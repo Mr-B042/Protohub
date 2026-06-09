@@ -327,6 +327,7 @@ const CompanionSchema = z.object({
   companionId:        z.string().min(1).max(120).optional(),
   productId:         z.string().uuid(),
   packageId:         z.string().uuid().optional(),
+  active:            z.boolean().default(true),
   quantity:          z.number().int().min(1).default(1),
   pricingMode:       z.enum(["free", "fixed", "use_product_price"]).default("free"),
   fixedPrice:        z.number().min(0).optional(),

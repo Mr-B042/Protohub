@@ -537,6 +537,7 @@ type PackageCompanion = {
   companionId: string;
   productId: string;
   packageId?: string;
+  active?: boolean;
   quantity: number;
   pricingMode: "free" | "fixed" | "use_product_price";
   fixedPrice?: number;
@@ -3980,6 +3981,7 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
   companionId: companion.companionId || makeCompanionId(),
   productId: companion.productId || "",
   packageId: companion.packageId || undefined,
+  active: companion.active !== false,
   quantity: Math.max(1, Number(companion.quantity) || 1),
   pricingMode: companion.pricingMode === "fixed" || companion.pricingMode === "use_product_price" ? companion.pricingMode : "free",
   fixedPrice: typeof companion.fixedPrice === "number" ? companion.fixedPrice : undefined,
@@ -4004,6 +4006,7 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
   priority: typeof companion.priority === "number" ? companion.priority : 0,
   displayMode: companion.displayMode === "card" ? "card" : "compact"
 });
+const companionIsActive = (companion: Pick<PackageCompanion, "active"> | null | undefined) => companion?.active !== false;
 const normalisePackageComponent = (component: Partial<PackageComponent>): PackageComponent => ({
   componentId: component.componentId || `pkg-comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   productId: component.productId || "",
@@ -19599,7 +19602,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         const addOnProduct = products.find((item) => item.id === selection.productId);
         if (!addOnProduct) return null;
         const companion = chosenPackage.companionProducts?.find((item) =>
-          item.productId === selection.productId
+          companionIsActive(item)
+          && item.productId === selection.productId
           && companionMatchesState(item, orderFormState.trim())
         );
         if (companion) {
@@ -22569,6 +22573,7 @@ ${waybillLineItems(w).length > 1
   const computeAutoCompanionLines = (chosenPackage: ProductPackage | undefined, state: string): CrossSellLine[] => {
     if (!chosenPackage?.companionProducts) return [];
     return chosenPackage.companionProducts
+      .filter(companionIsActive)
       .filter((c) => c.autoInclude)
       .filter((c) => companionMatchesState(c, state))
       .map((c) => {
@@ -24276,7 +24281,8 @@ ${waybillLineItems(w).length > 1
       const p = products.find((pp) => pp.id === c.productId);
       // Companion of the chosen package (if any) overrides the standard cross-sell price.
       const companion = chosenPackage.companionProducts?.find((cmp) =>
-        cmp.productId === c.productId
+        companionIsActive(cmp)
+        && cmp.productId === c.productId
         && companionMatchesState(cmp, orderFormState.trim())
       );
       let qty = c.quantity;
@@ -29827,7 +29833,8 @@ ${waybillLineItems(w).length > 1
             // package's pricing rules + quantity. Otherwise fall back to product-level cross-sell pricing.
             const companionForProductId = (productId: string) =>
               chosenPkg?.companionProducts?.find((c) =>
-                c.productId === productId
+                companionIsActive(c)
+                && c.productId === productId
                 && companionMatchesState(c, orderFormState)
               );
             const summaryXsLines = chosenPkg ? orderFormCrossSells.map((c) => {
@@ -29846,6 +29853,7 @@ ${waybillLineItems(w).length > 1
             }).filter(Boolean) as { name: string; qty: number; total: number }[] : [];
             // Append silently-bundled (auto-include) companions for the chosen package + state.
             const summaryAutoCompanionLines = (chosenPkg?.companionProducts ?? [])
+              .filter(companionIsActive)
               .filter((c) => c.autoInclude)
               .filter((c) => companionMatchesState(c, orderFormState))
               .map((c) => {
@@ -30156,7 +30164,7 @@ ${waybillLineItems(w).length > 1
                   {/* Package-level Companion Products — state-filtered opt-in cross-sells */}
                   {(() => {
                     const chosen = publicPackages.find((p) => p.id === orderFormPackageId);
-                    const companions = chosen?.companionProducts ?? [];
+                    const companions = (chosen?.companionProducts ?? []).filter(companionIsActive);
                     if (companions.length === 0) return null;
                     const eligible = companions.filter((c) => companionMatchesState(c, orderFormState));
                     // Card-mode opt-ins are hoisted out and rendered as a big bump card
@@ -30280,6 +30288,7 @@ ${waybillLineItems(w).length > 1
                     const chosen = publicPackages.find((p) => p.id === orderFormPackageId);
                     if (!chosen?.companionProducts) return null;
                     const cards = chosen.companionProducts
+                      .filter(companionIsActive)
                       .filter((c) => !c.autoInclude && c.displayMode === "card")
                       .filter((c) => companionMatchesState(c, orderFormState))
                       .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
@@ -44013,9 +44022,10 @@ ${waybillLineItems(w).length > 1
                     .filter((o) => new Date(o.createdAt ?? o.date ?? 0).getTime() >= cutoff)
                     .flatMap((o) => o.crossSellLines ?? [])
                     .reduce((s, l) => s + (l.amount || 0), 0);
-                  const totalActive = rows.length;
+                  const liveOfferRows = rows.filter((row) => companionIsActive(row.companion));
+                  const hiddenOfferRows = rows.filter((row) => !companionIsActive(row.companion));
                   const acceptanceAvg = (() => {
-                    const rates = rows.map((r) => acceptanceFor(r.pkg.id, r.companion.productId)).filter((v) => v !== null) as number[];
+                    const rates = liveOfferRows.map((r) => acceptanceFor(r.pkg.id, r.companion.productId)).filter((v) => v !== null) as number[];
                     if (rates.length === 0) return null;
                     return Math.round(rates.reduce((s, v) => s + v, 0) / rates.length);
                   })();
@@ -44051,10 +44061,14 @@ ${waybillLineItems(w).length > 1
                         </div>
                       </div>
                       {/* Stat cards */}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                         <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
-                          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Active extra offers</p>
-                          <p className="text-2xl font-extrabold text-gray-900 mt-0.5">{totalActive}</p>
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Live extra offers</p>
+                          <p className="text-2xl font-extrabold text-gray-900 mt-0.5">{liveOfferRows.length}</p>
+                        </div>
+                        <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Hidden saved offers</p>
+                          <p className="text-2xl font-extrabold text-amber-700 mt-0.5">{hiddenOfferRows.length}</p>
                         </div>
                         <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
                           <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Avg acceptance · 30d</p>
@@ -44101,8 +44115,9 @@ ${waybillLineItems(w).length > 1
                                   const savings = Math.max(0, standardTotal - total);
                                   const savingsPct = standardTotal > 0 ? Math.round((savings / standardTotal) * 100) : 0;
                                   const rate = acceptanceFor(r.pkg.id, r.companion.productId);
+                                  const offerLive = companionIsActive(r.companion);
                                   return (
-                                    <tr key={`${r.pkg.id}-${r.idx}`} className="hover:bg-gray-50">
+                                    <tr key={`${r.pkg.id}-${r.idx}`} className={`hover:bg-gray-50 ${offerLive ? "" : "bg-amber-50/30"}`}>
                                       <td className="px-3 py-3">
                                         <div className="font-bold text-gray-900">{r.product.name}</div>
                                         <div className="text-[11px] text-gray-500">on package "{r.pkg.name}"</div>
@@ -44112,6 +44127,7 @@ ${waybillLineItems(w).length > 1
                                       </td>
                                       <td className="px-3 py-3">
                                         <div className="font-semibold text-gray-900">{bp?.name ?? <em className="text-rose-600">missing product</em>}{r.companion.quantity > 1 ? ` × ${r.companion.quantity}` : ""}</div>
+                                        {!offerLive && <div className="mt-1 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">Hidden from customer form</div>}
                                         {r.companion.pitch && <div className="text-[11px] text-gray-500 italic">"{r.companion.pitch}"</div>}
                                       </td>
                                       <td className="px-3 py-3 font-bold text-[#1F8FE0]">{r.companion.pricingMode === "free" ? "FREE" : formatProductMoney(total, currency)}</td>
@@ -47128,7 +47144,9 @@ ${waybillLineItems(w).length > 1
                           [...selectedProduct.packages].sort((a, b) => a.displayOrder - b.displayOrder).map((item, sortedIdx, sortedArr) => {
                             const packageComponentCount = item.packageComponents?.length ?? 0;
                             const freeGiftCount = (item.packageComponents ?? []).filter((component) => component.isFreeGift).length;
-                            const extraOfferCount = item.companionProducts?.length ?? 0;
+                            const visibleOfferCount = (item.companionProducts ?? []).filter(companionIsActive).length;
+                            const hiddenOfferCount = (item.companionProducts ?? []).filter((companion) => !companionIsActive(companion)).length;
+                            const extraOfferCount = visibleOfferCount + hiddenOfferCount;
                             const hasStateRule = (item.stateFilterMode ?? "all") !== "all";
                             const hasCarousel = isComboLikePackage(item) && (item.imageUrls?.length ?? 0) > 1;
                             const hasContentBadges = packageComponentCount > 0 || freeGiftCount > 0 || extraOfferCount > 0;
@@ -47150,9 +47168,14 @@ ${waybillLineItems(w).length > 1
                                           {freeGiftCount} free gift{freeGiftCount === 1 ? "" : "s"}
                                         </span>
                                       )}
-                                      {extraOfferCount > 0 && (
-                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-blue-50 text-[#1F8FE0] whitespace-nowrap" title={`${extraOfferCount} extra offer${extraOfferCount === 1 ? "" : "s"}`}>
-                                          +{extraOfferCount} offer{extraOfferCount === 1 ? "" : "s"}
+                                      {visibleOfferCount > 0 && (
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-blue-50 text-[#1F8FE0] whitespace-nowrap" title={`${visibleOfferCount} visible extra offer${visibleOfferCount === 1 ? "" : "s"}`}>
+                                          +{visibleOfferCount} live offer{visibleOfferCount === 1 ? "" : "s"}
+                                        </span>
+                                      )}
+                                      {hiddenOfferCount > 0 && (
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 whitespace-nowrap" title={`${hiddenOfferCount} saved offer${hiddenOfferCount === 1 ? "" : "s"} hidden from the customer form`}>
+                                          {hiddenOfferCount} hidden offer{hiddenOfferCount === 1 ? "" : "s"}
                                         </span>
                                       )}
                                     </div>
@@ -51698,18 +51721,33 @@ ${waybillLineItems(w).length > 1
                               : c.stateRestrictions.length === 0
                                 ? "No states are hidden right now."
                                 : `All states except ${c.stateRestrictions.length} selected state${c.stateRestrictions.length === 1 ? "" : "s"} can see this offer.`;
+                        const activeOffer = companionIsActive(c);
                         return (
-                          <div key={idx} className="border border-gray-100 rounded-lg p-3 bg-gray-50/50 space-y-2.5">
+                          <div key={idx} className={`border rounded-lg p-3 space-y-2.5 transition-colors ${activeOffer ? "border-gray-100 bg-gray-50/50" : "border-amber-200 bg-amber-50/60"}`}>
                             <div className="flex items-center justify-between gap-3 pb-1 border-b border-gray-100">
                               <div>
-                                <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-gray-500">Offer {idx + 1}</p>
-                                <p className="m-0 text-xs text-gray-500">What is the offer, who should see it, and how should it look?</p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-gray-500">Offer {idx + 1}</p>
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${activeOffer ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                                    {activeOffer ? "Showing on form" : "Hidden for now"}
+                                  </span>
+                                </div>
+                                <p className="m-0 text-xs text-gray-500">{activeOffer ? "What is the offer, who should see it, and how should it look?" : "Saved, but customers cannot see or choose this add-on until you turn it back on."}</p>
                               </div>
-                              <button
-                                type="button"
-                                className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-50 rounded"
-                                onClick={remove}
-                              ><Trash2 className="w-3 h-3" /> Remove</button>
+                              <div className="flex flex-wrap items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2.5 py-1 text-xs font-bold rounded border transition-colors ${activeOffer ? "border-amber-200 bg-white text-amber-700 hover:bg-amber-50" : "border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50"}`}
+                                  onClick={() => update({ active: !activeOffer })}
+                                >
+                                  {activeOffer ? "Turn off" : "Turn on"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-50 rounded"
+                                  onClick={remove}
+                                ><Trash2 className="w-3 h-3" /> Remove</button>
+                              </div>
                             </div>
                             <div className="space-y-2">
                               <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 m-0">1. What customers can buy</p>

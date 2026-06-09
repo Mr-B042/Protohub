@@ -22,6 +22,7 @@ type DbPricing = { currency: string; selling_price: number; is_primary: boolean 
 type DbCompanion = {
   companionId?: string;
   productId: string; packageId?: string; quantity: number; pricingMode: string;
+  active?: boolean;
   fixedPrice?: number; stateFilterMode?: "all" | "allow" | "block"; stateRestrictions?: string[]; autoInclude?: boolean;
   placement?: "inline" | "upsell";
   pitch?: string;
@@ -100,6 +101,8 @@ const sanitisePricing = (p: DbPricing) => ({
   isPrimary:    p.is_primary
 });
 
+const companionIsActive = (companion: Pick<DbCompanion, "active"> | null | undefined) => companion?.active !== false;
+
 const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<string, CompanionSocialProof>) => ({
   id:           p.id,
   name:         p.name,
@@ -118,7 +121,7 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
   unitSingular: p.unit_singular ?? null,
   unitPlural: p.unit_plural ?? null,
   attributionProductId: p.attribution_product_id ?? null,
-  companionProducts: (p.companion_products ?? []).map((c) => {
+  companionProducts: (p.companion_products ?? []).filter(companionIsActive).map((c) => {
     const restrictions = c.stateRestrictions ?? [];
     const stateFilterMode =
       c.stateFilterMode === "block"
@@ -127,43 +130,44 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
           ? (restrictions.length > 0 ? "allow" : "all")
           : "all";
     return ({
-    companionId:       c.companionId ?? "",
-    productId:         c.productId,
-    packageId:         c.packageId ?? null,
-    quantity:          c.quantity,
-    pricingMode:       c.pricingMode,
-    fixedPrice:        c.fixedPrice ?? null,
-    stateFilterMode,
-    stateRestrictions: restrictions,
-    autoInclude:       c.autoInclude ?? false,
-    placement:         c.placement ?? "inline",
-    pitch:             c.pitch ?? "",
-    badgeText:         c.badgeText ?? "",
-    headline:          c.headline ?? "",
-    ctaText:           c.ctaText ?? "",
-    declineText:       c.declineText ?? "",
-    imageUrl:          c.imageUrl ?? "",
-    videoUrl:          c.videoUrl ?? "",
-    embedHtml:         c.embedHtml ?? "",
-    priority:          c.priority ?? 0,
-    displayMode:       c.displayMode ?? "compact",
-    proofMode:         c.proofMode === "promo_copy" || c.proofMode === "hidden" ? c.proofMode : "real",
-    urgencyMode:       c.urgencyMode === "price_loss" ? "price_loss" : "standard",
-    promoAllTimeBuyerCount:
-      typeof c.promoAllTimeBuyerCount === "number" && c.promoAllTimeBuyerCount > 0
-        ? Math.floor(c.promoAllTimeBuyerCount)
-        : null,
-    promoBuyersLast24HoursCount:
-      typeof c.promoBuyersLast24HoursCount === "number" && c.promoBuyersLast24HoursCount > 0
-        ? Math.floor(c.promoBuyersLast24HoursCount)
-        : null,
-    promoLastAddedRelative:
-      typeof c.promoLastAddedRelative === "string" && c.promoLastAddedRelative.trim()
-        ? c.promoLastAddedRelative.trim()
-        : null,
-    promoIsMostAdded: c.promoIsMostAdded === true,
-    socialProof: companionSocialProofByProductId?.[c.productId] ?? null
-  })}),
+      companionId:       c.companionId ?? "",
+      productId:         c.productId,
+      packageId:         c.packageId ?? null,
+      active:            true,
+      quantity:          c.quantity,
+      pricingMode:       c.pricingMode,
+      fixedPrice:        c.fixedPrice ?? null,
+      stateFilterMode,
+      stateRestrictions: restrictions,
+      autoInclude:       c.autoInclude ?? false,
+      placement:         c.placement ?? "inline",
+      pitch:             c.pitch ?? "",
+      badgeText:         c.badgeText ?? "",
+      headline:          c.headline ?? "",
+      ctaText:           c.ctaText ?? "",
+      declineText:       c.declineText ?? "",
+      imageUrl:          c.imageUrl ?? "",
+      videoUrl:          c.videoUrl ?? "",
+      embedHtml:         c.embedHtml ?? "",
+      priority:          c.priority ?? 0,
+      displayMode:       c.displayMode ?? "compact",
+      proofMode:         c.proofMode === "promo_copy" || c.proofMode === "hidden" ? c.proofMode : "real",
+      urgencyMode:       c.urgencyMode === "price_loss" ? "price_loss" : "standard",
+      promoAllTimeBuyerCount:
+        typeof c.promoAllTimeBuyerCount === "number" && c.promoAllTimeBuyerCount > 0
+          ? Math.floor(c.promoAllTimeBuyerCount)
+          : null,
+      promoBuyersLast24HoursCount:
+        typeof c.promoBuyersLast24HoursCount === "number" && c.promoBuyersLast24HoursCount > 0
+          ? Math.floor(c.promoBuyersLast24HoursCount)
+          : null,
+      promoLastAddedRelative:
+        typeof c.promoLastAddedRelative === "string" && c.promoLastAddedRelative.trim()
+          ? c.promoLastAddedRelative.trim()
+          : null,
+      promoIsMostAdded: c.promoIsMostAdded === true,
+      socialProof: companionSocialProofByProductId?.[c.productId] ?? null
+    })}),
   packageComponents: (p.package_components ?? []).map((component) => {
     const productId = component.productId ?? component.product_id ?? "";
     return {
@@ -233,6 +237,7 @@ const buildCompanionSocialProof = async (product: DbProduct) => {
     new Set(
       (product.packages ?? [])
         .flatMap((pkg) => (pkg.active ? (pkg.companion_products ?? []) : []))
+        .filter(companionIsActive)
         .filter((companion) => !companion.autoInclude)
         .filter((companion) => Boolean(companion.productId))
         .map((companion) => companion.productId)
@@ -435,6 +440,7 @@ router.get("/:id", readRateLimit, async (req, res) => {
       .filter((id): id is string => Boolean(id))),
     ...((product.packages ?? [])
       .flatMap((pkg) => (pkg.active ? (pkg.companion_products ?? []) : []))
+      .filter(companionIsActive)
       .map((companion) => companion.productId)
       .filter(Boolean)),
     ...((product.packages ?? [])

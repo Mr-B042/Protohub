@@ -22,6 +22,7 @@ type PublicCompanion = {
   companionId?: string;
   productId: string;
   packageId?: string | null;
+  active?: boolean;
   quantity: number;
   pricingMode: "free" | "fixed" | "use_product_price" | "standard";
   fixedPrice?: number | null;
@@ -531,6 +532,10 @@ function companionVisibleInState(companion: PublicCompanion, state: string) {
   const normalizedState = normalizeStateName(state);
   const matches = companion.stateRestrictions.map(normalizeStateName).includes(normalizedState);
   return mode === "block" ? !matches : matches;
+}
+
+function companionIsActive(companion: Pick<PublicCompanion, "active"> | null | undefined) {
+  return companion?.active !== false;
 }
 
 function companionSelectionKey(companion: { companionId?: string; productId: string; packageId?: string | null }) {
@@ -1529,7 +1534,8 @@ export default function PublicOrderFormPage() {
 
   const companionForSelection = (selection: CrossSellSelection) =>
     chosenPackage?.companionProducts?.find((companion) =>
-      companionSelectionKey(companion) === companionSelectionKey(selection)
+      companionIsActive(companion)
+      && companionSelectionKey(companion) === companionSelectionKey(selection)
       && companionVisibleInState(companion, orderFormState)
     );
 
@@ -1564,6 +1570,7 @@ export default function PublicOrderFormPage() {
     .filter(Boolean) as { name: string; detail?: string; qty: number; total: number }[];
 
   const autoCompanionLines = (chosenPackage?.companionProducts ?? [])
+    .filter(companionIsActive)
     .filter((companion) => companion.autoInclude)
     .filter((companion) => companionVisibleInState(companion, orderFormState))
     .map((companion) => {
@@ -1811,6 +1818,7 @@ export default function PublicOrderFormPage() {
   useEffect(() => {
     const companionKeys = new Set(
       (chosenPackage?.companionProducts ?? [])
+        .filter(companionIsActive)
         .filter((companion) => !companion.autoInclude)
         .filter((companion) => companionVisibleInState(companion, orderFormState))
         .map((companion) => companionSelectionKey(companion))
@@ -2697,6 +2705,7 @@ export default function PublicOrderFormPage() {
       const upsellPackageId = created.upsellOffer?.packageId;
       const upsellCompanion = upsellProductId
         ? (chosenPackage.companionProducts ?? [])
+            .filter(companionIsActive)
             .filter((companion) => (companion.placement ?? "inline") === "upsell")
             .filter((companion) => companionVisibleInState(companion, submittedState))
             .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
@@ -2889,6 +2898,7 @@ export default function PublicOrderFormPage() {
   }, [publicProduct]);
 
   const companionOptions = (chosenPackage?.companionProducts ?? [])
+    .filter(companionIsActive)
     .filter((companion) => !companion.autoInclude)
     .filter((companion) => (companion.placement ?? "inline") === "inline")
     .filter((companion) =>

@@ -79,6 +79,7 @@ type CompanionOverride = {
   companionId?: string;
   productId: string;
   packageId?: string;
+  active?: boolean;
   quantity: number;
   pricingMode: "standard" | "fixed" | "free" | "use_product_price";
   fixedPrice?: number;
@@ -95,6 +96,8 @@ type CompanionOverride = {
   priority?: number;
   displayMode?: "compact" | "card";
 };
+
+const companionIsActive = (companion: Pick<CompanionOverride, "active"> | null | undefined) => companion?.active !== false;
 
 type ResolvedLine = {
   productId: string;
@@ -501,7 +504,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   const crossSellStateRestrictions: Record<string, string[]> =
     (product.cross_sell_state_restrictions as Record<string, string[]> | null) ?? {};
   const companions: CompanionOverride[] = Array.isArray(pkg.companion_products)
-    ? (pkg.companion_products as CompanionOverride[])
+    ? (pkg.companion_products as CompanionOverride[]).filter(companionIsActive)
     : [];
 
   const targetPackageIds = Array.from(new Set([
@@ -538,6 +541,10 @@ router.post("/", submitRateLimit, async (req, res) => {
         : c.productId === line.productId)
       && stateAllowsCompanion(c, d.state)
     );
+    // If the client submitted a package companion id, it must still be an
+    // active companion for this package. Do not downgrade hidden add-ons into
+    // generic product-level cross-sells from stale browser sessions.
+    if (line.companionId && !companion) continue;
     const targetPackageId = companion?.packageId ?? line.packageId;
     const targetPackage = targetPackageId
       ? (targetPackages.find((entry) => entry.id === targetPackageId) as ResolvedPackageRow | undefined)
@@ -980,7 +987,7 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
     return;
   }
   const companions: CompanionOverride[] = Array.isArray(pkg.companion_products)
-    ? (pkg.companion_products as CompanionOverride[])
+    ? (pkg.companion_products as CompanionOverride[]).filter(companionIsActive)
     : [];
   const companion = companions.find((entry) =>
     (tokenPayload.companionId
