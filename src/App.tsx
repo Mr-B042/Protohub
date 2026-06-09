@@ -15087,6 +15087,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const customerOrderStateLabel = (order: Pick<TrackedOrder, "state" | "city" | "location">) =>
     (order.state ?? "").trim() || (order.location ?? "").trim() || orderLocationFromFields(order.city ?? "", order.state ?? "");
+  const customerInitial = (name: string) => (name.trim()[0] || "?").toUpperCase();
+  const customerAvatarTone = (key: string) => {
+    const tones = [
+      "bg-blue-50 text-blue-600",
+      "bg-green-50 text-green-600",
+      "bg-purple-50 text-purple-600",
+      "bg-amber-50 text-amber-600",
+      "bg-pink-50 text-pink-600",
+      "bg-cyan-50 text-cyan-600"
+    ];
+    const index = Math.abs(Array.from(key).reduce((sum, char) => sum + char.charCodeAt(0), 0)) % tones.length;
+    return tones[index];
+  };
   const isCustomerFlagged = (phone: string) => {
     const flag = customerFlags[normalizePhone(phone)];
     return flag?.flagged === true;
@@ -38714,23 +38727,38 @@ ${waybillLineItems(w).length > 1
                       const flagData = customerFlags[normalizePhone(customer.phone)];
                       const customerStatusLabel = flagged && canSeeCustomerRisk ? "High-risk" : customer.orders > 1 ? "Repeat Buyer" : customer.successful > 0 ? "Delivered Buyer" : "New Customer";
                       const customerStatusClass = flagged && canSeeCustomerRisk ? "bg-red-50 text-red-700 border-red-100" : customer.orders > 1 ? "bg-green-50 text-green-700 border-green-100" : customer.successful > 0 ? "bg-blue-50 text-blue-700 border-blue-100" : "bg-sky-50 text-sky-700 border-sky-100";
+                      const customerStatusDotClass = flagged && canSeeCustomerRisk ? "bg-red-500" : customer.orders > 1 ? "bg-green-500" : customer.successful > 0 ? "bg-blue-500" : "bg-sky-500";
+                      const customerStatusDetail = flagged && canSeeCustomerRisk ? (flagData?.reason || "Flagged for attention") : customer.orders > 1 ? "2+ orders" : customer.successful > 0 ? "Has delivered once" : "First time buyer";
                       const reliabilityLabel = customer.successful === 0 ? "No delivered order yet" : reliability >= 70 ? "Reliable buyer" : reliability >= 40 ? "Mixed delivery history" : "Needs follow-up";
+                      const whatsappUrl = buildWhatsAppTargets(customer.phone, `Hello ${customer.name}, thank you for ordering from us.`).normalUrl;
                       return (
                         <article key={customer.id} className={`px-4 py-4 flex flex-col gap-3 ${flagged && canSeeCustomerRisk ? "bg-red-50/30" : ""}`}>
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="font-bold text-gray-900 truncate">{customer.name}</div>
-                              <span className={`mt-1 inline-flex w-fit rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${customerStatusClass}`}>{customerStatusLabel}</span>
-                              {canViewCustomerContact ? (
-                                <>
-                                  <div className="text-xs text-gray-500">{customer.phone}</div>
-                                  {customer.email && customer.email !== "-" && <div className="text-xs text-gray-400 truncate">{customer.email}</div>}
-                                </>
-                              ) : (
-                                <div className="text-xs text-gray-400">Contact hidden</div>
-                              )}
+                            <div className="flex min-w-0 items-start gap-3">
+                              <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-base font-black ${customerAvatarTone(customer.id)}`}>{customerInitial(customer.name)}</span>
+                              <div className="min-w-0">
+                                <div className="font-bold text-gray-900 truncate">{customer.name}</div>
+                                {canViewCustomerContact ? (
+                                  <>
+                                    <div className="text-xs text-gray-500">{customer.phone}</div>
+                                    <div className="text-xs font-semibold text-gray-400 truncate">{customer.latestOrderState || "No state"}</div>
+                                    {customer.email && customer.email !== "-" && <div className="text-xs text-gray-400 truncate">{customer.email}</div>}
+                                    <div className="mt-2 flex items-center gap-2">
+                                      {whatsappUrl && <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-green-50 text-green-600 ring-1 ring-green-100 transition hover:bg-green-100" href={whatsappUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${customer.name}`}><WhatsAppIcon className="h-4 w-4" /></a>}
+                                      <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-50 text-blue-600 ring-1 ring-blue-100 transition hover:bg-blue-100" href={`tel:${customer.phone}`} title={`Call ${customer.name}`}><Phone className="h-4 w-4" /></a>
+                                      <button className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-gray-50 text-gray-500 ring-1 ring-gray-200 transition hover:bg-gray-100" onClick={() => copyText(customer.phone, `${customer.name} phone`)} title={`Copy ${customer.name}'s phone`}><Copy className="h-4 w-4" /></button>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div className="text-xs text-gray-400">Contact hidden</div>
+                                )}
+                              </div>
                             </div>
                             <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold whitespace-nowrap ${reliability >= 70 ? "bg-green-100 text-green-700" : reliability >= 40 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"}`}>{reliability}%</span>
+                          </div>
+                          <div className={`rounded-xl border p-3 ${customerStatusClass}`}>
+                            <div className="flex items-center gap-2 text-sm font-black"><span className={`h-2 w-2 rounded-full ${customerStatusDotClass}`} /> {customerStatusLabel}</div>
+                            <div className="mt-1 flex items-center gap-2 text-xs font-semibold opacity-80"><span className={`h-1.5 w-1.5 rounded-full ${customerStatusDotClass}`} /> {customerStatusDetail}</div>
                           </div>
                           {flagged && canSeeCustomerRisk && <span className="inline-flex items-center gap-1 self-start px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700" title={flagData?.reason || "Flagged"}><AlertTriangle className="w-3 h-3" /> Flagged</span>}
                           <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-2 gap-3 text-xs">
@@ -38798,21 +38826,37 @@ ${waybillLineItems(w).length > 1
                           const flagData = customerFlags[normalizePhone(customer.phone)];
                           const customerStatusLabel = flagged && canSeeCustomerRisk ? "High-risk" : customer.orders > 1 ? "Repeat Buyer" : customer.successful > 0 ? "Delivered Buyer" : "New Customer";
                           const customerStatusClass = flagged && canSeeCustomerRisk ? "bg-red-50 text-red-700 border-red-100" : customer.orders > 1 ? "bg-green-50 text-green-700 border-green-100" : customer.successful > 0 ? "bg-blue-50 text-blue-700 border-blue-100" : "bg-sky-50 text-sky-700 border-sky-100";
+                          const customerStatusDotClass = flagged && canSeeCustomerRisk ? "bg-red-500" : customer.orders > 1 ? "bg-green-500" : customer.successful > 0 ? "bg-blue-500" : "bg-sky-500";
+                          const customerStatusDetail = flagged && canSeeCustomerRisk ? (flagData?.reason || "Flagged for attention") : customer.orders > 1 ? "2+ orders" : customer.successful > 0 ? "Has delivered once" : "First time buyer";
                           const reliabilityLabel = customer.successful === 0 ? "No delivered order yet" : reliability >= 70 ? "Reliable buyer" : reliability >= 40 ? "Mixed delivery history" : "Needs follow-up";
+                          const whatsappUrl = buildWhatsAppTargets(customer.phone, `Hello ${customer.name}, thank you for ordering from us.`).normalUrl;
                           return (
                             <tr key={customer.id} className={`hover:bg-gray-50 transition-colors ${flagged && canSeeCustomerRisk ? "bg-red-50/40" : ""}`}>
                               <td className="px-4 py-4 max-w-[260px]">
-                                <div className="font-bold text-gray-900">{customer.name}</div>
-                                {flagged && canSeeCustomerRisk && <span className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700" title={flagData?.reason || "Flagged"}><AlertTriangle className="w-2.5 h-2.5" /> Flagged</span>}
-                                {canViewCustomerContact ? (
-                                  <div className="mt-1">
-                                    <div className="text-gray-700 whitespace-nowrap">{customer.phone}</div>
-                                    {customer.email && customer.email !== "-" ? <div className="text-xs text-gray-400 max-w-[190px] truncate">{customer.email}</div> : <div className="text-xs text-gray-300">No email</div>}
+                                <div className="flex items-center gap-3">
+                                  <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-base font-black ${customerAvatarTone(customer.id)}`}>{customerInitial(customer.name)}</span>
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-gray-900 truncate">{customer.name}</div>
+                                    {flagged && canSeeCustomerRisk && <span className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700" title={flagData?.reason || "Flagged"}><AlertTriangle className="w-2.5 h-2.5" /> Flagged</span>}
+                                    {canViewCustomerContact ? (
+                                      <div className="mt-1">
+                                        <div className="text-gray-700 whitespace-nowrap">{customer.phone}</div>
+                                        <div className="text-xs font-semibold text-gray-400">{customer.latestOrderState || "No state"}</div>
+                                        {customer.email && customer.email !== "-" ? <div className="text-xs text-gray-400 max-w-[190px] truncate">{customer.email}</div> : null}
+                                      </div>
+                                    ) : (
+                                      <span className="mt-1 block text-xs font-semibold text-gray-400">Contact hidden</span>
+                                    )}
+                                    {canViewCustomerContact && (
+                                      <div className="mt-2 flex items-center gap-2">
+                                        {whatsappUrl && <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-green-50 text-green-600 ring-1 ring-green-100 transition hover:bg-green-100" href={whatsappUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${customer.name}`}><WhatsAppIcon className="h-4 w-4" /></a>}
+                                        <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-50 text-blue-600 ring-1 ring-blue-100 transition hover:bg-blue-100" href={`tel:${customer.phone}`} title={`Call ${customer.name}`}><Phone className="h-4 w-4" /></a>
+                                        <button className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-gray-50 text-gray-500 ring-1 ring-gray-200 transition hover:bg-gray-100" onClick={() => copyText(customer.phone, `${customer.name} phone`)} title={`Copy ${customer.name}'s phone`}><Copy className="h-4 w-4" /></button>
+                                      </div>
+                                    )}
+                                    <span className="mt-2 inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500">{customer.source}</span>
                                   </div>
-                                ) : (
-                                  <span className="mt-1 block text-xs font-semibold text-gray-400">Contact hidden</span>
-                                )}
-                                <span className="mt-2 inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500">{customer.source}</span>
+                                </div>
                               </td>
                               <td className="px-4 py-4">
                                 <div className="font-semibold text-gray-900">{customerOrderLabel(customer.latestProductName, customer.latestPackageName)}</div>
@@ -38820,8 +38864,10 @@ ${waybillLineItems(w).length > 1
                                 <div className="text-xs text-gray-400">{customer.latestOrderState} · Placed {customerOrderPlacedLabel(customer.latestOrderDate)}</div>
                               </td>
                               <td className="px-4 py-4">
-                                <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${customerStatusClass}`}>{customerStatusLabel}</span>
-                                <div className="mt-1 text-xs text-gray-400">{customer.orders > 1 ? "2+ orders" : "First-time buyer"}</div>
+                                <div className={`inline-flex min-w-[150px] flex-col rounded-xl border px-3 py-2 ${customerStatusClass}`}>
+                                  <span className="flex items-center gap-2 text-xs font-black"><span className={`h-2 w-2 rounded-full ${customerStatusDotClass}`} /> {customerStatusLabel}</span>
+                                  <span className="mt-1 flex items-center gap-2 text-[11px] font-semibold opacity-80"><span className={`h-1.5 w-1.5 rounded-full ${customerStatusDotClass}`} /> {customerStatusDetail}</span>
+                                </div>
                               </td>
                               <td className="px-4 py-4">
                                 <div className="grid grid-cols-3 gap-3 text-center">
