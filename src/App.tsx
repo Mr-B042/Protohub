@@ -588,6 +588,8 @@ type ProductPackage = {
   companionProducts?: PackageCompanion[];
   packageComponents?: PackageComponent[];
 };
+type PackagePageTab = "Packages" | "Add-on Performance";
+type AddOnPerformanceRange = "all" | "30d" | "month" | "week";
 type PackBonusRule = {
   id: string;
   quantity: number;
@@ -6244,6 +6246,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     return stored === "pricing" || stored === "packages" ? "dashboard" : stored;
   });
+  const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
+  const [addOnPerformanceRange, setAddOnPerformanceRange] = useState<AddOnPerformanceRange>("all");
   const [stateStockProductId, setStateStockProductId] = useState("");
   const [stateStockStateFilter, setStateStockStateFilter] = useState("");
   const [stateStockSearch, setStateStockSearch] = useState("");
@@ -21864,6 +21868,8 @@ ${waybillLineItems(w).length > 1
   const openPackagesView = (product: Product) => {
     setSelectedProductId(product.id);
     setPackageDescriptionDraft(product.packageDescription);
+    setPackagePageTab("Packages");
+    setAddOnPerformanceRange("all");
     setInventoryView("packages");
     setActivePage("Inventory");
     syncHashRoute(`#/dashboard/admin/inventory/packages/${product.id}`);
@@ -22563,6 +22569,367 @@ ${waybillLineItems(w).length > 1
       );
       showToast(`Failed to ${nextActive ? "show" : "hide"} add-on: ${err?.message ?? "please retry"}.`);
     });
+  };
+
+  const renderPackageAddOnPerformance = (product: Product) => {
+    type AddOnDecision = {
+      label: "Scale" | "Keep testing" | "Improve offer" | "Watch delivery" | "Pause candidate";
+      className: string;
+      note: string;
+    };
+    type OfferMetricRow = {
+      key: string;
+      basePackage: ProductPackage;
+      companion: PackageCompanion;
+      addOnProduct?: Product;
+      addOnPackage?: ProductPackage;
+      placement: "inline" | "upsell";
+      isLive: boolean;
+      eligibleOrders: number;
+      acceptedOrders: number;
+      deliveredOrders: number;
+      units: number;
+      placedRevenue: number;
+      deliveredRevenue: number;
+      pendingValue: number;
+      failedValue: number;
+      estimatedCogs: number;
+      grossProfit: number;
+      costMissing: boolean;
+      attachRate: number;
+      deliveredRate: number;
+      margin: number | null;
+      aovLift: number | null;
+      decision: AddOnDecision;
+    };
+    type ProductMetricRow = {
+      key: string;
+      addOnProduct?: Product;
+      addOnProductName: string;
+      acceptedOrders: number;
+      deliveredOrders: number;
+      units: number;
+      placedRevenue: number;
+      deliveredRevenue: number;
+      estimatedCogs: number;
+      grossProfit: number;
+      costMissing: boolean;
+      deliveryRate: number;
+      margin: number | null;
+    };
+
+    const moneyCode = primaryPricing(product)?.currency ?? product.packages[0]?.currency ?? "NGN";
+    const rangeOptions: { key: AddOnPerformanceRange; label: string }[] = [
+      { key: "all", label: "All" },
+      { key: "30d", label: "30d" },
+      { key: "month", label: "This Month" },
+      { key: "week", label: "This Week" }
+    ];
+    const now = new Date();
+    const rangeStart = (() => {
+      if (addOnPerformanceRange === "all") return null;
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      if (addOnPerformanceRange === "30d") {
+        start.setDate(start.getDate() - 29);
+        return start;
+      }
+      if (addOnPerformanceRange === "month") {
+        start.setDate(1);
+        return start;
+      }
+      const day = start.getDay();
+      const mondayOffset = day === 0 ? 6 : day - 1;
+      start.setDate(start.getDate() - mondayOffset);
+      return start;
+    })();
+    const orderInRange = (order: TrackedOrder) => {
+      if (!rangeStart) return true;
+      const raw = order.createdAt ?? order.date;
+      const timestamp = raw ? new Date(raw).getTime() : NaN;
+      return Number.isFinite(timestamp) && timestamp >= rangeStart.getTime();
+    };
+    const matchLineToCompanion = (line: CrossSellLine, companion: PackageCompanion, companionPackage?: ProductPackage) => {
+      if (!isCustomerSelectedCrossSell(line)) return false;
+      if (line.productId !== companion.productId) return false;
+      if (companion.packageId) {
+        return line.packageId === companion.packageId || (!line.packageId && Boolean(companionPackage?.name && line.packageName === companionPackage.name));
+      }
+      return !line.packageId;
+    };
+    const safePercent = (top: number, bottom: number) => bottom > 0 ? Math.round((top / bottom) * 100) : 0;
+    const average = (values: number[]) => values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+    const decisionFor = (row: Omit<OfferMetricRow, "decision">): AddOnDecision => {
+      const enoughSample = row.eligibleOrders >= 20 || row.acceptedOrders >= 5;
+      const weakAttach = row.attachRate < 5;
+      const negativeMargin = row.margin !== null && row.margin <= 0;
+      const weakDelivery = row.acceptedOrders >= 5 && row.deliveredRate < 50;
+      if (enoughSample && (negativeMargin || (weakAttach && row.acceptedOrders <= 1) || row.deliveredRate < 35)) {
+        return { label: "Pause candidate", className: "bg-rose-50 text-rose-700 border-rose-200", note: "Weak economics or delivery after enough traffic." };
+      }
+      if (weakDelivery) {
+        return { label: "Watch delivery", className: "bg-orange-50 text-orange-700 border-orange-200", note: "Customers accept it, but delivery quality is weak." };
+      }
+      if (enoughSample && row.attachRate < 10) {
+        return { label: "Improve offer", className: "bg-amber-50 text-amber-700 border-amber-200", note: "Enough views, but attach rate is low." };
+      }
+      if (row.acceptedOrders >= 5 && row.attachRate >= 15 && row.deliveredRate >= 60 && (row.margin === null || row.margin > 0)) {
+        return { label: "Scale", className: "bg-emerald-50 text-emerald-700 border-emerald-200", note: "Strong attach, delivery, and margin." };
+      }
+      return { label: "Keep testing", className: "bg-blue-50 text-blue-700 border-blue-200", note: "Not enough signal yet; keep gathering data." };
+    };
+
+    const sortedPackages = [...product.packages].sort((a, b) => a.displayOrder - b.displayOrder);
+    const packagesWithOffers = sortedPackages.filter((pkg) => (pkg.companionProducts ?? []).length > 0);
+    const productOrders = trackedOrders.filter((order) => order.productId === product.id && orderInRange(order));
+    const offerRows: OfferMetricRow[] = packagesWithOffers.flatMap((basePackage) =>
+      (basePackage.companionProducts ?? []).map((companion, companionIndex) => {
+        const addOnProduct = products.find((item) => item.id === companion.productId);
+        const addOnPackage = addOnProduct?.packages.find((pkg) => pkg.id === companion.packageId);
+        const eligible = productOrders.filter((order) => order.packageId === basePackage.id || (!order.packageId && order.packageName === basePackage.name));
+        const acceptedOrderIds = new Set<string>();
+        let deliveredOrderCount = 0;
+        let units = 0;
+        let placedRevenue = 0;
+        let deliveredRevenue = 0;
+        let pendingValue = 0;
+        let failedValue = 0;
+        let estimatedCogs = 0;
+        let costMissing = false;
+
+        for (const order of eligible) {
+          const matchedLines = (order.crossSellLines ?? []).filter((line) => matchLineToCompanion(line, companion, addOnPackage));
+          if (matchedLines.length === 0) continue;
+          acceptedOrderIds.add(order.id);
+          const orderAcceptedValue = matchedLines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);
+          const delivered = order.status === "Delivered";
+          const failed = order.status === "Failed" || order.status === "Cancelled";
+          if (delivered) deliveredOrderCount += 1;
+          if (!delivered && !failed) pendingValue += orderAcceptedValue;
+          if (failed) failedValue += orderAcceptedValue;
+          for (const line of matchedLines) {
+            const lineQty = Math.max(0, Number(line.quantity) || 0);
+            const lineAmount = Math.max(0, Number(line.amount) || 0);
+            units += lineQty;
+            placedRevenue += lineAmount;
+            if (delivered) {
+              deliveredRevenue += lineAmount;
+              const unitCost = unitCostForProductInCurrency(line.productId, order.currency);
+              if (lineQty > 0 && unitCost <= 0) costMissing = true;
+              estimatedCogs += lineQty * unitCost;
+            }
+          }
+        }
+
+        const acceptedOrders = acceptedOrderIds.size;
+        const acceptedOrdersList = eligible.filter((order) => acceptedOrderIds.has(order.id));
+        const missedOrdersList = eligible.filter((order) => !acceptedOrderIds.has(order.id));
+        const acceptedAvg = average(acceptedOrdersList.map((order) => Number(order.amount) || 0));
+        const missedAvg = average(missedOrdersList.map((order) => Number(order.amount) || 0));
+        const grossProfit = deliveredRevenue - estimatedCogs;
+        const margin = deliveredRevenue > 0 && !costMissing ? Math.round((grossProfit / deliveredRevenue) * 100) : null;
+        const baseRow = {
+          key: `${basePackage.id}-${companion.companionId || companionIndex}`,
+          basePackage,
+          companion,
+          addOnProduct,
+          addOnPackage,
+          placement: (companion.placement ?? "inline") as "inline" | "upsell",
+          isLive: companionIsActive(companion),
+          eligibleOrders: eligible.length,
+          acceptedOrders,
+          deliveredOrders: deliveredOrderCount,
+          units,
+          placedRevenue,
+          deliveredRevenue,
+          pendingValue,
+          failedValue,
+          estimatedCogs,
+          grossProfit,
+          costMissing,
+          attachRate: safePercent(acceptedOrders, eligible.length),
+          deliveredRate: safePercent(deliveredOrderCount, acceptedOrders),
+          margin,
+          aovLift: acceptedOrdersList.length > 0 && missedOrdersList.length > 0 ? Math.round(acceptedAvg - missedAvg) : null
+        };
+        return { ...baseRow, decision: decisionFor(baseRow) };
+      })
+    );
+
+    const productRows = Array.from(offerRows.reduce((map, row) => {
+      const key = row.addOnProduct?.id ?? row.companion.productId;
+      const existing = map.get(key) ?? {
+        key,
+        addOnProduct: row.addOnProduct,
+        addOnProductName: row.addOnProduct?.name ?? "Unknown add-on",
+        acceptedOrders: 0,
+        deliveredOrders: 0,
+        units: 0,
+        placedRevenue: 0,
+        deliveredRevenue: 0,
+        estimatedCogs: 0,
+        grossProfit: 0,
+        costMissing: false,
+        deliveryRate: 0,
+        margin: null
+      } satisfies ProductMetricRow;
+      existing.acceptedOrders += row.acceptedOrders;
+      existing.deliveredOrders += row.deliveredOrders;
+      existing.units += row.units;
+      existing.placedRevenue += row.placedRevenue;
+      existing.deliveredRevenue += row.deliveredRevenue;
+      existing.estimatedCogs += row.estimatedCogs;
+      existing.grossProfit += row.grossProfit;
+      existing.costMissing = existing.costMissing || row.costMissing;
+      existing.deliveryRate = safePercent(existing.deliveredOrders, existing.acceptedOrders);
+      existing.margin = existing.deliveredRevenue > 0 && !existing.costMissing ? Math.round((existing.grossProfit / existing.deliveredRevenue) * 100) : null;
+      map.set(key, existing);
+      return map;
+    }, new Map<string, ProductMetricRow>()).values()).sort((a, b) => b.deliveredRevenue - a.deliveredRevenue || b.acceptedOrders - a.acceptedOrders);
+
+    const totalEligible = offerRows.reduce((sum, row) => sum + row.eligibleOrders, 0);
+    const totalAccepted = offerRows.reduce((sum, row) => sum + row.acceptedOrders, 0);
+    const totalPlacedRevenue = offerRows.reduce((sum, row) => sum + row.placedRevenue, 0);
+    const totalDeliveredRevenue = offerRows.reduce((sum, row) => sum + row.deliveredRevenue, 0);
+    const totalGrossProfit = offerRows.reduce((sum, row) => sum + row.grossProfit, 0);
+    const anyCostMissing = offerRows.some((row) => row.costMissing);
+    const averageMargin = totalDeliveredRevenue > 0 && !anyCostMissing ? Math.round((totalGrossProfit / totalDeliveredRevenue) * 100) : null;
+    const performanceEmpty = offerRows.length === 0;
+
+    return (
+      <div className="space-y-5">
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-black text-gray-900 m-0">Add-on Performance</h2>
+              <p className="m-0 mt-1 text-sm text-gray-500">Visible customer-selected add-ons only. Silent bundles, rep-added cross-sells, auto-includes, and free gifts are excluded.</p>
+            </div>
+            <div className="inline-flex rounded-2xl bg-gray-100 p-1 w-full sm:w-auto">
+              {rangeOptions.map((range) => (
+                <button
+                  key={range.key}
+                  type="button"
+                  onClick={() => setAddOnPerformanceRange(range.key)}
+                  className={`!min-h-0 flex-1 sm:flex-none rounded-xl px-3 py-2 text-xs font-black transition-colors ${addOnPerformanceRange === range.key ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                >
+                  {range.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {performanceEmpty ? (
+          <section className="bg-white rounded-xl border border-dashed border-gray-300 shadow-sm p-10 text-center">
+            <p className="m-0 text-lg font-black text-gray-900">No add-on offers configured yet.</p>
+            <p className="m-0 mt-2 text-sm text-gray-500">Create package add-ons first, then this tab will show attach rate, revenue, delivery quality, and profit by offer.</p>
+            <button className="mt-5 inline-flex items-center justify-center rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-bold text-white hover:bg-blue-700" onClick={openAddPackage}>Add package offer</button>
+          </section>
+        ) : (
+          <>
+            <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4">
+              {[
+                { label: "Accepted add-ons", value: totalAccepted.toLocaleString(), sub: "customer chose these", tone: "text-gray-900" },
+                { label: "Attach rate", value: `${safePercent(totalAccepted, totalEligible)}%`, sub: `${totalAccepted}/${totalEligible} opportunities`, tone: "text-[#1F8FE0]" },
+                { label: "Add-on revenue", value: formatProductMoney(totalPlacedRevenue, moneyCode), sub: "placed value", tone: "text-gray-900" },
+                { label: "Delivered revenue", value: formatProductMoney(totalDeliveredRevenue, moneyCode), sub: "cash-quality value", tone: "text-emerald-700" },
+                { label: "Est. gross profit", value: formatProductMoney(totalGrossProfit, moneyCode), sub: anyCostMissing ? "some costs missing" : "delivered revenue - COGS", tone: "text-emerald-700" },
+                { label: "Avg margin", value: averageMargin === null ? "—" : `${averageMargin}%`, sub: averageMargin === null ? "add unit costs to unlock" : "weighted by revenue", tone: "text-gray-900" }
+              ].map((card) => (
+                <article key={card.label} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <p className="m-0 text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">{card.label}</p>
+                  <p className={`m-0 mt-2 text-2xl font-black ${card.tone}`}>{card.value}</p>
+                  <p className="m-0 mt-1 text-xs font-semibold text-gray-400">{card.sub}</p>
+                </article>
+              ))}
+            </section>
+
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100">
+                <h3 className="m-0 text-sm font-black text-gray-900">Product Summary</h3>
+                <p className="m-0 mt-1 text-xs text-gray-500">Same add-on grouped across all base packages.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                      {["Add-on product","Accepted","Delivered","Delivery","Units","Placed revenue","Delivered revenue","Est. COGS","Gross profit","Margin"].map((h) => (
+                        <th key={h} className="px-4 py-3 text-[10px] font-black uppercase tracking-wider text-gray-500">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {productRows.length === 0 ? (
+                      <tr><td colSpan={10} className="px-4 py-10 text-center text-sm text-gray-400">No customer-selected add-ons matched this period yet.</td></tr>
+                    ) : productRows.map((row) => (
+                      <tr key={row.key} className="hover:bg-gray-50">
+                        <td className="px-4 py-4 font-bold text-gray-900 min-w-[220px]">{row.addOnProductName}</td>
+                        <td className="px-4 py-4 text-gray-700">{row.acceptedOrders}</td>
+                        <td className="px-4 py-4 text-gray-700">{row.deliveredOrders}</td>
+                        <td className="px-4 py-4 font-bold text-gray-900">{row.deliveryRate}%</td>
+                        <td className="px-4 py-4 text-gray-700">{row.units}</td>
+                        <td className="px-4 py-4 font-bold text-gray-900">{formatProductMoney(row.placedRevenue, moneyCode)}</td>
+                        <td className="px-4 py-4 font-bold text-emerald-700">{formatProductMoney(row.deliveredRevenue, moneyCode)}</td>
+                        <td className="px-4 py-4 text-gray-700">{row.costMissing ? "Cost missing" : formatProductMoney(row.estimatedCogs, moneyCode)}</td>
+                        <td className="px-4 py-4 font-bold text-emerald-700">{row.costMissing ? "—" : formatProductMoney(row.grossProfit, moneyCode)}</td>
+                        <td className="px-4 py-4 font-bold text-gray-900">{row.margin === null ? "—" : `${row.margin}%`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100">
+                <h3 className="m-0 text-sm font-black text-gray-900">Package Offer Breakdown</h3>
+                <p className="m-0 mt-1 text-xs text-gray-500">Each configured add-on offer, including hidden ones, with the decision signal to guide scaling.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                      {["Base package","Add-on offer","Status","Placement","Eligible","Accepted","Attach","Delivered","Pending","Failed","Delivered rev.","Profit","Margin","AOV lift","Decision"].map((h) => (
+                        <th key={h} className="px-4 py-3 text-[10px] font-black uppercase tracking-wider text-gray-500">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {offerRows.map((row) => (
+                      <tr key={row.key} className="hover:bg-gray-50 align-top">
+                        <td className="px-4 py-4 font-bold text-gray-900 min-w-[190px]">{row.basePackage.name}</td>
+                        <td className="px-4 py-4 min-w-[240px]">
+                          <p className="m-0 font-bold text-gray-900">{row.addOnProduct?.name ?? "Unknown add-on"}</p>
+                          <p className="m-0 mt-0.5 text-xs text-gray-500">{row.addOnPackage?.name ?? "Product-only offer"} · {row.companion.quantity} pc{row.companion.quantity === 1 ? "" : "s"}</p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-black uppercase ${row.isLive ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{row.isLive ? "Live" : "Hidden"}</span>
+                        </td>
+                        <td className="px-4 py-4 text-gray-700 capitalize">{row.placement === "upsell" ? "Upsell" : "Inline"}</td>
+                        <td className="px-4 py-4 text-gray-700">{row.eligibleOrders}</td>
+                        <td className="px-4 py-4 font-bold text-gray-900">{row.acceptedOrders}</td>
+                        <td className="px-4 py-4 font-bold text-[#1F8FE0]">{row.attachRate}%</td>
+                        <td className="px-4 py-4 font-bold text-gray-900">{row.deliveredRate}%</td>
+                        <td className="px-4 py-4 text-amber-700 font-semibold">{formatProductMoney(row.pendingValue, moneyCode)}</td>
+                        <td className="px-4 py-4 text-rose-700 font-semibold">{formatProductMoney(row.failedValue, moneyCode)}</td>
+                        <td className="px-4 py-4 font-bold text-emerald-700">{formatProductMoney(row.deliveredRevenue, moneyCode)}</td>
+                        <td className="px-4 py-4 font-bold text-emerald-700">{row.costMissing ? "—" : formatProductMoney(row.grossProfit, moneyCode)}</td>
+                        <td className="px-4 py-4 font-bold text-gray-900">{row.margin === null ? "—" : `${row.margin}%`}</td>
+                        <td className={`px-4 py-4 font-bold ${row.aovLift === null ? "text-gray-400" : row.aovLift >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{row.aovLift === null ? "—" : formatProductMoney(row.aovLift, moneyCode)}</td>
+                        <td className="px-4 py-4 min-w-[180px]">
+                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${row.decision.className}`}>{row.decision.label}</span>
+                          <p className="m-0 mt-1 text-[11px] leading-snug text-gray-500">{row.decision.note}</p>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
+        )}
+      </div>
+    );
   };
 
   // Reorder: move a package up/down by swapping displayOrder with neighbour.
@@ -47147,13 +47514,27 @@ ${waybillLineItems(w).length > 1
                     <p className="text-sm font-medium text-gray-500">
                       {selectedProduct.name} — {isComboLibraryProduct(selectedProduct) ? "build bundle names, stock mix, and reusable offer packages." : "configure public order packages and bundle pricing."}
                     </p>
-                  </div>
-                  <button className="flex items-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openAddPackage}><PackagePlus className="w-4 h-4" /> {isComboLibraryProduct(selectedProduct) ? "Create Bundle" : "Create Package"}</button>
-                </header>
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-3">
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-sm font-semibold text-gray-700">General Package Description</span>
-                    <textarea className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 resize-y min-h-[80px] focus:outline-none focus:ring-2 focus:ring-blue-200" value={packageDescriptionDraft} onChange={(event) => setPackageDescriptionDraft(event.target.value)} placeholder="Describe these package options for customers..." />
+	                  </div>
+	                  <button className="flex items-center gap-2 px-4 py-2 bg-[#1F8FE0] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openAddPackage}><PackagePlus className="w-4 h-4" /> {isComboLibraryProduct(selectedProduct) ? "Create Bundle" : "Create Package"}</button>
+	                </header>
+	                <div className="inline-flex w-full sm:w-auto rounded-2xl border border-gray-200 bg-gray-100 p-1 shadow-sm">
+	                  {(["Packages", "Add-on Performance"] as PackagePageTab[]).map((tab) => (
+	                    <button
+	                      key={tab}
+	                      type="button"
+	                      onClick={() => setPackagePageTab(tab)}
+	                      className={`!min-h-0 flex-1 sm:flex-none rounded-xl px-4 py-2 text-sm font-black transition-colors ${packagePageTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+	                    >
+	                      {tab}
+	                    </button>
+	                  ))}
+	                </div>
+	                {packagePageTab === "Packages" ? (
+	                  <>
+	                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-3">
+	                  <label className="flex flex-col gap-1.5">
+	                    <span className="text-sm font-semibold text-gray-700">General Package Description</span>
+	                    <textarea className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 resize-y min-h-[80px] focus:outline-none focus:ring-2 focus:ring-blue-200" value={packageDescriptionDraft} onChange={(event) => setPackageDescriptionDraft(event.target.value)} placeholder="Describe these package options for customers..." />
                   </label>
                   <button className="self-start px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={savePackageDescription}>Save Description</button>
                 </div>
@@ -47327,10 +47708,14 @@ ${waybillLineItems(w).length > 1
                           })
                         )}
                       </tbody>
-                    </table>
-                  </div>
-                </section>
-              </div>
+	                    </table>
+	                  </div>
+	                </section>
+	                  </>
+	                ) : (
+	                  renderPackageAddOnPerformance(selectedProduct)
+	                )}
+	              </div>
             ) : inventoryView === "stockcount" ? (
               <div className="space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
