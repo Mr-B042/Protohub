@@ -42043,14 +42043,14 @@ ${waybillLineItems(w).length > 1
                       { label: "Delivered", value: String(marketingDeliveredRows.length), helper: "successful orders", icon: BadgeCheck, tone: "emerald" },
                       { label: "Ad spend", value: formatMoney(marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "matched spend only" : "no matched spend yet", icon: Banknote, tone: "amber" },
                       { label: "Cost / order", value: marketingCostPerOrder ? formatMoney(marketingCostPerOrder) : "—", helper: "spend / tracked orders", icon: Target, tone: marketingCostPerOrder ? "blue" : "slate" },
-                      { label: "Cost / delivered", value: marketingCostPerDeliveredOrder ? formatMoney(marketingCostPerDeliveredOrder) : "—", helper: "spend / delivered orders", icon: ShieldCheck, tone: marketingCostPerDeliveredOrder ? "emerald" : "amber" },
+                      { label: "Spend / delivered", value: marketingCostPerDeliveredOrder ? formatMoney(marketingCostPerDeliveredOrder) : "—", helper: "ad spend ÷ delivered orders", icon: ShieldCheck, tone: marketingCostPerDeliveredOrder ? "emerald" : "amber" },
                       { label: "ROAS", value: marketingRoas ? `${marketingRoas.toFixed(2)}x` : "—", helper: "delivered revenue / spend", icon: CircleDollarSign, tone: marketingRoas && marketingRoas >= 1 ? "emerald" : "rose" }
                     ] : [
                       { label: "Delivered revenue", value: formatMoney(marketingDeliveredRevenue), helper: "only delivered orders", icon: CircleDollarSign, tone: "emerald" },
                       { label: "Budget given", value: formatMoney(marketingUsesSpendLedger ? marketingTotalLedgerBudget : marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "matched money released" : "fallback: expenses", icon: WalletCards, tone: "amber" },
                       { label: "Actual spend", value: formatMoney(marketingTotalAdSpend), helper: marketingUsesSpendLedger ? "matched actual/estimate" : "Ad Spend expenses", icon: Banknote, tone: "amber" },
                       { label: "Cost / order", value: marketingCostPerOrder ? formatMoney(marketingCostPerOrder) : "—", helper: "spend / tracked orders", icon: Target, tone: marketingCostPerOrder ? "blue" : "slate" },
-                      { label: "Cost / delivered", value: marketingCostPerDeliveredOrder ? formatMoney(marketingCostPerDeliveredOrder) : "—", helper: "spend / delivered", icon: ShieldCheck, tone: marketingCostPerDeliveredOrder ? "emerald" : "amber" },
+                      { label: "Spend / delivered", value: marketingCostPerDeliveredOrder ? formatMoney(marketingCostPerDeliveredOrder) : "—", helper: "ad spend ÷ delivered orders", icon: ShieldCheck, tone: marketingCostPerDeliveredOrder ? "emerald" : "amber" },
                       { label: "ROAS", value: marketingRoas ? `${marketingRoas.toFixed(2)}x` : "—", helper: "revenue / spend", icon: TrendingUp, tone: marketingRoas && marketingRoas >= 1 ? "emerald" : "rose" }
                     ]).map((metric) => {
                       const Icon = metric.icon;
@@ -42167,7 +42167,7 @@ ${waybillLineItems(w).length > 1
                       <table className="w-full min-w-[1040px] text-sm">
                         <thead>
                           <tr className="border-b border-gray-200 bg-gray-50/80 text-left dark:border-slate-800/80 dark:bg-slate-900/40">
-                            {(marketingIsPersonalWorkspace ? ["Buyer", "Campaign", "Orders", "Delivered", "Delivery", "Spend", "Cost/order", "Cost/delivered", "Revenue"] : ["Buyer", "Campaign", "Orders", "Delivered", "Delivery", "Revenue", "Spend", "ROAS", "Net after ads"]).map((heading) => (
+                            {(marketingIsPersonalWorkspace ? ["Buyer", "Campaign", "Orders", "Delivered", "Delivery", "Spend", "Cost/order", "Spend/delivered", "Revenue"] : ["Buyer", "Campaign", "Orders", "Delivered", "Delivery", "Revenue", "Spend", "ROAS", "Net after ads"]).map((heading) => (
                               <th key={heading} className="px-5 py-3 text-[11px] font-black uppercase tracking-wider text-gray-500 dark:text-slate-400">{heading}</th>
                             ))}
                           </tr>
