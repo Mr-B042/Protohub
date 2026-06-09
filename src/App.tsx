@@ -11304,7 +11304,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       quality: netAfterAds > 0 && metrics.deliveryRate >= 50 ? "Profitable" : adSpend > 0 && metrics.delivered === 0 ? "No delivered proof" : netAfterAds < 0 ? "Losing money" : "Needs spend tagging"
     };
   }).sort((a, b) => b.netAfterAds - a.netAfterAds || b.deliveredRevenue - a.deliveredRevenue || b.orders - a.orders);
-  const marketingRowsByCampaign = Object.values(
+  const marketingCampaignBuckets = Object.values(
     marketingFilteredOrders.reduce<Record<string, {
       key: string;
       buyerKey: string;
@@ -11332,14 +11332,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       acc[key] = bucket;
       return acc;
     }, {})
-  ).map((row) => {
+  );
+  const marketingRowsByCampaign = marketingCampaignBuckets.map((row) => {
+    const buyerCampaignRows = marketingCampaignBuckets.filter((bucket) => bucket.buyerKey === row.buyerKey);
+    const buyerCampaignOrderCount = buyerCampaignRows.reduce((sum, bucket) => sum + bucket.orders.length, 0);
+    const buyerCampaignShare = buyerCampaignOrderCount > 0 ? row.orders.length / buyerCampaignOrderCount : 0;
     const spendExpenses = marketingAdSpendExpenses.filter((expense) => marketingExpenseMatchesTokens(expense, [row.buyerKey, row.buyerLabel, row.campaignKey, row.campaignLabel, row.campaignRaw]));
-    const spendRecords = marketingSpendRecordsForReporting.filter((record) =>
+    const directSpendRecords = marketingSpendRecordsForReporting.filter((record) =>
       marketingSpendMatchesBuyer(record, { key: row.buyerKey, label: row.buyerLabel, raw: row.buyerLabel, hasHiddenBuyer: row.buyerHasHiddenBuyer })
       && marketingSpendMatchesCampaign(record, row)
     );
+    const buyerLevelSpendRecords = marketingSpendRecordsForReporting.filter((record) =>
+      marketingSpendMatchesBuyer(record, { key: row.buyerKey, label: row.buyerLabel, raw: row.buyerLabel, hasHiddenBuyer: row.buyerHasHiddenBuyer })
+      && !String(record.campaign ?? "").trim()
+    );
+    const spendRecords = [...directSpendRecords, ...buyerLevelSpendRecords];
     const expenseSpend = spendExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-    const ledgerSpend = spendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
+    const directLedgerSpend = directSpendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0);
+    const buyerLevelLedgerSpend = buyerLevelSpendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0) * buyerCampaignShare;
+    const ledgerSpend = directLedgerSpend + buyerLevelLedgerSpend;
     const adSpend = marketingUsesSpendLedger ? ledgerSpend : expenseSpend;
     const metrics = marketingMetricForOrders(row.orders);
     const netAfterAds = metrics.contribution - adSpend;
@@ -11349,8 +11360,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       adSpend,
       spendExpenseIds: spendExpenses.map((expense) => expense.id),
       spendRecordIds: spendRecords.map((record) => record.id),
-      budgetGiven: spendRecords.reduce((sum, record) => sum + record.budgetGiven, 0),
-      actualSpent: spendRecords.reduce((sum, record) => sum + marketingSpendAmount(record), 0),
+      budgetGiven: directSpendRecords.reduce((sum, record) => sum + record.budgetGiven, 0) + buyerLevelSpendRecords.reduce((sum, record) => sum + record.budgetGiven, 0) * buyerCampaignShare,
+      actualSpent: ledgerSpend,
       roas: adSpend > 0 ? metrics.deliveredRevenue / adSpend : null,
       cpo: metrics.orders > 0 ? adSpend / metrics.orders : null,
       cpa: metrics.delivered > 0 ? adSpend / metrics.delivered : null,
