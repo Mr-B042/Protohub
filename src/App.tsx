@@ -22617,6 +22617,27 @@ ${waybillLineItems(w).length > 1
       deliveryRate: number;
       margin: number | null;
     };
+    type ManualUpsellMetricRow = {
+      key: string;
+      addOnProduct?: Product;
+      addOnProductName: string;
+      addedOrders: number;
+      deliveredOrders: number;
+      units: number;
+      placedRevenue: number;
+      deliveredRevenue: number;
+      pendingValue: number;
+      failedValue: number;
+      estimatedCogs: number;
+      grossProfit: number;
+      costMissing: boolean;
+      deliveryRate: number;
+      margin: number | null;
+    };
+    type ManualUpsellAccumulator = ManualUpsellMetricRow & {
+      orderIds: Set<string>;
+      deliveredOrderIds: Set<string>;
+    };
 
     const moneyCode = primaryPricing(product)?.currency ?? product.packages[0]?.currency ?? "NGN";
     const rangeOptions: { key: AddOnPerformanceRange; label: string }[] = [
@@ -22790,6 +22811,76 @@ ${waybillLineItems(w).length > 1
       return map;
     }, new Map<string, ProductMetricRow>()).values()).sort((a, b) => b.deliveredRevenue - a.deliveredRevenue || b.acceptedOrders - a.acceptedOrders);
 
+    const manualUpsellMap = new Map<string, ManualUpsellAccumulator>();
+    for (const order of productOrders) {
+      const manualLines = (order.crossSellLines ?? []).filter((line) => line.selectionSource === "manual_rep");
+      if (manualLines.length === 0) continue;
+      const delivered = order.status === "Delivered";
+      const failed = order.status === "Failed" || order.status === "Cancelled";
+      for (const line of manualLines) {
+        const key = line.productId ?? `name:${line.productName}`;
+        const addOnProduct = products.find((item) => item.id === line.productId);
+        const existing = manualUpsellMap.get(key) ?? {
+          key,
+          addOnProduct,
+          addOnProductName: addOnProduct?.name ?? line.productName ?? "Manual upsell",
+          addedOrders: 0,
+          deliveredOrders: 0,
+          units: 0,
+          placedRevenue: 0,
+          deliveredRevenue: 0,
+          pendingValue: 0,
+          failedValue: 0,
+          estimatedCogs: 0,
+          grossProfit: 0,
+          costMissing: false,
+          deliveryRate: 0,
+          margin: null,
+          orderIds: new Set<string>(),
+          deliveredOrderIds: new Set<string>()
+        } satisfies ManualUpsellAccumulator;
+        const lineQty = Math.max(0, Number(line.quantity) || 0);
+        const lineAmount = Math.max(0, Number(line.amount) || 0);
+        existing.orderIds.add(order.id);
+        existing.units += lineQty;
+        existing.placedRevenue += lineAmount;
+        if (delivered) {
+          existing.deliveredOrderIds.add(order.id);
+          existing.deliveredRevenue += lineAmount;
+          const unitCost = unitCostForProductInCurrency(line.productId, order.currency);
+          if (lineQty > 0 && unitCost <= 0) existing.costMissing = true;
+          existing.estimatedCogs += lineQty * unitCost;
+        } else if (failed) {
+          existing.failedValue += lineAmount;
+        } else {
+          existing.pendingValue += lineAmount;
+        }
+        manualUpsellMap.set(key, existing);
+      }
+    }
+    const manualUpsellRows: ManualUpsellMetricRow[] = Array.from(manualUpsellMap.values()).map((row) => {
+      const addedOrders = row.orderIds.size;
+      const deliveredOrders = row.deliveredOrderIds.size;
+      const grossProfit = row.deliveredRevenue - row.estimatedCogs;
+      return {
+        key: row.key,
+        addOnProduct: row.addOnProduct,
+        addOnProductName: row.addOnProductName,
+        addedOrders,
+        deliveredOrders,
+        units: row.units,
+        placedRevenue: row.placedRevenue,
+        deliveredRevenue: row.deliveredRevenue,
+        pendingValue: row.pendingValue,
+        failedValue: row.failedValue,
+        estimatedCogs: row.estimatedCogs,
+        grossProfit,
+        costMissing: row.costMissing,
+        deliveryRate: safePercent(deliveredOrders, addedOrders),
+        margin: row.deliveredRevenue > 0 && !row.costMissing ? Math.round((grossProfit / row.deliveredRevenue) * 100) : null
+      };
+    }).sort((a, b) => b.deliveredRevenue - a.deliveredRevenue || b.placedRevenue - a.placedRevenue || b.addedOrders - a.addedOrders);
+
     const totalEligible = offerRows.reduce((sum, row) => sum + row.eligibleOrders, 0);
     const totalAccepted = offerRows.reduce((sum, row) => sum + row.acceptedOrders, 0);
     const totalPlacedRevenue = offerRows.reduce((sum, row) => sum + row.placedRevenue, 0);
@@ -22797,6 +22888,8 @@ ${waybillLineItems(w).length > 1
     const totalGrossProfit = offerRows.reduce((sum, row) => sum + row.grossProfit, 0);
     const anyCostMissing = offerRows.some((row) => row.costMissing);
     const averageMargin = totalDeliveredRevenue > 0 && !anyCostMissing ? Math.round((totalGrossProfit / totalDeliveredRevenue) * 100) : null;
+    const manualTotalAddedOrders = manualUpsellRows.reduce((sum, row) => sum + row.addedOrders, 0);
+    const manualTotalDeliveredRevenue = manualUpsellRows.reduce((sum, row) => sum + row.deliveredRevenue, 0);
     const performanceEmpty = offerRows.length === 0;
 
     return (
@@ -22934,6 +23027,55 @@ ${waybillLineItems(w).length > 1
                   </tbody>
                 </table>
               </div>
+            </section>
+
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
+                <div>
+                  <h3 className="m-0 text-sm font-black text-gray-900">Rep/Admin Added Upsells</h3>
+                  <p className="m-0 mt-1 text-xs text-gray-500">Manual add-ons added after the order came in. Kept separate from public form attach-rate metrics.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs font-black">
+                  <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-slate-700">{manualTotalAddedOrders} added</span>
+                  <span className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">{formatProductMoney(manualTotalDeliveredRevenue, moneyCode)} delivered</span>
+                </div>
+              </div>
+              {manualUpsellRows.length === 0 ? (
+                <div className="px-5 py-10 text-center text-sm text-gray-400">No rep/admin-added upsells matched this period yet.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                        {["Add-on product","Added orders","Delivered","Delivery","Units","Placed revenue","Pending","Failed","Delivered revenue","Est. COGS","Gross profit","Margin"].map((h) => (
+                          <th key={h} className="px-4 py-3 text-[10px] font-black uppercase tracking-wider text-gray-500">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {manualUpsellRows.map((row) => (
+                        <tr key={row.key} className="hover:bg-gray-50">
+                          <td className="px-4 py-4 font-bold text-gray-900 min-w-[220px]">{row.addOnProductName}</td>
+                          <td className="px-4 py-4 font-bold text-gray-900">{row.addedOrders}</td>
+                          <td className="px-4 py-4 text-gray-700">{row.deliveredOrders}</td>
+                          <td className="px-4 py-4">
+                            <div className="font-bold text-gray-900">{row.deliveryRate}%</div>
+                            <div className="text-[11px] font-semibold text-gray-400">{row.deliveredOrders} of {row.addedOrders} delivered</div>
+                          </td>
+                          <td className="px-4 py-4 text-gray-700">{row.units}</td>
+                          <td className="px-4 py-4 font-bold text-gray-900">{formatProductMoney(row.placedRevenue, moneyCode)}</td>
+                          <td className="px-4 py-4 text-amber-700 font-semibold">{formatProductMoney(row.pendingValue, moneyCode)}</td>
+                          <td className="px-4 py-4 text-rose-700 font-semibold">{formatProductMoney(row.failedValue, moneyCode)}</td>
+                          <td className="px-4 py-4 font-bold text-emerald-700">{formatProductMoney(row.deliveredRevenue, moneyCode)}</td>
+                          <td className="px-4 py-4 text-gray-700">{row.costMissing ? "Cost missing" : formatProductMoney(row.estimatedCogs, moneyCode)}</td>
+                          <td className="px-4 py-4 font-bold text-emerald-700">{row.costMissing ? "—" : formatProductMoney(row.grossProfit, moneyCode)}</td>
+                          <td className="px-4 py-4 font-bold text-gray-900">{row.margin === null ? "—" : `${row.margin}%`}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
           </>
         )}
