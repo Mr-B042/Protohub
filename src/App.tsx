@@ -9609,14 +9609,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           const stateHubs = inventoryStateHubRows.filter(
             (row) => normalizeAgentState(row.location.state) === state
           );
-          const quantity = stateHubs.reduce(
-            (sum, row) => sum + Number(stockRowsForStateHub(row.agent, row.location).find((stock) => stock.productId === product.id)?.quantity ?? 0),
-            0
-          );
+          const hubs = stateHubs
+            .map((row) => {
+              const quantity = Number(stockRowsForStateHub(row.agent, row.location).find((stock) => stock.productId === product.id)?.quantity ?? 0);
+              return {
+                key: `${row.agentId}::${row.location.id}`,
+                agentName: row.agentName,
+                hubName: agentLocationLabel(row.location),
+                quantity: Math.max(0, quantity)
+              };
+            })
+            .sort((a, b) => b.quantity - a.quantity || a.hubName.localeCompare(b.hubName) || a.agentName.localeCompare(b.agentName));
+          const quantity = hubs.reduce((sum, hub) => sum + hub.quantity, 0);
           return {
             state,
             quantity,
             hubCount: stateHubs.length,
+            hubs,
             status: stateStockStatusMeta(quantity, smartStockLowStockThreshold)
           };
         })
@@ -47757,14 +47766,28 @@ ${waybillLineItems(w).length > 1
 
                             <div className="divide-y divide-gray-100">
                               {group.rows.map((row) => (
-                                <div key={`${group.product.id}-${row.state}`} className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
-                                  <div className="min-w-0">
+                                <div key={`${group.product.id}-${row.state}`} className="px-5 py-4 flex flex-col gap-3 hover:bg-gray-50 transition-colors sm:flex-row sm:items-start sm:justify-between">
+                                  <div className="min-w-0 flex-1">
                                     <div className="font-semibold text-gray-900">{row.state}</div>
                                     <div className="text-[11px] text-gray-400">
                                       {row.hubCount} hub{row.hubCount === 1 ? "" : "s"} tracked
                                     </div>
+                                    {row.hubs.length > 0 && (
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        {row.hubs.map((hub) => (
+                                          <span key={`${group.product.id}-${row.state}-${hub.key}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-600 shadow-sm">
+                                            <span className="truncate font-semibold text-gray-800">{hub.hubName}</span>
+                                            <span className="hidden text-gray-300 sm:inline">·</span>
+                                            <span className="hidden truncate text-gray-500 sm:inline">{hub.agentName}</span>
+                                            <strong className={`ml-1 shrink-0 ${hub.quantity > 0 ? "text-gray-950" : "text-gray-400"}`}>
+                                              {hub.quantity} unit{hub.quantity === 1 ? "" : "s"}
+                                            </strong>
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
-                                  <div className="flex items-center gap-2 sm:gap-3">
+                                  <div className="flex shrink-0 items-center gap-2 sm:gap-3">
                                     <span className="text-sm font-bold text-gray-900 whitespace-nowrap">{row.quantity} unit{row.quantity === 1 ? "" : "s"}</span>
                                     <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${row.status.className}`}>
                                       {row.status.label}
