@@ -41798,16 +41798,16 @@ ${waybillLineItems(w).length > 1
             </div>
           ) : activePage === "Marketing" ? (
             <div className="space-y-6">
-              <header className="relative overflow-hidden rounded-3xl border border-sky-100 bg-gradient-to-br from-slate-950 via-[#0b2740] to-[#123f66] p-5 text-white shadow-xl shadow-sky-900/10 sm:p-7">
+              <header className="relative overflow-hidden rounded-3xl border border-sky-200/20 bg-gradient-to-br from-slate-950 via-[#0b2740] to-[#123f66] p-5 text-slate-50 shadow-xl shadow-sky-900/10 sm:p-7">
                 <div className="absolute -right-20 -top-24 h-56 w-56 rounded-full bg-sky-400/20 blur-3xl" />
                 <div className="absolute bottom-0 left-1/3 h-24 w-64 rounded-full bg-emerald-300/10 blur-2xl" />
                 <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                   <div className="max-w-3xl">
-                    <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.22em] text-sky-100">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/15 px-3 py-1 text-xs font-black uppercase tracking-[0.22em] text-sky-50 shadow-sm shadow-black/10">
                       <TrendingUp className="h-3.5 w-3.5" /> {marketingIsPersonalWorkspace ? "Your Marketing Workspace" : "Marketing Performance Center"}
                     </span>
-                    <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">{marketingIsPersonalWorkspace ? "See what your ads are bringing in." : "Know which media buyer is actually making money."}</h1>
-                    <p className="mt-2 text-sm font-medium leading-6 text-sky-100/85 sm:text-base">
+                    <h1 className="mt-4 text-3xl font-black tracking-tight text-white drop-shadow-[0_2px_18px_rgba(0,0,0,0.45)] sm:text-4xl">{marketingIsPersonalWorkspace ? "See what your ads are bringing in." : "Know which media buyer is actually making money."}</h1>
+                    <p className="mt-2 text-sm font-semibold leading-6 text-sky-50/90 drop-shadow-[0_1px_8px_rgba(0,0,0,0.3)] sm:text-base">
                       {marketingIsPersonalWorkspace
                         ? "Track your own attributed orders, delivery quality, revenue, and the campaign proof behind your traffic."
                         : "Compare buyers, campaigns, spend discipline, delivery quality, and delivered profit from the same UTM attribution already captured by your order forms."}
@@ -41834,9 +41834,9 @@ ${waybillLineItems(w).length > 1
                       { label: "Ad spend", value: formatMoney(marketingTotalAdSpend) },
                       { label: "Net after ads", value: formatMoney(marketingNetAfterMatchedAds), tone: marketingNetAfterMatchedAds >= 0 ? "text-emerald-200" : "text-rose-200" }
                     ]).map((item) => (
-                      <div key={item.label} className="rounded-2xl border border-white/10 bg-white/10 p-3 backdrop-blur">
-                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-sky-100/70">{item.label}</div>
-                        <div className={`mt-1 text-lg font-black ${item.tone ?? "text-white"}`}>{item.value}</div>
+                      <div key={item.label} className="rounded-2xl border border-white/20 bg-white/[0.14] p-3 shadow-sm shadow-black/10 backdrop-blur">
+                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-sky-50/85">{item.label}</div>
+                        <div className={`mt-1 text-lg font-black drop-shadow-sm ${item.tone ?? "text-white"}`}>{item.value}</div>
                       </div>
                     ))}
                   </div>
