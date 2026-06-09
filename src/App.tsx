@@ -11207,8 +11207,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     && matchesProductFilter(expense.productId, expense.productName, campaignProductIds)
     && (marketingBuyerFilter === "all" || marketingExpenseMatchesTokens(expense, marketingBuyerExpenseTokens))
   );
-  const marketingSpendAmount = (record: MarketingSpendRecord) =>
-    Number(record.actualSpent ?? record.budgetGiven ?? 0);
+  const marketingSpendAmount = (record: MarketingSpendRecord) => {
+    const actual = Number(record.actualSpent ?? 0);
+    if (Number.isFinite(actual) && actual > 0) return actual;
+    return Number(record.budgetGiven ?? 0);
+  };
   const marketingSpendRecordsInPeriod = marketingSpendRecords.filter((record) => {
     const productName = products.find((product) => product.id === record.productId)?.name ?? "";
     const matchesScope = matchesProductFilter(record.productId, productName, campaignProductIds);
@@ -18829,7 +18832,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             campaign: row.campaign ?? "",
             landingPageUrl: row.landingPageUrl ?? row.landing_page_url ?? "",
             budgetGiven: Number(row.budgetGiven ?? row.budget_given ?? 0),
-            actualSpent: row.actualSpent !== undefined || row.actual_spent !== undefined ? Number(row.actualSpent ?? row.actual_spent ?? 0) : null,
+            actualSpent: row.actualSpent !== undefined
+              ? (row.actualSpent == null || row.actualSpent === "" ? null : Number(row.actualSpent))
+              : row.actual_spent !== undefined
+                ? (row.actual_spent == null || row.actual_spent === "" ? null : Number(row.actual_spent))
+                : null,
             currency: (row.currency ?? "NGN") as ProductCurrencyCode,
             notes: row.notes ?? "",
             proofUrl: row.proofUrl ?? row.proof_url ?? "",
@@ -20303,7 +20310,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     campaign: row.campaign ?? fallback.campaign ?? "",
     landingPageUrl: row.landingPageUrl ?? row.landing_page_url ?? fallback.landingPageUrl ?? "",
     budgetGiven: Number(row.budgetGiven ?? row.budget_given ?? fallback.budgetGiven ?? 0),
-    actualSpent: row.actualSpent !== undefined || row.actual_spent !== undefined ? Number(row.actualSpent ?? row.actual_spent ?? 0) : fallback.actualSpent ?? null,
+    actualSpent: row.actualSpent !== undefined
+      ? (row.actualSpent == null || row.actualSpent === "" ? null : Number(row.actualSpent))
+      : row.actual_spent !== undefined
+        ? (row.actual_spent == null || row.actual_spent === "" ? null : Number(row.actual_spent))
+        : fallback.actualSpent ?? null,
     currency: (row.currency ?? fallback.currency ?? "NGN") as ProductCurrencyCode,
     notes: row.notes ?? fallback.notes ?? "",
     proofUrl: row.proofUrl ?? row.proof_url ?? fallback.proofUrl ?? "",
@@ -20424,7 +20435,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (currentRole !== "Owner" && currentRole !== "Admin") return;
     setAdjustingMarketingSpendId(record.id);
     setAdjustMarketingSpendBudget(String(record.budgetGiven ?? ""));
-    setAdjustMarketingSpendActual(record.actualSpent == null ? "" : String(record.actualSpent));
+    setAdjustMarketingSpendActual(record.actualSpent && record.actualSpent > 0 ? String(record.actualSpent) : "");
     setAdjustMarketingSpendStatus(marketingSpendReviewStatus(record));
     setAdjustMarketingSpendNote(record.matchNote || record.notes || "");
   };
@@ -42243,6 +42254,7 @@ ${waybillLineItems(w).length > 1
                             {marketingSpendLedgerRows.slice(0, 40).map((record) => {
                               const matchedBuyer = marketingRowsByBuyer.find((row) => row.spendRecordIds.includes(record.id));
                               const spend = marketingSpendAmount(record);
+                              const usesBudgetEstimate = record.budgetGiven > 0 && !(record.actualSpent && record.actualSpent > 0);
                               const cpo = matchedBuyer && matchedBuyer.orders > 0 ? spend / matchedBuyer.orders : null;
                               const isMatched = Boolean(matchedBuyer);
                               const reviewStatus = marketingSpendReviewStatus(record);
@@ -42267,7 +42279,7 @@ ${waybillLineItems(w).length > 1
                                     <div className="text-xs text-gray-400">{record.platform}{record.campaign ? ` · ${record.campaign}` : ""}{record.landingPageUrl ? " · landing page" : ""}</div>
                                   </td>
                                   <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{formatMoney(record.budgetGiven)}</td>
-                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{formatMoney(spend)}{record.actualSpent == null && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black text-gray-500 dark:bg-slate-800 dark:text-slate-300">estimated</span>}</td>
+                                  <td className="px-5 py-4 font-black text-gray-900 dark:text-slate-100">{formatMoney(spend)}{usesBudgetEstimate && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black text-gray-500 dark:bg-slate-800 dark:text-slate-300">from budget</span>}</td>
                                   <td className="px-5 py-4 font-bold text-gray-900 dark:text-slate-100">{cpo ? formatMoney(cpo) : "—"}</td>
                                   <td className="px-5 py-4">
                                     <div className="flex max-w-[260px] flex-col gap-2">

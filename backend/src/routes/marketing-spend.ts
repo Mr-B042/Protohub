@@ -48,7 +48,9 @@ const syncMarketingSpendExpense = async (row: any, orgId: string) => {
     return;
   }
 
-  const amount = normalizeMoney(row.actual_spent ?? row.budget_given) ?? 0;
+  const actualSpent = normalizeMoney(row.actual_spent) ?? 0;
+  const budgetGiven = normalizeMoney(row.budget_given) ?? 0;
+  const amount = actualSpent > 0 ? actualSpent : budgetGiven;
   if (amount <= 0) {
     const { error } = await supabase
       .from("expenses")
