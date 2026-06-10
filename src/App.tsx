@@ -4045,6 +4045,7 @@ const replacePackageFreeGiftComponents = (
 const normalisePackageStateFilterMode = (mode: ProductPackage["stateFilterMode"]): "all" | "allow" | "block" =>
   mode === "allow" || mode === "block" ? mode : "all";
 const PACKAGE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const SHOWCASE_GALLERY_MIN_IMAGES = 10;
 const normalisePackageImageUrls = (urls: (string | null | undefined)[] | undefined) =>
   Array.from(new Set((urls ?? []).map((url) => (url ?? "").trim()).filter(Boolean))).slice(0, 15);
 const packageCarouselImages = (pkg: Pick<ProductPackage, "imageUrl" | "imageUrls">) => {
@@ -22451,10 +22452,10 @@ ${waybillLineItems(w).length > 1
         ...(targetPackage ? packageCarouselImages(targetPackage) : []),
         companion.imageUrl
       ]);
-      return galleryImages.length < 2;
+      return galleryImages.length < SHOWCASE_GALLERY_MIN_IMAGES;
     });
     if (invalidShowcaseOffer) {
-      showToast("Visual gallery card needs at least 2 images. Add more images to the selected bundle package carousel, or switch this offer to Simple add-on card.");
+      showToast(`Visual gallery card needs at least ${SHOWCASE_GALLERY_MIN_IMAGES} images. Add more images to the selected bundle package carousel, or switch this offer to Simple add-on card.`);
       return;
     }
     if (packageStateFilterMode === "allow" && packageStateRestrictions.length === 0) {
@@ -52847,7 +52848,7 @@ ${waybillLineItems(w).length > 1
                         const offerGalleryPreviewImages = c.displayMode === "showcase"
                           ? normalisePackageImageUrls([...(targetPackage ? packageCarouselImages(targetPackage) : []), c.imageUrl])
                           : [];
-                        const showcaseGalleryReady = offerGalleryPreviewImages.length >= 2;
+                        const showcaseGalleryReady = offerGalleryPreviewImages.length >= SHOWCASE_GALLERY_MIN_IMAGES;
                         const parentProductStates = (selectedProduct.availableStates?.length ?? 0) > 0 ? selectedProduct.availableStates! : nigeriaStates;
                         const stateRuleMode = c.stateFilterMode ?? "all";
                         const stateSummary =
@@ -52934,12 +52935,12 @@ ${waybillLineItems(w).length > 1
                                             ? `Customer card uses the "${targetPackage.name}" package carousel first. Edit that package's image carousel to change the gallery.`
                                             : "Customer card uses this offer image gallery."
                                           : targetPackage
-                                            ? `Add at least 2 images to the "${targetPackage.name}" package carousel before saving this as a visual gallery card.`
-                                            : "Select a bundle package with 2+ carousel images, or switch this offer to Simple add-on card."}
+                                            ? `Add at least ${SHOWCASE_GALLERY_MIN_IMAGES} images to the "${targetPackage.name}" package carousel before saving this as a visual gallery card.`
+                                            : `Select a bundle package with ${SHOWCASE_GALLERY_MIN_IMAGES}+ carousel images, or switch this offer to Simple add-on card.`}
                                       </p>
                                     </div>
                                     <span className={`rounded-full bg-white px-2.5 py-1 text-[11px] font-black ring-1 ${showcaseGalleryReady ? "text-amber-800 ring-amber-200" : "text-red-700 ring-red-200"}`}>
-                                      {showcaseGalleryReady ? `${offerGalleryPreviewImages.length} images` : `${offerGalleryPreviewImages.length}/2 images`}
+                                      {showcaseGalleryReady ? `${offerGalleryPreviewImages.length} images` : `${offerGalleryPreviewImages.length}/${SHOWCASE_GALLERY_MIN_IMAGES} images`}
                                     </span>
                                   </div>
                                   {offerGalleryPreviewImages.length > 0 ? (
