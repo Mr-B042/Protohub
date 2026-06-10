@@ -307,11 +307,23 @@ const PUBLIC_SETTINGS_CACHE_TTL_MS = 10 * 60 * 1000;
 const PUBLIC_PRODUCT_FETCH_ATTEMPTS = 8;
 const PUBLIC_PRODUCT_RETRY_DELAY_MS = 1200;
 const PUBLIC_OUTAGE_QUEUE_KEY = "protohub.publicOrderOutageQueue";
+const PUBLIC_ORDER_CONTACT_CACHE_KEY = "protohub.publicOrderContact.v1";
+const PUBLIC_ORDER_CONTACT_CACHE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const RECOVERY_AUTO_SUBMIT_IDLE_MS = 12_000;
 
 type CachedSnapshot<T> = {
   cachedAt: number;
   value: T;
+};
+
+type PublicOrderSavedContact = {
+  name?: string;
+  phone?: string;
+  whatsapp?: string;
+  email?: string;
+  address?: string;
+  city?: string;
+  state?: string;
 };
 
 function readCachedSnapshot<T>(key: string): CachedSnapshot<T> | null {
@@ -356,6 +368,31 @@ function publicProductCacheKey(productId: string) {
 
 function publicSettingsCacheKey(orgId: string) {
   return `protohub.publicEmbedSettings.${orgId}`;
+}
+
+function normalizeSavedPublicOrderContact(value: Partial<PublicOrderSavedContact> | null | undefined): PublicOrderSavedContact | null {
+  if (!value) return null;
+  const contact: PublicOrderSavedContact = {
+    name: (value.name ?? "").trim(),
+    phone: sanitizePhoneDigitsInput(value.phone ?? ""),
+    whatsapp: sanitizePhoneDigitsInput(value.whatsapp ?? ""),
+    email: (value.email ?? "").trim(),
+    address: (value.address ?? "").trim(),
+    city: (value.city ?? "").trim(),
+    state: (value.state ?? "").trim()
+  };
+  const hasUsefulContact = Boolean(contact.name || contact.phone || contact.whatsapp || contact.email || contact.address || contact.city || contact.state);
+  return hasUsefulContact ? contact : null;
+}
+
+function readSavedPublicOrderContact() {
+  return normalizeSavedPublicOrderContact(readCachedValue<PublicOrderSavedContact>(PUBLIC_ORDER_CONTACT_CACHE_KEY, PUBLIC_ORDER_CONTACT_CACHE_MAX_AGE_MS));
+}
+
+function writeSavedPublicOrderContact(value: Partial<PublicOrderSavedContact>) {
+  const contact = normalizeSavedPublicOrderContact(value);
+  if (!contact) return;
+  writeCachedValue(PUBLIC_ORDER_CONTACT_CACHE_KEY, contact);
 }
 
 function readQueuedPublicOrders() {
@@ -1026,6 +1063,8 @@ export default function PublicOrderFormPage() {
   const [submitRetryArmed, setSubmitRetryArmed] = useState(false);
   const [animatedInvalidField, setAnimatedInvalidField] = useState<PublicOrderFieldKey | null>(null);
   const [submitButtonAttention, setSubmitButtonAttention] = useState(false);
+  const [savedContactAvailable, setSavedContactAvailable] = useState(false);
+  const [contactAutofillBusy, setContactAutofillBusy] = useState(false);
 
   const [orderFormName, setOrderFormName] = useState("");
   const [orderFormPhone, setOrderFormPhone] = useState("");
@@ -2314,6 +2353,94 @@ export default function PublicOrderFormPage() {
     setToast(message);
   }
 
+  const contactPickerSupported = typeof navigator !== "undefined" && Boolean((navigator as any).contacts?.select);
+
+  const applyContactAutofill = useCallback((contact: PublicOrderSavedContact) => {
+    const normalized = normalizeSavedPublicOrderContact(contact);
+    if (!normalized) return false;
+    if (normalized.name) setOrderFormName(normalized.name);
+    if (normalized.phone) setOrderFormPhone(normalized.phone);
+    if (normalized.whatsapp) setOrderFormWhatsapp(normalized.whatsapp);
+    if (!normalized.whatsapp && normalized.phone) setOrderFormWhatsapp(normalized.phone);
+    if (normalized.email) setOrderFormEmail(normalized.email);
+    if (normalized.address) setOrderFormAddress(normalized.address);
+    if (normalized.city) setOrderFormCity(normalized.city);
+    if (normalized.state) setOrderFormState(normalized.state);
+    setFieldErrors({});
+    return true;
+  }, []);
+
+  const handleAutofillCustomerDetails = useCallback(async () => {
+    const saved = readSavedPublicOrderContact();
+    if (saved && applyContactAutofill(saved)) {
+      showToast("Saved details filled. Check them before placing your order.");
+      return;
+    }
+
+    const contactsApi = typeof navigator !== "undefined" ? (navigator as any).contacts : null;
+    if (!contactsApi?.select) {
+      showToast("No saved details found on this form yet. Type once, and next time this button will fill it.");
+      focusField("name");
+      return;
+    }
+
+    setContactAutofillBusy(true);
+    try {
+      const contacts = await contactsApi.select(["name", "tel", "email", "address"], { multiple: false });
+      const contact = Array.isArray(contacts) ? contacts[0] : null;
+      if (!contact) return;
+      const address = Array.isArray(contact.address) ? contact.address[0] : null;
+      const addressLine = Array.isArray(address?.addressLine) ? address.addressLine.join(", ") : (address?.addressLine ?? "");
+      const nextContact: PublicOrderSavedContact = {
+        name: Array.isArray(contact.name) ? contact.name[0] : contact.name,
+        phone: Array.isArray(contact.tel) ? contact.tel[0] : contact.tel,
+        whatsapp: Array.isArray(contact.tel) ? contact.tel[0] : contact.tel,
+        email: Array.isArray(contact.email) ? contact.email[0] : contact.email,
+        address: addressLine,
+        city: address?.city ?? "",
+        state: address?.region ?? address?.state ?? ""
+      };
+      if (applyContactAutofill(nextContact)) {
+        writeSavedPublicOrderContact(nextContact);
+        setSavedContactAvailable(true);
+        showToast("Details filled from your phone. Check them before placing your order.");
+      } else {
+        showToast("No usable contact details were selected.");
+      }
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        showToast("Could not open phone contacts. Type your details once and we will remember them here.");
+      }
+    } finally {
+      setContactAutofillBusy(false);
+    }
+  }, [applyContactAutofill]);
+
+  useEffect(() => {
+    setSavedContactAvailable(Boolean(readSavedPublicOrderContact()));
+  }, []);
+
+  useEffect(() => {
+    if (publicEmbedIsPreview) return;
+    const phoneDigits = sanitizePhoneDigitsInput(orderFormPhone);
+    const whatsappDigits = sanitizePhoneDigitsInput(orderFormWhatsapp);
+    const contact = normalizeSavedPublicOrderContact({
+      name: orderFormName,
+      phone: phoneDigits,
+      whatsapp: whatsappDigits || phoneDigits,
+      email: orderFormEmail,
+      address: orderFormAddress,
+      city: orderFormCity,
+      state: orderFormState
+    });
+    if (!contact || (!contact.name && !contact.phone) || (contact.phone ?? "").length < 7) return;
+    const timer = window.setTimeout(() => {
+      writeSavedPublicOrderContact(contact);
+      setSavedContactAvailable(true);
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [orderFormAddress, orderFormCity, orderFormEmail, orderFormName, orderFormPhone, orderFormState, orderFormWhatsapp, publicEmbedIsPreview]);
+
   function handleAdditionalItemFinishClick() {
     const nextErrors = buildSubmitValidationErrors();
     const firstInvalidField = PUBLIC_ORDER_VALIDATION_ORDER.find((field) => nextErrors[field]);
@@ -2702,6 +2829,17 @@ export default function PublicOrderFormPage() {
       formContext: buildPublicFormContext("submit"),
       company: publicHoneypot,
     };
+
+    writeSavedPublicOrderContact({
+      name: customerName,
+      phone: orderFormPhone,
+      whatsapp: whatsappDigits || orderFormPhone,
+      email: orderFormEmail,
+      address: orderFormAddress,
+      city: orderFormCity,
+      state: orderFormState
+    });
+    setSavedContactAvailable(true);
 
     if (publicEmbedIsPreview) {
       resetOrderForm();
@@ -3805,6 +3943,51 @@ export default function PublicOrderFormPage() {
                   onChange={(event) => setPublicHoneypot(event.target.value)}
                   style={{ position: "absolute", left: "-9999px", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
                 />
+
+                <div
+                  className="field-full"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    padding: "10px 12px",
+                    border: "1px solid #bfdbfe",
+                    borderRadius: 12,
+                    background: "linear-gradient(135deg, #eff6ff, #f8fafc)"
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 13, fontWeight: 900, color: "#0f172a" }}>Fill this form faster</p>
+                    <p style={{ margin: "2px 0 0", fontSize: 11, lineHeight: 1.4, color: "#64748b" }}>
+                      {savedContactAvailable
+                        ? "Use details saved on this phone, then edit anything that changed."
+                        : contactPickerSupported
+                          ? "Pick your own contact from this phone to fill the basics."
+                          : "Type once on this phone; next time we can fill it for you."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="!min-h-0"
+                    disabled={contactAutofillBusy}
+                    onClick={handleAutofillCustomerDetails}
+                    style={{
+                      flexShrink: 0,
+                      border: "1px solid #93c5fd",
+                      borderRadius: 999,
+                      background: "#ffffff",
+                      color: "#1d4ed8",
+                      fontSize: 12,
+                      fontWeight: 900,
+                      padding: "8px 12px",
+                      boxShadow: "0 6px 16px rgba(37, 99, 235, 0.12)",
+                      opacity: contactAutofillBusy ? 0.7 : 1
+                    }}
+                  >
+                    {contactAutofillBusy ? "Opening..." : savedContactAvailable ? "Autofill saved" : "Autofill"}
+                  </button>
+                </div>
 
                 <label className="field-full">
                   <input
