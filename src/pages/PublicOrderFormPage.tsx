@@ -3809,6 +3809,11 @@ export default function PublicOrderFormPage() {
                 <label className="field-full">
                   <input
                     ref={setFieldRef("name") as any}
+                    type="text"
+                    name="name"
+                    autoComplete="shipping name"
+                    autoCapitalize="words"
+                    enterKeyHint="next"
                     value={orderFormName}
                     onChange={(event) => {
                       setOrderFormName(event.target.value);
@@ -3833,6 +3838,8 @@ export default function PublicOrderFormPage() {
                     </span>
                     <input
                       ref={setFieldRef("phone") as any}
+                      type="tel"
+                      name="tel"
                       value={orderFormPhone}
                       onChange={(event) => {
                         setOrderFormPhone(event.target.value.replace(/[^\d\s\-]/g, ""));
@@ -3840,8 +3847,9 @@ export default function PublicOrderFormPage() {
                       }}
                       placeholder="Your Phone Number *"
                       inputMode="tel"
+                      enterKeyHint="next"
                       pattern="[0-9\\s\\-]{7,15}"
-                      autoComplete="tel-national"
+                      autoComplete="shipping tel-national"
                       aria-invalid={Boolean(fieldErrors.phone)}
                       aria-describedby={fieldErrors.phone ? "public-order-error-phone" : undefined}
                       style={{ flex: 1, ...inputErrorStyle("phone") }}
@@ -3862,6 +3870,8 @@ export default function PublicOrderFormPage() {
                       </span>
                       <input
                         ref={setFieldRef("whatsapp") as any}
+                        type="tel"
+                        name="mobile"
                         style={{ flex: 1, ...inputErrorStyle("whatsapp") }}
                         value={orderFormWhatsapp}
                         onChange={(event) => {
@@ -3870,13 +3880,36 @@ export default function PublicOrderFormPage() {
                         }}
                         placeholder={`Your WhatsApp Number${settings.requireWhatsapp ? " *" : ""}`}
                         inputMode="tel"
+                        enterKeyHint="next"
                         pattern="[0-9]{7,15}"
-                        autoComplete="tel-national"
+                        autoComplete="shipping tel-national"
                         maxLength={15}
                         aria-invalid={Boolean(fieldErrors.whatsapp)}
                         aria-describedby={fieldErrors.whatsapp ? "public-order-error-whatsapp" : undefined}
                       />
                     </div>
+                    {orderFormPhone.trim() && sanitizePhoneDigitsInput(orderFormWhatsapp) !== sanitizePhoneDigitsInput(orderFormPhone) && (
+                      <button
+                        type="button"
+                        className="!min-h-0"
+                        onClick={() => {
+                          setOrderFormWhatsapp(sanitizePhoneDigitsInput(orderFormPhone));
+                          clearFieldError("whatsapp");
+                        }}
+                        style={{
+                          marginTop: 8,
+                          border: "1px solid #bbf7d0",
+                          borderRadius: 999,
+                          background: "#f0fdf4",
+                          color: "#047857",
+                          fontSize: 12,
+                          fontWeight: 800,
+                          padding: "7px 10px"
+                        }}
+                      >
+                        Use phone number for WhatsApp
+                      </button>
+                    )}
                     {fieldErrors.whatsapp && (
                       <span id="public-order-error-whatsapp" style={{ marginTop: 6, display: "block", fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
                         {fieldErrors.whatsapp}
@@ -3887,13 +3920,27 @@ export default function PublicOrderFormPage() {
 
                 {settings.showEmail && (
                   <label className="field-full">
-                    <input value={orderFormEmail} onChange={(event) => setOrderFormEmail(event.target.value)} placeholder="Your Email" type="email" />
+                    <input
+                      value={orderFormEmail}
+                      onChange={(event) => setOrderFormEmail(event.target.value)}
+                      placeholder="Your Email"
+                      type="email"
+                      name="email"
+                      inputMode="email"
+                      autoComplete="shipping email"
+                      enterKeyHint="next"
+                    />
                   </label>
                 )}
 
                 <label className="field-full">
                   <input
                     ref={setFieldRef("address") as any}
+                    type="text"
+                    name="street-address"
+                    autoComplete="shipping street-address"
+                    autoCapitalize="words"
+                    enterKeyHint="next"
                     value={orderFormAddress}
                     onChange={(event) => {
                       setOrderFormAddress(event.target.value);
@@ -3914,6 +3961,11 @@ export default function PublicOrderFormPage() {
                 <label className="field-full">
                   <input
                     ref={setFieldRef("city") as any}
+                    type="text"
+                    name="address-level2"
+                    autoComplete="shipping address-level2"
+                    autoCapitalize="words"
+                    enterKeyHint="next"
                     value={orderFormCity}
                     onChange={(event) => {
                       setOrderFormCity(event.target.value);
@@ -3934,6 +3986,8 @@ export default function PublicOrderFormPage() {
                 <label className="field-full">
                   <select
                     ref={setFieldRef("state") as any}
+                    name="address-level1"
+                    autoComplete="shipping address-level1"
                     required
                     value={orderFormState}
                     onChange={(event) => {
