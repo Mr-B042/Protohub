@@ -52673,6 +52673,20 @@ ${waybillLineItems(w).length > 1
                       {packageCompanions.map((c, idx) => {
                         const update = (patch: Partial<PackageCompanion>) =>
                           setPackageCompanions((prev) => prev.map((row, i) => i === idx ? { ...row, ...patch } : row));
+                        const duplicateOffer = () => {
+                          setPackageCompanions((prev) => {
+                            const source = prev[idx];
+                            if (!source) return prev;
+                            const clone = normalisePackageCompanion({
+                              ...source,
+                              companionId: makeCompanionId(),
+                              active: false,
+                              priority: Number(source.priority ?? 0) + 1
+                            });
+                            return [...prev.slice(0, idx + 1), clone, ...prev.slice(idx + 1)];
+                          });
+                          showToast("Offer duplicated as hidden. Tweak it, then turn it on when ready.");
+                        };
                         const remove = () => setPackageCompanions((prev) => prev.filter((_, i) => i !== idx));
                         const targetProduct = products.find((p) => p.id === c.productId);
                         const targetPackages = targetProduct?.packages?.filter((pkg) => pkg.active) ?? [];
@@ -52702,6 +52716,14 @@ ${waybillLineItems(w).length > 1
                                 <p className="m-0 text-xs text-gray-500">{activeOffer ? "What is the offer, who should see it, and how should it look?" : "Saved, but customers cannot see or choose this add-on until you turn it back on."}</p>
                               </div>
                               <div className="flex flex-wrap items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2.5 py-1 text-xs font-bold rounded border border-blue-100 bg-white text-blue-700 hover:bg-blue-50 transition-colors"
+                                  onClick={duplicateOffer}
+                                  title="Copy this offer row so you only tweak quantity, package, price, or image"
+                                >
+                                  <Copy className="w-3 h-3" /> Duplicate
+                                </button>
                                 <button
                                   type="button"
                                   className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2.5 py-1 text-xs font-bold rounded border transition-colors ${activeOffer ? "border-amber-200 bg-white text-amber-700 hover:bg-amber-50" : "border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50"}`}
