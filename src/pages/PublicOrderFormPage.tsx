@@ -4279,6 +4279,33 @@ export default function PublicOrderFormPage() {
                 })}
               </div>
 
+              {(showcaseCompanionOptions.length > 0 || compactCompanionOptions.length > 0 || cardCompanionGroups.length > 0) && (
+                <div style={{ display: "grid", gap: 4, textAlign: "center", marginTop: 16 }}>
+                  <strong style={{ fontSize: 22, color: "#111827", lineHeight: 1.25 }}>
+                    Before you submit, add these discounted extras to your order
+                  </strong>
+                  <span style={{ fontSize: 13, color: "#475569", lineHeight: 1.55 }}>
+                    Tap any item below to preview the demo, see the bundle choices, and add it to your order.
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: "#b45309",
+                      lineHeight: 1.5,
+                      fontWeight: 700,
+                      background: "#fff7ed",
+                      border: "1px solid #fdba74",
+                      borderRadius: 12,
+                      padding: "8px 10px",
+                      maxWidth: 620,
+                      margin: "4px auto 0"
+                    }}
+                  >
+                    These discounted additional items only apply when you add them with the main offer. They are not available as stand-alone purchases at this discounted price.
+                  </span>
+                </div>
+              )}
+
               {showcaseCompanionOptions.length > 0 && (
                 <div style={{ display: "grid", gap: 14, marginTop: 16 }}>
                   {showcaseCompanionOptions.map((companion, index) => {
@@ -4591,30 +4618,6 @@ export default function PublicOrderFormPage() {
               {cardCompanionGroups.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
                   <div style={{ border: "2px solid #cbd5e1", borderRadius: 22, background: "#f8fafc", padding: 14, display: "grid", gap: 14 }}>
-                    <div style={{ display: "grid", gap: 4, textAlign: "center" }}>
-                      <strong style={{ fontSize: 22, color: "#111827", lineHeight: 1.25 }}>
-                        Before you submit, add these discounted extras to your order
-                      </strong>
-                      <span style={{ fontSize: 13, color: "#475569", lineHeight: 1.55 }}>
-                        Tap any item below to preview the demo, see the bundle choices, and add it to your order.
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 12,
-                          color: "#b45309",
-                          lineHeight: 1.5,
-                          fontWeight: 700,
-                          background: "#fff7ed",
-                          border: "1px solid #fdba74",
-                          borderRadius: 12,
-                          padding: "8px 10px",
-                          maxWidth: 620,
-                          margin: "4px auto 0"
-                        }}
-                      >
-                        These discounted additional items only apply when you add them with the main offer. They are not available as stand-alone purchases at this discounted price.
-                      </span>
-                    </div>
                     <div style={{ display: "grid", gap: 12 }}>
                       {cardCompanionGroups.map((group, index) => {
                         const product = group.product;
