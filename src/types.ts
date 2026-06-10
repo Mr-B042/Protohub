@@ -152,7 +152,7 @@ export type PackageCompanion = {
   videoUrl?: string;
   embedHtml?: string;
   priority?: number;
-  displayMode?: "compact" | "card";
+  displayMode?: "compact" | "card" | "showcase";
   proofMode?: "real" | "promo_copy" | "hidden";
   urgencyMode?: "standard" | "price_loss";
   // Optional promo-copy fields. Only rendered on the buyer card when

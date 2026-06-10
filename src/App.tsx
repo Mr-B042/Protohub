@@ -6297,6 +6297,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageImageUploading, setPackageImageUploading] = useState(0);
   const [packageImageSyncToTiers, setPackageImageSyncToTiers] = useState(false);
   const [packageFreeGiftSyncToTiers, setPackageFreeGiftSyncToTiers] = useState(false);
+  const [packageCompanionSyncToPackages, setPackageCompanionSyncToPackages] = useState(false);
   const packageImageUploadTokenRef = useRef(0);
   // Drag-and-drop sensors for the package image gallery. PointerSensor needs an
   // 8px activation distance so a click on the trash button doesn't start a drag.
@@ -8578,6 +8579,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const packageFreeGiftCount = packageComponents.filter((component) => component.productId && component.isFreeGift).length;
   const canSyncPackageFreeGiftsToComboTiers =
     currentPackageFormIsComboLike && packageFreeGiftCount > 0 && packageGallerySyncTargetCount > 0;
+  const packageCompanionSyncTargetCount = selectedProduct
+    ? selectedProduct.packages.filter((pkg) =>
+        !(modal === "editPackage" && selectedPackage && pkg.id === selectedPackage.id) &&
+        !isTemporaryPackageId(pkg.id)
+      ).length
+    : 0;
+  const packageCompanionSyncOfferCount = packageCompanions.filter((companion) => companion.productId).length;
+  const canSyncPackageCompanionsToPackages = packageCompanionSyncTargetCount > 0 && packageCompanionSyncOfferCount > 0;
   useEffect(() => {
     if (packageImageSyncToTiers && !canSyncPackageGalleryToComboTiers) {
       setPackageImageSyncToTiers(false);
@@ -8588,6 +8597,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setPackageFreeGiftSyncToTiers(false);
     }
   }, [packageFreeGiftSyncToTiers, canSyncPackageFreeGiftsToComboTiers]);
+  useEffect(() => {
+    if (packageCompanionSyncToPackages && !canSyncPackageCompanionsToPackages) {
+      setPackageCompanionSyncToPackages(false);
+    }
+  }, [packageCompanionSyncToPackages, canSyncPackageCompanionsToPackages]);
   const selectedPricing = selectedProduct?.pricings.find((item) => item.currency === selectedPricingCurrency);
   const selectedOrder = trackedOrders.find((order) => order.id === selectedOrderId);
   const selectedOrderFollowUpTasks = selectedOrder ? (orderFollowUpTasksByOrder[selectedOrder.id] ?? []) : [];
@@ -22109,6 +22123,7 @@ ${waybillLineItems(w).length > 1
     setPackageImageUploading(0);
     setPackageImageSyncToTiers(false);
     setPackageFreeGiftSyncToTiers(false);
+    setPackageCompanionSyncToPackages(false);
     setSelectedPackageId("");
   };
 
@@ -22146,6 +22161,7 @@ ${waybillLineItems(w).length > 1
     setPackageImageUploading(0);
     setPackageImageSyncToTiers(false);
     setPackageFreeGiftSyncToTiers(false);
+    setPackageCompanionSyncToPackages(false);
     if (!productId) return;
     openInventoryEditPackageRoute(productId, item.id);
   };
@@ -22289,6 +22305,96 @@ ${waybillLineItems(w).length > 1
     return targetPackages.length;
   };
 
+  const packageCompanionSyncKey = (companion: PackageCompanion) =>
+    [
+      companion.productId,
+      companion.packageId ?? "",
+      companion.placement ?? "inline"
+    ].join("::");
+
+  const syncPackageCompanionsToSiblingPackages = async (
+    productId: string,
+    sourcePackageId: string,
+    sourceCompanions: PackageCompanion[],
+    productSnapshot: Product
+  ) => {
+    const sourceOffers = sourceCompanions
+      .map(normalisePackageCompanion)
+      .filter((companion) => companion.productId);
+    if (sourceOffers.length === 0) return 0;
+
+    const targetPackages = productSnapshot.packages.filter((pkg) => pkg.id !== sourcePackageId && !isTemporaryPackageId(pkg.id));
+    if (targetPackages.length === 0) return 0;
+
+    const companionPatchByPackageId = new Map(
+      targetPackages.map((pkg) => {
+        const existing = (pkg.companionProducts ?? []).map(normalisePackageCompanion);
+        const existingIndexByKey = new Map(existing.map((companion, index) => [packageCompanionSyncKey(companion), index]));
+        const nextCompanions = existing.map(normalisePackageCompanion);
+
+        sourceOffers.forEach((offer) => {
+          const key = packageCompanionSyncKey(offer);
+          const existingIndex = existingIndexByKey.get(key);
+          if (typeof existingIndex === "number") {
+            const current = nextCompanions[existingIndex];
+            nextCompanions[existingIndex] = normalisePackageCompanion({
+              ...offer,
+              companionId: current.companionId,
+              active: current.active !== false
+            });
+            return;
+          }
+          nextCompanions.push(normalisePackageCompanion({
+            ...offer,
+            companionId: makeCompanionId(),
+            active: false
+          }));
+        });
+
+        return [pkg.id, nextCompanions] as const;
+      })
+    );
+
+    const savedSiblings = await Promise.all(
+      targetPackages.map((pkg) =>
+        productsApi.updatePackage(productId, pkg.id, {
+          companionProducts: companionPatchByPackageId.get(pkg.id) ?? []
+        })
+      )
+    );
+    const savedById = new Map(savedSiblings.map((pkg: ProductPackage) => [pkg.id, pkg]));
+    const targetIdSet = new Set(targetPackages.map((pkg) => pkg.id));
+    setProducts((prev) =>
+      prev.map((product) =>
+        product.id !== productId
+          ? product
+          : {
+              ...product,
+              packages: product.packages.map((pkg) => {
+                if (!targetIdSet.has(pkg.id)) return pkg;
+                const savedPackage = savedById.get(pkg.id);
+                const companionProducts = savedPackage?.companionProducts ?? companionPatchByPackageId.get(pkg.id) ?? pkg.companionProducts;
+                if (!savedPackage) return { ...pkg, companionProducts };
+                const savedImages = savedPackageCarouselImagePatch(savedPackage, pkg);
+                return {
+                  ...pkg,
+                  ...savedPackage,
+                  packageComponents: savedPackage.packageComponents ?? pkg.packageComponents,
+                  companionProducts,
+                  stateFilterMode: savedPackage.stateFilterMode ?? pkg.stateFilterMode,
+                  stateRestrictions: savedPackage.stateRestrictions ?? pkg.stateRestrictions,
+                  requiresStateStock: savedPackage.requiresStateStock ?? pkg.requiresStateStock,
+                  featuredComboCard: savedPackage.featuredComboCard ?? pkg.featuredComboCard,
+                  imageUrl: savedImages.imageUrl,
+                  imageUrls: savedImages.imageUrls
+                };
+              })
+            }
+      )
+    );
+    return targetPackages.length;
+  };
+
   const savePackageGalleryAfterDetails = async (
     productId: string,
     packageId: string,
@@ -22361,6 +22467,15 @@ ${waybillLineItems(w).length > 1
       showToast("Tick at least one component as a free gift before copying gifts to other combo tiers.");
       return;
     }
+    const normalisedCopyableCompanions = normalisedCompanions.filter((companion) => companion.productId);
+    if (packageCompanionSyncToPackages && normalisedCopyableCompanions.length === 0) {
+      showToast("Add at least one extra offer before copying it to other packages.");
+      return;
+    }
+    if (packageCompanionSyncToPackages && packageCompanionSyncTargetCount === 0) {
+      showToast("Create another saved package first, then copy offers across.");
+      return;
+    }
     const packageRecord: ProductPackage = {
       id: modal === "editPackage" && selectedPackage ? selectedPackage.id : makePackageId(),
       name: packageName.trim(),
@@ -22412,6 +22527,7 @@ ${waybillLineItems(w).length > 1
     const productSnapshot = selectedProduct;
     const shouldSyncPackageImagesToTiers = packageImageSyncToTiers && currentPackageFormIsComboLike && normalisedPackageImageUrls.length > 0;
     const shouldSyncPackageFreeGiftsToTiers = packageFreeGiftSyncToTiers && currentPackageFormIsComboLike && normalisedFreeGiftComponents.length > 0;
+    const shouldSyncPackageCompanionsToPackages = packageCompanionSyncToPackages && normalisedCopyableCompanions.length > 0 && packageCompanionSyncTargetCount > 0;
     const syncPackageAssetsToTiers = async (sourcePackageId: string, gallerySaved: boolean) => {
       if (shouldSyncPackageImagesToTiers && gallerySaved) {
         const count = await syncPackageGalleryToSiblingTiers(_pkgProdId, sourcePackageId, normalisedPackageImageUrls, productSnapshot);
@@ -22422,6 +22538,10 @@ ${waybillLineItems(w).length > 1
       if (shouldSyncPackageFreeGiftsToTiers) {
         const count = await syncPackageFreeGiftsToSiblingTiers(_pkgProdId, sourcePackageId, normalisedFreeGiftComponents, productSnapshot);
         if (count > 0) showToast(`Free gift copied to ${count} other combo tier${count === 1 ? "" : "s"}.`);
+      }
+      if (shouldSyncPackageCompanionsToPackages) {
+        const count = await syncPackageCompanionsToSiblingPackages(_pkgProdId, sourcePackageId, normalisedCopyableCompanions, productSnapshot);
+        if (count > 0) showToast(`Extra offer setup copied to ${count} other package${count === 1 ? "" : "s"}. New copies stay hidden until you turn them on.`);
       }
     };
     setPackageSaving(true);
@@ -22454,9 +22574,9 @@ ${waybillLineItems(w).length > 1
             };
           })
         );
-        if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers) {
+        if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers || shouldSyncPackageCompanionsToPackages) {
           syncPackageAssetsToTiers(savedPackage.id, galleryResult.gallerySaved).catch((err: any) => {
-            showToast(`Package saved, but combo-tier copy failed: ${err?.message ?? "please retry"}.`);
+            showToast(`Package saved, but cross-package copy failed: ${err?.message ?? "please retry"}.`);
           });
         }
       } else if (modal === "editPackage" && selectedPackage) {
@@ -22487,9 +22607,9 @@ ${waybillLineItems(w).length > 1
             };
           })
         );
-        if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers) {
+        if (shouldSyncPackageImagesToTiers || shouldSyncPackageFreeGiftsToTiers || shouldSyncPackageCompanionsToPackages) {
           syncPackageAssetsToTiers(selectedPackage.id, galleryResult.gallerySaved).catch((err: any) => {
-            showToast(`Package saved, but combo-tier copy failed: ${err?.message ?? "please retry"}.`);
+            showToast(`Package saved, but cross-package copy failed: ${err?.message ?? "please retry"}.`);
           });
         }
       }
@@ -45042,8 +45162,8 @@ ${waybillLineItems(w).length > 1
                                         ) : <span className="text-gray-400">—</span>}
                                       </td>
                                       <td className="px-3 py-3">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${r.companion.displayMode === "card" ? "bg-blue-100 text-[#1F8FE0]" : r.companion.autoInclude ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-700"}`}>
-                                          {r.companion.autoInclude ? "Auto add" : r.companion.displayMode === "card" ? "Big card" : "Small row"}
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${r.companion.displayMode === "showcase" ? "bg-amber-100 text-amber-800" : r.companion.displayMode === "card" ? "bg-blue-100 text-[#1F8FE0]" : r.companion.autoInclude ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-700"}`}>
+                                          {r.companion.autoInclude ? "Auto add" : r.companion.displayMode === "showcase" ? "Gallery card" : r.companion.displayMode === "card" ? "Big card" : "Small row"}
                                         </span>
                                       </td>
                                       <td className="px-3 py-3 text-gray-600">{r.companion.priority ?? 0}</td>
@@ -52666,6 +52786,23 @@ ${waybillLineItems(w).length > 1
                       onClick={() => setPackageCompanions((prev) => [...prev, normalisePackageCompanion({ productId: "", packageId: undefined, quantity: 1, pricingMode: "free", stateFilterMode: "all", stateRestrictions: [], autoInclude: false })])}
                     >+ Add extra offer</button>
                   </div>
+                  <label className={`flex items-start gap-3 rounded-lg border px-3 py-3 ${canSyncPackageCompanionsToPackages ? "border-violet-100 bg-violet-50/70" : "border-gray-100 bg-gray-50"}`}>
+                    <input
+                      type="checkbox"
+                      className="mt-1 w-4 h-4 accent-violet-600"
+                      checked={packageCompanionSyncToPackages}
+                      disabled={!canSyncPackageCompanionsToPackages}
+                      onChange={(event) => setPackageCompanionSyncToPackages(event.target.checked)}
+                    />
+                    <span className="text-sm text-gray-700">
+                      <strong className="block text-gray-900">Duplicate these extra offers to other packages</strong>
+                      {packageCompanionSyncOfferCount === 0
+                        ? "Add at least one extra offer first, then you can copy the setup across."
+                        : packageCompanionSyncTargetCount > 0
+                          ? `When you save, ${packageCompanionSyncOfferCount} offer row${packageCompanionSyncOfferCount === 1 ? "" : "s"} will copy to ${packageCompanionSyncTargetCount} other package${packageCompanionSyncTargetCount === 1 ? "" : "s"}. New copies stay hidden so you can tweak each package before making them live.`
+                          : "No other saved packages are available yet. Create another package first, then copy the offer setup across."}
+                    </span>
+                  </label>
                   {packageCompanions.length === 0 ? (
                     <p className="text-xs text-gray-400 italic m-0">No extra offers added yet.</p>
                   ) : (
@@ -52690,6 +52827,10 @@ ${waybillLineItems(w).length > 1
                         const remove = () => setPackageCompanions((prev) => prev.filter((_, i) => i !== idx));
                         const targetProduct = products.find((p) => p.id === c.productId);
                         const targetPackages = targetProduct?.packages?.filter((pkg) => pkg.active) ?? [];
+                        const targetPackage = targetProduct?.packages?.find((pkg) => pkg.id === c.packageId);
+                        const offerGalleryPreviewImages = c.displayMode === "showcase"
+                          ? normalisePackageImageUrls([...(targetPackage ? packageCarouselImages(targetPackage) : []), c.imageUrl])
+                          : [];
                         const parentProductStates = (selectedProduct.availableStates?.length ?? 0) > 0 ? selectedProduct.availableStates! : nigeriaStates;
                         const stateRuleMode = c.stateFilterMode ?? "all";
                         const stateSummary =
@@ -52765,6 +52906,44 @@ ${waybillLineItems(w).length > 1
                                   ) : null}
                                 </label>
                               </div>
+                              {(c.placement ?? "inline") !== "upsell" && c.displayMode === "showcase" && (
+                                <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50/50 p-3">
+                                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                                    <div>
+                                      <p className="m-0 text-[11px] font-black uppercase tracking-wider text-amber-800">Visual gallery source</p>
+                                      <p className="m-0 mt-1 text-xs text-amber-900/75">
+                                        {targetPackage
+                                          ? `Customer card uses the "${targetPackage.name}" package carousel first. Edit that package's image carousel to change the gallery.`
+                                          : "Select a Bundle target with a package image carousel for the full gallery effect, or add one offer image below for a single visual."}
+                                      </p>
+                                    </div>
+                                    <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black text-amber-800 ring-1 ring-amber-200">
+                                      {offerGalleryPreviewImages.length} image{offerGalleryPreviewImages.length === 1 ? "" : "s"}
+                                    </span>
+                                  </div>
+                                  {offerGalleryPreviewImages.length > 0 ? (
+                                    <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                                      {offerGalleryPreviewImages.slice(0, 8).map((url, imageIdx) => (
+                                        <div key={`${url}-${imageIdx}`} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-white bg-white shadow-sm">
+                                          <img src={url} alt="" className="h-full w-full object-cover" />
+                                          {imageIdx === 0 && (
+                                            <span className="absolute left-1 top-1 rounded bg-amber-500 px-1.5 py-0.5 text-[9px] font-black uppercase text-white">Main</span>
+                                          )}
+                                        </div>
+                                      ))}
+                                      {offerGalleryPreviewImages.length > 8 && (
+                                        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white text-xs font-black text-amber-800">
+                                          +{offerGalleryPreviewImages.length - 8}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <p className="m-0 mt-3 rounded-md border border-dashed border-amber-200 bg-white px-3 py-2 text-xs text-amber-800">
+                                      No image yet. Use the media fields below or choose a bundle package that already has a carousel.
+                                    </p>
+                                  )}
+                                </div>
+                              )}
                             </div>
                             <div className="space-y-2">
                               <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 m-0">1. What customers can buy</p>

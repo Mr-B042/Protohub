@@ -39,7 +39,7 @@ type PublicCompanion = {
   videoUrl?: string;
   embedHtml?: string;
   priority?: number;
-  displayMode?: "compact" | "card";
+  displayMode?: "compact" | "card" | "showcase";
   proofMode?: "real" | "promo_copy" | "hidden";
   urgencyMode?: "standard" | "price_loss";
   // Admin-typed promo numbers — only rendered when proofMode === "promo_copy".
@@ -748,7 +748,14 @@ function companionEmbedDocument(embedHtml: string) {
 </html>`;
 }
 
-function renderCompanionMedia(companion: PublicCompanion, productName: string) {
+function companionImageSource(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
+  const packageImage = targetPackage?.imageUrls?.find((url) => typeof url === "string" && url.trim()) || targetPackage?.imageUrl || "";
+  return companion.displayMode === "showcase"
+    ? (packageImage || companion.imageUrl || "")
+    : (companion.imageUrl || packageImage || "");
+}
+
+function renderCompanionMedia(companion: PublicCompanion, productName: string, targetPackage?: PublicPackage | null) {
   const embedHtml = (companion.embedHtml ?? "").trim();
   if (embedHtml) {
     const paddingTop = companionEmbedPaddingTop(embedHtml);
@@ -802,10 +809,11 @@ function renderCompanionMedia(companion: PublicCompanion, productName: string) {
       </div>
     );
   }
-  if (companion.imageUrl?.trim()) {
+  const imageSrc = companionImageSource(companion, targetPackage).trim();
+  if (imageSrc) {
     return (
       <img
-        src={companion.imageUrl}
+        src={imageSrc}
         alt={productName}
         onError={(event) => {
           const target = event.currentTarget;
@@ -820,8 +828,8 @@ function renderCompanionMedia(companion: PublicCompanion, productName: string) {
   return null;
 }
 
-function renderCompanionTeaserVisual(companion: PublicCompanion, productName: string) {
-  const src = companion.imageUrl?.trim() || fallbackCompanionImageSrc(productName);
+function renderCompanionTeaserVisual(companion: PublicCompanion, productName: string, targetPackage?: PublicPackage | null) {
+  const src = companionImageSource(companion, targetPackage).trim() || fallbackCompanionImageSrc(productName);
   return (
     <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1", borderRadius: 22, overflow: "hidden", background: "#ffffff", border: "1px solid rgba(148, 163, 184, 0.18)" }}>
       <img
@@ -2910,7 +2918,7 @@ export default function PublicOrderFormPage() {
   const cardCompanionGroups = useMemo(
     () => Object.values(
       companionOptions
-        .filter((companion) => (companion.displayMode ?? "compact") === "card")
+        .filter((companion) => (companion.displayMode ?? "compact") === "card" || (companion.displayMode ?? "compact") === "showcase")
         .reduce<Record<string, { product: PublicProduct | undefined; companions: PublicCompanion[]; priority: number }>>((acc, companion) => {
           const key = companion.productId;
           if (!acc[key]) {
@@ -2937,7 +2945,10 @@ export default function PublicOrderFormPage() {
   );
 
   const compactCompanionOptions = useMemo(
-    () => companionOptions.filter((companion) => (companion.displayMode ?? "compact") !== "card"),
+    () => companionOptions.filter((companion) => {
+      const mode = companion.displayMode ?? "compact";
+      return mode !== "card" && mode !== "showcase";
+    }),
     [companionOptions]
   );
 
@@ -3588,7 +3599,7 @@ export default function PublicOrderFormPage() {
                   </p>
                 </div>
                 <div style={{ border: "1px solid #dbeafe", borderRadius: 18, background: "#f8fbff", padding: 18, display: "grid", gap: 12 }}>
-                  {renderCompanionMedia(publicUpsellOffer.companion, publicUpsellOffer.product.name)}
+                  {renderCompanionMedia(publicUpsellOffer.companion, publicUpsellOffer.product.name, publicUpsellOffer.targetPackage)}
                   {publicUpsellOffer.companion.badgeText?.trim() && (
                     <span style={{ display: "inline-flex", width: "fit-content", padding: "6px 10px", borderRadius: 999, background: "#dbeafe", color: "#1d4ed8", fontSize: 12, fontWeight: 800 }}>
                       {publicUpsellOffer.companion.badgeText}
@@ -4209,7 +4220,7 @@ export default function PublicOrderFormPage() {
                     const currency = primaryPricing(product)?.currency ?? "NGN";
                     const total = companionLineTotal(companion, product, targetPackage);
                     const selected = isOrderFormCrossSellSelected(companion);
-                    const media = renderCompanionMedia(companion, product.name);
+                    const media = renderCompanionMedia(companion, product.name, targetPackage);
                     return (
                       <label
                         key={`${companionSelectionKey(companion)}-${index}`}
@@ -4297,7 +4308,7 @@ export default function PublicOrderFormPage() {
                         const discountPercent = companionDiscountPercent(standardTotal, total);
                         const teaserOfferLabel = companionOfferPriceLabel(previewCompanion, teaserTotal, currency, previewTargetPackage);
                         const displayOfferLabel = companionOfferPriceLabel(displayCompanion, total, currency, displayTargetPackage);
-                        const media = renderCompanionMedia(displayCompanion, product.name);
+                        const media = renderCompanionMedia(displayCompanion, product.name, displayTargetPackage);
                         const socialProofUi = companionSocialProofUi(displayCompanion);
                         const teaserCtaLabel = selectedVariant
                           ? "Already added"
@@ -4367,7 +4378,7 @@ export default function PublicOrderFormPage() {
                                       {previewCompanion.pitch?.trim() || "Quick extra additional item that fits this order."}
                                     </span>
                                     <div style={{ width: "100%", maxWidth: 240, justifySelf: "center" }}>
-                                      {renderCompanionTeaserVisual(previewCompanion, product.name)}
+                                      {renderCompanionTeaserVisual(previewCompanion, product.name, previewTargetPackage)}
                                     </div>
                                     {(socialProofUi.badgeText || socialProofUi.stats.length > 0) && (
                                       <div style={{ display: "grid", gap: 6 }}>
@@ -4471,7 +4482,7 @@ export default function PublicOrderFormPage() {
                                 ) : (
                                   <>
                                     <div style={{ width: 120 }}>
-                                      {renderCompanionTeaserVisual(previewCompanion, product.name)}
+                                      {renderCompanionTeaserVisual(previewCompanion, product.name, previewTargetPackage)}
                                     </div>
                                     <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
                                       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>

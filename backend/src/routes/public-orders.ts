@@ -94,7 +94,7 @@ type CompanionOverride = {
   declineText?: string;
   embedHtml?: string;
   priority?: number;
-  displayMode?: "compact" | "card";
+  displayMode?: "compact" | "card" | "showcase";
 };
 
 const companionIsActive = (companion: Pick<CompanionOverride, "active"> | null | undefined) => companion?.active !== false;
