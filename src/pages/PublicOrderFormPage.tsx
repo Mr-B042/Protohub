@@ -755,6 +755,13 @@ function companionImageSource(companion: PublicCompanion, targetPackage?: Public
     : (companion.imageUrl || packageImage || "");
 }
 
+function companionShowcaseImageList(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
+  return Array.from(new Set([
+    ...(targetPackage ? packageImageList(targetPackage) : []),
+    companion.imageUrl ?? ""
+  ].map((url) => url.trim()).filter(Boolean))).slice(0, 15);
+}
+
 function renderCompanionMedia(companion: PublicCompanion, productName: string, targetPackage?: PublicPackage | null) {
   const embedHtml = (companion.embedHtml ?? "").trim();
   if (embedHtml) {
@@ -1011,6 +1018,7 @@ export default function PublicOrderFormPage() {
   const [freeDeliverySlotStatus, setFreeDeliverySlotStatus] = useState<PublicFreeDeliverySlotStatus | null>(null);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
   const [packageCarouselIndexById, setPackageCarouselIndexById] = useState<Record<string, number>>({});
+  const [companionCarouselIndexByKey, setCompanionCarouselIndexByKey] = useState<Record<string, number>>({});
   const [isCompactUpsellViewport, setIsCompactUpsellViewport] = useState(() =>
     typeof window !== "undefined" ? window.matchMedia("(max-width: 680px)").matches : false
   );
@@ -2918,7 +2926,7 @@ export default function PublicOrderFormPage() {
   const cardCompanionGroups = useMemo(
     () => Object.values(
       companionOptions
-        .filter((companion) => (companion.displayMode ?? "compact") === "card" || (companion.displayMode ?? "compact") === "showcase")
+        .filter((companion) => (companion.displayMode ?? "compact") === "card")
         .reduce<Record<string, { product: PublicProduct | undefined; companions: PublicCompanion[]; priority: number }>>((acc, companion) => {
           const key = companion.productId;
           if (!acc[key]) {
@@ -2942,6 +2950,13 @@ export default function PublicOrderFormPage() {
       }))
       .sort((a, b) => b.priority - a.priority),
     [companionOptions, products]
+  );
+
+  const showcaseCompanionOptions = useMemo(
+    () => companionOptions
+      .filter((companion) => (companion.displayMode ?? "compact") === "showcase")
+      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0)),
+    [companionOptions]
   );
 
   const compactCompanionOptions = useMemo(
@@ -4209,6 +4224,264 @@ export default function PublicOrderFormPage() {
                   );
                 })}
               </div>
+
+              {showcaseCompanionOptions.length > 0 && (
+                <div style={{ display: "grid", gap: 14, marginTop: 16 }}>
+                  {showcaseCompanionOptions.map((companion, index) => {
+                    const product = products.find((item) => item.id === companion.productId);
+                    if (!product) return null;
+                    const targetPackage = targetPackageForCompanion(companion, products);
+                    const imageUrls = companionShowcaseImageList(companion, targetPackage);
+                    const hasCarousel = imageUrls.length > 1;
+                    const companionKey = companionSelectionKey(companion);
+                    const activeCarouselIndex = imageUrls.length > 0
+                      ? Math.min(companionCarouselIndexByKey[companionKey] ?? 0, imageUrls.length - 1)
+                      : 0;
+                    const activeImageUrl = imageUrls[activeCarouselIndex] ?? imageUrls[0];
+                    const updateCarouselIndex = (
+                      nextIndex: number,
+                      event: { preventDefault: () => void; stopPropagation: () => void }
+                    ) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (!hasCarousel) return;
+                      setCompanionCarouselIndexByKey((prev) => ({
+                        ...prev,
+                        [companionKey]: (nextIndex + imageUrls.length) % imageUrls.length
+                      }));
+                    };
+                    const selected = isOrderFormCrossSellSelected(companion);
+                    const currency = targetPackage?.currency ?? primaryPricing(product)?.currency ?? "NGN";
+                    const total = companionLineTotal(companion, product, targetPackage);
+                    const standardUnit = targetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
+                    const standardTotal = standardUnit * Math.max(1, Number(companion.quantity) || 1);
+                    const savings = Math.max(0, standardTotal - total);
+                    const discountPercent = companionDiscountPercent(standardTotal, total);
+                    const title = targetPackage?.name || product.name;
+                    const componentSummary = targetPackage ? packageComponentSummary(targetPackage, products) : "";
+                    const packageDescriptionText = targetPackage?.description.trim() ?? "";
+                    const packageDetailText = packageDescriptionText || companion.pitch?.trim() || companionDisplayDetail(companion, targetPackage);
+                    const freeGiftItems = targetPackage ? packageFreeGiftItems(targetPackage, products) : [];
+                    const freeGiftQuantity = freeGiftItems.reduce((sum, gift) => sum + gift.quantity, 0);
+                    const freeGiftBadge = `${freeGiftQuantity} FREE GIFT${freeGiftQuantity === 1 ? "" : "S"}`;
+                    const badgeText = companion.badgeText?.trim();
+                    const isFeatured = Boolean(targetPackage?.featuredComboCard || badgeText || hasCarousel);
+                    const selectOffer = () => setOrderFormCrossSellSelection(companion, !selected, { exclusiveProduct: true });
+                    return (
+                      <div
+                        key={`${companionKey}-${index}`}
+                        role="checkbox"
+                        aria-checked={selected}
+                        tabIndex={0}
+                        className={`public-package-option${isFeatured ? " public-package-option--featured" : " public-package-option--compact"}${imageUrls.length > 0 ? " public-package-option--with-media" : ""}${selected ? " public-package-option--selected" : ""}`}
+                        onClick={(event) => {
+                          if ((event.target as HTMLElement).closest("button,input")) return;
+                          selectOffer();
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          selectOffer();
+                        }}
+                        style={{
+                          display: "grid",
+                          gap: 12,
+                          padding: 14,
+                          cursor: "pointer",
+                          border: `2px solid ${selected ? "#1F8FE0" : isFeatured ? "#f59e0b" : "#e5e7eb"}`,
+                          borderRadius: 20,
+                          background: selected ? "#eff6ff" : isFeatured ? "#fffbeb" : "#ffffff",
+                          boxShadow: selected ? "0 16px 38px rgba(31, 143, 224, 0.16)" : "0 10px 30px rgba(15, 23, 42, 0.08)"
+                        }}
+                      >
+                        {imageUrls.length > 0 && (
+                          <div className="public-package-option__media" style={{ position: "relative", display: "grid", gap: 8 }}>
+                            <div
+                              style={{
+                                position: "relative",
+                                width: "100%",
+                                aspectRatio: "1 / 1",
+                                borderRadius: 16,
+                                overflow: "hidden",
+                                border: "1px solid rgba(148, 163, 184, 0.28)",
+                                background: "#ffffff"
+                              }}
+                            >
+                              <img
+                                src={activeImageUrl}
+                                alt=""
+                                aria-hidden="true"
+                                style={{
+                                  position: "absolute",
+                                  inset: 0,
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "cover",
+                                  filter: "blur(28px) brightness(0.96)",
+                                  transform: "scale(1.15)",
+                                  opacity: 0.48
+                                }}
+                              />
+                              <img
+                                className="public-package-option__image"
+                                src={activeImageUrl}
+                                alt={`${title} add-on preview ${activeCarouselIndex + 1}`}
+                                style={{
+                                  position: "absolute",
+                                  inset: 0,
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "contain"
+                                }}
+                              />
+                              {selected && (
+                                <span className="public-package-option__selected-ribbon">
+                                  Added to order
+                                </span>
+                              )}
+                              {hasCarousel && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="public-package-option__side-nav public-package-option__side-nav--prev"
+                                    aria-label={`Show previous ${title} photo`}
+                                    onClick={(event) => updateCarouselIndex(activeCarouselIndex - 1, event)}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="public-package-option__side-nav public-package-option__side-nav--next"
+                                    aria-label={`Show next ${title} photo`}
+                                    onClick={(event) => updateCarouselIndex(activeCarouselIndex + 1, event)}
+                                  />
+                                </>
+                              )}
+                            </div>
+                            {hasCarousel && (
+                              <>
+                                <div className="public-package-option__photo-dots" aria-label={`${title} photo selector`}>
+                                  {imageUrls.map((_, imageIndex) => (
+                                    <button
+                                      key={`${companionKey}-dot-${imageIndex}`}
+                                      type="button"
+                                      className={imageIndex === activeCarouselIndex ? "is-active" : ""}
+                                      aria-label={`Show ${title} photo ${imageIndex + 1}`}
+                                      onClick={(event) => updateCarouselIndex(imageIndex, event)}
+                                    />
+                                  ))}
+                                </div>
+                                <div className="public-package-option__thumbnails" aria-label={`${title} photos`}>
+                                  {imageUrls.map((imageUrl, imageIndex) => (
+                                    <button
+                                      key={`${companionKey}-thumb-${imageIndex}`}
+                                      type="button"
+                                      className={imageIndex === activeCarouselIndex ? "is-active" : ""}
+                                      aria-label={`Show ${title} photo ${imageIndex + 1}`}
+                                      onClick={(event) => updateCarouselIndex(imageIndex, event)}
+                                    >
+                                      <img src={imageUrl} alt="" aria-hidden="true" />
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="public-package-option__gallery-nav" aria-label={`${title} photo navigation`}>
+                                  <button
+                                    type="button"
+                                    aria-label={`Show previous ${title} photo`}
+                                    onClick={(event) => updateCarouselIndex(activeCarouselIndex - 1, event)}
+                                  >
+                                    Previous
+                                  </button>
+                                  <span>Tap thumbnails or use Next</span>
+                                  <button
+                                    type="button"
+                                    aria-label={`Show next ${title} photo`}
+                                    onClick={(event) => updateCarouselIndex(activeCarouselIndex + 1, event)}
+                                  >
+                                    Next
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                        <div className="public-package-option__meta" style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "start", gap: 12 }}>
+                          <input
+                            type="radio"
+                            name={`public-showcase-addon-${companion.productId}`}
+                            checked={selected}
+                            readOnly
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              selectOffer();
+                            }}
+                            style={{ marginTop: 4, accentColor: "#1F8FE0" }}
+                          />
+                          <div className="public-package-option__copy" style={{ display: "grid", gap: 6, minWidth: 0 }}>
+                            <div className="public-package-option__badges" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              {selected && (
+                                <span className="public-package-option__selected-chip">
+                                  Added
+                                </span>
+                              )}
+                              {badgeText ? (
+                                <span style={{ display: "inline-flex", width: "fit-content", borderRadius: 999, padding: "3px 8px", background: "#fef3c7", color: "#92400e", fontSize: 11, fontWeight: 900, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                                  {badgeText}
+                                </span>
+                              ) : targetPackage?.featuredComboCard ? (
+                                <span style={{ display: "inline-flex", width: "fit-content", borderRadius: 999, padding: "3px 8px", background: "#fef3c7", color: "#92400e", fontSize: 11, fontWeight: 900, letterSpacing: "0.04em" }}>
+                                  FEATURED COMBO
+                                </span>
+                              ) : null}
+                              {targetPackage?.requiresStateStock && (
+                                <span style={{ display: "inline-flex", width: "fit-content", borderRadius: 999, padding: "3px 8px", background: "#dcfce7", color: "#166534", fontSize: 11, fontWeight: 900, letterSpacing: "0.04em" }}>
+                                  STATE STOCK CHECKED
+                                </span>
+                              )}
+                              {freeGiftQuantity > 0 && (
+                                <span className="public-package-option__gift-chip">
+                                  {freeGiftBadge}
+                                </span>
+                              )}
+                            </div>
+                            <div className="public-package-option__title" style={{ fontWeight: 900, fontSize: 17, color: "#111827", lineHeight: 1.2 }}>{title}</div>
+                            <div className={`public-package-option__description ${packageDescriptionText ? "public-package-option__description--custom" : "public-package-option__description--fallback"}`} style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.5 }}>
+                              {packageDetailText}
+                            </div>
+                            {componentSummary && packageDescriptionText && (
+                              <div className="public-package-option__components" style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{componentSummary}</div>
+                            )}
+                            {freeGiftItems.length > 0 && (
+                              <div className="public-package-option__free-gifts">
+                                <strong>Free gift included:</strong>
+                                <span>{freeGiftItems.map((gift) => gift.label).join(" + ")}</span>
+                              </div>
+                            )}
+                            {companion.pitch?.trim() && packageDescriptionText && (
+                              <div style={{ fontSize: 12, color: "#92400e", fontWeight: 800, lineHeight: 1.45 }}>
+                                {companion.pitch.trim()}
+                              </div>
+                            )}
+                            {hasCarousel && (
+                              <div className="public-package-option__swipe" style={{ fontSize: 12, color: "#92400e", fontWeight: 800 }}>
+                                Tap any photo thumbnail to view all {imageUrls.length} pictures
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: "grid", justifyItems: "end", gap: 4, minWidth: 86 }}>
+                            <strong className="public-package-option__price" style={{ fontSize: 18, color: "#111827", whiteSpace: "nowrap", lineHeight: 1.2 }}>
+                              {companion.pricingMode === "free" ? "FREE" : formatProductMoney(total, currency)}
+                            </strong>
+                            {savings > 0 && companion.pricingMode !== "free" && (
+                              <span style={{ fontSize: 11, fontWeight: 800, color: "#047857", whiteSpace: "nowrap" }}>
+                                Save {formatProductMoney(savings, currency)}{discountPercent > 0 ? ` · ${discountPercent}% off` : ""}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {compactCompanionOptions.length > 0 && (
                 <div className="cross-sell-picker" style={{ padding: 12, border: "1px solid #1F8FE040", background: "#eff6ff", borderRadius: 12, marginTop: 16 }}>
