@@ -555,7 +555,7 @@ type PackageCompanion = {
   videoUrl?: string;       // optional companion video / embed url
   embedHtml?: string;      // optional raw embed code rendered in sandboxed iframe
   priority?: number;       // higher shown first when multiple cards exist
-  displayMode?: "compact" | "card"; // 'card' renders a big visual bump above Pay On Delivery
+  displayMode?: "compact" | "card" | "showcase"; // 'showcase' renders a gallery-style visual offer
 };
 type PackageComponent = {
   componentId?: string;
@@ -4014,7 +4014,7 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
   videoUrl: companion.videoUrl ?? "",
   embedHtml: companion.embedHtml ?? "",
   priority: typeof companion.priority === "number" ? companion.priority : 0,
-  displayMode: companion.displayMode === "card" ? "card" : "compact"
+  displayMode: companion.displayMode === "showcase" ? "showcase" : companion.displayMode === "card" ? "card" : "compact"
 });
 const companionIsActive = (companion: Pick<PackageCompanion, "active"> | null | undefined) => companion?.active !== false;
 const normalisePackageComponent = (component: Partial<PackageComponent>): PackageComponent => ({
@@ -7905,6 +7905,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderFormState, setOrderFormState] = useState("");
   const [orderFormPackageId, setOrderFormPackageId] = useState("");
   const [orderFormCrossSells, setOrderFormCrossSells] = useState<{ productId: string; quantity: number }[]>([]);
+  const [orderFormAddOnGalleryIndex, setOrderFormAddOnGalleryIndex] = useState<Record<string, number>>({});
   const toggleOrderFormCrossSell = (productId: string) => setOrderFormCrossSells((prev) => prev.some((c) => c.productId === productId) ? prev.filter((c) => c.productId !== productId) : [...prev, { productId, quantity: 1 }]);
   const hydrateCallOutcomeDraft = (outcome?: string | null) => {
     const normalized = (outcome ?? "").trim();
@@ -30944,14 +30945,14 @@ ${waybillLineItems(w).length > 1
                       )}
                     </div>
                   )}
-                  {/* Card-mode bump cards — last opportunity to upsell, before Pay On Delivery.
-                      Renders one card per eligible card-mode companion, sorted by priority desc. */}
+                  {/* Visual bump cards — last opportunity to upsell, before Pay On Delivery.
+                      Compact add-ons stay in the old checkbox block above; card/showcase modes render here. */}
                   {(() => {
                     const chosen = publicPackages.find((p) => p.id === orderFormPackageId);
                     if (!chosen?.companionProducts) return null;
                     const cards = chosen.companionProducts
                       .filter(companionIsActive)
-                      .filter((c) => !c.autoInclude && c.displayMode === "card")
+                      .filter((c) => !c.autoInclude && (c.displayMode === "card" || c.displayMode === "showcase"))
                       .filter((c) => companionMatchesState(c, orderFormState))
                       .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
                     if (cards.length === 0) return null;
@@ -30960,6 +30961,7 @@ ${waybillLineItems(w).length > 1
                         {cards.map((c, i) => {
                           const cp = products.find((p) => p.id === c.productId);
                           if (!cp) return null;
+                          const addOnPackage = c.packageId ? cp.packages.find((pkg) => pkg.id === c.packageId) : undefined;
                           const standard = primaryPricing(cp)?.sellingPrice ?? 0;
                           const currency = primaryPricing(cp)?.currency ?? "NGN";
                           const unit = c.pricingMode === "free" ? 0
@@ -30969,13 +30971,163 @@ ${waybillLineItems(w).length > 1
                           const savings  = Math.max(0, standard * c.quantity - total);
                           const sel      = Boolean(orderFormCrossSells.find((s) => s.productId === c.productId));
                           const badge    = (c.badgeText && c.badgeText.trim()) || "🎁 Add to your order?";
+                          const title = addOnPackage?.name || cp.name;
+                          const detail = c.packageId && addOnPackage
+                            ? `${addOnPackage.quantity} pc${addOnPackage.quantity === 1 ? "" : "s"} package`
+                            : `${c.quantity} pc${c.quantity === 1 ? "" : "s"}`;
+                          const yesText = (c.ctaText && c.ctaText.trim()) || "Yes, add it";
+                          const noText = (c.declineText && c.declineText.trim()) || "No thanks";
+                          const packageImages = addOnPackage ? packageCarouselImages(addOnPackage) : [];
+                          const showcaseImages = normalisePackageImageUrls([...packageImages, c.imageUrl]);
+                          const galleryKey = c.companionId || `${c.productId}-${i}`;
+                          const rawGalleryIndex = orderFormAddOnGalleryIndex[galleryKey] ?? 0;
+                          const galleryIndex = showcaseImages.length > 0 ? ((rawGalleryIndex % showcaseImages.length) + showcaseImages.length) % showcaseImages.length : 0;
+                          const setGalleryIndex = (next: number) => {
+                            if (showcaseImages.length <= 1) return;
+                            const safeNext = ((next % showcaseImages.length) + showcaseImages.length) % showcaseImages.length;
+                            setOrderFormAddOnGalleryIndex((prev) => ({ ...prev, [galleryKey]: safeNext }));
+                          };
+                          if (c.displayMode === "showcase") {
+                            return (
+                              <div
+                                key={galleryKey}
+                                style={{
+                                  border: `2px solid ${sel ? "#059669" : "#f59e0b"}`,
+                                  borderRadius: 24,
+                                  background: sel ? "#ecfdf5" : "#fffbeb",
+                                  overflow: "hidden",
+                                  boxShadow: sel ? "0 18px 40px rgba(5, 150, 105, 0.12)" : "0 18px 42px rgba(245, 158, 11, 0.14)"
+                                }}
+                              >
+                                {showcaseImages.length > 0 && (
+                                  <div style={{ padding: 14, paddingBottom: 0 }}>
+                                    <div style={{ position: "relative", borderRadius: 18, border: "1px solid #e5e7eb", background: "#fff", overflow: "hidden" }}>
+                                      <img
+                                        src={showcaseImages[galleryIndex]}
+                                        alt={`${title} offer image ${galleryIndex + 1}`}
+                                        style={{ display: "block", width: "100%", maxHeight: 520, objectFit: "contain", background: "#fff" }}
+                                      />
+                                      {showcaseImages.length > 1 && (
+                                        <>
+                                          <button
+                                            type="button"
+                                            aria-label="Previous add-on image"
+                                            onClick={() => setGalleryIndex(galleryIndex - 1)}
+                                            style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", width: 44, height: 44, borderRadius: 999, border: "1px solid rgba(15,23,42,0.08)", background: "rgba(255,255,255,0.92)", color: "#0f172a", display: "inline-flex", alignItems: "center", justifyContent: "center", boxShadow: "0 10px 24px rgba(15,23,42,0.16)", cursor: "pointer", minHeight: 0 }}
+                                          >
+                                            <ChevronLeft className="h-6 w-6" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            aria-label="Next add-on image"
+                                            onClick={() => setGalleryIndex(galleryIndex + 1)}
+                                            style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", width: 44, height: 44, borderRadius: 999, border: "1px solid rgba(15,23,42,0.08)", background: "rgba(255,255,255,0.92)", color: "#0f172a", display: "inline-flex", alignItems: "center", justifyContent: "center", boxShadow: "0 10px 24px rgba(15,23,42,0.16)", cursor: "pointer", minHeight: 0 }}
+                                          >
+                                            <ChevronRight className="h-6 w-6" />
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                    {showcaseImages.length > 1 && (
+                                      <>
+                                        <div style={{ display: "flex", justifyContent: "center", gap: 7, padding: "12px 0 10px" }}>
+                                          {showcaseImages.map((_, dotIndex) => (
+                                            <button
+                                              key={dotIndex}
+                                              type="button"
+                                              aria-label={`Show add-on image ${dotIndex + 1}`}
+                                              onClick={() => setGalleryIndex(dotIndex)}
+                                              style={{ width: dotIndex === galleryIndex ? 30 : 10, height: 8, borderRadius: 999, border: "none", background: dotIndex === galleryIndex ? "#1F8FE0" : "#d1d5db", padding: 0, cursor: "pointer", minHeight: 0, transition: "width 160ms ease" }}
+                                            />
+                                          ))}
+                                        </div>
+                                        <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
+                                          {showcaseImages.map((url, thumbIndex) => (
+                                            <button
+                                              key={`${url}-${thumbIndex}`}
+                                              type="button"
+                                              onClick={() => setGalleryIndex(thumbIndex)}
+                                              style={{ flex: "0 0 74px", height: 58, borderRadius: 12, border: thumbIndex === galleryIndex ? "3px solid #1F8FE0" : "2px solid #fff", background: "#fff", padding: 0, overflow: "hidden", boxShadow: "0 4px 12px rgba(15,23,42,0.10)", cursor: "pointer", minHeight: 0 }}
+                                            >
+                                              <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                                            </button>
+                                          ))}
+                                        </div>
+                                        <p style={{ margin: "2px 0 0", textAlign: "center", color: "#92400e", fontSize: 12, fontWeight: 800 }}>
+                                          Tap thumbnails or use Next to view all {showcaseImages.length} picture{showcaseImages.length === 1 ? "" : "s"}
+                                        </p>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                                <div style={{ padding: 18, display: "grid", gap: 12 }}>
+                                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+                                      <span
+                                        aria-hidden="true"
+                                        style={{ width: 24, height: 24, borderRadius: 999, border: `2px solid ${sel ? "#059669" : "#9ca3af"}`, background: sel ? "#059669" : "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 14, fontWeight: 900, flexShrink: 0 }}
+                                      >
+                                        {sel ? "✓" : ""}
+                                      </span>
+                                      <div style={{ minWidth: 0 }}>
+                                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                                          <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "5px 10px", background: "#fef3c7", color: "#92400e", fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.04em" }}>{badge}</span>
+                                          {sel && <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "5px 10px", background: "#d1fae5", color: "#065f46", fontSize: 12, fontWeight: 900 }}>Added</span>}
+                                        </div>
+                                        <h3 style={{ margin: 0, color: "#111827", fontSize: 24, lineHeight: 1.12, fontWeight: 950 }}>{title}</h3>
+                                        {c.pitch && c.pitch.trim() && (
+                                          <p style={{ margin: "8px 0 0", color: "#4b5563", fontSize: 15, lineHeight: 1.5 }}>{c.pitch}</p>
+                                        )}
+                                        <p style={{ margin: "8px 0 0", color: "#6b7280", fontSize: 13 }}>{detail}</p>
+                                      </div>
+                                    </div>
+                                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                                      {c.pricingMode === "free" ? (
+                                        <strong style={{ display: "block", fontSize: 24, color: "#047857", lineHeight: 1 }}>FREE</strong>
+                                      ) : (
+                                        <>
+                                          <strong style={{ display: "block", fontSize: 26, color: "#111827", lineHeight: 1 }}>{formatProductMoney(total, currency)}</strong>
+                                          {savings > 0 && standard * c.quantity > total && (
+                                            <span style={{ display: "block", marginTop: 4, color: "#ef4444", fontWeight: 800, textDecoration: "line-through" }}>{formatProductMoney(standard * c.quantity, currency)}</span>
+                                          )}
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {sel ? (
+                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 14px", background: "#d1fae5", border: "1px solid #a7f3d0", borderRadius: 14, color: "#065f46", fontSize: 14, fontWeight: 900 }}>
+                                      <span>✓ This add-on is included in your order</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleOrderFormCrossSell(c.productId)}
+                                        style={{ background: "#fff", color: "#065f46", border: "1px solid #a7f3d0", borderRadius: 999, fontSize: 12, fontWeight: 900, padding: "7px 11px", cursor: "pointer", minHeight: 0 }}
+                                      >Remove</button>
+                                    </div>
+                                  ) : (
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleOrderFormCrossSell(c.productId)}
+                                        style={{ padding: "12px 14px", background: "#111827", color: "white", borderRadius: 14, fontWeight: 900, fontSize: 14, border: "none", cursor: "pointer", minHeight: 0 }}
+                                      >{yesText}</button>
+                                      <button
+                                        type="button"
+                                        onClick={() => { /* explicit no — nothing to add */ }}
+                                        style={{ padding: "12px 14px", background: "white", color: "#92400e", border: "1px solid #fcd34d", borderRadius: 14, fontWeight: 900, fontSize: 14, cursor: "pointer", minHeight: 0 }}
+                                      >{noText}</button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          }
                           return (
-                            <div key={i} style={{ border: "2px solid #1F8FE0", borderRadius: 14, background: "#f0f8ff", overflow: "hidden" }}>
+                            <div key={galleryKey} style={{ border: "2px solid #1F8FE0", borderRadius: 14, background: "#f0f8ff", overflow: "hidden" }}>
                               <div style={{ background: "#1F8FE0", color: "white", padding: "8px 14px", fontSize: 13, fontWeight: 700 }}>{badge}</div>
                               <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
                                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                                   <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontWeight: 800, fontSize: 16, color: "#111827", marginBottom: 2 }}>{cp.name}{c.quantity > 1 ? ` × ${c.quantity}` : ""}</div>
+                                    <div style={{ fontWeight: 800, fontSize: 16, color: "#111827", marginBottom: 2 }}>{title}{c.quantity > 1 ? ` × ${c.quantity}` : ""}</div>
                                     {c.pitch && c.pitch.trim() && (
                                       <p style={{ margin: 0, color: "#374151", fontSize: 13, lineHeight: 1.5 }}>{c.pitch}</p>
                                     )}
@@ -31011,12 +31163,12 @@ ${waybillLineItems(w).length > 1
                                       type="button"
                                       onClick={() => toggleOrderFormCrossSell(c.productId)}
                                       style={{ flex: 1, padding: "10px 14px", background: "#1F8FE0", color: "white", borderRadius: 8, fontWeight: 700, fontSize: 14, border: "none", cursor: "pointer", minHeight: 0 }}
-                                    >✓ Yes, add it</button>
+                                    >✓ {yesText}</button>
                                     <button
                                       type="button"
                                       onClick={() => { /* explicit no — nothing to add */ }}
                                       style={{ flex: 1, padding: "10px 14px", background: "white", color: "#6b7280", border: "1px solid #d1d5db", borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: "pointer", minHeight: 0 }}
-                                    >No thanks</button>
+                                    >{noText}</button>
                                   </div>
                                 )}
                               </div>
@@ -52754,13 +52906,17 @@ ${waybillLineItems(w).length > 1
                                     <select
                                       className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                       value={c.displayMode ?? "compact"}
-                                      onChange={(e) => update({ displayMode: e.target.value as "compact" | "card" })}
+                                      onChange={(e) => update({ displayMode: e.target.value as "compact" | "card" | "showcase" })}
                                     >
-                                      <option value="compact">Compact checkbox row</option>
-                                      <option value="card">Big add-on card</option>
+                                      <option value="compact">Old compact checkbox row</option>
+                                      <option value="card">Simple add-on card</option>
+                                      <option value="showcase">Visual gallery card</option>
                                     </select>
+                                    {c.displayMode === "showcase" && (
+                                      <span className="text-[10px] text-gray-400">Uses this offer image, or the selected bundle package carousel if one exists.</span>
+                                    )}
                                   </label>
-                                  {c.displayMode === "card" ? (
+                                  {c.displayMode === "card" || c.displayMode === "showcase" ? (
                                     <label className="flex flex-col gap-1">
                                       <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center justify-between">
                                         Badge text <span className="text-gray-400 font-normal normal-case">{(c.badgeText ?? "").length}/30</span>
