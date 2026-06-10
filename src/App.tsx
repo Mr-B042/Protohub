@@ -22427,17 +22427,14 @@ ${waybillLineItems(w).length > 1
     productId: string,
     packageId: string,
     nextImages: string[],
-    packageNameForToast: string
+    packageNameForToast: string,
+    successMessage?: string
   ) => {
     if (isTemporaryProductId(productId) || isTemporaryPackageId(packageId)) {
       showToast("This package is still syncing. Try again in a moment.");
       return false;
     }
     const imageUrls = normalisePackageImageUrls(nextImages);
-    if (imageUrls.length === 0) {
-      showToast("Add at least one image first.");
-      return false;
-    }
     try {
       const savedPackage = await productsApi.updatePackage(productId, packageId, {
         imageUrl: imageUrls[0] ?? "",
@@ -22471,7 +22468,7 @@ ${waybillLineItems(w).length > 1
       if (selectedPackageId === packageId) {
         setPackageImageUrls(imageUrls);
       }
-      showToast(`Image added to "${packageNameForToast}" gallery.`);
+      showToast(successMessage ?? `Image added to "${packageNameForToast}" gallery.`);
       return true;
     } catch (err: any) {
       showToast(`Could not save "${packageNameForToast}" gallery: ${err?.message ?? "try again"}.`);
@@ -52971,6 +52968,36 @@ ${waybillLineItems(w).length > 1
                         const offerGalleryPreviewImages = c.displayMode === "showcase"
                           ? normalisePackageImageUrls([...targetPackageImages, c.imageUrl])
                           : [];
+                        const handleCompanionGalleryDragEnd = (event: DragEndEvent) => {
+                          if (!targetPackage || !targetProduct) return;
+                          const { active, over } = event;
+                          if (!over || active.id === over.id) return;
+                          const oldIndex = targetPackageImages.indexOf(String(active.id));
+                          const newIndex = targetPackageImages.indexOf(String(over.id));
+                          if (oldIndex === -1 || newIndex === -1) return;
+                          const nextImages = arrayMove(targetPackageImages, oldIndex, newIndex);
+                          void saveCompanionGalleryToPackage(
+                            targetProduct.id,
+                            targetPackage.id,
+                            nextImages,
+                            targetPackage.name,
+                            `Gallery order updated for "${targetPackage.name}".`
+                          );
+                        };
+                        const removeCompanionGalleryImage = (imageUrl: string) => {
+                          if (targetPackage && targetProduct) {
+                            const nextImages = targetPackageImages.filter((url) => url !== imageUrl);
+                            void saveCompanionGalleryToPackage(
+                              targetProduct.id,
+                              targetPackage.id,
+                              nextImages,
+                              targetPackage.name,
+                              `Image removed from "${targetPackage.name}" gallery.`
+                            );
+                            return;
+                          }
+                          update({ imageUrl: "" });
+                        };
                         const showcaseGalleryHasRecommendedCount = offerGalleryPreviewImages.length >= SHOWCASE_GALLERY_RECOMMENDED_IMAGES;
                         const parentProductStates = (selectedProduct.availableStates?.length ?? 0) > 0 ? selectedProduct.availableStates! : nigeriaStates;
                         const stateRuleMode = c.stateFilterMode ?? "all";
@@ -53126,19 +53153,54 @@ ${waybillLineItems(w).length > 1
                                     )}
                                   </div>
                                   {offerGalleryPreviewImages.length > 0 ? (
-                                    <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                                      {offerGalleryPreviewImages.slice(0, 8).map((url, imageIdx) => (
-                                        <div key={`${url}-${imageIdx}`} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-white bg-white shadow-sm">
-                                          <img src={url} alt="" className="h-full w-full object-cover" />
-                                          {imageIdx === 0 && (
-                                            <span className="absolute left-1 top-1 rounded bg-amber-500 px-1.5 py-0.5 text-[9px] font-black uppercase text-white">Main</span>
-                                          )}
+                                    <div className="mt-3 grid gap-2">
+                                      {targetPackage && targetPackageImages.length > 0 ? (
+                                        <>
+                                          <p className="m-0 text-[11px] font-semibold text-amber-800/80">
+                                            Drag any image to reorder. The first image is the main preview customers see.
+                                          </p>
+                                          <DndContext sensors={packageImageSortableSensors} collisionDetection={closestCenter} onDragEnd={handleCompanionGalleryDragEnd}>
+                                            <SortableContext items={targetPackageImages} strategy={rectSortingStrategy}>
+                                              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                                {targetPackageImages.map((url, imageIdx) => (
+                                                  <SortablePackageImage
+                                                    key={url}
+                                                    url={url}
+                                                    index={imageIdx}
+                                                    isMain={imageIdx === 0}
+                                                    onRemove={() => removeCompanionGalleryImage(url)}
+                                                  />
+                                                ))}
+                                              </div>
+                                            </SortableContext>
+                                          </DndContext>
+                                        </>
+                                      ) : (
+                                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                          {offerGalleryPreviewImages.map((url, imageIdx) => (
+                                            <div key={`${url}-${imageIdx}`} className="relative overflow-hidden rounded-lg border border-amber-100 bg-amber-50">
+                                              <img src={url} alt="" className="h-24 w-full select-none object-cover" draggable={false} />
+                                              {imageIdx === 0 && (
+                                                <span className="absolute left-1 top-1 inline-flex rounded-md border border-amber-200 bg-white/95 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-800 shadow-sm">
+                                                  Main
+                                                </span>
+                                              )}
+                                              <button
+                                                type="button"
+                                                className="absolute right-1 top-1 !min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-full border border-red-100 bg-white/95 text-red-600 shadow-sm"
+                                                onClick={() => removeCompanionGalleryImage(url)}
+                                                title="Remove image"
+                                              >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                              </button>
+                                            </div>
+                                          ))}
                                         </div>
-                                      ))}
-                                      {offerGalleryPreviewImages.length > 8 && (
-                                        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white text-xs font-black text-amber-800">
-                                          +{offerGalleryPreviewImages.length - 8}
-                                        </div>
+                                      )}
+                                      {targetPackage && c.imageUrl && !targetPackageImages.includes(c.imageUrl) && (
+                                        <p className="m-0 text-[11px] text-amber-800/80">
+                                          This offer also has an old single image saved. New gallery order is controlled by the "{targetPackage.name}" package carousel above.
+                                        </p>
                                       )}
                                     </div>
                                   ) : (
