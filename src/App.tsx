@@ -4045,7 +4045,7 @@ const replacePackageFreeGiftComponents = (
 const normalisePackageStateFilterMode = (mode: ProductPackage["stateFilterMode"]): "all" | "allow" | "block" =>
   mode === "allow" || mode === "block" ? mode : "all";
 const PACKAGE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
-const SHOWCASE_GALLERY_MIN_IMAGES = 10;
+const SHOWCASE_GALLERY_RECOMMENDED_IMAGES = 10;
 const normalisePackageImageUrls = (urls: (string | null | undefined)[] | undefined) =>
   Array.from(new Set((urls ?? []).map((url) => (url ?? "").trim()).filter(Boolean))).slice(0, 15);
 const packageCarouselImages = (pkg: Pick<ProductPackage, "imageUrl" | "imageUrls">) => {
@@ -22440,22 +22440,6 @@ ${waybillLineItems(w).length > 1
     );
     if (invalidStateScopedOffer) {
       showToast("Pick at least one state for every 'Show only in selected states' offer.");
-      return;
-    }
-    const invalidShowcaseOffer = normalisedCompanions.find((companion) => {
-      if (!companionIsActive(companion)) return false;
-      if ((companion.placement ?? "inline") === "upsell") return false;
-      if ((companion.displayMode ?? "compact") !== "showcase") return false;
-      const targetProduct = products.find((product) => product.id === companion.productId);
-      const targetPackage = targetProduct?.packages?.find((pkg) => pkg.id === companion.packageId);
-      const galleryImages = normalisePackageImageUrls([
-        ...(targetPackage ? packageCarouselImages(targetPackage) : []),
-        companion.imageUrl
-      ]);
-      return galleryImages.length < SHOWCASE_GALLERY_MIN_IMAGES;
-    });
-    if (invalidShowcaseOffer) {
-      showToast(`Visual gallery card needs at least ${SHOWCASE_GALLERY_MIN_IMAGES} images. Add more images to the selected bundle package carousel, or switch this offer to Simple add-on card.`);
       return;
     }
     if (packageStateFilterMode === "allow" && packageStateRestrictions.length === 0) {
@@ -52848,7 +52832,7 @@ ${waybillLineItems(w).length > 1
                         const offerGalleryPreviewImages = c.displayMode === "showcase"
                           ? normalisePackageImageUrls([...(targetPackage ? packageCarouselImages(targetPackage) : []), c.imageUrl])
                           : [];
-                        const showcaseGalleryReady = offerGalleryPreviewImages.length >= SHOWCASE_GALLERY_MIN_IMAGES;
+                        const showcaseGalleryHasRecommendedCount = offerGalleryPreviewImages.length >= SHOWCASE_GALLERY_RECOMMENDED_IMAGES;
                         const parentProductStates = (selectedProduct.availableStates?.length ?? 0) > 0 ? selectedProduct.availableStates! : nigeriaStates;
                         const stateRuleMode = c.stateFilterMode ?? "all";
                         const stateSummary =
@@ -52925,22 +52909,22 @@ ${waybillLineItems(w).length > 1
                                 </label>
                               </div>
                               {(c.placement ?? "inline") !== "upsell" && c.displayMode === "showcase" && (
-                                <div className={`mt-3 rounded-lg border p-3 ${showcaseGalleryReady ? "border-amber-100 bg-amber-50/50" : "border-red-200 bg-red-50/70"}`}>
+                                <div className={`mt-3 rounded-lg border p-3 ${showcaseGalleryHasRecommendedCount ? "border-amber-100 bg-amber-50/50" : "border-amber-200 bg-amber-50/70"}`}>
                                   <div className="flex items-start justify-between gap-3 flex-wrap">
                                     <div>
-                                      <p className={`m-0 text-[11px] font-black uppercase tracking-wider ${showcaseGalleryReady ? "text-amber-800" : "text-red-700"}`}>Visual gallery source</p>
-                                      <p className={`m-0 mt-1 text-xs ${showcaseGalleryReady ? "text-amber-900/75" : "text-red-700"}`}>
-                                        {showcaseGalleryReady
+                                      <p className="m-0 text-[11px] font-black uppercase tracking-wider text-amber-800">Visual gallery source</p>
+                                      <p className="m-0 mt-1 text-xs text-amber-900/75">
+                                        {showcaseGalleryHasRecommendedCount
                                           ? targetPackage
                                             ? `Customer card uses the "${targetPackage.name}" package carousel first. Edit that package's image carousel to change the gallery.`
                                             : "Customer card uses this offer image gallery."
                                           : targetPackage
-                                            ? `Add at least ${SHOWCASE_GALLERY_MIN_IMAGES} images to the "${targetPackage.name}" package carousel before saving this as a visual gallery card.`
-                                            : `Select a bundle package with ${SHOWCASE_GALLERY_MIN_IMAGES}+ carousel images, or switch this offer to Simple add-on card.`}
+                                            ? `You can save now. ${SHOWCASE_GALLERY_RECOMMENDED_IMAGES} images are recommended for a stronger swipe gallery; add more images to the "${targetPackage.name}" package carousel when ready.`
+                                            : `You can save now. ${SHOWCASE_GALLERY_RECOMMENDED_IMAGES} images are recommended for a stronger swipe gallery, but any number will work.`}
                                       </p>
                                     </div>
-                                    <span className={`rounded-full bg-white px-2.5 py-1 text-[11px] font-black ring-1 ${showcaseGalleryReady ? "text-amber-800 ring-amber-200" : "text-red-700 ring-red-200"}`}>
-                                      {showcaseGalleryReady ? `${offerGalleryPreviewImages.length} images` : `${offerGalleryPreviewImages.length}/${SHOWCASE_GALLERY_MIN_IMAGES} images`}
+                                    <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black text-amber-800 ring-1 ring-amber-200">
+                                      {showcaseGalleryHasRecommendedCount ? `${offerGalleryPreviewImages.length} images` : `${offerGalleryPreviewImages.length}/${SHOWCASE_GALLERY_RECOMMENDED_IMAGES} recommended`}
                                     </span>
                                   </div>
                                   {offerGalleryPreviewImages.length > 0 ? (
