@@ -6296,10 +6296,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageImageUrlDraft, setPackageImageUrlDraft] = useState("");
   const [packageSaving, setPackageSaving] = useState(false);
   const [packageImageUploading, setPackageImageUploading] = useState(0);
+  const [companionGalleryUrlDrafts, setCompanionGalleryUrlDrafts] = useState<Record<string, string>>({});
+  const [companionGalleryUploading, setCompanionGalleryUploading] = useState(0);
   const [packageImageSyncToTiers, setPackageImageSyncToTiers] = useState(false);
   const [packageFreeGiftSyncToTiers, setPackageFreeGiftSyncToTiers] = useState(false);
   const [packageCompanionSyncToPackages, setPackageCompanionSyncToPackages] = useState(false);
   const packageImageUploadTokenRef = useRef(0);
+  const companionGalleryUploadTokenRef = useRef(0);
   // Drag-and-drop sensors for the package image gallery. PointerSensor needs an
   // 8px activation distance so a click on the trash button doesn't start a drag.
   // TouchSensor needs a long-press (250 ms) so a tap on the trash isn't a drag.
@@ -22118,10 +22121,13 @@ ${waybillLineItems(w).length > 1
     setPackageFeaturedComboCard(false);
     setPackageAttributionProductId(null);
     packageImageUploadTokenRef.current += 1;
+    companionGalleryUploadTokenRef.current += 1;
     setPackageImageUrls([]);
     setPackageImageUrlDraft("");
     setPackageSaving(false);
     setPackageImageUploading(0);
+    setCompanionGalleryUrlDrafts({});
+    setCompanionGalleryUploading(0);
     setPackageImageSyncToTiers(false);
     setPackageFreeGiftSyncToTiers(false);
     setPackageCompanionSyncToPackages(false);
@@ -22157,9 +22163,12 @@ ${waybillLineItems(w).length > 1
     setPackageFeaturedComboCard(Boolean(item.featuredComboCard));
     setPackageAttributionProductId(item.attributionProductId ?? null);
     packageImageUploadTokenRef.current += 1;
+    companionGalleryUploadTokenRef.current += 1;
     setPackageImageUrls(packageCarouselImages(item));
     setPackageImageUrlDraft("");
     setPackageImageUploading(0);
+    setCompanionGalleryUrlDrafts({});
+    setCompanionGalleryUploading(0);
     setPackageImageSyncToTiers(false);
     setPackageFreeGiftSyncToTiers(false);
     setPackageCompanionSyncToPackages(false);
@@ -22414,6 +22423,70 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  const saveCompanionGalleryToPackage = async (
+    productId: string,
+    packageId: string,
+    nextImages: string[],
+    packageNameForToast: string
+  ) => {
+    if (isTemporaryProductId(productId) || isTemporaryPackageId(packageId)) {
+      showToast("This package is still syncing. Try again in a moment.");
+      return false;
+    }
+    const imageUrls = normalisePackageImageUrls(nextImages);
+    if (imageUrls.length === 0) {
+      showToast("Add at least one image first.");
+      return false;
+    }
+    try {
+      const savedPackage = await productsApi.updatePackage(productId, packageId, {
+        imageUrl: imageUrls[0] ?? "",
+        imageUrls
+      });
+      setProducts((prev) =>
+        prev.map((product) =>
+          product.id !== productId
+            ? product
+            : {
+                ...product,
+                packages: product.packages.map((pkg) => {
+                  if (pkg.id !== packageId) return pkg;
+                  const savedImages = savedPackageCarouselImagePatch(savedPackage as ProductPackage, { ...pkg, imageUrl: imageUrls[0] ?? "", imageUrls });
+                  return {
+                    ...pkg,
+                    ...(savedPackage as ProductPackage),
+                    packageComponents: (savedPackage as ProductPackage).packageComponents ?? pkg.packageComponents,
+                    companionProducts: (savedPackage as ProductPackage).companionProducts ?? pkg.companionProducts,
+                    stateFilterMode: (savedPackage as ProductPackage).stateFilterMode ?? pkg.stateFilterMode,
+                    stateRestrictions: (savedPackage as ProductPackage).stateRestrictions ?? pkg.stateRestrictions,
+                    requiresStateStock: (savedPackage as ProductPackage).requiresStateStock ?? pkg.requiresStateStock,
+                    featuredComboCard: (savedPackage as ProductPackage).featuredComboCard ?? pkg.featuredComboCard,
+                    imageUrl: savedImages.imageUrl,
+                    imageUrls: savedImages.imageUrls
+                  };
+                })
+              }
+        )
+      );
+      if (selectedPackageId === packageId) {
+        setPackageImageUrls(imageUrls);
+      }
+      showToast(`Image added to "${packageNameForToast}" gallery.`);
+      return true;
+    } catch (err: any) {
+      showToast(`Could not save "${packageNameForToast}" gallery: ${err?.message ?? "try again"}.`);
+      return false;
+    }
+  };
+
+  const readImageFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => resolve(String(event.target?.result ?? ""));
+      reader.onerror = () => reject(new Error("Could not read image file."));
+      reader.readAsDataURL(file);
+    });
+
   const savePackage = async () => {
     if (packageSaving) return;
     if (!selectedProduct || !packageName.trim()) {
@@ -22428,8 +22501,8 @@ ${waybillLineItems(w).length > 1
       showToast("This package is still syncing. Try again in a moment.");
       return;
     }
-    if (packageImageUploading > 0) {
-      showToast("Package images are still loading. Wait a second, then save again.");
+    if (packageImageUploading > 0 || companionGalleryUploading > 0) {
+      showToast("Images are still loading. Wait a second, then save again.");
       return;
     }
 
@@ -52829,8 +52902,74 @@ ${waybillLineItems(w).length > 1
                         const targetProduct = products.find((p) => p.id === c.productId);
                         const targetPackages = targetProduct?.packages?.filter((pkg) => pkg.active) ?? [];
                         const targetPackage = targetProduct?.packages?.find((pkg) => pkg.id === c.packageId);
+                        const targetPackageImages = targetPackage ? packageCarouselImages(targetPackage) : [];
+                        const companionGalleryKey = c.companionId || `offer-${idx}`;
+                        const companionGalleryDraft = companionGalleryUrlDrafts[companionGalleryKey] ?? "";
+                        const setCompanionGalleryDraft = (value: string) =>
+                          setCompanionGalleryUrlDrafts((prev) => ({ ...prev, [companionGalleryKey]: value }));
+                        const clearCompanionGalleryDraft = () =>
+                          setCompanionGalleryUrlDrafts((prev) => {
+                            const next = { ...prev };
+                            delete next[companionGalleryKey];
+                            return next;
+                          });
+                        const addCompanionGalleryUrl = async () => {
+                          const imageUrl = companionGalleryDraft.trim();
+                          if (!imageUrl) {
+                            showToast("Paste an image URL first.");
+                            return;
+                          }
+                          if (targetPackage && targetProduct) {
+                            const nextImages = normalisePackageImageUrls([...targetPackageImages, imageUrl]);
+                            if (nextImages.length === targetPackageImages.length) {
+                              showToast("That image is already in this package gallery.");
+                              return;
+                            }
+                            const saved = await saveCompanionGalleryToPackage(targetProduct.id, targetPackage.id, nextImages, targetPackage.name);
+                            if (saved) clearCompanionGalleryDraft();
+                            return;
+                          }
+                          update({ imageUrl });
+                          clearCompanionGalleryDraft();
+                          showToast("Offer image added.");
+                        };
+                        const uploadCompanionGalleryFiles = async (files: File[]) => {
+                          if (files.length === 0) return;
+                          const oversized = files.find((file) => file.size > PACKAGE_IMAGE_MAX_BYTES);
+                          if (oversized) {
+                            showToast("Each gallery image must be under 5 MB.");
+                            return;
+                          }
+                          const uploadToken = companionGalleryUploadTokenRef.current;
+                          const uploadCount = targetPackage ? files.length : 1;
+                          setCompanionGalleryUploading((count) => count + uploadCount);
+                          try {
+                            const uploadFiles = targetPackage ? files : files.slice(0, 1);
+                            const uploadedUrls = await Promise.all(uploadFiles.map(async (file) => {
+                              const dataUrl = await readImageFileAsDataUrl(file);
+                              if (!dataUrl) throw new Error(`Could not load ${file.name}.`);
+                              const { url } = await productsApi.uploadPackageImage(dataUrl, file.name);
+                              return url;
+                            }));
+                            if (companionGalleryUploadTokenRef.current !== uploadToken) return;
+                            if (targetPackage && targetProduct) {
+                              await saveCompanionGalleryToPackage(targetProduct.id, targetPackage.id, [...targetPackageImages, ...uploadedUrls], targetPackage.name);
+                            } else if (uploadedUrls[0]) {
+                              update({ imageUrl: uploadedUrls[0] });
+                              showToast("Offer image uploaded.");
+                            }
+                          } catch (err: any) {
+                            if (companionGalleryUploadTokenRef.current === uploadToken) {
+                              showToast(`Could not upload image: ${err?.message ?? "try again"}.`);
+                            }
+                          } finally {
+                            if (companionGalleryUploadTokenRef.current === uploadToken) {
+                              setCompanionGalleryUploading((count) => Math.max(0, count - uploadCount));
+                            }
+                          }
+                        };
                         const offerGalleryPreviewImages = c.displayMode === "showcase"
-                          ? normalisePackageImageUrls([...(targetPackage ? packageCarouselImages(targetPackage) : []), c.imageUrl])
+                          ? normalisePackageImageUrls([...targetPackageImages, c.imageUrl])
                           : [];
                         const showcaseGalleryHasRecommendedCount = offerGalleryPreviewImages.length >= SHOWCASE_GALLERY_RECOMMENDED_IMAGES;
                         const parentProductStates = (selectedProduct.availableStates?.length ?? 0) > 0 ? selectedProduct.availableStates! : nigeriaStates;
@@ -52926,6 +53065,65 @@ ${waybillLineItems(w).length > 1
                                     <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black text-amber-800 ring-1 ring-amber-200">
                                       {showcaseGalleryHasRecommendedCount ? `${offerGalleryPreviewImages.length} images` : `${offerGalleryPreviewImages.length}/${SHOWCASE_GALLERY_RECOMMENDED_IMAGES} recommended`}
                                     </span>
+                                  </div>
+                                  <div className="mt-3 rounded-lg border border-amber-100 bg-white/80 p-3">
+                                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                                      <div>
+                                        <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-700">Add gallery image</p>
+                                        <p className="m-0 mt-0.5 text-[11px] text-gray-500">
+                                          {targetPackage
+                                            ? `Images added here save to the "${targetPackage.name}" package carousel.`
+                                            : "No bundle target selected yet, so this saves as this offer's image."}
+                                        </p>
+                                      </div>
+                                      {companionGalleryUploading > 0 && (
+                                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-amber-800">
+                                          Uploading...
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr,auto,auto]">
+                                      <input
+                                        type="url"
+                                        className="border border-amber-200 rounded-md px-2 py-1.5 text-sm bg-white"
+                                        placeholder={targetPackage ? `Paste image URL for ${targetPackage.name}...` : "Paste offer image URL..."}
+                                        value={companionGalleryDraft}
+                                        onChange={(event) => setCompanionGalleryDraft(event.target.value)}
+                                      />
+                                      <button
+                                        type="button"
+                                        className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-md border border-amber-200 text-xs font-bold text-amber-800 hover:bg-amber-50 disabled:opacity-50"
+                                        disabled={companionGalleryUploading > 0}
+                                        onClick={addCompanionGalleryUrl}
+                                      >
+                                        Add image
+                                      </button>
+                                      <label className={`!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border border-amber-200 text-xs font-bold text-amber-800 hover:bg-amber-50 ${companionGalleryUploading > 0 ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}>
+                                        <Upload className="w-4 h-4" />
+                                        Upload
+                                        <input
+                                          type="file"
+                                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                                          multiple={Boolean(targetPackage)}
+                                          className="hidden"
+                                          disabled={companionGalleryUploading > 0}
+                                          onChange={(event) => {
+                                            const files = Array.from(event.target.files ?? []);
+                                            void uploadCompanionGalleryFiles(files);
+                                            event.target.value = "";
+                                          }}
+                                        />
+                                      </label>
+                                    </div>
+                                    {!targetPackage && c.imageUrl && (
+                                      <button
+                                        type="button"
+                                        className="!min-h-0 mt-2 inline-flex items-center gap-1.5 rounded-md border border-red-100 bg-white px-2.5 py-1 text-[11px] font-bold text-red-600 hover:bg-red-50"
+                                        onClick={() => update({ imageUrl: "" })}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" /> Remove offer image
+                                      </button>
+                                    )}
                                   </div>
                                   {offerGalleryPreviewImages.length > 0 ? (
                                     <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
@@ -53350,7 +53548,7 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
                 </section>
-                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={packageSaving} onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={packageSaving || packageImageUploading > 0} onClick={savePackage}>{packageSaving ? "Saving package..." : packageImageUploading > 0 ? "Loading images..." : modal === "addPackage" ? "Create Package" : "Save Package"}</button></div>
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={packageSaving} onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={packageSaving || packageImageUploading > 0 || companionGalleryUploading > 0} onClick={savePackage}>{packageSaving ? "Saving package..." : (packageImageUploading > 0 || companionGalleryUploading > 0) ? "Loading images..." : modal === "addPackage" ? "Create Package" : "Save Package"}</button></div>
               </div>
             )}
 
