@@ -6405,6 +6405,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return stored === "pricing" || stored === "packages" ? "dashboard" : stored;
   });
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
+  const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>({});
   const [expandedPackageRows, setExpandedPackageRows] = useState<Record<string, boolean>>({});
   const [addOnPerformanceRange, setAddOnPerformanceRange] = useState<AddOnPerformanceRange>("all");
   const [stateStockProductId, setStateStockProductId] = useState("");
@@ -48528,22 +48529,40 @@ ${waybillLineItems(w).length > 1
                   <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-100">
                     <Boxes className="w-4 h-4 text-[#1F8FE0]" />
                     <h2 className="text-sm font-bold text-gray-900">Product Packages</h2>
-                    {selectedProduct.packages.some((pkg) => (pkg.companionProducts ?? []).length > 0) && (
-                      <div className="ml-auto flex items-center gap-2">
+                    {selectedProduct.packages.length > 0 && (
+                      <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                         <button
                           type="button"
                           className="!min-h-0 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+                          onClick={() => setExpandedPackageSets(Object.fromEntries(packageSetOptionsForProduct(selectedProduct).map((setLabel) => [packageSetKey(setLabel), true])))}
+                        >
+                          Open all sets
+                        </button>
+                        <button
+                          type="button"
+                          className="!min-h-0 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+                          onClick={() => setExpandedPackageSets({})}
+                        >
+                          Close all sets
+                        </button>
+                        {selectedProduct.packages.some((pkg) => (pkg.companionProducts ?? []).length > 0) && (
+                          <>
+                        <button
+                          type="button"
+                          className="!min-h-0 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 transition-colors hover:bg-blue-100"
                           onClick={() => setExpandedPackageRows(Object.fromEntries(selectedProduct.packages.map((pkg) => [pkg.id, true])))}
                         >
-                          Expand all
+                          Open all offers
                         </button>
                         <button
                           type="button"
-                          className="!min-h-0 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+                          className="!min-h-0 rounded-full border border-blue-100 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 transition-colors hover:bg-blue-50"
                           onClick={() => setExpandedPackageRows({})}
                         >
-                          Collapse all
+                          Close all offers
                         </button>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -48572,8 +48591,45 @@ ${waybillLineItems(w).length > 1
                             const hasContentBadges = packageComponentCount > 0 || freeGiftCount > 0 || extraOfferCount > 0;
                             const hasRuleBadges = hasStateRule || item.requiresStateStock || item.featuredComboCard || hasCarousel;
                             const isPackageExpanded = expandedPackageRows[item.id] === true;
+                            const setLabel = packageSetLabelFor(item);
+                            const setKey = packageSetKey(setLabel);
+                            const isFirstInSet = sortedIdx === 0 || packageSetKey(sortedArr[sortedIdx - 1]?.packageSet) !== setKey;
+                            const setPackages = sortedArr.filter((pkg) => packageSetKey(pkg.packageSet) === setKey);
+                            const setLiveCount = setPackages.filter((pkg) => pkg.active).length;
+                            const setOfferCount = setPackages.reduce((sum, pkg) => sum + (pkg.companionProducts?.length ?? 0), 0);
+                            const setHiddenOfferCount = setPackages.reduce((sum, pkg) => sum + (pkg.companionProducts ?? []).filter((companion) => !companionIsActive(companion)).length, 0);
+                            const isSetExpanded = expandedPackageSets[setKey] === true;
                             return (
-                            <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                            <Fragment key={item.id}>
+                            {isFirstInSet && (
+                              <tr className="bg-slate-50/90">
+                                <td colSpan={7} className="px-4 py-3">
+                                  <button
+                                    type="button"
+                                    className="!min-h-0 flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition-all hover:border-blue-200 hover:bg-blue-50/50"
+                                    onClick={() => setExpandedPackageSets((prev) => ({ ...prev, [setKey]: !prev[setKey] }))}
+                                    aria-expanded={isSetExpanded}
+                                  >
+                                    <div className="flex min-w-0 items-center gap-3">
+                                      <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${isSetExpanded ? "bg-blue-600 text-white shadow-sm" : "bg-slate-100 text-slate-500"}`}>
+                                        {isSetExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                                      </span>
+                                      <div className="min-w-0">
+                                        <p className="m-0 truncate text-sm font-black text-slate-900">Set: {setLabel}</p>
+                                        <p className="m-0 text-xs font-semibold text-slate-500">
+                                          {setPackages.length} package{setPackages.length === 1 ? "" : "s"} · {setLiveCount} live · {setOfferCount} offer{setOfferCount === 1 ? "" : "s"}{setHiddenOfferCount > 0 ? ` · ${setHiddenOfferCount} hidden` : ""}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <span className="shrink-0 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-black text-blue-700">
+                                      {isSetExpanded ? "Hide packages" : `View packages (${setPackages.length})`}
+                                    </span>
+                                  </button>
+                                </td>
+                              </tr>
+                            )}
+                            {isSetExpanded && (
+                            <tr className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4 font-bold text-gray-900 min-w-[220px]">
                                 <div className="flex flex-col gap-2">
                                   <span className="leading-tight">{item.name}</span>
@@ -48724,6 +48780,8 @@ ${waybillLineItems(w).length > 1
                                 </div>
                               </td>
                             </tr>
+                            )}
+                            </Fragment>
                             );
                           })
                         )}
