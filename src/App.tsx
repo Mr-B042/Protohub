@@ -6779,6 +6779,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [adjustMarketingSpendStatus, setAdjustMarketingSpendStatus] = useState<"pending" | "matched" | "mismatch">("matched");
   const [adjustMarketingSpendNote, setAdjustMarketingSpendNote] = useState("");
   const [adjustMarketingSpendSaving, setAdjustMarketingSpendSaving] = useState(false);
+  const [marketingSpendReviewDialog, setMarketingSpendReviewDialog] = useState<null | {
+    recordId: string;
+    reviewStatus: "matched" | "mismatch";
+    note: string;
+    busy?: boolean;
+  }>(null);
   const [financePeriod, setFinancePeriod] = useState<Period>(() =>
     readPref<Period>("protohub.finance.period", "This Month", (raw) => raw as Period)
   );
@@ -20692,12 +20698,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const reviewMarketingSpendRecord = async (record: MarketingSpendRecord, reviewStatus: "matched" | "mismatch") => {
     if (currentRole !== "Owner" && currentRole !== "Admin") return;
-    const matchNote = window.prompt(
-      reviewStatus === "matched"
-        ? "Optional note for this matched marketer spend:"
-        : "Why does this not match the company record?"
-    );
-    if (matchNote === null) return;
+    setMarketingSpendReviewDialog({
+      recordId: record.id,
+      reviewStatus,
+      note: record.matchNote || "",
+      busy: false
+    });
+  };
+  const submitMarketingSpendReview = async () => {
+    if (currentRole !== "Owner" && currentRole !== "Admin") return;
+    if (!marketingSpendReviewDialog || marketingSpendReviewDialog.busy) return;
+    const record = marketingSpendRecords.find((item) => item.id === marketingSpendReviewDialog.recordId);
+    if (!record) {
+      setMarketingSpendReviewDialog(null);
+      return;
+    }
+    const reviewStatus = marketingSpendReviewDialog.reviewStatus;
+    const matchNote = marketingSpendReviewDialog.note.trim();
+    setMarketingSpendReviewDialog((prev) => prev ? { ...prev, busy: true } : prev);
     try {
       const row = await marketingSpendApi.update(record.id, { reviewStatus, matchNote });
       const normalized = normalizeMarketingSpendRecord(row, {
@@ -20708,10 +20726,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         matchedAt: new Date().toISOString()
       });
       setMarketingSpendRecords((prev) => prev.map((item) => item.id === record.id ? normalized : item));
+      setMarketingSpendReviewDialog(null);
       expensesApi.list().then((rows: any[]) => setExpenses(rows.map((item) => normalizeExpenseRecord(item)))).catch(() => undefined);
       showToast(reviewStatus === "matched" ? "Spend matched and added to reporting." : "Spend flagged as mismatch.");
     } catch (err: any) {
       showToast(`Could not update spend review: ${err?.message ?? err}`);
+      setMarketingSpendReviewDialog((prev) => prev ? { ...prev, busy: false } : prev);
     }
   };
   const openAdjustMarketingSpendRecord = (record: MarketingSpendRecord) => {
@@ -49684,6 +49704,84 @@ ${waybillLineItems(w).length > 1
           </section>
 	        </div>
 	      )}
+
+	      {marketingSpendReviewDialog && (() => {
+	        const record = marketingSpendRecords.find((item) => item.id === marketingSpendReviewDialog.recordId);
+	        if (!record) return null;
+	        const isMatched = marketingSpendReviewDialog.reviewStatus === "matched";
+	        const closeReviewDialog = () => {
+	          if (!marketingSpendReviewDialog.busy) setMarketingSpendReviewDialog(null);
+	        };
+	        return (
+	          <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm dark:bg-[rgba(3,7,18,0.86)]" onClick={closeReviewDialog}>
+	            <section className="w-full max-w-xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#07111b]" role="dialog" aria-modal="true" aria-labelledby="marketing-spend-review-title" onClick={(event) => event.stopPropagation()}>
+	              <div className={`relative overflow-hidden border-b px-5 py-5 ${isMatched ? "border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-sky-50 dark:border-emerald-500/20 dark:from-emerald-500/10 dark:via-[#07111b] dark:to-sky-500/10" : "border-rose-100 bg-gradient-to-br from-rose-50 via-white to-orange-50 dark:border-rose-500/20 dark:from-rose-500/10 dark:via-[#07111b] dark:to-orange-500/10"}`}>
+	                <div className="flex items-start justify-between gap-4">
+	                  <div className="flex items-start gap-3">
+	                    <span className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${isMatched ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200" : "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200"}`}>
+	                      {isMatched ? <CheckCircle2 className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}
+	                    </span>
+	                    <div>
+	                      <p className="m-0 text-[11px] font-black uppercase tracking-[0.22em] text-slate-400 dark:text-slate-500">Marketing spend review</p>
+	                      <h3 id="marketing-spend-review-title" className="m-0 mt-1 text-2xl font-black text-slate-950 dark:text-white">
+	                        {isMatched ? "Match this spend?" : "Flag spend mismatch?"}
+	                      </h3>
+	                      <p className="m-0 mt-1 text-sm font-semibold text-slate-600 dark:text-slate-300">
+	                        {marketingSpendRecordMarketerName(record)} · {displayDateFromKey(record.spendDate)} · {marketingSpendRecordProductName(record)}
+	                      </p>
+	                    </div>
+	                  </div>
+	                  <button type="button" className="!min-h-0 rounded-xl p-2 text-slate-400 hover:bg-white/80 hover:text-slate-700 disabled:opacity-50 dark:hover:bg-white/10 dark:hover:text-white" aria-label="Close marketing spend review" onClick={closeReviewDialog} disabled={marketingSpendReviewDialog.busy}>
+	                    <X className="h-5 w-5" />
+	                  </button>
+	                </div>
+	              </div>
+	              <div className="space-y-4 px-5 py-5">
+	                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+	                  <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60">
+	                    <p className="m-0 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Budget given</p>
+	                    <p className="m-0 mt-1 text-xl font-black text-slate-950 dark:text-slate-100">{formatMoney(record.budgetGiven)}</p>
+	                  </article>
+	                  <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60">
+	                    <p className="m-0 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Actual used</p>
+	                    <p className="m-0 mt-1 text-xl font-black text-slate-950 dark:text-slate-100">{formatMoney(marketingSpendAmount(record))}</p>
+	                  </article>
+	                  <article className={`rounded-2xl border p-4 ${isMatched ? "border-emerald-200 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10" : "border-rose-200 bg-rose-50 dark:border-rose-500/30 dark:bg-rose-500/10"}`}>
+	                    <p className={`m-0 text-[10px] font-black uppercase tracking-[0.18em] ${isMatched ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300"}`}>Decision</p>
+	                    <p className={`m-0 mt-1 text-xl font-black ${isMatched ? "text-emerald-900 dark:text-emerald-100" : "text-rose-900 dark:text-rose-100"}`}>{isMatched ? "Matched" : "Mismatch"}</p>
+	                  </article>
+	                </div>
+	                <label className="block">
+	                  <span className="mb-2 block text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+	                    {isMatched ? "Optional note" : "Mismatch reason"}
+	                  </span>
+	                  <textarea
+	                    rows={4}
+	                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#1F8FE0] focus:ring-4 focus:ring-[#1F8FE0]/10 dark:border-slate-700 dark:bg-[#111f2d] dark:text-slate-100 dark:placeholder:text-slate-500"
+	                    value={marketingSpendReviewDialog.note}
+	                    onChange={(event) => setMarketingSpendReviewDialog((prev) => prev ? { ...prev, note: event.target.value } : prev)}
+	                    placeholder={isMatched ? "e.g. Confirmed with company ad account record" : "e.g. Marketer submitted ₦50,000 but company record shows ₦45,000"}
+	                    autoFocus
+	                  />
+	                </label>
+	                <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold leading-6 ${isMatched ? "border-emerald-100 bg-emerald-50 text-emerald-900 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-100" : "border-rose-100 bg-rose-50 text-rose-900 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100"}`}>
+	                  {isMatched
+	                    ? "Matched spend will count in ad spend, cost/order, cost/delivered, and ROAS."
+	                    : "Mismatch spend stays out of final marketing results until it is corrected or matched."}
+	                </div>
+	              </div>
+	              <div className="flex flex-col-reverse gap-3 border-t border-slate-100 bg-slate-50 px-5 py-4 dark:border-slate-800 dark:bg-[#0a121b] sm:flex-row sm:justify-end">
+	                <button type="button" className="!min-h-0 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-60 dark:border-slate-700 dark:bg-[#111f2d] dark:text-slate-200 dark:hover:bg-slate-800" onClick={closeReviewDialog} disabled={marketingSpendReviewDialog.busy}>
+	                  Cancel
+	                </button>
+	                <button type="button" className={`!min-h-0 rounded-2xl px-5 py-3 text-sm font-black text-white shadow-lg transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isMatched ? "bg-emerald-600 shadow-emerald-900/20 hover:bg-emerald-700" : "bg-rose-600 shadow-rose-900/20 hover:bg-rose-700"}`} onClick={submitMarketingSpendReview} disabled={marketingSpendReviewDialog.busy}>
+	                  {marketingSpendReviewDialog.busy ? "Saving..." : isMatched ? "Match spend" : "Flag mismatch"}
+	                </button>
+	              </div>
+	            </section>
+	          </div>
+	        );
+	      })()}
 
 	      {adjustingMarketingSpendId && (() => {
 	        const record = marketingSpendRecords.find((item) => item.id === adjustingMarketingSpendId);
