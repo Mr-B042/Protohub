@@ -1,5 +1,6 @@
 import { type Dispatch, type SetStateAction, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { motion } from "framer-motion";
 import { PAGE_HELP, DEFAULT_HELP } from "./help-content";
 import {
   ArrowRight,
@@ -50723,6 +50724,7 @@ ${waybillLineItems(w).length > 1
 	                      softClass: string;
 	                      lineClass: string;
 	                      textClass: string;
+	                      cardClass: string;
 	                    }[] = [
 	                      {
 	                        key: "placed",
@@ -50733,7 +50735,8 @@ ${waybillLineItems(w).length > 1
 	                        doneClass: "bg-[#1F8FE0] border-[#1F8FE0] text-white shadow-[0_14px_32px_rgba(31,143,224,0.28)]",
 	                        softClass: "bg-sky-50/90 border-sky-100 text-sky-700 dark:bg-sky-500/12 dark:border-sky-400/25 dark:text-sky-200",
 	                        lineClass: "from-[#1F8FE0] to-sky-200 dark:from-sky-400 dark:to-sky-900/70",
-	                        textClass: "text-[#1F8FE0] dark:text-sky-200"
+	                        textClass: "text-[#1F8FE0] dark:text-sky-100",
+	                        cardClass: "border-sky-200/80 bg-[linear-gradient(135deg,rgba(240,249,255,0.96),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(31,143,224,0.16),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-sky-300/38 dark:bg-[linear-gradient(135deg,rgba(14,165,233,0.30),rgba(7,18,34,0.86))] dark:shadow-[0_24px_65px_rgba(14,165,233,0.20),inset_0_1px_0_rgba(255,255,255,0.10)]"
 	                      },
 	                      {
 	                        key: "confirmed",
@@ -50744,7 +50747,8 @@ ${waybillLineItems(w).length > 1
 	                        doneClass: "bg-yellow-400 border-yellow-300 text-yellow-950 shadow-[0_14px_32px_rgba(250,204,21,0.30)]",
 	                        softClass: "bg-yellow-50/90 border-yellow-100 text-yellow-800 dark:bg-yellow-400/14 dark:border-yellow-300/25 dark:text-yellow-100",
 	                        lineClass: "from-yellow-400 to-amber-200 dark:from-yellow-300 dark:to-yellow-900/60",
-	                        textClass: "text-yellow-700 dark:text-yellow-100"
+	                        textClass: "text-yellow-700 dark:text-yellow-50",
+	                        cardClass: "border-yellow-200/85 bg-[linear-gradient(135deg,rgba(254,252,232,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(250,204,21,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-yellow-300/38 dark:bg-[linear-gradient(135deg,rgba(250,204,21,0.26),rgba(27,22,7,0.80))] dark:shadow-[0_24px_65px_rgba(250,204,21,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
 	                      },
 	                      {
 	                        key: "dispatched",
@@ -50755,7 +50759,8 @@ ${waybillLineItems(w).length > 1
 	                        doneClass: "bg-orange-500 border-orange-400 text-white shadow-[0_14px_32px_rgba(249,115,22,0.30)]",
 	                        softClass: "bg-orange-50/90 border-orange-100 text-orange-800 dark:bg-orange-500/14 dark:border-orange-300/25 dark:text-orange-100",
 	                        lineClass: "from-orange-500 to-orange-200 dark:from-orange-300 dark:to-orange-900/60",
-	                        textClass: "text-orange-700 dark:text-orange-100"
+	                        textClass: "text-orange-700 dark:text-orange-50",
+	                        cardClass: "border-orange-200/85 bg-[linear-gradient(135deg,rgba(255,247,237,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(249,115,22,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-orange-300/38 dark:bg-[linear-gradient(135deg,rgba(249,115,22,0.28),rgba(28,15,5,0.82))] dark:shadow-[0_24px_65px_rgba(249,115,22,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
 	                      },
 	                      {
 	                        key: "delivered",
@@ -50766,7 +50771,8 @@ ${waybillLineItems(w).length > 1
 	                        doneClass: "bg-emerald-500 border-emerald-400 text-white shadow-[0_14px_32px_rgba(16,185,129,0.30)]",
 	                        softClass: "bg-emerald-50/90 border-emerald-100 text-emerald-800 dark:bg-emerald-500/14 dark:border-emerald-300/25 dark:text-emerald-100",
 	                        lineClass: "from-emerald-500 to-emerald-200 dark:from-emerald-300 dark:to-emerald-900/60",
-	                        textClass: "text-emerald-700 dark:text-emerald-100"
+	                        textClass: "text-emerald-700 dark:text-emerald-50",
+	                        cardClass: "border-emerald-200/85 bg-[linear-gradient(135deg,rgba(236,253,245,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(16,185,129,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-emerald-300/38 dark:bg-[linear-gradient(135deg,rgba(16,185,129,0.28),rgba(5,26,18,0.84))] dark:shadow-[0_24px_65px_rgba(16,185,129,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
 	                      }
 	                    ];
 	                    const exceptionConfig = s === "Failed"
@@ -50775,7 +50781,7 @@ ${waybillLineItems(w).length > 1
 	                          statusLabel: "Needs recovery",
 	                          Icon: CircleX,
 	                          timestamp: auditByStatus.get("Failed"),
-	                          cardClass: "border-red-200/80 bg-red-50/80 text-red-950 shadow-[0_18px_40px_rgba(239,68,68,0.13)] dark:border-red-400/25 dark:bg-red-500/12 dark:text-red-100",
+	                          cardClass: "border-red-200/80 bg-red-50/80 text-red-950 shadow-[0_18px_40px_rgba(239,68,68,0.13)] dark:border-red-300/35 dark:bg-[linear-gradient(135deg,rgba(239,68,68,0.24),rgba(31,8,12,0.88))] dark:text-red-50 dark:shadow-[0_18px_48px_rgba(239,68,68,0.16)]",
 	                          iconClass: "bg-red-500 text-white shadow-[0_14px_30px_rgba(239,68,68,0.30)]",
 	                          pillClass: "bg-red-100 text-red-700 ring-red-200 dark:bg-red-500/20 dark:text-red-100 dark:ring-red-400/25",
 	                          helper: "This order has stopped. Use follow-up or recovery actions without losing the core journey above."
@@ -50786,7 +50792,7 @@ ${waybillLineItems(w).length > 1
 	                            statusLabel: "New date needed",
 	                            Icon: CalendarClock,
 	                            timestamp: auditByStatus.get("Postponed") ?? selectedOrder.scheduledAt ?? selectedOrder.scheduledDate,
-	                            cardClass: "border-amber-200/80 bg-amber-50/85 text-amber-950 shadow-[0_18px_40px_rgba(245,158,11,0.14)] dark:border-amber-300/25 dark:bg-amber-500/12 dark:text-amber-100",
+	                            cardClass: "border-amber-200/80 bg-amber-50/85 text-amber-950 shadow-[0_18px_40px_rgba(245,158,11,0.14)] dark:border-amber-300/35 dark:bg-[linear-gradient(135deg,rgba(245,158,11,0.24),rgba(30,22,6,0.86))] dark:text-amber-50 dark:shadow-[0_18px_48px_rgba(245,158,11,0.16)]",
 	                            iconClass: "bg-amber-500 text-white shadow-[0_14px_30px_rgba(245,158,11,0.30)]",
 	                            pillClass: "bg-amber-100 text-amber-800 ring-amber-200 dark:bg-amber-500/20 dark:text-amber-100 dark:ring-amber-300/25",
 	                            helper: "Delivery or follow-up moved. The four-step journey stays clean while this schedule note remains visible."
@@ -50797,7 +50803,7 @@ ${waybillLineItems(w).length > 1
 	                              statusLabel: "Stopped",
 	                              Icon: CircleX,
 	                              timestamp: auditByStatus.get("Cancelled"),
-	                              cardClass: "border-rose-200/80 bg-rose-50/80 text-rose-950 shadow-[0_18px_40px_rgba(244,63,94,0.13)] dark:border-rose-400/25 dark:bg-rose-500/12 dark:text-rose-100",
+	                              cardClass: "border-rose-200/80 bg-rose-50/80 text-rose-950 shadow-[0_18px_40px_rgba(244,63,94,0.13)] dark:border-rose-300/35 dark:bg-[linear-gradient(135deg,rgba(244,63,94,0.24),rgba(31,8,14,0.88))] dark:text-rose-50 dark:shadow-[0_18px_48px_rgba(244,63,94,0.16)]",
 	                              iconClass: "bg-rose-500 text-white shadow-[0_14px_30px_rgba(244,63,94,0.30)]",
 	                              pillClass: "bg-rose-100 text-rose-700 ring-rose-200 dark:bg-rose-500/20 dark:text-rose-100 dark:ring-rose-400/25",
 	                              helper: "The order was cancelled. The path above shows how far it moved before stopping."
@@ -50808,25 +50814,58 @@ ${waybillLineItems(w).length > 1
 	                          label: "In process",
 	                          timestamp: auditByStatus.get("In Process"),
 	                          helper: "Confirmed and being worked on before dispatch.",
-	                          className: "border-blue-200/80 bg-blue-50/80 text-blue-950 dark:border-blue-400/25 dark:bg-blue-500/12 dark:text-blue-100"
+	                          className: "border-blue-200/80 bg-blue-50/85 text-blue-950 dark:border-sky-300/35 dark:bg-[linear-gradient(135deg,rgba(59,130,246,0.24),rgba(7,18,34,0.86))] dark:text-sky-50"
 	                        }
 	                      : null;
 	                    return (
-	                      <div className="relative overflow-hidden rounded-[28px] border border-white/70 bg-gradient-to-br from-white/90 via-sky-50/55 to-white/75 p-3 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-slate-700/45 dark:from-[#0b1622]/92 dark:via-[#102235]/74 dark:to-[#0b1622]/88 dark:shadow-[0_28px_70px_rgba(2,6,23,0.45)] sm:p-4">
-	                        <div className="pointer-events-none absolute -right-16 -top-20 h-44 w-44 rounded-full bg-[#1F8FE0]/12 blur-3xl dark:bg-sky-400/10" />
-	                        <div className="pointer-events-none absolute -bottom-20 left-10 h-40 w-40 rounded-full bg-emerald-300/14 blur-3xl dark:bg-emerald-400/10" />
+	                      <motion.div
+	                        initial={{ opacity: 0, y: 18, scale: 0.985, rotateX: 3 }}
+	                        animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
+	                        transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+	                        whileHover={{ rotateX: 0.7, rotateY: -0.7 }}
+	                        style={{ perspective: 1200, transformStyle: "preserve-3d" }}
+	                        className="relative overflow-hidden rounded-[30px] border border-sky-100/80 bg-[radial-gradient(circle_at_10%_-10%,rgba(224,242,254,0.98),rgba(255,255,255,0.94)_42%,rgba(240,249,255,0.82))] p-3 shadow-[0_26px_70px_rgba(15,23,42,0.15),inset_0_1px_0_rgba(255,255,255,0.95)] backdrop-blur-2xl dark:border-cyan-200/20 dark:bg-[radial-gradient(circle_at_12%_-8%,rgba(14,116,144,0.38),rgba(8,18,31,0.94)_45%,rgba(2,6,23,0.98))] dark:shadow-[0_30px_85px_rgba(0,0,0,0.58),inset_0_1px_0_rgba(255,255,255,0.11)] sm:p-4"
+	                      >
+	                        <motion.div
+	                          aria-hidden="true"
+	                          animate={{ x: [0, -18, 8, 0], y: [0, 12, -8, 0], opacity: [0.35, 0.62, 0.42, 0.35] }}
+	                          transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
+	                          className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-sky-300/24 blur-3xl dark:bg-cyan-300/18"
+	                        />
+	                        <motion.div
+	                          aria-hidden="true"
+	                          animate={{ x: [0, 20, -10, 0], y: [0, -10, 12, 0], opacity: [0.28, 0.55, 0.34, 0.28] }}
+	                          transition={{ duration: 8.5, repeat: Infinity, ease: "easeInOut" }}
+	                          className="pointer-events-none absolute -bottom-24 left-4 h-52 w-52 rounded-full bg-emerald-300/20 blur-3xl dark:bg-emerald-300/14"
+	                        />
+	                        <motion.div
+	                          aria-hidden="true"
+	                          animate={{ opacity: [0.08, 0.22, 0.08], scale: [1, 1.04, 1] }}
+	                          transition={{ duration: 4.8, repeat: Infinity, ease: "easeInOut" }}
+	                          className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent dark:via-cyan-100"
+	                        />
 	                        <div className="relative flex flex-col gap-3">
 	                          <div className="flex items-start justify-between gap-3">
 	                            <div>
-	                              <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-sky-700 dark:text-sky-200">Core order journey</p>
-	                              <p className={`m-0 mt-1 text-sm font-semibold ${orderMutedTextClass}`}>Four clean milestones, with exception statuses shown separately.</p>
+	                              <p className="m-0 text-[11px] font-black uppercase tracking-[0.22em] text-sky-700 drop-shadow-sm dark:text-cyan-100 dark:[text-shadow:0_0_18px_rgba(125,211,252,0.32)]">Core order journey</p>
+	                              <p className="m-0 mt-1 text-sm font-semibold text-slate-600 dark:text-slate-200">Four clean milestones, with exception statuses shown separately.</p>
 	                            </div>
-	                            <span className="inline-flex shrink-0 items-center rounded-full border border-white/70 bg-white/75 px-3 py-1 text-[11px] font-black uppercase tracking-[0.12em] text-slate-700 shadow-sm backdrop-blur dark:border-slate-600/50 dark:bg-slate-900/45 dark:text-slate-200">
+	                            <motion.span
+	                              initial={{ opacity: 0, y: -6 }}
+	                              animate={{ opacity: 1, y: 0 }}
+	                              transition={{ delay: 0.15, duration: 0.35 }}
+	                              className="inline-flex shrink-0 items-center rounded-full border border-white/80 bg-white/80 px-3 py-1 text-[11px] font-black uppercase tracking-[0.12em] text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-xl dark:border-cyan-100/18 dark:bg-slate-950/52 dark:text-cyan-50 dark:shadow-[0_12px_30px_rgba(0,0,0,0.36),inset_0_1px_0_rgba(255,255,255,0.09)]"
+	                            >
 	                              {s === "Postponed" ? "Rescheduled" : s}
-	                            </span>
+	                            </motion.span>
 	                          </div>
 	                          {processStatus && (
-	                            <div className={`rounded-2xl border px-3 py-2.5 ${processStatus.className}`}>
+	                            <motion.div
+	                              initial={{ opacity: 0, y: 8, scale: 0.98 }}
+	                              animate={{ opacity: 1, y: 0, scale: 1 }}
+	                              transition={{ delay: 0.12, duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
+	                              className={`rounded-2xl border px-3 py-2.5 shadow-[0_14px_36px_rgba(31,143,224,0.12)] backdrop-blur-xl dark:shadow-[0_18px_46px_rgba(14,165,233,0.12)] ${processStatus.className}`}
+	                            >
 	                              <div className="flex items-center justify-between gap-3">
 	                                <div className="min-w-0">
 	                                  <p className="m-0 text-sm font-black">{processStatus.label}</p>
@@ -50834,14 +50873,23 @@ ${waybillLineItems(w).length > 1
 	                                </div>
 	                                {processStatus.timestamp && <span className="shrink-0 text-[11px] font-bold opacity-75">{formatDateTime(processStatus.timestamp)}</span>}
 	                              </div>
-	                            </div>
+	                            </motion.div>
 	                          )}
 	                          {exceptionConfig && (
-	                            <div className={`rounded-3xl border p-3 backdrop-blur ${exceptionConfig.cardClass}`}>
+	                            <motion.div
+	                              initial={{ opacity: 0, y: -8, scale: 0.985 }}
+	                              animate={{ opacity: 1, y: 0, scale: 1 }}
+	                              transition={{ delay: 0.08, duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+	                              className={`rounded-3xl border p-3 backdrop-blur-xl ${exceptionConfig.cardClass}`}
+	                            >
 	                              <div className="flex items-start gap-3">
-	                                <div className={`flex size-10 shrink-0 items-center justify-center rounded-2xl ${exceptionConfig.iconClass}`}>
+	                                <motion.div
+	                                  animate={{ rotate: [0, -2, 2, 0], scale: [1, 1.03, 1] }}
+	                                  transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+	                                  className={`flex size-10 shrink-0 items-center justify-center rounded-2xl ${exceptionConfig.iconClass}`}
+	                                >
 	                                  <exceptionConfig.Icon className="h-5 w-5" />
-	                                </div>
+	                                </motion.div>
 	                                <div className="min-w-0 flex-1">
 	                                  <div className="flex items-start justify-between gap-3">
 	                                    <div>
@@ -50857,7 +50905,7 @@ ${waybillLineItems(w).length > 1
 	                                  )}
 	                                </div>
 	                              </div>
-	                            </div>
+	                            </motion.div>
 	                          )}
 	                          <div className="grid gap-3">
 	                            {steps.map((step, idx) => {
@@ -50867,45 +50915,66 @@ ${waybillLineItems(w).length > 1
 	                              const connectorFilled = idx < currentStep;
 	                              const isLast = idx === steps.length - 1;
 	                              return (
-	                                <div
+	                                <motion.div
 	                                  key={step.label}
+	                                  initial={{ opacity: 0, x: -18, scale: 0.97 }}
+	                                  animate={{ opacity: 1, x: 0, scale: 1 }}
+	                                  transition={{ delay: 0.16 + idx * 0.085, duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+	                                  whileHover={{ y: -3, scale: 1.008, rotateX: 0.45 }}
+	                                  style={{ transformStyle: "preserve-3d" }}
 	                                  className={`relative grid grid-cols-[46px_1fr] gap-3 rounded-3xl border p-3 transition-all ${
 	                                    filled
-	                                      ? `border-white/70 bg-white/70 shadow-[0_16px_38px_rgba(15,23,42,0.08)] backdrop-blur-md dark:border-slate-600/45 dark:bg-slate-900/36 ${isActive ? "ring-2 ring-white/80 dark:ring-sky-300/20" : ""}`
-	                                      : "border-slate-200/70 bg-white/40 backdrop-blur-sm dark:border-slate-700/45 dark:bg-slate-900/20"
+	                                      ? `${step.cardClass} backdrop-blur-xl ${isActive ? "ring-2 ring-white/90 dark:ring-cyan-200/25" : ""}`
+	                                      : "border-slate-200/80 bg-white/64 shadow-[inset_0_1px_0_rgba(255,255,255,0.82),0_14px_36px_rgba(15,23,42,0.07)] backdrop-blur-xl dark:border-slate-500/38 dark:bg-[linear-gradient(135deg,rgba(15,23,42,0.88),rgba(30,41,59,0.72))] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_18px_45px_rgba(0,0,0,0.30)]"
 	                                  }`}
 	                                >
 	                                  {!isLast && (
-	                                    <div className={`absolute left-[35px] top-[62px] h-[calc(100%+12px)] w-[3px] rounded-full bg-gradient-to-b ${connectorFilled ? step.lineClass : "from-slate-200 to-slate-100 dark:from-slate-700 dark:to-slate-800"}`} />
+	                                    <motion.div
+	                                      initial={{ scaleY: 0, opacity: 0.35 }}
+	                                      animate={{ scaleY: 1, opacity: 1 }}
+	                                      transition={{ delay: 0.22 + idx * 0.08, duration: 0.45, ease: "easeOut" }}
+	                                      className={`absolute left-[35px] top-[62px] h-[calc(100%+12px)] w-[3px] origin-top rounded-full bg-gradient-to-b ${connectorFilled ? step.lineClass : "from-slate-300 to-slate-100 dark:from-slate-500/60 dark:to-slate-800"}`}
+	                                    />
 	                                  )}
-	                                  <div className={`relative z-10 flex size-11 items-center justify-center rounded-2xl border-2 ${filled ? step.doneClass : "border-slate-200 bg-white text-slate-400 shadow-sm dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-500"}`}>
+	                                  <motion.div
+	                                    animate={isActive ? { scale: [1, 1.05, 1], boxShadow: ["0 14px 34px rgba(31,143,224,0.25)", "0 18px 45px rgba(31,143,224,0.42)", "0 14px 34px rgba(31,143,224,0.25)"] } : undefined}
+	                                    transition={isActive ? { duration: 2.2, repeat: Infinity, ease: "easeInOut" } : undefined}
+	                                    className={`relative z-10 flex size-11 items-center justify-center rounded-2xl border-2 ${filled ? step.doneClass : "border-slate-300 bg-white text-slate-500 shadow-[0_12px_28px_rgba(15,23,42,0.08)] dark:border-slate-500/60 dark:bg-slate-950/90 dark:text-slate-300 dark:shadow-[0_14px_34px_rgba(0,0,0,0.42)]"}`}
+	                                  >
+	                                    {isActive && <span className="absolute -inset-1 rounded-[20px] bg-current opacity-10 blur-md" />}
 	                                    <step.Icon className="h-5 w-5" />
-	                                  </div>
+	                                  </motion.div>
 	                                  <div className="min-w-0">
 	                                    <div className="flex items-start justify-between gap-3">
 	                                      <div className="min-w-0">
-	                                        <p className={`m-0 text-[15px] font-black tracking-[-0.02em] sm:text-base ${filled ? step.textClass : orderTitleTextClass}`}>{step.label}</p>
-	                                        <p className={`m-0 mt-0.5 text-xs font-semibold leading-5 ${orderMutedTextClass}`}>{step.description}</p>
+	                                        <p className={`m-0 text-[15px] font-black tracking-[-0.02em] sm:text-base ${filled ? step.textClass : "text-slate-800 dark:text-slate-100"}`}>{step.label}</p>
+	                                        <p className="m-0 mt-0.5 text-xs font-semibold leading-5 text-slate-500 dark:text-slate-300">{step.description}</p>
 	                                      </div>
 	                                      {step.timestamp && filled && (
-	                                        <span className={`shrink-0 text-right text-[11px] font-bold leading-5 sm:text-xs ${orderMutedTextClass}`}>{formatDateTime(step.timestamp)}</span>
+	                                        <span className="shrink-0 text-right text-[11px] font-bold leading-5 text-slate-600 dark:text-slate-200 sm:text-xs">{formatDateTime(step.timestamp)}</span>
 	                                      )}
 	                                    </div>
 	                                    {isActive && (
-	                                      <span className={`mt-2 inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.12em] ${step.softClass}`}>
-	                                        Current status
+	                                      <span className={`relative mt-2 inline-flex items-center overflow-hidden rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.12em] shadow-sm ${step.softClass}`}>
+	                                        <motion.span
+	                                          aria-hidden="true"
+	                                          animate={{ x: ["-120%", "180%"] }}
+	                                          transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut", repeatDelay: 0.8 }}
+	                                          className="absolute inset-y-0 w-1/2 bg-gradient-to-r from-transparent via-white/65 to-transparent dark:via-white/24"
+	                                        />
+	                                        <span className="relative">Current status</span>
 	                                      </span>
 	                                    )}
 	                                  </div>
-	                                </div>
+	                                </motion.div>
 	                              );
 	                          })}
 	                        </div>
-	                        <div className="rounded-2xl border border-white/70 bg-white/55 px-3 py-2 text-[11px] font-semibold leading-5 text-slate-500 backdrop-blur dark:border-slate-700/45 dark:bg-slate-900/30 dark:text-slate-400">
+	                        <div className="rounded-2xl border border-white/75 bg-white/68 px-3 py-2 text-[11px] font-semibold leading-5 text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-xl dark:border-slate-500/32 dark:bg-slate-950/52 dark:text-slate-300">
 	                          Failed, cancelled, and rescheduled orders appear as smart alerts above the four core milestones, so the main status path stays clean.
 	                        </div>
 	                      </div>
-	                    </div>
+	                    </motion.div>
 	                    );
 	                  })()}
 	                </section>
