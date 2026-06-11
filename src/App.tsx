@@ -50744,7 +50744,7 @@ ${waybillLineItems(w).length > 1
 	                        Icon: ShoppingBag,
 	                        timestamp: selectedOrder.createdAt ?? selectedOrder.date ?? selectedOrder.updatedAt,
 	                        doneClass: "bg-[#1F8FE0] border-[#1F8FE0] text-white shadow-[0_14px_32px_rgba(31,143,224,0.28)]",
-	                        softClass: "bg-sky-50/90 border-sky-100 text-sky-700 dark:border-sky-300/45 dark:bg-slate-950/58 dark:text-sky-100 dark:shadow-[0_0_24px_rgba(56,189,248,0.16),inset_0_1px_0_rgba(255,255,255,0.08)]",
+	                        softClass: "border-sky-300/50 bg-slate-950/76 text-sky-50 shadow-[0_0_26px_rgba(56,189,248,0.20),inset_0_1px_0_rgba(255,255,255,0.12)]",
 	                        lineClass: "from-[#1F8FE0] to-sky-200 dark:from-sky-400 dark:to-sky-900/70",
 	                        textClass: "text-[#1F8FE0] dark:text-sky-100",
 	                        cardClass: "border-sky-200/80 bg-[linear-gradient(135deg,rgba(240,249,255,0.96),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(31,143,224,0.16),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-sky-300/38 dark:bg-[linear-gradient(135deg,rgba(14,165,233,0.30),rgba(7,18,34,0.86))] dark:shadow-[0_24px_65px_rgba(14,165,233,0.20),inset_0_1px_0_rgba(255,255,255,0.10)]"
@@ -50756,7 +50756,7 @@ ${waybillLineItems(w).length > 1
 	                        Icon: CheckCircle2,
 	                        timestamp: timestampForStatus("Confirmed", auditByStatus.get("In Process")),
 	                        doneClass: "bg-yellow-400 border-yellow-300 text-yellow-950 shadow-[0_14px_32px_rgba(250,204,21,0.30)]",
-	                        softClass: "bg-yellow-50/90 border-yellow-100 text-yellow-800 dark:border-yellow-200/48 dark:bg-slate-950/58 dark:text-yellow-50 dark:shadow-[0_0_24px_rgba(250,204,21,0.18),inset_0_1px_0_rgba(255,255,255,0.08)]",
+	                        softClass: "border-yellow-200/55 bg-slate-950/76 text-yellow-50 shadow-[0_0_26px_rgba(250,204,21,0.22),inset_0_1px_0_rgba(255,255,255,0.12)]",
 	                        lineClass: "from-yellow-400 to-amber-200 dark:from-yellow-300 dark:to-yellow-900/60",
 	                        textClass: "text-yellow-700 dark:text-yellow-50",
 	                        cardClass: "border-yellow-200/85 bg-[linear-gradient(135deg,rgba(254,252,232,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(250,204,21,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-yellow-300/38 dark:bg-[linear-gradient(135deg,rgba(250,204,21,0.26),rgba(27,22,7,0.80))] dark:shadow-[0_24px_65px_rgba(250,204,21,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
@@ -50768,7 +50768,7 @@ ${waybillLineItems(w).length > 1
 	                        Icon: Truck,
 	                        timestamp: timestampForStatus("Dispatched"),
 	                        doneClass: "bg-orange-500 border-orange-400 text-white shadow-[0_14px_32px_rgba(249,115,22,0.30)]",
-	                        softClass: "bg-orange-50/90 border-orange-100 text-orange-800 dark:border-orange-300/48 dark:bg-slate-950/58 dark:text-orange-50 dark:shadow-[0_0_24px_rgba(249,115,22,0.18),inset_0_1px_0_rgba(255,255,255,0.08)]",
+	                        softClass: "border-orange-300/55 bg-slate-950/76 text-orange-50 shadow-[0_0_26px_rgba(249,115,22,0.22),inset_0_1px_0_rgba(255,255,255,0.12)]",
 	                        lineClass: "from-orange-500 to-orange-200 dark:from-orange-300 dark:to-orange-900/60",
 	                        textClass: "text-orange-700 dark:text-orange-50",
 	                        cardClass: "border-orange-200/85 bg-[linear-gradient(135deg,rgba(255,247,237,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(249,115,22,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-orange-300/38 dark:bg-[linear-gradient(135deg,rgba(249,115,22,0.28),rgba(28,15,5,0.82))] dark:shadow-[0_24px_65px_rgba(249,115,22,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
@@ -50780,7 +50780,7 @@ ${waybillLineItems(w).length > 1
 	                        Icon: CheckCircle2,
 	                        timestamp: timestampForStatus("Delivered", selectedOrder.deliveredDate),
 	                        doneClass: "bg-emerald-500 border-emerald-400 text-white shadow-[0_14px_32px_rgba(16,185,129,0.30)]",
-	                        softClass: "bg-emerald-50/90 border-emerald-100 text-emerald-800 dark:border-emerald-300/48 dark:bg-slate-950/58 dark:text-emerald-50 dark:shadow-[0_0_24px_rgba(16,185,129,0.18),inset_0_1px_0_rgba(255,255,255,0.08)]",
+	                        softClass: "border-emerald-300/55 bg-slate-950/76 text-emerald-50 shadow-[0_0_26px_rgba(16,185,129,0.22),inset_0_1px_0_rgba(255,255,255,0.12)]",
 	                        lineClass: "from-emerald-500 to-emerald-200 dark:from-emerald-300 dark:to-emerald-900/60",
 	                        textClass: "text-emerald-700 dark:text-emerald-50",
 	                        cardClass: "border-emerald-200/85 bg-[linear-gradient(135deg,rgba(236,253,245,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(16,185,129,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-emerald-300/38 dark:bg-[linear-gradient(135deg,rgba(16,185,129,0.28),rgba(5,26,18,0.84))] dark:shadow-[0_24px_65px_rgba(16,185,129,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
@@ -50877,12 +50877,12 @@ ${waybillLineItems(w).length > 1
 	                              transition={{ delay: 0.12, duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
 	                              className={`rounded-2xl border px-3 py-2.5 shadow-[0_14px_36px_rgba(31,143,224,0.12)] backdrop-blur-xl dark:shadow-[0_18px_46px_rgba(14,165,233,0.12)] ${processStatus.className}`}
 	                            >
-	                              <div className="flex items-center justify-between gap-3">
+	                              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
 	                                <div className="min-w-0">
 	                                  <p className="m-0 text-sm font-black">{processStatus.label}</p>
 	                                  <p className="m-0 mt-0.5 text-xs font-semibold opacity-80">{processStatus.helper}</p>
 	                                </div>
-	                                {processStatus.timestamp && <span className="shrink-0 text-right text-[11px] font-bold leading-5 opacity-85">Recorded {timelineTimeLabel(processStatus.timestamp)}</span>}
+	                                {processStatus.timestamp && <span className="basis-full text-left text-[11px] font-bold leading-5 opacity-85 sm:basis-auto sm:text-right">Recorded {timelineTimeLabel(processStatus.timestamp)}</span>}
 	                              </div>
 	                            </motion.div>
 	                          )}
@@ -50956,13 +50956,13 @@ ${waybillLineItems(w).length > 1
 	                                    <step.Icon className="h-5 w-5" />
 	                                  </motion.div>
 	                                  <div className="min-w-0">
-	                                    <div className="flex items-start justify-between gap-3">
+	                                    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
 	                                      <div className="min-w-0">
 	                                        <p className={`m-0 text-[15px] font-black tracking-[-0.02em] sm:text-base ${filled ? step.textClass : "text-slate-800 dark:text-slate-100"}`}>{step.label}</p>
 	                                        <p className="m-0 mt-0.5 text-xs font-semibold leading-5 text-slate-500 dark:text-slate-300">{step.description}</p>
 	                                      </div>
 	                                      {step.timestamp && filled && (
-	                                        <span className="shrink-0 text-right text-[11px] font-bold leading-5 text-slate-600 dark:text-slate-200 sm:text-xs">Recorded {timelineTimeLabel(step.timestamp)}</span>
+	                                        <span className="basis-full text-left text-[11px] font-bold leading-5 text-slate-600 dark:text-slate-200 sm:basis-auto sm:text-right sm:text-xs">Recorded {timelineTimeLabel(step.timestamp)}</span>
 	                                      )}
 	                                    </div>
 	                                    {isActive && (
