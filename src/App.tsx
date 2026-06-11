@@ -115,9 +115,11 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
 } from "./lib/api";
 import {
+  FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
   classifyFrontendFollowUpOutcome,
   followUpOutcomeToneClass,
+  type FollowUpOutcomeGroup,
   type FollowUpRecoveryBucket
 } from "./lib/followUpOutcomes";
 import {
@@ -1584,6 +1586,77 @@ const repCallOutcomeStatusHelper: Partial<Record<OrderStatusAction, string>> = {
   "Failed": "Mark the main failure reason so the team can spot it quickly.",
   "Reschedule": "Choose the follow-up reason, then pick the new date and time below."
 };
+type FollowUpAttemptPattern = {
+  label: string;
+  group: FollowUpOutcomeGroup;
+  bucket?: FollowUpRecoveryBucket;
+  helper: string;
+  attemptType?: OrderContactAttempt["attemptType"];
+  nextActionType?: FollowUpTask["taskType"];
+};
+const followUpOutcomeDefinitionByBucket = new Map(FOLLOW_UP_OUTCOME_DEFINITIONS.map((definition) => [definition.bucket, definition]));
+const followUpAttemptPatternGroups: Array<{ title: string; helper: string; patterns: FollowUpAttemptPattern[] }> = [
+  {
+    title: "Progress / ready",
+    helper: "Use when the buyer moved forward.",
+    patterns: [
+      { label: "Confirmed", group: "progress", helper: "Customer confirmed the order.", attemptType: "delivery_confirmation" },
+      { label: "Ready now", group: "progress", bucket: "ready_now", helper: "Buyer is ready to proceed now.", attemptType: "delivery_confirmation" },
+      { label: "Awaiting payment", group: "progress", helper: "Customer wants to pay or complete payment.", attemptType: "payment_follow_up", nextActionType: "payment_check" },
+      { label: "Waybill", group: "progress", helper: "Customer/agent needs waybill tracking.", attemptType: "waybill_follow_up", nextActionType: "waybill_follow_up" }
+    ]
+  },
+  {
+    title: "Needs another follow-up",
+    helper: "Use when the buyer is still possible but not ready.",
+    patterns: [
+      { label: "Will Call Back", group: "recoverable", helper: "Customer promised to call back.", nextActionType: "callback" },
+      { label: "Scheduled Callback", group: "recoverable", helper: "A callback time was agreed.", nextActionType: "callback" },
+      { label: "Call tomorrow", group: "recoverable", bucket: "call_tomorrow", helper: "Buyer asked to be called tomorrow.", nextActionType: "callback" },
+      { label: "Call in 2-3 days", group: "recoverable", bucket: "call_in_2_3_days", helper: "Buyer asked for a later callback window.", nextActionType: "callback" },
+      { label: "Not Ready", group: "recoverable", helper: "Buyer is interested but not ready yet.", nextActionType: "callback" },
+      { label: "Waiting for salary / payday", group: "recoverable", bucket: "salary_wait", helper: "Money timing is the objection.", nextActionType: "callback" },
+      { label: "Needs spouse approval", group: "recoverable", bucket: "spouse_approval", helper: "Buyer needs to confirm with spouse/family.", nextActionType: "callback" },
+      { label: "Wants discount", group: "recoverable", bucket: "wants_discount", helper: "Price/discount is the objection.", nextActionType: "callback" },
+      { label: "Asked for WhatsApp details", group: "recoverable", bucket: "asked_for_whatsapp", helper: "Send details, then follow up.", nextActionType: "callback" },
+      { label: "Travelled", group: "recoverable", helper: "Buyer is away and needs later contact.", nextActionType: "callback" }
+    ]
+  },
+  {
+    title: "Could not reach buyer",
+    helper: "Use when the call did not connect properly.",
+    patterns: [
+      { label: "No Answer", group: "unreachable", bucket: "no_answer", helper: "Customer did not answer.", nextActionType: "callback" },
+      { label: "Not Picking", group: "unreachable", helper: "Line rang but customer did not pick.", nextActionType: "callback" },
+      { label: "Phone switched off", group: "unreachable", bucket: "switched_off", helper: "Phone was switched off.", nextActionType: "callback" },
+      { label: "Line Busy", group: "unreachable", bucket: "line_busy", helper: "Line was busy.", nextActionType: "callback" },
+      { label: "Not Reached", group: "unreachable", helper: "Customer could not be reached.", nextActionType: "callback" },
+      { label: "Not Available", group: "unreachable", helper: "Customer was unavailable.", nextActionType: "callback" },
+      { label: "Number not going", group: "unreachable", helper: "Call could not connect.", nextActionType: "callback" }
+    ]
+  },
+  {
+    title: "Stop / lost reason",
+    helper: "Use when this lead should not keep coming back to the queue.",
+    patterns: [
+      { label: "Refused", group: "closed_loss", helper: "Customer refused the offer." },
+      { label: "Not interested", group: "closed_loss", bucket: "not_interested", helper: "Customer is no longer interested." },
+      { label: "Wrong number", group: "closed_loss", bucket: "wrong_number", helper: "The phone number is wrong." },
+      { label: "Out of coverage", group: "closed_loss", bucket: "out_of_coverage", helper: "Location is not serviceable." },
+      { label: "Out of Stock", group: "closed_loss", helper: "The product cannot be fulfilled right now." }
+    ]
+  }
+];
+const followUpAttemptPatternByLabel = new Map(
+  followUpAttemptPatternGroups.flatMap((group) => group.patterns.map((pattern) => [pattern.label.toLowerCase(), pattern] as const))
+);
+const followUpAttemptCategoryOptions: Array<{ value: OrderContactAttempt["attemptType"]; label: string }> = [
+  { value: "scheduled_callback", label: "Scheduled Callback" },
+  { value: "fresh_follow_up", label: "Fresh Follow-up" },
+  { value: "delivery_confirmation", label: "Delivery Confirmation" },
+  { value: "payment_follow_up", label: "Payment Follow-up" },
+  { value: "waybill_follow_up", label: "Waybill Follow-up" }
+];
 const allOrderStatuses: Exclude<OrderStatus, "All Orders">[] = ["New", "Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
 const permissionDefs: { key: UserPermission; label: string; group: string }[] = [
   { key: "create_orders",       label: "Create Orders",       group: "Orders" },
@@ -3163,6 +3236,47 @@ const humanizeFollowUpTaskType = (value?: FollowUpTask["taskType"]) => {
   if (value === "waybill_follow_up") return "Waybill Follow-up";
   return "Callback";
 };
+const followUpAttemptTypeForTask = (value?: FollowUpTask["taskType"] | null): OrderContactAttempt["attemptType"] => {
+  if (value === "payment_check") return "payment_follow_up";
+  if (value === "delivery_confirmation") return "delivery_confirmation";
+  if (value === "waybill_follow_up") return "waybill_follow_up";
+  return "scheduled_callback";
+};
+const followUpAttemptTypeForPattern = (
+  pattern: FollowUpAttemptPattern,
+  task?: FollowUpTask | null
+): OrderContactAttempt["attemptType"] => {
+  if (pattern.attemptType) return pattern.attemptType;
+  return followUpAttemptTypeForTask(task?.taskType ?? null);
+};
+const followUpPatternChipClass = (group: FollowUpOutcomeGroup, active: boolean) => {
+  if (active) {
+    switch (group) {
+      case "progress":
+        return "border-emerald-600 bg-emerald-700 text-white shadow-[0_14px_32px_rgba(16,185,129,0.22)] dark:border-emerald-300 dark:bg-emerald-400 dark:text-emerald-950";
+      case "recoverable":
+        return "border-blue-500 bg-blue-600 text-white shadow-[0_14px_32px_rgba(37,99,235,0.22)] dark:border-sky-300 dark:bg-sky-400 dark:text-sky-950";
+      case "unreachable":
+        return "border-amber-500 bg-amber-500 text-amber-950 shadow-[0_14px_32px_rgba(245,158,11,0.2)] dark:border-amber-300 dark:bg-amber-300 dark:text-amber-950";
+      case "closed_loss":
+        return "border-rose-500 bg-rose-600 text-white shadow-[0_14px_32px_rgba(225,29,72,0.22)] dark:border-rose-300 dark:bg-rose-400 dark:text-rose-950";
+      default:
+        return "border-slate-600 bg-slate-800 text-white dark:border-slate-300 dark:bg-slate-200 dark:text-slate-950";
+    }
+  }
+  switch (group) {
+    case "progress":
+      return "border-emerald-200 bg-emerald-50 text-emerald-800 hover:border-emerald-400 hover:bg-emerald-100 dark:border-emerald-500/50 dark:bg-emerald-950 dark:text-emerald-100 dark:hover:bg-emerald-900";
+    case "recoverable":
+      return "border-blue-200 bg-blue-50 text-blue-800 hover:border-blue-400 hover:bg-blue-100 dark:border-sky-500/50 dark:bg-sky-950 dark:text-sky-100 dark:hover:bg-sky-900";
+    case "unreachable":
+      return "border-amber-200 bg-amber-50 text-amber-800 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-500/50 dark:bg-amber-950 dark:text-amber-100 dark:hover:bg-amber-900";
+    case "closed_loss":
+      return "border-rose-200 bg-rose-50 text-rose-800 hover:border-rose-400 hover:bg-rose-100 dark:border-rose-500/50 dark:bg-rose-950 dark:text-rose-100 dark:hover:bg-rose-900";
+    default:
+      return "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-400 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700";
+  }
+};
 const percentOf = (part: number, total: number) => (total <= 0 ? 0 : Math.round((part / total) * 100));
 const statusForOrder = (order: Pick<TrackedOrder, "status">) => (order.status ?? "New") as Exclude<OrderStatus, "All Orders">;
 const MANAGER_OPEN_STATUSES = new Set<Exclude<OrderStatus, "All Orders">>(["New", "Confirmed", "In Process", "Dispatched", "Postponed"]);
@@ -4728,6 +4842,8 @@ const normalizeContactAttempt = (value: any): OrderContactAttempt => ({
   channel: (value.channel ?? "manual") as OrderContactAttempt["channel"],
   attemptType: (value.attemptType ?? value.attempt_type ?? "fresh_follow_up") as OrderContactAttempt["attemptType"],
   outcomeCode: value.outcomeCode ?? value.outcome_code ?? "",
+  outcomeGroup: (value.outcomeGroup ?? value.outcome_group ?? undefined) as OrderContactAttempt["outcomeGroup"],
+  recoveryBucket: (value.recoveryBucket ?? value.recovery_bucket ?? undefined) as OrderContactAttempt["recoveryBucket"],
   outcomeNote: value.outcomeNote ?? value.outcome_note ?? undefined,
   customerReached: typeof (value.customerReached ?? value.customer_reached) === "boolean" ? (value.customerReached ?? value.customer_reached) : undefined,
   nextActionType: (value.nextActionType ?? value.next_action_type ?? undefined) as OrderContactAttempt["nextActionType"],
@@ -8396,6 +8512,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [followUpAttemptChannel, setFollowUpAttemptChannel] = useState<OrderContactAttempt["channel"]>("call");
   const [followUpAttemptType, setFollowUpAttemptType] = useState<OrderContactAttempt["attemptType"]>("scheduled_callback");
   const [followUpAttemptOutcome, setFollowUpAttemptOutcome] = useState("");
+  const [followUpAttemptRecoveryBucket, setFollowUpAttemptRecoveryBucket] = useState<FollowUpRecoveryBucket | "">("");
   const [followUpAttemptNote, setFollowUpAttemptNote] = useState("");
   const [followUpAttemptTaskId, setFollowUpAttemptTaskId] = useState("");
   const [followUpNextActionEnabled, setFollowUpNextActionEnabled] = useState(false);
@@ -8613,6 +8730,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const selectedOrderContactAttempts = selectedOrder ? (orderContactAttemptsByOrder[selectedOrder.id] ?? []) : [];
   const selectedOrderActiveFollowUpTask = activeFollowUpTaskForOrder(selectedOrderFollowUpTasks);
   const selectedOrderLatestAttempt = latestContactAttemptForOrder(selectedOrderContactAttempts);
+  const selectedOrderAttemptCategoryOptions = useMemo(() => {
+    const preferred = followUpAttemptTypeForTask(selectedOrderActiveFollowUpTask?.taskType ?? null);
+    return [...followUpAttemptCategoryOptions].sort((left, right) => Number(right.value === preferred) - Number(left.value === preferred));
+  }, [selectedOrderActiveFollowUpTask?.taskType]);
+  const selectedOrderRecentOutcomeLabels = useMemo(
+    () => Array.from(new Set(selectedOrderContactAttempts.map((attempt) => attempt.outcomeCode).filter(Boolean))).slice(0, 5),
+    [selectedOrderContactAttempts]
+  );
   const selectedOrderJourney = useMemo(
     () => selectedOrder?.sourceCartId ? (adTrackingCartJourneyMap[selectedOrder.sourceCartId] ?? []) : [],
     [selectedOrder?.sourceCartId, adTrackingCartJourneyMap]
@@ -24656,10 +24781,53 @@ ${waybillLineItems(w).length > 1
       });
   };
 
+  const setFollowUpOutcomeText = (value: string) => {
+    setFollowUpAttemptOutcome(value);
+    const definition = FOLLOW_UP_OUTCOME_DEFINITIONS.find((entry) => entry.label.toLowerCase() === value.trim().toLowerCase());
+    setFollowUpAttemptRecoveryBucket(definition?.bucket ?? "");
+  };
+
+  const scheduleNextActionFromPattern = (pattern: FollowUpAttemptPattern) => {
+    const definition = pattern.bucket ? followUpOutcomeDefinitionByBucket.get(pattern.bucket) : null;
+    const nextAt = new Date();
+    if (definition?.defaultOffsetMinutes != null) {
+      nextAt.setMinutes(nextAt.getMinutes() + definition.defaultOffsetMinutes);
+    } else {
+      nextAt.setDate(nextAt.getDate() + (definition?.defaultOffsetDays ?? (pattern.group === "unreachable" ? 0 : 1)));
+      if (pattern.group === "unreachable" && definition?.defaultOffsetDays == null) {
+        nextAt.setHours(nextAt.getHours() + 2);
+      }
+    }
+    const parts = splitMomentForInput(nextAt.toISOString());
+    setFollowUpNextActionEnabled(true);
+    setFollowUpNextActionType(pattern.nextActionType ?? "callback");
+    setFollowUpNextActionDate(parts.date || todayKey());
+    setFollowUpNextActionTime(parts.time || nextTimeValue());
+    setFollowUpNextActionNote(pattern.helper ? `${pattern.label} — ${pattern.helper}` : pattern.label);
+  };
+
+  const applyFollowUpAttemptPattern = (pattern: FollowUpAttemptPattern) => {
+    setFollowUpAttemptOutcome(pattern.label);
+    setFollowUpAttemptRecoveryBucket(pattern.bucket ?? "");
+    setFollowUpAttemptType(followUpAttemptTypeForPattern(pattern, selectedOrderActiveFollowUpTask));
+    const shouldScheduleNextAction =
+      pattern.group === "recoverable" ||
+      pattern.group === "unreachable" ||
+      pattern.nextActionType === "payment_check" ||
+      pattern.nextActionType === "waybill_follow_up";
+    if (shouldScheduleNextAction) {
+      scheduleNextActionFromPattern(pattern);
+    } else if (pattern.group === "progress" || pattern.group === "closed_loss") {
+      setFollowUpNextActionEnabled(false);
+      setFollowUpNextActionNote("");
+    }
+  };
+
   const resetFollowUpAttemptDraft = (task?: FollowUpTask | null) => {
     setFollowUpAttemptChannel("call");
-    setFollowUpAttemptType(task?.taskType === "delivery_confirmation" ? "delivery_confirmation" : "scheduled_callback");
+    setFollowUpAttemptType(followUpAttemptTypeForTask(task?.taskType ?? null));
     setFollowUpAttemptOutcome("");
+    setFollowUpAttemptRecoveryBucket("");
     setFollowUpAttemptNote("");
     setFollowUpAttemptTaskId(task?.id ?? "");
     setFollowUpNextActionEnabled(false);
@@ -24700,6 +24868,7 @@ ${waybillLineItems(w).length > 1
         channel: followUpAttemptChannel,
         attemptType: followUpAttemptType,
         outcomeCode: followUpAttemptOutcome.trim(),
+        recoveryBucket: followUpAttemptRecoveryBucket || null,
         outcomeNote: followUpAttemptNote.trim() || null,
         nextActionType: followUpNextActionEnabled ? followUpNextActionType : null,
         nextActionAt: followUpNextActionEnabled ? nextActionMoment.iso ?? null : null,
@@ -51558,21 +51727,89 @@ ${waybillLineItems(w).length > 1
                       </select>
                     </label>
                     <label>
-                      <span>Attempt Type</span>
+                      <span>System category</span>
                       <select value={followUpAttemptType} onChange={(event) => setFollowUpAttemptType(event.target.value as OrderContactAttempt["attemptType"])}>
-                        <option value="scheduled_callback">Scheduled Callback</option>
-                        <option value="fresh_follow_up">Fresh Follow-up</option>
-                        <option value="delivery_confirmation">Delivery Confirmation</option>
-                        <option value="payment_follow_up">Payment Follow-up</option>
-                        <option value="waybill_follow_up">Waybill Follow-up</option>
+                        {selectedOrderAttemptCategoryOptions.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
                       </select>
+                      <span className={`mt-1 block text-[11px] font-medium normal-case tracking-normal ${orderFaintTextClass}`}>
+                        Auto-suggested from the active reminder; use Attempt Type below for what the customer actually said.
+                      </span>
                     </label>
                   </div>
 
                   <label>
-                    <span>Outcome *</span>
-                    <input value={followUpAttemptOutcome} onChange={(event) => setFollowUpAttemptOutcome(event.target.value)} placeholder="e.g. No Answer, Confirmed, Not Ready, Will Call Back..." />
+                    <span>Attempt Type *</span>
+                    <input value={followUpAttemptOutcome} onChange={(event) => setFollowUpOutcomeText(event.target.value)} placeholder="e.g. No Answer, Not Picking, Call Tomorrow, Wants Discount..." />
                   </label>
+
+                  <div className={`${orderPanelMutedClass} rounded-xl p-4 space-y-4`}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className={`m-0 text-sm font-bold ${orderTitleTextClass}`}>Repeated customer patterns</p>
+                        <p className={`m-0 mt-1 text-xs ${orderMutedTextClass}`}>Tap the closest pattern so reports group the same customer response together.</p>
+                      </div>
+                      {followUpAttemptRecoveryBucket && (
+                        <span className="inline-flex rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200">
+                          Structured
+                        </span>
+                      )}
+                    </div>
+
+                    {selectedOrderRecentOutcomeLabels.length > 0 && (
+                      <div className="space-y-2">
+                        <p className={`m-0 text-[10px] font-black uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Recent on this order</p>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedOrderRecentOutcomeLabels.map((label) => (
+                            <button
+                              key={label}
+                              type="button"
+                              onClick={() => {
+                                const pattern = followUpAttemptPatternByLabel.get(label.trim().toLowerCase());
+                                if (pattern) applyFollowUpAttemptPattern(pattern);
+                                else setFollowUpOutcomeText(label);
+                              }}
+                              className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                                followUpAttemptOutcome.trim().toLowerCase() === label.trim().toLowerCase()
+                                  ? "border-slate-700 bg-slate-900 text-white dark:border-slate-200 dark:bg-slate-100 dark:text-slate-950"
+                                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-400 dark:border-slate-700 dark:bg-[#101a24] dark:text-slate-200 dark:hover:bg-slate-800"
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      {followUpAttemptPatternGroups.map((group) => (
+                        <div key={group.title} className="space-y-2">
+                          <div className="flex flex-wrap items-baseline gap-2">
+                            <p className={`m-0 text-[11px] font-black uppercase tracking-[0.16em] ${orderFaintTextClass}`}>{group.title}</p>
+                            <span className={`text-[11px] ${orderMutedTextClass}`}>{group.helper}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {group.patterns.map((pattern) => {
+                              const active = followUpAttemptOutcome.trim().toLowerCase() === pattern.label.toLowerCase();
+                              return (
+                                <button
+                                  key={`${group.title}-${pattern.label}`}
+                                  type="button"
+                                  onClick={() => applyFollowUpAttemptPattern(pattern)}
+                                  title={pattern.helper}
+                                  className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-black transition-all hover:-translate-y-0.5 ${followUpPatternChipClass(pattern.group, active)}`}
+                                >
+                                  {pattern.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
 
                   <label>
                     <span>What happened?</span>
