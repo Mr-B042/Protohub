@@ -6407,6 +6407,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
   const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>({});
   const [expandedPackageRows, setExpandedPackageRows] = useState<Record<string, boolean>>({});
+  const [packageSetAction, setPackageSetAction] = useState<null | {
+    mode: "duplicate" | "remove";
+    setLabel: string;
+    packages: ProductPackage[];
+    nextLabel: string;
+    busy?: boolean;
+  }>(null);
   const [addOnPerformanceRange, setAddOnPerformanceRange] = useState<AddOnPerformanceRange>("all");
   const [stateStockProductId, setStateStockProductId] = useState("");
   const [stateStockStateFilter, setStateStockStateFilter] = useState("");
@@ -22994,13 +23001,50 @@ ${waybillLineItems(w).length > 1
     showToast(`Created "${clone.name}" as a draft x${multiplier} combo copy. Adjust it, then Go live when ready.`);
   };
 
-  const duplicatePackageSet = async (setLabel: string, setPackages: ProductPackage[]) => {
-    if (!selectedProduct || setPackages.length === 0) return;
-    const rawName = window.prompt(`Duplicate set "${setLabel}" as:`, `${setLabel} Copy`);
-    const nextSetLabel = cleanPackageSetLabel(rawName);
-    if (!nextSetLabel) return;
+  const suggestPackageSetCopyName = (setLabel: string) => {
+    if (!selectedProduct) return `${setLabel} Copy`;
+    const existing = new Set(packageSetOptionsForProduct(selectedProduct).map((label) => packageSetKey(label)));
+    const base = `${setLabel} Copy`;
+    let candidate = base;
+    let suffix = 2;
+    while (existing.has(packageSetKey(candidate))) {
+      candidate = `${base} ${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  };
+
+  const openDuplicatePackageSet = (setLabel: string, setPackages: ProductPackage[]) => {
+    setPackageSetAction({
+      mode: "duplicate",
+      setLabel,
+      packages: setPackages,
+      nextLabel: suggestPackageSetCopyName(setLabel)
+    });
+  };
+
+  const openRemovePackageSet = (setLabel: string, setPackages: ProductPackage[]) => {
+    setPackageSetAction({
+      mode: "remove",
+      setLabel,
+      packages: setPackages,
+      nextLabel: ""
+    });
+  };
+
+  const duplicatePackageSet = async (setLabel: string, setPackages: ProductPackage[], requestedSetLabel: string) => {
+    if (!selectedProduct || setPackages.length === 0) {
+      setPackageSetAction((prev) => prev ? { ...prev, busy: false } : prev);
+      return;
+    }
+    const nextSetLabel = cleanPackageSetLabel(requestedSetLabel);
+    if (!nextSetLabel) {
+      setPackageSetAction((prev) => prev ? { ...prev, busy: false } : prev);
+      return;
+    }
     if (packageSetOptionsForProduct(selectedProduct).some((label) => packageSetKey(label) === packageSetKey(nextSetLabel))) {
       showToast(`A set named "${nextSetLabel}" already exists. Pick a different name.`);
+      setPackageSetAction((prev) => prev ? { ...prev, busy: false } : prev);
       return;
     }
     const baseOrder = selectedProduct.packages.reduce((max, pkg) => Math.max(max, pkg.displayOrder), 0) || 0;
@@ -23047,9 +23091,12 @@ ${waybillLineItems(w).length > 1
         tempIds.delete(clone.id);
       }
       showToast(`Duplicated set "${setLabel}" into "${nextSetLabel}" as drafts.`);
+      setPackageSetAction(null);
     } catch (err: any) {
       setProducts((prev) => prev.map((p) => p.id === productId ? { ...p, packages: p.packages.filter((pkg) => !tempIds.has(pkg.id)) } : p));
       showToast(`Set copy partly failed: ${err?.message ?? "please retry"}. Saved copies, if any, were kept.`);
+    } finally {
+      setPackageSetAction((prev) => prev ? { ...prev, busy: false } : prev);
     }
   };
 
@@ -23083,8 +23130,6 @@ ${waybillLineItems(w).length > 1
       showToast("This set is still syncing. Try again in a moment.");
       return;
     }
-    const ok = window.confirm(`Remove package set "${setLabel}"?\n\nThis deletes ${setPackages.length} package${setPackages.length === 1 ? "" : "s"} and all add-on offers inside this set. This cannot be undone.`);
-    if (!ok) return;
     const productId = selectedProduct.id;
     const previousPackages = selectedProduct.packages;
     const ids = new Set(setPackages.map((pkg) => pkg.id));
@@ -23099,9 +23144,12 @@ ${waybillLineItems(w).length > 1
     try {
       await Promise.all(setPackages.map((pkg) => productsApi.deletePackage(productId, pkg.id)));
       showToast(`Removed set "${setLabel}".`);
+      setPackageSetAction(null);
     } catch (err: any) {
       setProducts((value) => value.map((p) => p.id === productId ? { ...p, packages: previousPackages } : p));
       showToast(`Failed to remove set: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setPackageSetAction((prev) => prev ? { ...prev, busy: false } : prev);
     }
   };
 
@@ -48743,7 +48791,7 @@ ${waybillLineItems(w).length > 1
                                         <button
                                           type="button"
                                           className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-indigo-100 bg-white px-3 py-1.5 text-xs font-black text-indigo-700 transition-colors hover:bg-indigo-50"
-                                          onClick={() => duplicatePackageSet(setLabel, setPackages)}
+                                          onClick={() => openDuplicatePackageSet(setLabel, setPackages)}
                                           title="Duplicate every package inside this set as a new draft set"
                                         >
                                           <Copy className="h-3.5 w-3.5" />
@@ -48760,7 +48808,7 @@ ${waybillLineItems(w).length > 1
                                         <button
                                           type="button"
                                           className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-red-100 bg-white px-3 py-1.5 text-xs font-black text-red-600 transition-colors hover:bg-red-50"
-                                          onClick={() => removePackageSet(setLabel, setPackages)}
+                                          onClick={() => openRemovePackageSet(setLabel, setPackages)}
                                           title="Delete every package inside this set"
                                         >
                                           <Trash2 className="h-3.5 w-3.5" />
@@ -49999,6 +50047,129 @@ ${waybillLineItems(w).length > 1
               </div>
               <div className="border-t border-gray-100 px-5 py-4 dark:border-slate-800/80">
                 <button onClick={() => saveBatchCorrection(row, newTotal, correctBatchReason, correctBatchSelectedOrderIds)} disabled={correctBatchBusy || selectedOrders.length === 0 || changedCount === 0 || !correctBatchReason.trim()} className="!min-h-0 h-10 w-full rounded-lg bg-[#1F8FE0] text-sm font-semibold text-white hover:bg-[#1560a8] disabled:opacity-50">{correctBatchBusy ? "Saving..." : `Apply to ${changedCount} selected order${changedCount === 1 ? "" : "s"}`}</button>
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+
+      {packageSetAction && (() => {
+        const action = packageSetAction;
+        const packageCount = action.packages.length;
+        const offerCount = action.packages.reduce((sum, pkg) => sum + (pkg.companionProducts?.length ?? 0), 0);
+        const liveCount = action.packages.filter((pkg) => pkg.active).length;
+        const duplicateLabel = cleanPackageSetLabel(action.nextLabel);
+        const duplicateNameTaken = action.mode === "duplicate" && Boolean(selectedProduct && duplicateLabel && packageSetOptionsForProduct(selectedProduct).some((label) => packageSetKey(label) === packageSetKey(duplicateLabel)));
+        const duplicateNameEmpty = action.mode === "duplicate" && !duplicateLabel;
+        const canSubmit = action.mode === "remove" || (!duplicateNameEmpty && !duplicateNameTaken);
+        const closePackageSetAction = () => {
+          if (!action.busy) setPackageSetAction(null);
+        };
+        const submitPackageSetAction = async () => {
+          if (!canSubmit || action.busy) return;
+          setPackageSetAction((prev) => prev ? { ...prev, busy: true } : prev);
+          if (action.mode === "duplicate") {
+            await duplicatePackageSet(action.setLabel, action.packages, action.nextLabel);
+          } else {
+            await removePackageSet(action.setLabel, action.packages);
+          }
+        };
+        return (
+          <div className="fixed inset-0 z-[72] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm dark:bg-black/75" onClick={closePackageSetAction}>
+            <section
+              className="w-full max-w-xl overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-2xl ring-1 ring-slate-900/5 dark:border-slate-700/80 dark:bg-[#0d1722] dark:ring-white/10"
+              role="dialog"
+              aria-modal="true"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className={`px-6 py-5 ${action.mode === "remove" ? "bg-gradient-to-br from-red-50 via-white to-orange-50 dark:from-red-950/40 dark:via-[#0d1722] dark:to-orange-950/20" : "bg-gradient-to-br from-blue-50 via-white to-indigo-50 dark:from-blue-950/40 dark:via-[#0d1722] dark:to-indigo-950/20"}`}>
+                <div className="flex items-start gap-4">
+                  <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm ${action.mode === "remove" ? "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-200" : "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-200"}`}>
+                    {action.mode === "remove" ? <Trash2 className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="m-0 text-xs font-black uppercase tracking-[0.22em] text-slate-400 dark:text-slate-500">Package set action</p>
+                    <h2 className="m-0 mt-1 text-2xl font-black text-slate-950 dark:text-white">
+                      {action.mode === "remove" ? `Remove "${action.setLabel}"?` : `Duplicate "${action.setLabel}"`}
+                    </h2>
+                    <p className="m-0 mt-2 text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
+                      {packageCount} package{packageCount === 1 ? "" : "s"} · {liveCount} live · {offerCount} add-on offer{offerCount === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="!min-h-0 rounded-full p-2 text-slate-400 transition-colors hover:bg-white/80 hover:text-slate-700 disabled:opacity-50 dark:hover:bg-white/10 dark:hover:text-white"
+                    onClick={closePackageSetAction}
+                    aria-label="Close"
+                    disabled={action.busy}
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-4 px-6 py-5">
+                {action.mode === "duplicate" ? (
+                  <>
+                    <label className="block">
+                      <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">New set name</span>
+                      <input
+                        className={`mt-2 w-full rounded-2xl border px-4 py-3 text-base font-bold text-slate-900 outline-none transition focus:ring-4 dark:bg-[#111f2d] dark:text-white ${duplicateNameTaken || duplicateNameEmpty ? "border-red-300 bg-red-50/60 focus:ring-red-100 dark:border-red-500/50 dark:bg-red-950/20 dark:focus:ring-red-500/10" : "border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100 dark:border-slate-700 dark:focus:border-blue-400 dark:focus:ring-blue-500/10"}`}
+                        value={action.nextLabel}
+                        onChange={(event) => setPackageSetAction((prev) => prev ? { ...prev, nextLabel: event.target.value } : prev)}
+                        autoFocus
+                      />
+                    </label>
+                    <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold leading-6 text-blue-900 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
+                      The copied set will be saved as <strong>draft</strong>, so it will not appear on customer forms until you make it live.
+                    </div>
+                    {duplicateNameTaken && (
+                      <p className="m-0 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-bold text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">
+                        A set with this name already exists. Choose another name.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div className="rounded-3xl border border-red-200 bg-red-50 p-4 dark:border-red-500/30 dark:bg-red-500/10">
+                    <p className="m-0 text-sm font-black uppercase tracking-[0.18em] text-red-700 dark:text-red-200">Permanent removal</p>
+                    <p className="m-0 mt-2 text-sm font-semibold leading-6 text-red-900 dark:text-red-100">
+                      This deletes every package in this set, including all add-on offers inside them. This cannot be undone.
+                    </p>
+                    <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-2xl bg-white px-3 py-3 shadow-sm dark:bg-white/10">
+                        <p className="m-0 text-xl font-black text-slate-950 dark:text-white">{packageCount}</p>
+                        <p className="m-0 text-[10px] font-black uppercase tracking-wider text-slate-400">Packages</p>
+                      </div>
+                      <div className="rounded-2xl bg-white px-3 py-3 shadow-sm dark:bg-white/10">
+                        <p className="m-0 text-xl font-black text-slate-950 dark:text-white">{offerCount}</p>
+                        <p className="m-0 text-[10px] font-black uppercase tracking-wider text-slate-400">Offers</p>
+                      </div>
+                      <div className="rounded-2xl bg-white px-3 py-3 shadow-sm dark:bg-white/10">
+                        <p className="m-0 text-xl font-black text-slate-950 dark:text-white">{liveCount}</p>
+                        <p className="m-0 text-[10px] font-black uppercase tracking-wider text-slate-400">Live</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col-reverse gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4 dark:border-slate-800 dark:bg-[#0a121b] sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  className="!min-h-0 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-60 dark:border-slate-700 dark:bg-[#111f2d] dark:text-slate-200 dark:hover:bg-slate-800"
+                  onClick={closePackageSetAction}
+                  disabled={action.busy}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className={`!min-h-0 rounded-2xl px-5 py-3 text-sm font-black text-white shadow-lg transition-all disabled:cursor-not-allowed disabled:opacity-50 ${action.mode === "remove" ? "bg-red-600 shadow-red-900/20 hover:bg-red-700" : "bg-blue-600 shadow-blue-900/20 hover:bg-blue-700"}`}
+                  onClick={submitPackageSetAction}
+                  disabled={!canSubmit || action.busy}
+                >
+                  {action.busy ? "Working..." : action.mode === "remove" ? "Remove set" : "Create draft set"}
+                </button>
               </div>
             </section>
           </div>
