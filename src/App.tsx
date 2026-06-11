@@ -50687,9 +50687,6 @@ ${waybillLineItems(w).length > 1
 	                  <h3 className={`font-semibold text-lg border-b ${orderBorderClass} pb-2 mb-4 ${orderTitleTextClass}`}>Order Timeline</h3>
 	                  {(() => {
 	                    const s = selectedOrder.status ?? "New";
-	                    const isCancelled = s === "Cancelled";
-	                    const statusStepMap: Record<string, number> = { "New": 0, "Confirmed": 1, "In Process": 1, "Postponed": 1, "Failed": 1, "Dispatched": 2, "Delivered": 3 };
-	                    const currentStep = isCancelled ? 0 : (statusStepMap[s] ?? 0);
 	                    // Pull the latest audit entry per step so each row can show its timestamp.
 	                    const auditByStatus = new Map<string, string>();
 	                    for (const entry of orderAuditLog) {
@@ -50697,54 +50694,218 @@ ${waybillLineItems(w).length > 1
 	                        auditByStatus.set(entry.to_status, entry.created_at);
 	                      }
 	                    }
-	                    const steps: { label: string; Icon: React.ElementType; timestamp?: string }[] = [
-	                      { label: "Order Placed", Icon: ShoppingBag, timestamp: selectedOrder.createdAt ?? selectedOrder.date },
-	                      { label: "Confirmed",    Icon: CheckCircle2, timestamp: auditByStatus.get("Confirmed") },
-	                      { label: "Dispatched",   Icon: Truck,        timestamp: auditByStatus.get("Dispatched") },
-	                      { label: "Delivered",    Icon: CheckCircle2, timestamp: selectedOrder.deliveredDate ?? auditByStatus.get("Delivered") },
+	                    const statusStepMap: Record<string, number> = {
+	                      "New": 0,
+	                      "Confirmed": 1,
+	                      "In Process": 1,
+	                      "Postponed": 1,
+	                      "Dispatched": 2,
+	                      "Delivered": 3,
+	                      "Cancelled": 0,
+	                      "Failed": 1
+	                    };
+	                    const exceptionStatuses = new Set(["Failed", "Postponed", "Cancelled"]);
+	                    const hasExceptionStatus = exceptionStatuses.has(s);
+	                    const auditedCoreStep = Math.max(
+	                      0,
+	                      ...Array.from(auditByStatus.keys()).map((status) => statusStepMap[status] ?? 0)
+	                    );
+	                    const currentStep = hasExceptionStatus
+	                      ? Math.max(statusStepMap[s] ?? 0, auditedCoreStep)
+	                      : (statusStepMap[s] ?? 0);
+	                    const steps: {
+	                      key: "placed" | "confirmed" | "dispatched" | "delivered";
+	                      label: string;
+	                      description: string;
+	                      Icon: React.ElementType;
+	                      timestamp?: string;
+	                      doneClass: string;
+	                      softClass: string;
+	                      lineClass: string;
+	                      textClass: string;
+	                    }[] = [
+	                      {
+	                        key: "placed",
+	                        label: "Order Placed",
+	                        description: "Customer order captured",
+	                        Icon: ShoppingBag,
+	                        timestamp: selectedOrder.createdAt ?? selectedOrder.date,
+	                        doneClass: "bg-[#1F8FE0] border-[#1F8FE0] text-white shadow-[0_14px_32px_rgba(31,143,224,0.28)]",
+	                        softClass: "bg-sky-50/90 border-sky-100 text-sky-700 dark:bg-sky-500/12 dark:border-sky-400/25 dark:text-sky-200",
+	                        lineClass: "from-[#1F8FE0] to-sky-200 dark:from-sky-400 dark:to-sky-900/70",
+	                        textClass: "text-[#1F8FE0] dark:text-sky-200"
+	                      },
+	                      {
+	                        key: "confirmed",
+	                        label: "Confirmed",
+	                        description: "Customer has been confirmed",
+	                        Icon: CheckCircle2,
+	                        timestamp: auditByStatus.get("Confirmed") ?? auditByStatus.get("In Process"),
+	                        doneClass: "bg-yellow-400 border-yellow-300 text-yellow-950 shadow-[0_14px_32px_rgba(250,204,21,0.30)]",
+	                        softClass: "bg-yellow-50/90 border-yellow-100 text-yellow-800 dark:bg-yellow-400/14 dark:border-yellow-300/25 dark:text-yellow-100",
+	                        lineClass: "from-yellow-400 to-amber-200 dark:from-yellow-300 dark:to-yellow-900/60",
+	                        textClass: "text-yellow-700 dark:text-yellow-100"
+	                      },
+	                      {
+	                        key: "dispatched",
+	                        label: "Dispatched",
+	                        description: "Handed to logistics",
+	                        Icon: Truck,
+	                        timestamp: auditByStatus.get("Dispatched"),
+	                        doneClass: "bg-orange-500 border-orange-400 text-white shadow-[0_14px_32px_rgba(249,115,22,0.30)]",
+	                        softClass: "bg-orange-50/90 border-orange-100 text-orange-800 dark:bg-orange-500/14 dark:border-orange-300/25 dark:text-orange-100",
+	                        lineClass: "from-orange-500 to-orange-200 dark:from-orange-300 dark:to-orange-900/60",
+	                        textClass: "text-orange-700 dark:text-orange-100"
+	                      },
+	                      {
+	                        key: "delivered",
+	                        label: "Delivered",
+	                        description: "Order completed successfully",
+	                        Icon: CheckCircle2,
+	                        timestamp: selectedOrder.deliveredDate ?? auditByStatus.get("Delivered"),
+	                        doneClass: "bg-emerald-500 border-emerald-400 text-white shadow-[0_14px_32px_rgba(16,185,129,0.30)]",
+	                        softClass: "bg-emerald-50/90 border-emerald-100 text-emerald-800 dark:bg-emerald-500/14 dark:border-emerald-300/25 dark:text-emerald-100",
+	                        lineClass: "from-emerald-500 to-emerald-200 dark:from-emerald-300 dark:to-emerald-900/60",
+	                        textClass: "text-emerald-700 dark:text-emerald-100"
+	                      }
 	                    ];
+	                    const exceptionConfig = s === "Failed"
+	                      ? {
+	                          label: "Order failed",
+	                          statusLabel: "Needs recovery",
+	                          Icon: CircleX,
+	                          timestamp: auditByStatus.get("Failed"),
+	                          cardClass: "border-red-200/80 bg-red-50/80 text-red-950 shadow-[0_18px_40px_rgba(239,68,68,0.13)] dark:border-red-400/25 dark:bg-red-500/12 dark:text-red-100",
+	                          iconClass: "bg-red-500 text-white shadow-[0_14px_30px_rgba(239,68,68,0.30)]",
+	                          pillClass: "bg-red-100 text-red-700 ring-red-200 dark:bg-red-500/20 dark:text-red-100 dark:ring-red-400/25",
+	                          helper: "This order has stopped. Use follow-up or recovery actions without losing the core journey above."
+	                        }
+	                      : s === "Postponed"
+	                        ? {
+	                            label: "Rescheduled",
+	                            statusLabel: "New date needed",
+	                            Icon: CalendarClock,
+	                            timestamp: auditByStatus.get("Postponed") ?? selectedOrder.scheduledAt ?? selectedOrder.scheduledDate,
+	                            cardClass: "border-amber-200/80 bg-amber-50/85 text-amber-950 shadow-[0_18px_40px_rgba(245,158,11,0.14)] dark:border-amber-300/25 dark:bg-amber-500/12 dark:text-amber-100",
+	                            iconClass: "bg-amber-500 text-white shadow-[0_14px_30px_rgba(245,158,11,0.30)]",
+	                            pillClass: "bg-amber-100 text-amber-800 ring-amber-200 dark:bg-amber-500/20 dark:text-amber-100 dark:ring-amber-300/25",
+	                            helper: "Delivery or follow-up moved. The four-step journey stays clean while this schedule note remains visible."
+	                          }
+	                        : s === "Cancelled"
+	                          ? {
+	                              label: "Cancelled",
+	                              statusLabel: "Stopped",
+	                              Icon: CircleX,
+	                              timestamp: auditByStatus.get("Cancelled"),
+	                              cardClass: "border-rose-200/80 bg-rose-50/80 text-rose-950 shadow-[0_18px_40px_rgba(244,63,94,0.13)] dark:border-rose-400/25 dark:bg-rose-500/12 dark:text-rose-100",
+	                              iconClass: "bg-rose-500 text-white shadow-[0_14px_30px_rgba(244,63,94,0.30)]",
+	                              pillClass: "bg-rose-100 text-rose-700 ring-rose-200 dark:bg-rose-500/20 dark:text-rose-100 dark:ring-rose-400/25",
+	                              helper: "The order was cancelled. The path above shows how far it moved before stopping."
+	                            }
+	                          : null;
+	                    const processStatus = s === "In Process"
+	                      ? {
+	                          label: "In process",
+	                          timestamp: auditByStatus.get("In Process"),
+	                          helper: "Confirmed and being worked on before dispatch.",
+	                          className: "border-blue-200/80 bg-blue-50/80 text-blue-950 dark:border-blue-400/25 dark:bg-blue-500/12 dark:text-blue-100"
+	                        }
+	                      : null;
 	                    return (
-	                      <div className="flex flex-col">
-	                        {steps.map((step, idx) => {
-	                          const isDone = idx < currentStep;
-	                          const isActive = idx === currentStep && !isCancelled;
-	                          const filled = isDone || isActive;
-	                          const isLast = idx === steps.length - 1 && !isCancelled;
-	                          return (
-	                            <div key={step.label} className="relative flex gap-4 pb-6 last:pb-0">
-	                              {!isLast && <div className="absolute left-4 top-8 bottom-0 w-0.5 bg-gray-200" />}
-	                              <div className={`relative z-10 flex size-8 items-center justify-center rounded-full border-2 shrink-0 ${filled ? "bg-[#1F8FE0] border-[#1F8FE0]" : "bg-white border-gray-300"}`}>
-	                                <step.Icon className={`w-4 h-4 ${filled ? "text-white" : "text-gray-400"}`} />
+	                      <div className="relative overflow-hidden rounded-[28px] border border-white/70 bg-gradient-to-br from-white/90 via-sky-50/55 to-white/75 p-3 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-slate-700/45 dark:from-[#0b1622]/92 dark:via-[#102235]/74 dark:to-[#0b1622]/88 dark:shadow-[0_28px_70px_rgba(2,6,23,0.45)] sm:p-4">
+	                        <div className="pointer-events-none absolute -right-16 -top-20 h-44 w-44 rounded-full bg-[#1F8FE0]/12 blur-3xl dark:bg-sky-400/10" />
+	                        <div className="pointer-events-none absolute -bottom-20 left-10 h-40 w-40 rounded-full bg-emerald-300/14 blur-3xl dark:bg-emerald-400/10" />
+	                        <div className="relative flex flex-col gap-3">
+	                          <div className="flex items-start justify-between gap-3">
+	                            <div>
+	                              <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-sky-700 dark:text-sky-200">Core order journey</p>
+	                              <p className={`m-0 mt-1 text-sm font-semibold ${orderMutedTextClass}`}>Four clean milestones, with exception statuses shown separately.</p>
+	                            </div>
+	                            <span className="inline-flex shrink-0 items-center rounded-full border border-white/70 bg-white/75 px-3 py-1 text-[11px] font-black uppercase tracking-[0.12em] text-slate-700 shadow-sm backdrop-blur dark:border-slate-600/50 dark:bg-slate-900/45 dark:text-slate-200">
+	                              {s === "Postponed" ? "Rescheduled" : s}
+	                            </span>
+	                          </div>
+	                          {processStatus && (
+	                            <div className={`rounded-2xl border px-3 py-2.5 ${processStatus.className}`}>
+	                              <div className="flex items-center justify-between gap-3">
+	                                <div className="min-w-0">
+	                                  <p className="m-0 text-sm font-black">{processStatus.label}</p>
+	                                  <p className="m-0 mt-0.5 text-xs font-semibold opacity-80">{processStatus.helper}</p>
+	                                </div>
+	                                {processStatus.timestamp && <span className="shrink-0 text-[11px] font-bold opacity-75">{formatDateTime(processStatus.timestamp)}</span>}
 	                              </div>
-	                              <div className="flex-1 pt-1">
-	                                <div className="flex items-center justify-between gap-2 flex-wrap">
-	                                  <p className={`text-[15px] sm:text-base font-semibold m-0 ${orderTitleTextClass}`}>{step.label}</p>
-	                                  {step.timestamp && (isDone || isActive) && (
-	                                    <span className={`text-[12px] sm:text-[13px] font-medium whitespace-nowrap ${orderMutedTextClass}`}>{formatDateTime(step.timestamp)}</span>
+	                            </div>
+	                          )}
+	                          {exceptionConfig && (
+	                            <div className={`rounded-3xl border p-3 backdrop-blur ${exceptionConfig.cardClass}`}>
+	                              <div className="flex items-start gap-3">
+	                                <div className={`flex size-10 shrink-0 items-center justify-center rounded-2xl ${exceptionConfig.iconClass}`}>
+	                                  <exceptionConfig.Icon className="h-5 w-5" />
+	                                </div>
+	                                <div className="min-w-0 flex-1">
+	                                  <div className="flex items-start justify-between gap-3">
+	                                    <div>
+	                                      <p className="m-0 text-[15px] font-black tracking-[-0.01em]">{exceptionConfig.label}</p>
+	                                      <p className="m-0 mt-1 text-xs font-semibold leading-5 opacity-80">{exceptionConfig.helper}</p>
+	                                    </div>
+	                                    <span className={`inline-flex shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] ring-1 ${exceptionConfig.pillClass}`}>
+	                                      {exceptionConfig.statusLabel}
+	                                    </span>
+	                                  </div>
+	                                  {exceptionConfig.timestamp && (
+	                                    <p className="m-0 mt-2 text-[11px] font-bold opacity-75">{formatDateTime(exceptionConfig.timestamp)}</p>
 	                                  )}
 	                                </div>
-	                                {isActive && <span className={`inline-flex items-center border rounded-full px-2 py-0.5 text-[12px] font-medium mt-1 ${orderSecondaryButtonClass}`}>Current Status</span>}
 	                              </div>
 	                            </div>
-	                          );
-	                        })}
-	                        {isCancelled && (
-	                          <div className="relative flex gap-4">
-	                            <div className="relative z-10 flex size-8 items-center justify-center rounded-full border-2 shrink-0 bg-white border-red-500">
-	                              <CircleX className="w-4 h-4 text-red-500" />
-	                            </div>
-	                            <div className="flex-1 pt-1">
-	                              <div className="flex items-center justify-between gap-2 flex-wrap">
-	                                <p className="text-[15px] sm:text-base font-semibold text-red-600 dark:text-red-300 m-0">Cancelled</p>
-	                                {auditByStatus.get("Cancelled") && (
-	                                  <span className="text-[12px] sm:text-[13px] text-red-500 dark:text-red-300 font-medium whitespace-nowrap">{formatDateTime(auditByStatus.get("Cancelled"))}</span>
-	                                )}
-	                              </div>
-	                              <span className="inline-flex items-center border border-red-200 dark:border-red-500/35 rounded-full px-2 py-0.5 text-[12px] font-medium text-red-500 dark:text-red-300 mt-1">Current Status</span>
-	                            </div>
-	                          </div>
-	                        )}
+	                          )}
+	                          <div className="grid gap-3">
+	                            {steps.map((step, idx) => {
+	                              const isDone = hasExceptionStatus ? idx <= currentStep : idx < currentStep;
+	                              const isActive = !hasExceptionStatus && idx === currentStep;
+	                              const filled = isDone || isActive;
+	                              const connectorFilled = idx < currentStep;
+	                              const isLast = idx === steps.length - 1;
+	                              return (
+	                                <div
+	                                  key={step.label}
+	                                  className={`relative grid grid-cols-[46px_1fr] gap-3 rounded-3xl border p-3 transition-all ${
+	                                    filled
+	                                      ? `border-white/70 bg-white/70 shadow-[0_16px_38px_rgba(15,23,42,0.08)] backdrop-blur-md dark:border-slate-600/45 dark:bg-slate-900/36 ${isActive ? "ring-2 ring-white/80 dark:ring-sky-300/20" : ""}`
+	                                      : "border-slate-200/70 bg-white/40 backdrop-blur-sm dark:border-slate-700/45 dark:bg-slate-900/20"
+	                                  }`}
+	                                >
+	                                  {!isLast && (
+	                                    <div className={`absolute left-[35px] top-[62px] h-[calc(100%+12px)] w-[3px] rounded-full bg-gradient-to-b ${connectorFilled ? step.lineClass : "from-slate-200 to-slate-100 dark:from-slate-700 dark:to-slate-800"}`} />
+	                                  )}
+	                                  <div className={`relative z-10 flex size-11 items-center justify-center rounded-2xl border-2 ${filled ? step.doneClass : "border-slate-200 bg-white text-slate-400 shadow-sm dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-500"}`}>
+	                                    <step.Icon className="h-5 w-5" />
+	                                  </div>
+	                                  <div className="min-w-0">
+	                                    <div className="flex items-start justify-between gap-3">
+	                                      <div className="min-w-0">
+	                                        <p className={`m-0 text-[15px] font-black tracking-[-0.02em] sm:text-base ${filled ? step.textClass : orderTitleTextClass}`}>{step.label}</p>
+	                                        <p className={`m-0 mt-0.5 text-xs font-semibold leading-5 ${orderMutedTextClass}`}>{step.description}</p>
+	                                      </div>
+	                                      {step.timestamp && filled && (
+	                                        <span className={`shrink-0 text-right text-[11px] font-bold leading-5 sm:text-xs ${orderMutedTextClass}`}>{formatDateTime(step.timestamp)}</span>
+	                                      )}
+	                                    </div>
+	                                    {isActive && (
+	                                      <span className={`mt-2 inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.12em] ${step.softClass}`}>
+	                                        Current status
+	                                      </span>
+	                                    )}
+	                                  </div>
+	                                </div>
+	                              );
+	                          })}
+	                        </div>
+	                        <div className="rounded-2xl border border-white/70 bg-white/55 px-3 py-2 text-[11px] font-semibold leading-5 text-slate-500 backdrop-blur dark:border-slate-700/45 dark:bg-slate-900/30 dark:text-slate-400">
+	                          Failed, cancelled, and rescheduled orders appear as smart alerts above the four core milestones, so the main status path stays clean.
+	                        </div>
 	                      </div>
+	                    </div>
 	                    );
 	                  })()}
 	                </section>
