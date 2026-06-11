@@ -64,6 +64,7 @@ type DbPackageComponent = {
 };
 type DbPackage = {
   id: string; name: string; description: string | null; quantity: number;
+  package_set?: string | null;
   price: number; currency: string; display_order: number; active: boolean;
   state_filter_mode?: "all" | "allow" | "block" | null;
   state_restrictions?: string[] | null;
@@ -106,6 +107,7 @@ const companionIsActive = (companion: Pick<DbCompanion, "active"> | null | undef
 const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<string, CompanionSocialProof>) => ({
   id:           p.id,
   name:         p.name,
+  packageSet:   p.package_set ?? "Default",
   description:  p.description ?? "",
   quantity:     p.quantity,
   price:        p.price,
@@ -310,12 +312,25 @@ const PUBLIC_PRODUCT_SELECT = `
   alternative_product_ids,
   form_custom_text,
   pricings: product_pricings!product_pricings_product_id_fkey(currency, selling_price, is_primary),
-  packages: product_packages!product_packages_product_id_fkey(id, name, description, quantity, price, currency, display_order, active, state_filter_mode, state_restrictions, requires_state_stock, featured_combo_card, image_url, image_urls, unit_singular, unit_plural, attribution_product_id, companion_products, package_components)
+  packages: product_packages!product_packages_product_id_fkey(id, name, package_set, description, quantity, price, currency, display_order, active, state_filter_mode, state_restrictions, requires_state_stock, featured_combo_card, image_url, image_urls, unit_singular, unit_plural, attribution_product_id, companion_products, package_components)
 `;
+
+const cleanPackageSetLabel = (value: unknown) =>
+  String(value ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
+
+const packageMatchesSet = (pkg: DbPackage, selectedSet: string) =>
+  !selectedSet || ((pkg.package_set ?? "Default").trim().toLowerCase() === selectedSet.toLowerCase());
 
 router.get("/:id/package-availability", readRateLimit, async (req, res) => {
   const { id } = req.params;
   const state = typeof req.query.state === "string" ? req.query.state : "";
+  const selectedPackageSet = cleanPackageSetLabel(
+    typeof req.query.packageSet === "string"
+      ? req.query.packageSet
+      : typeof req.query.package_set === "string"
+        ? req.query.package_set
+        : ""
+  );
   const { data: rawProduct, error } = await supabase
     .from("products")
     .select(PUBLIC_PRODUCT_SELECT)
@@ -330,7 +345,7 @@ router.get("/:id/package-availability", readRateLimit, async (req, res) => {
 
   try {
     const product = rawProduct as unknown as DbProduct;
-    const packages = (product.packages ?? []).filter((pkg) => pkg.active);
+    const packages = (product.packages ?? []).filter((pkg) => pkg.active && packageMatchesSet(pkg, selectedPackageSet));
     const availability = await packageAvailabilityForState(product.org_id, product.id, packages, state);
     res.json({ packages: availability });
   } catch (availabilityError: any) {

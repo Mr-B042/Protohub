@@ -451,6 +451,7 @@ type MarketingLinkVariant = {
   productId: string;
   marketerUserId?: string | null;
   marketerTag: string;
+  packageSet?: string | null;
   label: string;
   landingPageUrl?: string | null;
   utmSource: string;
@@ -461,6 +462,14 @@ type MarketingLinkVariant = {
   active: boolean;
   createdAt?: string;
   updatedAt?: string;
+};
+
+type MarketingVariantDraft = {
+  label: string;
+  landingPageUrl: string;
+  utmSource: string;
+  utmCampaign: string;
+  packageSet: string;
 };
 
 type MarketingSpendRecord = {
@@ -579,6 +588,7 @@ type ProductPackage = {
   currency: ProductCurrencyCode;
   displayOrder: number;
   active: boolean;
+  packageSet?: string;
   stateFilterMode?: "all" | "allow" | "block";
   stateRestrictions?: string[];
   requiresStateStock?: boolean;
@@ -2326,6 +2336,28 @@ const primaryPricing = (product: Product) =>
   product.pricings.find((pricing) => (pricing as any).primary || (pricing as any).isPrimary)
   ?? product.pricings[0];
 const totalProductStock = (product: Product) => product.warehouseStock + product.agentStock;
+const DEFAULT_PACKAGE_SET_LABEL = "Default";
+const cleanPackageSetLabel = (value?: string | null) => String(value ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
+const packageSetLabelFor = (pkg?: Pick<ProductPackage, "packageSet"> | null) => cleanPackageSetLabel(pkg?.packageSet) || DEFAULT_PACKAGE_SET_LABEL;
+const packageSetKey = (value?: string | null) => (cleanPackageSetLabel(value) || DEFAULT_PACKAGE_SET_LABEL).toLowerCase();
+const packageMatchesSet = (pkg: Pick<ProductPackage, "packageSet">, selectedSet?: string | null) => {
+  const selected = cleanPackageSetLabel(selectedSet);
+  return !selected || packageSetKey(pkg.packageSet) === selected.toLowerCase();
+};
+const packageSetOptionsForProduct = (product?: Pick<Product, "packages"> | null, activeOnly = false) => {
+  const seen = new Map<string, string>();
+  (product?.packages ?? [])
+    .filter((pkg) => !activeOnly || pkg.active)
+    .forEach((pkg) => {
+      const label = packageSetLabelFor(pkg);
+      if (!seen.has(label.toLowerCase())) seen.set(label.toLowerCase(), label);
+    });
+  return Array.from(seen.values()).sort((a, b) => {
+    if (a === DEFAULT_PACKAGE_SET_LABEL) return -1;
+    if (b === DEFAULT_PACKAGE_SET_LABEL) return 1;
+    return a.localeCompare(b);
+  });
+};
 const activeProductPackages = (product: Product) => product.packages.filter((item) => item.active).sort((a, b) => a.displayOrder - b.displayOrder);
 const persistedActiveProductPackages = <T extends { id: string; active: boolean; displayOrder: number }>(product: { packages: T[] }) =>
   product.packages.filter((item) => item.active && !isTemporaryPackageId(item.id)).sort((a, b) => a.displayOrder - b.displayOrder);
@@ -6394,6 +6426,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pricingCost, setPricingCost] = useState("0");
   const [selectedPricingCurrency, setSelectedPricingCurrency] = useState<ProductCurrencyCode>("NGN");
   const [packageName, setPackageName] = useState("");
+  const [packageSet, setPackageSet] = useState(DEFAULT_PACKAGE_SET_LABEL);
   const [packageDescription, setPackageDescription] = useState("");
   const [packageQuantity, setPackageQuantity] = useState("1");
   const [packageUnitSingular, setPackageUnitSingular] = useState("");
@@ -8012,9 +8045,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [embedSyncingProductIds, setEmbedSyncingProductIds] = useState<string[]>([]);
   const [embedCurrencyByProduct, setEmbedCurrencyByProduct] = useState<Record<string, ProductCurrencyCode>>({});
   const [embedRedirectUrls, setEmbedRedirectUrls] = useState<Record<string, string>>({});
+  const [embedPackageSetsByProduct, setEmbedPackageSetsByProduct] = useState<Record<string, string>>({});
   const [embedCodeTabsByProduct, setEmbedCodeTabsByProduct] = useState<Record<string, EmbedCodeTab>>({});
   const [marketingLinkVariants, setMarketingLinkVariants] = useState<MarketingLinkVariant[]>([]);
-  const [marketingVariantDrafts, setMarketingVariantDrafts] = useState<Record<string, { label: string; landingPageUrl: string; utmSource: string; utmCampaign: string }>>({});
+  const [marketingVariantDrafts, setMarketingVariantDrafts] = useState<Record<string, MarketingVariantDraft>>({});
   const [marketingVariantSavingProductIds, setMarketingVariantSavingProductIds] = useState<string[]>([]);
   const [trackedOrders, setTrackedOrders] = useState<TrackedOrder[]>([]);
   const [abandonedCarts, setAbandonedCarts] = useState<AbandonedCartRecord[]>([]);
@@ -9504,6 +9538,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const publicUtmMedium   = (publicEmbedParams?.get("utm_medium")   ?? "").slice(0, 100);
   const publicUtmContent  = (publicEmbedParams?.get("utm_content")  ?? "").slice(0, 100);
   const publicUtmTerm     = (publicEmbedParams?.get("utm_term")     ?? "").slice(0, 100);
+  const publicPackageSet = cleanPackageSetLabel(
+    publicEmbedParams?.get("package_set")
+    ?? publicEmbedParams?.get("packageSet")
+    ?? ""
+  );
   // Only http(s) redirect targets are honored — defends against `javascript:` /
   // `data:` smuggling that would execute in the parent window after submit.
   const rawPublicRedirect = publicEmbedParams?.get("redirect_url") ?? "";
@@ -9534,7 +9573,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     const allowedKeys = new Set([
       "media_buyer", "media_buyer_id", "buyer", "buyer_id", "marketer_user_id",
-      "landing_page", "landing_page_url", "embed_label", "redirect_url",
+      "landing_page", "landing_page_url", "embed_label", "redirect_url", "package_set", "packageSet",
       "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
       "fbclid", "gclid", "gbraid", "wbraid", "ttclid", "msclkid",
       "ad_id", "adset_id", "campaign_id", "creative_id", "placement", "utm_id"
@@ -9549,6 +9588,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ["media_buyer_id", "mediaBuyerId"],
       ["buyer_id", "buyerId"],
       ["marketer_user_id", "marketerUserId"],
+      ["package_set", "packageSet"],
       ["ad_id", "adId"],
       ["adset_id", "adsetId"],
       ["campaign_id", "campaignId"],
@@ -9562,10 +9602,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (landingUrl) context.landingUrl = landingUrl.slice(0, 2048);
     const landingPage = publicEmbedParams.get("landing_page")?.trim();
     if (landingPage) context.landingPage = landingPage.slice(0, 2048);
+    if (publicPackageSet) context.packageSet = publicPackageSet;
     if (publicRedirectUrl) context.redirectUrl = publicRedirectUrl;
     return context;
-  }, [publicEmbedParams, publicEmbedLabel, publicRedirectUrl, publicReferrer]);
-  const publicPackages = useMemo(() => publicProduct ? activeProductPackages(publicProduct) : [], [publicProduct]);
+  }, [publicEmbedParams, publicEmbedLabel, publicPackageSet, publicRedirectUrl, publicReferrer]);
+  const publicPackages = useMemo(
+    () => publicProduct
+      ? activeProductPackages(publicProduct).filter((pkg) => packageMatchesSet(pkg, publicPackageSet))
+      : [],
+    [publicPackageSet, publicProduct]
+  );
   const shouldUseStateDropdown = (currencyCode: ProductCurrencyCode) => currencyCode === "NGN";
   useEffect(() => {
     if (!publicEmbedParams || !dataLoading || publicProduct) {
@@ -9813,6 +9859,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }).format(amount);
   const productEmbedCurrency = (product: Product | undefined) => (product ? embedCurrencyByProduct[product.id] ?? "NGN" : "NGN");
   const productEmbedRedirect = (product: Product | undefined) => (product ? embedRedirectUrls[product.id] ?? "" : "");
+  const productEmbedPackageSet = (product: Product | undefined) => {
+    if (!product) return DEFAULT_PACKAGE_SET_LABEL;
+    const options = packageSetOptionsForProduct(product, true);
+    const current = cleanPackageSetLabel(embedPackageSetsByProduct[product.id]);
+    if (current && options.some((option) => option.toLowerCase() === current.toLowerCase())) return current;
+    return options[0] ?? DEFAULT_PACKAGE_SET_LABEL;
+  };
   const generatedEmbedProducts = readyEmbedProducts.filter((product) => generatedEmbedProductIds.includes(product.id));
   const productEmbedCodeTab = (productId: string) => embedCodeTabsByProduct[productId] ?? "Direct Link";
   const isEmbedSyncing = (productId: string) => embedSyncingProductIds.includes(productId);
@@ -9856,6 +9909,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       product: product.id,
       currency: currencyOverride ?? productEmbedCurrency(product)
     });
+    const selectedPackageSet = cleanPackageSetLabel(variant?.packageSet ?? productEmbedPackageSet(product));
+    if (selectedPackageSet) params.set("package_set", selectedPackageSet);
     const variantTag = variant?.marketerTag?.trim() || primaryMarketerEmbedTag;
     if (isMarketerEmbedMode && variantTag) {
       const marketerId = currentManagedUser?.id ?? authUser?.id ?? "";
@@ -9948,8 +10003,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .filter((variant) => variant.productId === productId && variant.active !== false)
       .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
   const marketingVariantDraftFor = (productId: string) =>
-    marketingVariantDrafts[productId] ?? { label: "", landingPageUrl: "", utmSource: "Facebook", utmCampaign: "landing-pages" };
-  const setMarketingVariantDraft = (productId: string, patch: Partial<{ label: string; landingPageUrl: string; utmSource: string; utmCampaign: string }>) =>
+    marketingVariantDrafts[productId] ?? { label: "", landingPageUrl: "", utmSource: "Facebook", utmCampaign: "landing-pages", packageSet: embedPackageSetsByProduct[productId] ?? DEFAULT_PACKAGE_SET_LABEL };
+  const setMarketingVariantDraft = (productId: string, patch: Partial<MarketingVariantDraft>) =>
     setMarketingVariantDrafts((prev) => ({ ...prev, [productId]: { ...marketingVariantDraftFor(productId), ...patch } }));
   const isMarketingVariantSaving = (productId: string) => marketingVariantSavingProductIds.includes(productId);
   const normalizeMarketingVariantRow = (row: any): MarketingLinkVariant => ({
@@ -9957,6 +10012,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     productId: row.productId ?? row.product_id,
     marketerUserId: row.marketerUserId ?? row.marketer_user_id ?? null,
     marketerTag: row.marketerTag ?? row.marketer_tag ?? "",
+    packageSet: row.packageSet ?? row.package_set ?? null,
     label: row.label ?? "",
     landingPageUrl: row.landingPageUrl ?? row.landing_page_url ?? "",
     utmSource: row.utmSource ?? row.utm_source ?? "Facebook",
@@ -9972,6 +10028,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const tag = primaryMarketerEmbedTag.trim();
     if (!tag) { showToast("Ask the Owner to assign your marketer tag before creating landing-page links."); return; }
     const draft = marketingVariantDraftFor(product.id);
+    const selectedPackageSet = cleanPackageSetLabel(draft.packageSet || productEmbedPackageSet(product));
     const landingPageUrl = draft.landingPageUrl.trim();
     const normalizedLandingPageUrl = landingPageUrl && /^https?:\/\//i.test(landingPageUrl) ? landingPageUrl : landingPageUrl ? `https://${landingPageUrl}` : "";
     const label = (() => {
@@ -9989,6 +10046,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const saved = await marketingLinkVariantsApi.create({
         productId: product.id,
         marketerTag: tag,
+        packageSet: selectedPackageSet || undefined,
         label,
         landingPageUrl: normalizedLandingPageUrl,
         utmSource: draft.utmSource.trim() || "Facebook",
@@ -9999,7 +10057,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setMarketingLinkVariants((prev) => [normalized, ...prev.filter((row) => row.id !== normalized.id)]);
       setGeneratedProductId(product.id);
       setGeneratedEmbedProductIds((prev) => prev.includes(product.id) ? prev : [...prev, product.id]);
-      setMarketingVariantDrafts((prev) => ({ ...prev, [product.id]: { label: "", landingPageUrl: "", utmSource: draft.utmSource || "Facebook", utmCampaign: draft.utmCampaign || "landing-pages" } }));
+      setMarketingVariantDrafts((prev) => ({ ...prev, [product.id]: { label: "", landingPageUrl: "", utmSource: draft.utmSource || "Facebook", utmCampaign: draft.utmCampaign || "landing-pages", packageSet: selectedPackageSet || DEFAULT_PACKAGE_SET_LABEL } }));
       showToast("Landing-page link saved.");
     } catch (err: any) {
       showToast(`Could not save link: ${err?.message ?? err}`);
@@ -19021,6 +19079,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             productId: row.productId ?? row.product_id,
             marketerUserId: row.marketerUserId ?? row.marketer_user_id ?? null,
             marketerTag: row.marketerTag ?? row.marketer_tag ?? "",
+            packageSet: row.packageSet ?? row.package_set ?? null,
             label: row.label ?? "",
             landingPageUrl: row.landingPageUrl ?? row.landing_page_url ?? "",
             utmSource: row.utmSource ?? row.utm_source ?? "Facebook",
@@ -22231,6 +22290,7 @@ ${waybillLineItems(w).length > 1
 
   const resetPackageForm = () => {
     setPackageName("");
+    setPackageSet(DEFAULT_PACKAGE_SET_LABEL);
     setPackageDescription("");
     setPackageQuantity("1");
     setPackageUnitSingular("");
@@ -22273,6 +22333,7 @@ ${waybillLineItems(w).length > 1
     }
     setSelectedPackageId(item.id);
     setPackageName(item.name);
+    setPackageSet(packageSetLabelFor(item));
     setPackageDescription(item.description);
     setPackageQuantity(String(item.quantity));
     setPackageUnitSingular(item.unitSingular ?? "");
@@ -22676,6 +22737,7 @@ ${waybillLineItems(w).length > 1
     const packageRecord: ProductPackage = {
       id: modal === "editPackage" && selectedPackage ? selectedPackage.id : makePackageId(),
       name: packageName.trim(),
+      packageSet: cleanPackageSetLabel(packageSet) || DEFAULT_PACKAGE_SET_LABEL,
       description: packageDescription.trim(),
       quantity: Math.max(1, Number(packageQuantity) || 1),
       price: Math.max(0, Number(packagePrice) || 0),
@@ -22696,6 +22758,7 @@ ${waybillLineItems(w).length > 1
     };
     const packagePayload = {
       name: packageRecord.name,
+      packageSet: packageRecord.packageSet,
       description: packageRecord.description,
       quantity: packageRecord.quantity,
       price: packageRecord.price,
@@ -22853,6 +22916,7 @@ ${waybillLineItems(w).length > 1
     };
     productsApi.createPackage(selectedProduct.id, {
       name: clone.name, description: clone.description,
+      packageSet: packageSetLabelFor(clone),
       quantity: clone.quantity, price: clone.price, currency: clone.currency,
       displayOrder: clone.displayOrder, active: clone.active,
       stateFilterMode: clone.stateFilterMode ?? "all",
@@ -22905,6 +22969,7 @@ ${waybillLineItems(w).length > 1
     };
     productsApi.createPackage(selectedProduct.id, {
       name: clone.name,
+      packageSet: packageSetLabelFor(clone),
       description: clone.description,
       quantity: clone.quantity,
       price: clone.price,
@@ -25434,6 +25499,7 @@ ${waybillLineItems(w).length > 1
           city: orderFormCity.trim() || undefined,
           state: orderFormState.trim() || undefined,
           packageId: chosenPackage.id,
+          packageSet: publicPackageSet || undefined,
           crossSellLines: orderFormCrossSells
             .filter((c) => c.productId && c.quantity > 0)
             .map((c) => ({ productId: c.productId, quantity: c.quantity })),
@@ -45471,6 +45537,8 @@ ${waybillLineItems(w).length > 1
                         const iframeCode = buildIframeCode(product);
                         const selectedCodeTab = productEmbedCodeTab(product.id);
                         const selectedCurrencyCode = productEmbedCurrency(product);
+                        const packageSetOptions = packageSetOptionsForProduct(product, true);
+                        const selectedPackageSet = productEmbedPackageSet(product);
                         const redirectUrl = productEmbedRedirect(product);
                         const marketerLinkReady = !isMarketerEmbedMode || Boolean(primaryMarketerEmbedTag);
                         const directUrlValue = marketerLinkReady ? embedUrl : "Owner must assign your marketer tag first";
@@ -45507,6 +45575,22 @@ ${waybillLineItems(w).length > 1
                                       </label>
                                     </>
                                   )}
+                                  {packageSetOptions.length > 1 && (
+                                    <label className="flex flex-col gap-1">
+                                      <span className="text-sm font-semibold text-gray-700">Package set</span>
+                                      <select
+                                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 w-full"
+                                        value={isMarketerEmbedMode ? (productMarketingDraft.packageSet || selectedPackageSet) : selectedPackageSet}
+                                        onChange={(e) => {
+                                          setEmbedPackageSetsByProduct((v) => ({ ...v, [product.id]: e.target.value }));
+                                          if (isMarketerEmbedMode) setMarketingVariantDraft(product.id, { packageSet: e.target.value });
+                                        }}
+                                      >
+                                        {packageSetOptions.map((setLabel) => <option key={setLabel} value={setLabel}>{setLabel}</option>)}
+                                      </select>
+                                      <span className="text-xs text-gray-400">Choose which package group this order form should show.</span>
+                                    </label>
+                                  )}
                                   <label className="flex flex-col gap-1">
                                     <span className="text-sm font-semibold text-gray-700">Thank-you page URL <span className="font-normal text-gray-400">(Optional)</span></span>
                                     <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={redirectUrl} onChange={(e) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: e.target.value }))} placeholder="https://yourwebsite.com/thank-you" />
@@ -45535,6 +45619,7 @@ ${waybillLineItems(w).length > 1
                                           <div key={variant.id} className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2 sm:flex-row sm:items-center">
                                             <div className="min-w-0 flex-1">
                                               <p className="m-0 text-sm font-bold text-gray-800">{variant.label}</p>
+                                              {variant.packageSet && <p className="m-0 text-[11px] font-semibold text-blue-700">Package set: {variant.packageSet}</p>}
                                               <input readOnly className="mt-1 w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs font-mono text-gray-500" value={variantUrl} aria-label={`${product.name} ${variant.label} tracked URL`} />
                                             </div>
                                             <div className="grid grid-cols-3 gap-1.5 sm:flex">
@@ -45596,6 +45681,18 @@ ${waybillLineItems(w).length > 1
                                         {Object.entries(productCurrencies).map(([code, item]) => <option key={code} value={code}>{item.symbol} - {item.label}</option>)}
                                       </select>
                                     </label>
+                                    {packageSetOptions.length > 1 && (
+                                      <label className="flex items-center gap-2 text-xs text-gray-500">
+                                        <span className="font-semibold text-gray-600">Package set:</span>
+                                        <select
+                                          className="border border-gray-200 rounded-md px-2 py-1 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-200"
+                                          value={selectedPackageSet}
+                                          onChange={(e) => setEmbedPackageSetsByProduct((v) => ({ ...v, [product.id]: e.target.value }))}
+                                        >
+                                          {packageSetOptions.map((setLabel) => <option key={setLabel} value={setLabel}>{setLabel}</option>)}
+                                        </select>
+                                      </label>
+                                    )}
                                     <label className="flex min-w-[240px] flex-1 items-center gap-2 text-xs text-gray-500">
                                       <span className="shrink-0 font-semibold text-gray-600">Thank-you URL:</span>
                                       <input className="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-200" value={redirectUrl} onChange={(e) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: e.target.value }))} placeholder="https://yourwebsite.com/thank-you" />
@@ -45607,6 +45704,15 @@ ${waybillLineItems(w).length > 1
                                       <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-3">
                                         <label className="flex flex-col gap-1">
                                           <span className="text-sm font-semibold text-gray-800">Need a separate landing-page link?</span>
+                                          {packageSetOptions.length > 1 && (
+                                            <select
+                                              className="border border-blue-100 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                                              value={productMarketingDraft.packageSet || selectedPackageSet}
+                                              onChange={(e) => setMarketingVariantDraft(product.id, { packageSet: e.target.value })}
+                                            >
+                                              {packageSetOptions.map((setLabel) => <option key={setLabel} value={setLabel}>Package set: {setLabel}</option>)}
+                                            </select>
+                                          )}
                                           <input className="border border-blue-100 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={productMarketingDraft.landingPageUrl} onChange={(e) => setMarketingVariantDraft(product.id, { landingPageUrl: e.target.value })} placeholder="https://yourlandingpage.com/offer" />
                                           <span className="text-xs text-blue-800/70">Paste a landing page URL, then generate. Orders will still attach to your marketer account and this page.</span>
                                         </label>
@@ -45622,6 +45728,7 @@ ${waybillLineItems(w).length > 1
                                               <div key={variant.id} className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2 sm:flex-row sm:items-center">
                                                 <div className="min-w-0 flex-1">
                                                   <p className="m-0 text-sm font-bold text-gray-800">{variant.label}</p>
+                                                  {variant.packageSet && <p className="m-0 text-[11px] font-semibold text-blue-700">Package set: {variant.packageSet}</p>}
                                                   <input readOnly className="mt-1 w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs font-mono text-gray-500" value={variantUrl} aria-label={`${product.name} ${variant.label} tracked URL`} />
                                                 </div>
                                                 <div className="grid grid-cols-3 gap-1.5 sm:flex">
@@ -48450,6 +48557,9 @@ ${waybillLineItems(w).length > 1
                               <td className="px-4 py-4 font-bold text-gray-900 min-w-[220px]">
                                 <div className="flex flex-col gap-2">
                                   <span className="leading-tight">{item.name}</span>
+                                  <span className="inline-flex w-fit items-center rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.16em] text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200" title="Only packages with the same set show together on package-set embed links">
+                                    Set: {packageSetLabelFor(item)}
+                                  </span>
                                   {hasContentBadges && (
                                     <div className="flex flex-wrap items-center gap-1.5">
                                       {packageComponentCount > 0 && (
@@ -52872,6 +52982,20 @@ ${waybillLineItems(w).length > 1
                   </div>
                 </label>
                 <label><span>Package Name *</span><input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="Starter package" /></label>
+                <label>
+                  <span>Package set</span>
+                  <input
+                    value={packageSet}
+                    onChange={(event) => setPackageSet(event.target.value)}
+                    placeholder="Default, Package Set 1, TikTok Offer..."
+                    list="package-set-options"
+                    maxLength={80}
+                  />
+                  <datalist id="package-set-options">
+                    {packageSetOptionsForProduct(selectedProduct).map((setLabel) => <option key={setLabel} value={setLabel} />)}
+                  </datalist>
+                  <small className="text-gray-500 dark:text-gray-400">Packages with the same set show together when generating a special order-form link.</small>
+                </label>
                 <label><span>Description</span><textarea value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} placeholder="Package description..." /></label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <label><span>Main Product Quantity</span><input value={packageQuantity} onChange={(event) => setPackageQuantity(event.target.value)} inputMode="numeric" /></label>

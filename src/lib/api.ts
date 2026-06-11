@@ -317,8 +317,9 @@ export const productsApi = {
     }
     return snakeToCamel<{ product: any; related: any[] }>(await res.json());
   },
-  publicPackageAvailability: async (id: string, state: string) => {
+  publicPackageAvailability: async (id: string, state: string, packageSet?: string) => {
     const qs = new URLSearchParams({ state });
+    if (packageSet?.trim()) qs.set("packageSet", packageSet.trim());
     const res = await fetchWithApiFailover(`/api/public/products/${encodeURIComponent(id)}/package-availability?${qs.toString()}`, {
       cache: "no-store"
     });

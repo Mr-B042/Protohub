@@ -60,6 +60,7 @@ const PublicOrderSchema = z.object({
   city:         z.string().max(80).optional(),
   state:        z.string().max(80).optional(),
   packageId:    z.string().uuid(),
+  packageSet:   z.string().trim().max(80).optional(),
   crossSellLines:  z.array(CrossSellLineSchema).max(20).optional(),
   utmSource:    z.string().max(80).optional(),
   utmCampaign:  z.string().max(120).optional(),
@@ -375,11 +376,12 @@ router.post("/", submitRateLimit, async (req, res) => {
     return;
   }
   const d = parsed.data;
+  const requestedPackageSet = String(d.packageSet ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
 
   // 1. Resolve package → product → org
   const { data: pkg, error: pkgErr } = await supabase
     .from("product_packages")
-    .select("id, product_id, name, price, currency, quantity, companion_products, package_components, active, state_filter_mode, state_restrictions, requires_state_stock, attribution_product_id")
+    .select("id, product_id, name, package_set, price, currency, quantity, companion_products, package_components, active, state_filter_mode, state_restrictions, requires_state_stock, attribution_product_id")
     .eq("id", d.packageId)
     .maybeSingle();
   if (pkgErr || !pkg || !pkg.active) {
@@ -394,6 +396,11 @@ router.post("/", submitRateLimit, async (req, res) => {
     .maybeSingle();
   if (productErr || !product || !product.active) {
     res.status(404).json({ error: "Product not available." });
+    return;
+  }
+
+  if (requestedPackageSet && String((pkg as { package_set?: string | null }).package_set ?? "Default").trim().toLowerCase() !== requestedPackageSet.toLowerCase()) {
+    res.status(400).json({ error: "This package is not available on this order form. Please refresh and choose an available package." });
     return;
   }
 

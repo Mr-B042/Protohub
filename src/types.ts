@@ -181,6 +181,7 @@ export type ProductPackage = {
   currency: ProductCurrencyCode;
   displayOrder: number;
   active: boolean;
+  packageSet?: string;
   stateFilterMode?: "all" | "allow" | "block";
   stateRestrictions?: string[];
   requiresStateStock?: boolean;

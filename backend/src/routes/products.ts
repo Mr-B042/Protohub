@@ -42,6 +42,7 @@ const productForMarketer = (product: any) => ({
     .map((pkg: any) => ({
       id: pkg.id,
       name: pkg.name,
+      package_set: pkg.package_set ?? "Default",
       description: pkg.description ?? "",
       quantity: Number(pkg.quantity ?? 1),
       price: Number(pkg.price ?? 0),
@@ -185,6 +186,9 @@ const withoutPackageOfferSyncColumns = (payload: Record<string, unknown>) => {
   } = payload;
   return fallback;
 };
+
+const cleanPackageSetLabel = (value: unknown) =>
+  String(value ?? "").trim().replace(/\s+/g, " ").slice(0, 80) || "Default";
 
 // ── GET /api/products/:id/pricings ────────────────────────
 router.get("/:id/pricings", async (req, res) => {
@@ -366,6 +370,7 @@ const PackageComponentSchema = z.object({
 });
 const PackageSchema = z.object({
   name:         z.string().min(1),
+  packageSet:   z.string().trim().max(80).optional(),
   description:  z.string().optional(),
   quantity:     z.number().int().min(1),
   price:        z.number().min(0),
@@ -399,6 +404,7 @@ router.post("/:id/packages",
     }
     const {
       name,
+      packageSet,
       description,
       quantity,
       price,
@@ -423,6 +429,7 @@ router.post("/:id/packages",
     const insertPayload = {
       product_id: req.params.id,
       name,
+      package_set: cleanPackageSetLabel(packageSet),
       description,
       quantity,
       price,
@@ -464,6 +471,7 @@ router.post("/:id/packages",
 // ── PATCH /api/products/:id/packages/:pkgId ─────────────
 const PackageUpdateSchema = z.object({
   name:         z.string().min(1).optional(),
+  packageSet:   z.string().trim().max(80).optional(),
   description:  z.string().optional(),
   quantity:     z.number().int().min(1).optional(),
   price:        z.number().min(0).optional(),
@@ -497,6 +505,7 @@ router.patch("/:id/packages/:pkgId",
     }
     const updates: Record<string, unknown> = {};
     if (parsed.data.name !== undefined) updates.name = parsed.data.name;
+    if (parsed.data.packageSet !== undefined) updates.package_set = cleanPackageSetLabel(parsed.data.packageSet);
     if (parsed.data.description !== undefined) updates.description = parsed.data.description;
     if (parsed.data.quantity !== undefined) updates.quantity = parsed.data.quantity;
     if (parsed.data.price !== undefined) updates.price = parsed.data.price;

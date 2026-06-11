@@ -60,6 +60,7 @@ type PublicPackage = {
   currency: ProductCurrencyCode;
   displayOrder: number;
   active: boolean;
+  packageSet?: string;
   stateFilterMode?: "all" | "allow" | "block";
   stateRestrictions?: string[];
   requiresStateStock?: boolean;
@@ -389,6 +390,19 @@ function activeProductPackages(product: PublicProduct) {
   return [...(product.packages ?? [])]
     .filter((item) => item.active)
     .sort((a, b) => a.displayOrder - b.displayOrder);
+}
+
+function cleanPackageSetLabel(value?: string | null) {
+  return String(value ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
+}
+
+function packageSetKey(value?: string | null) {
+  return (cleanPackageSetLabel(value) || "Default").toLowerCase();
+}
+
+function packageMatchesSet(pkg: PublicPackage, selectedSet?: string | null) {
+  const selected = cleanPackageSetLabel(selectedSet);
+  return !selected || packageSetKey(pkg.packageSet) === selected.toLowerCase();
 }
 
 function packageVisibleInState(pkg: PublicPackage, state: string) {
@@ -963,6 +977,7 @@ export default function PublicOrderFormPage() {
   const publicUtmContent = (params?.get("utm_content") ?? "").slice(0, 100);
   const publicUtmTerm = (params?.get("utm_term") ?? "").slice(0, 100);
   const publicEmbedLabel = (params?.get("embed_label") ?? "").trim().slice(0, 120);
+  const publicPackageSet = cleanPackageSetLabel(params?.get("package_set") ?? params?.get("packageSet") ?? "");
   const publicEmbedIsPreview = params?.get("preview") === "1";
   const publicEmbedIsLocalTest = publicEmbedIsPreview && typeof window !== "undefined" && (
     window.location.hostname === "localhost" ||
@@ -1139,8 +1154,8 @@ export default function PublicOrderFormPage() {
     [products, publicProductId]
   );
   const publicPackages = useMemo(
-    () => (publicProduct ? activeProductPackages(publicProduct) : []),
-    [publicProduct]
+    () => (publicProduct ? activeProductPackages(publicProduct).filter((pkg) => packageMatchesSet(pkg, publicPackageSet)) : []),
+    [publicPackageSet, publicProduct]
   );
   const normalizedSelectedState = normalizeStateName(orderFormState);
   const packagesNeedAvailability = publicPackages.some((pkg) =>
@@ -1221,7 +1236,7 @@ export default function PublicOrderFormPage() {
     }
     let cancelled = false;
     setPackageAvailabilityLoading(true);
-    productsApi.publicPackageAvailability(publicProductId, normalizedSelectedState)
+    productsApi.publicPackageAvailability(publicProductId, normalizedSelectedState, publicPackageSet)
       .then((response) => {
         if (cancelled) return;
         setPackageAvailabilityById(Object.fromEntries((response.packages ?? []).map((row) => [row.packageId, row])));
@@ -1236,7 +1251,7 @@ export default function PublicOrderFormPage() {
     return () => {
       cancelled = true;
     };
-  }, [normalizedSelectedState, packagesNeedAvailability, publicProductId]);
+  }, [normalizedSelectedState, packagesNeedAvailability, publicPackageSet, publicProductId]);
 
   useEffect(() => {
     if (!publicProductId || !settings.freeDeliverySlotsEnabled) {
@@ -2682,6 +2697,7 @@ export default function PublicOrderFormPage() {
       city: orderFormCity.trim() || undefined,
       state: orderFormState.trim() || undefined,
       packageId: chosenPackage.id,
+      packageSet: publicPackageSet || undefined,
       crossSellLines: orderFormCrossSells
         .filter((line) => line.productId && line.quantity > 0)
         .map((line) => ({
