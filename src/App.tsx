@@ -2742,11 +2742,11 @@ const orderAuditTitleFor = (entry: OrderAuditEntry) => {
     return `Order updated while ${toStatus}`;
   }
   if (lowerNote.includes("assigned")) return "Assignment update";
+  if (!fromStatus && !toStatus && !note) return "System activity saved";
   return fromStatus ? `Order activity while ${fromStatus}` : "Order activity recorded";
 };
 const orderAuditDetailFor = (entry: OrderAuditEntry) => {
   if (entry.note) return entry.note;
-  if (!entry.to_status) return "This older audit entry did not save a destination status or note.";
   return "";
 };
 const orderAuditActorFor = (entry: OrderAuditEntry) => {
@@ -50688,13 +50688,24 @@ ${waybillLineItems(w).length > 1
 	                  <h3 className={`font-semibold text-lg border-b ${orderBorderClass} pb-2 mb-4 ${orderTitleTextClass}`}>Order Timeline</h3>
 	                  {(() => {
 	                    const s = selectedOrder.status ?? "New";
-	                    // Pull the latest audit entry per step so each row can show its timestamp.
+	                    // Pull the newest audit entry per step so each row can show when it was recorded.
 	                    const auditByStatus = new Map<string, string>();
 	                    for (const entry of orderAuditLog) {
-	                      if (entry.to_status && !auditByStatus.has(entry.to_status)) {
+	                      if (!entry.to_status) continue;
+	                      const existing = auditByStatus.get(entry.to_status);
+	                      if (!existing || new Date(entry.created_at).getTime() > new Date(existing).getTime()) {
 	                        auditByStatus.set(entry.to_status, entry.created_at);
 	                      }
 	                    }
+	                    const timestampForStatus = (status: string, fallback?: string | null) => {
+	                      const audited = auditByStatus.get(status);
+	                      if (audited) return audited;
+	                      return s === status ? (selectedOrder.updatedAt ?? fallback ?? selectedOrder.createdAt ?? selectedOrder.date) : (fallback ?? undefined);
+	                    };
+	                    const timelineTimeLabel = (value?: string | null) => {
+	                      if (!value) return "Not recorded yet";
+	                      return `${formatDateTime(value)} · ${relativeMinutesLabel(value)}`;
+	                    };
 	                    const statusStepMap: Record<string, number> = {
 	                      "New": 0,
 	                      "Confirmed": 1,
@@ -50731,9 +50742,9 @@ ${waybillLineItems(w).length > 1
 	                        label: "Order Placed",
 	                        description: "Customer order captured",
 	                        Icon: ShoppingBag,
-	                        timestamp: selectedOrder.createdAt ?? selectedOrder.date,
+	                        timestamp: selectedOrder.createdAt ?? selectedOrder.date ?? selectedOrder.updatedAt,
 	                        doneClass: "bg-[#1F8FE0] border-[#1F8FE0] text-white shadow-[0_14px_32px_rgba(31,143,224,0.28)]",
-	                        softClass: "bg-sky-50/90 border-sky-100 text-sky-700 dark:bg-sky-500/12 dark:border-sky-400/25 dark:text-sky-200",
+	                        softClass: "bg-sky-50/90 border-sky-100 text-sky-700 dark:border-sky-300/45 dark:bg-slate-950/58 dark:text-sky-100 dark:shadow-[0_0_24px_rgba(56,189,248,0.16),inset_0_1px_0_rgba(255,255,255,0.08)]",
 	                        lineClass: "from-[#1F8FE0] to-sky-200 dark:from-sky-400 dark:to-sky-900/70",
 	                        textClass: "text-[#1F8FE0] dark:text-sky-100",
 	                        cardClass: "border-sky-200/80 bg-[linear-gradient(135deg,rgba(240,249,255,0.96),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(31,143,224,0.16),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-sky-300/38 dark:bg-[linear-gradient(135deg,rgba(14,165,233,0.30),rgba(7,18,34,0.86))] dark:shadow-[0_24px_65px_rgba(14,165,233,0.20),inset_0_1px_0_rgba(255,255,255,0.10)]"
@@ -50743,9 +50754,9 @@ ${waybillLineItems(w).length > 1
 	                        label: "Confirmed",
 	                        description: "Customer has been confirmed",
 	                        Icon: CheckCircle2,
-	                        timestamp: auditByStatus.get("Confirmed") ?? auditByStatus.get("In Process"),
+	                        timestamp: timestampForStatus("Confirmed", auditByStatus.get("In Process")),
 	                        doneClass: "bg-yellow-400 border-yellow-300 text-yellow-950 shadow-[0_14px_32px_rgba(250,204,21,0.30)]",
-	                        softClass: "bg-yellow-50/90 border-yellow-100 text-yellow-800 dark:bg-yellow-400/14 dark:border-yellow-300/25 dark:text-yellow-100",
+	                        softClass: "bg-yellow-50/90 border-yellow-100 text-yellow-800 dark:border-yellow-200/48 dark:bg-slate-950/58 dark:text-yellow-50 dark:shadow-[0_0_24px_rgba(250,204,21,0.18),inset_0_1px_0_rgba(255,255,255,0.08)]",
 	                        lineClass: "from-yellow-400 to-amber-200 dark:from-yellow-300 dark:to-yellow-900/60",
 	                        textClass: "text-yellow-700 dark:text-yellow-50",
 	                        cardClass: "border-yellow-200/85 bg-[linear-gradient(135deg,rgba(254,252,232,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(250,204,21,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-yellow-300/38 dark:bg-[linear-gradient(135deg,rgba(250,204,21,0.26),rgba(27,22,7,0.80))] dark:shadow-[0_24px_65px_rgba(250,204,21,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
@@ -50755,9 +50766,9 @@ ${waybillLineItems(w).length > 1
 	                        label: "Dispatched",
 	                        description: "Handed to logistics",
 	                        Icon: Truck,
-	                        timestamp: auditByStatus.get("Dispatched"),
+	                        timestamp: timestampForStatus("Dispatched"),
 	                        doneClass: "bg-orange-500 border-orange-400 text-white shadow-[0_14px_32px_rgba(249,115,22,0.30)]",
-	                        softClass: "bg-orange-50/90 border-orange-100 text-orange-800 dark:bg-orange-500/14 dark:border-orange-300/25 dark:text-orange-100",
+	                        softClass: "bg-orange-50/90 border-orange-100 text-orange-800 dark:border-orange-300/48 dark:bg-slate-950/58 dark:text-orange-50 dark:shadow-[0_0_24px_rgba(249,115,22,0.18),inset_0_1px_0_rgba(255,255,255,0.08)]",
 	                        lineClass: "from-orange-500 to-orange-200 dark:from-orange-300 dark:to-orange-900/60",
 	                        textClass: "text-orange-700 dark:text-orange-50",
 	                        cardClass: "border-orange-200/85 bg-[linear-gradient(135deg,rgba(255,247,237,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(249,115,22,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-orange-300/38 dark:bg-[linear-gradient(135deg,rgba(249,115,22,0.28),rgba(28,15,5,0.82))] dark:shadow-[0_24px_65px_rgba(249,115,22,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
@@ -50767,9 +50778,9 @@ ${waybillLineItems(w).length > 1
 	                        label: "Delivered",
 	                        description: "Order completed successfully",
 	                        Icon: CheckCircle2,
-	                        timestamp: selectedOrder.deliveredDate ?? auditByStatus.get("Delivered"),
+	                        timestamp: timestampForStatus("Delivered", selectedOrder.deliveredDate),
 	                        doneClass: "bg-emerald-500 border-emerald-400 text-white shadow-[0_14px_32px_rgba(16,185,129,0.30)]",
-	                        softClass: "bg-emerald-50/90 border-emerald-100 text-emerald-800 dark:bg-emerald-500/14 dark:border-emerald-300/25 dark:text-emerald-100",
+	                        softClass: "bg-emerald-50/90 border-emerald-100 text-emerald-800 dark:border-emerald-300/48 dark:bg-slate-950/58 dark:text-emerald-50 dark:shadow-[0_0_24px_rgba(16,185,129,0.18),inset_0_1px_0_rgba(255,255,255,0.08)]",
 	                        lineClass: "from-emerald-500 to-emerald-200 dark:from-emerald-300 dark:to-emerald-900/60",
 	                        textClass: "text-emerald-700 dark:text-emerald-50",
 	                        cardClass: "border-emerald-200/85 bg-[linear-gradient(135deg,rgba(236,253,245,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(16,185,129,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-emerald-300/38 dark:bg-[linear-gradient(135deg,rgba(16,185,129,0.28),rgba(5,26,18,0.84))] dark:shadow-[0_24px_65px_rgba(16,185,129,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
@@ -50780,7 +50791,7 @@ ${waybillLineItems(w).length > 1
 	                          label: "Order failed",
 	                          statusLabel: "Needs recovery",
 	                          Icon: CircleX,
-	                          timestamp: auditByStatus.get("Failed"),
+	                          timestamp: timestampForStatus("Failed"),
 	                          cardClass: "border-red-200/80 bg-red-50/80 text-red-950 shadow-[0_18px_40px_rgba(239,68,68,0.13)] dark:border-red-300/35 dark:bg-[linear-gradient(135deg,rgba(239,68,68,0.24),rgba(31,8,12,0.88))] dark:text-red-50 dark:shadow-[0_18px_48px_rgba(239,68,68,0.16)]",
 	                          iconClass: "bg-red-500 text-white shadow-[0_14px_30px_rgba(239,68,68,0.30)]",
 	                          pillClass: "bg-red-100 text-red-700 ring-red-200 dark:bg-red-500/20 dark:text-red-100 dark:ring-red-400/25",
@@ -50791,7 +50802,7 @@ ${waybillLineItems(w).length > 1
 	                            label: "Rescheduled",
 	                            statusLabel: "New date needed",
 	                            Icon: CalendarClock,
-	                            timestamp: auditByStatus.get("Postponed") ?? selectedOrder.scheduledAt ?? selectedOrder.scheduledDate,
+	                            timestamp: timestampForStatus("Postponed", selectedOrder.scheduledAt ?? selectedOrder.scheduledDate),
 	                            cardClass: "border-amber-200/80 bg-amber-50/85 text-amber-950 shadow-[0_18px_40px_rgba(245,158,11,0.14)] dark:border-amber-300/35 dark:bg-[linear-gradient(135deg,rgba(245,158,11,0.24),rgba(30,22,6,0.86))] dark:text-amber-50 dark:shadow-[0_18px_48px_rgba(245,158,11,0.16)]",
 	                            iconClass: "bg-amber-500 text-white shadow-[0_14px_30px_rgba(245,158,11,0.30)]",
 	                            pillClass: "bg-amber-100 text-amber-800 ring-amber-200 dark:bg-amber-500/20 dark:text-amber-100 dark:ring-amber-300/25",
@@ -50802,7 +50813,7 @@ ${waybillLineItems(w).length > 1
 	                              label: "Cancelled",
 	                              statusLabel: "Stopped",
 	                              Icon: CircleX,
-	                              timestamp: auditByStatus.get("Cancelled"),
+	                              timestamp: timestampForStatus("Cancelled"),
 	                              cardClass: "border-rose-200/80 bg-rose-50/80 text-rose-950 shadow-[0_18px_40px_rgba(244,63,94,0.13)] dark:border-rose-300/35 dark:bg-[linear-gradient(135deg,rgba(244,63,94,0.24),rgba(31,8,14,0.88))] dark:text-rose-50 dark:shadow-[0_18px_48px_rgba(244,63,94,0.16)]",
 	                              iconClass: "bg-rose-500 text-white shadow-[0_14px_30px_rgba(244,63,94,0.30)]",
 	                              pillClass: "bg-rose-100 text-rose-700 ring-rose-200 dark:bg-rose-500/20 dark:text-rose-100 dark:ring-rose-400/25",
@@ -50812,7 +50823,7 @@ ${waybillLineItems(w).length > 1
 	                    const processStatus = s === "In Process"
 	                      ? {
 	                          label: "In process",
-	                          timestamp: auditByStatus.get("In Process"),
+	                          timestamp: timestampForStatus("In Process"),
 	                          helper: "Confirmed and being worked on before dispatch.",
 	                          className: "border-blue-200/80 bg-blue-50/85 text-blue-950 dark:border-sky-300/35 dark:bg-[linear-gradient(135deg,rgba(59,130,246,0.24),rgba(7,18,34,0.86))] dark:text-sky-50"
 	                        }
@@ -50871,7 +50882,7 @@ ${waybillLineItems(w).length > 1
 	                                  <p className="m-0 text-sm font-black">{processStatus.label}</p>
 	                                  <p className="m-0 mt-0.5 text-xs font-semibold opacity-80">{processStatus.helper}</p>
 	                                </div>
-	                                {processStatus.timestamp && <span className="shrink-0 text-[11px] font-bold opacity-75">{formatDateTime(processStatus.timestamp)}</span>}
+	                                {processStatus.timestamp && <span className="shrink-0 text-right text-[11px] font-bold leading-5 opacity-85">Recorded {timelineTimeLabel(processStatus.timestamp)}</span>}
 	                              </div>
 	                            </motion.div>
 	                          )}
@@ -50901,7 +50912,7 @@ ${waybillLineItems(w).length > 1
 	                                    </span>
 	                                  </div>
 	                                  {exceptionConfig.timestamp && (
-	                                    <p className="m-0 mt-2 text-[11px] font-bold opacity-75">{formatDateTime(exceptionConfig.timestamp)}</p>
+	                                    <p className="m-0 mt-2 text-[11px] font-bold opacity-85">Recorded {timelineTimeLabel(exceptionConfig.timestamp)}</p>
 	                                  )}
 	                                </div>
 	                              </div>
@@ -50951,7 +50962,7 @@ ${waybillLineItems(w).length > 1
 	                                        <p className="m-0 mt-0.5 text-xs font-semibold leading-5 text-slate-500 dark:text-slate-300">{step.description}</p>
 	                                      </div>
 	                                      {step.timestamp && filled && (
-	                                        <span className="shrink-0 text-right text-[11px] font-bold leading-5 text-slate-600 dark:text-slate-200 sm:text-xs">{formatDateTime(step.timestamp)}</span>
+	                                        <span className="shrink-0 text-right text-[11px] font-bold leading-5 text-slate-600 dark:text-slate-200 sm:text-xs">Recorded {timelineTimeLabel(step.timestamp)}</span>
 	                                      )}
 	                                    </div>
 	                                    {isActive && (
@@ -50960,7 +50971,7 @@ ${waybillLineItems(w).length > 1
 	                                          aria-hidden="true"
 	                                          animate={{ x: ["-120%", "180%"] }}
 	                                          transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut", repeatDelay: 0.8 }}
-	                                          className="absolute inset-y-0 w-1/2 bg-gradient-to-r from-transparent via-white/65 to-transparent dark:via-white/24"
+	                                          className="absolute inset-y-0 w-1/2 bg-gradient-to-r from-transparent via-white/65 to-transparent dark:via-cyan-100/18"
 	                                        />
 	                                        <span className="relative">Current status</span>
 	                                      </span>
