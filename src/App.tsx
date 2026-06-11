@@ -22994,6 +22994,117 @@ ${waybillLineItems(w).length > 1
     showToast(`Created "${clone.name}" as a draft x${multiplier} combo copy. Adjust it, then Go live when ready.`);
   };
 
+  const duplicatePackageSet = async (setLabel: string, setPackages: ProductPackage[]) => {
+    if (!selectedProduct || setPackages.length === 0) return;
+    const rawName = window.prompt(`Duplicate set "${setLabel}" as:`, `${setLabel} Copy`);
+    const nextSetLabel = cleanPackageSetLabel(rawName);
+    if (!nextSetLabel) return;
+    if (packageSetOptionsForProduct(selectedProduct).some((label) => packageSetKey(label) === packageSetKey(nextSetLabel))) {
+      showToast(`A set named "${nextSetLabel}" already exists. Pick a different name.`);
+      return;
+    }
+    const baseOrder = selectedProduct.packages.reduce((max, pkg) => Math.max(max, pkg.displayOrder), 0) || 0;
+    const clones = setPackages.map((item, index) => ({
+      ...item,
+      id: makePackageId(),
+      name: item.name,
+      packageSet: nextSetLabel,
+      active: false,
+      displayOrder: baseOrder + index + 1,
+      packageComponents: item.packageComponents ? item.packageComponents.map((component) => normalisePackageComponent({ ...component, componentId: `pkg-comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })) : [],
+      companionProducts: item.companionProducts ? item.companionProducts.map((companion) => normalisePackageCompanion({ ...companion, companionId: makeCompanionId() })) : []
+    }));
+    const productId = selectedProduct.id;
+    const tempIds = new Set(clones.map((clone) => clone.id));
+    setProducts((value) =>
+      value.map((p) => p.id === productId ? { ...p, packages: [...p.packages, ...clones] } : p)
+    );
+    setExpandedPackageSets((prev) => ({ ...prev, [packageSetKey(nextSetLabel)]: true }));
+    try {
+      for (const clone of clones) {
+        const galleryPayload = { imageUrl: clone.imageUrl ?? "", imageUrls: clone.imageUrls ?? [] };
+        const savedPackage = await productsApi.createPackage(productId, {
+          name: clone.name,
+          packageSet: nextSetLabel,
+          description: clone.description,
+          quantity: clone.quantity,
+          price: clone.price,
+          currency: clone.currency,
+          displayOrder: clone.displayOrder,
+          active: clone.active,
+          stateFilterMode: clone.stateFilterMode ?? "all",
+          stateRestrictions: clone.stateRestrictions ?? [],
+          requiresStateStock: Boolean(clone.requiresStateStock),
+          featuredComboCard: Boolean(clone.featuredComboCard),
+          attributionProductId: clone.attributionProductId ?? null,
+          unitSingular: clone.unitSingular ?? null,
+          unitPlural: clone.unitPlural ?? null,
+          packageComponents: clone.packageComponents,
+          companionProducts: clone.companionProducts
+        });
+        const galleryResult = await savePackageGalleryAfterDetails(productId, (savedPackage as ProductPackage).id, galleryPayload, clone.name);
+        replaceTemporaryPackageId(productId, clone.id, galleryResult.savedPackage ?? (savedPackage as ProductPackage));
+        tempIds.delete(clone.id);
+      }
+      showToast(`Duplicated set "${setLabel}" into "${nextSetLabel}" as drafts.`);
+    } catch (err: any) {
+      setProducts((prev) => prev.map((p) => p.id === productId ? { ...p, packages: p.packages.filter((pkg) => !tempIds.has(pkg.id)) } : p));
+      showToast(`Set copy partly failed: ${err?.message ?? "please retry"}. Saved copies, if any, were kept.`);
+    }
+  };
+
+  const setPackageSetActive = async (setLabel: string, setPackages: ProductPackage[], nextActive: boolean) => {
+    if (!selectedProduct || setPackages.length === 0) return;
+    const temporary = setPackages.find((pkg) => isTemporaryPackageId(pkg.id));
+    if (temporary) {
+      showToast("This set is still syncing. Try again in a moment.");
+      return;
+    }
+    const productId = selectedProduct.id;
+    const previousPackages = selectedProduct.packages;
+    setProducts((value) =>
+      value.map((p) => p.id === productId
+        ? { ...p, packages: p.packages.map((pkg) => setPackages.some((target) => target.id === pkg.id) ? { ...pkg, active: nextActive } : pkg) }
+        : p)
+    );
+    try {
+      await Promise.all(setPackages.map((pkg) => productsApi.updatePackage(productId, pkg.id, { active: nextActive })));
+      showToast(`Set "${setLabel}" is now ${nextActive ? "live" : "saved as draft"}.`);
+    } catch (err: any) {
+      setProducts((value) => value.map((p) => p.id === productId ? { ...p, packages: previousPackages } : p));
+      showToast(`Failed to ${nextActive ? "publish" : "draft"} set: ${err?.message ?? "please retry"}.`);
+    }
+  };
+
+  const removePackageSet = async (setLabel: string, setPackages: ProductPackage[]) => {
+    if (!selectedProduct || setPackages.length === 0) return;
+    const temporary = setPackages.find((pkg) => isTemporaryPackageId(pkg.id));
+    if (temporary) {
+      showToast("This set is still syncing. Try again in a moment.");
+      return;
+    }
+    const ok = window.confirm(`Remove package set "${setLabel}"?\n\nThis deletes ${setPackages.length} package${setPackages.length === 1 ? "" : "s"} and all add-on offers inside this set. This cannot be undone.`);
+    if (!ok) return;
+    const productId = selectedProduct.id;
+    const previousPackages = selectedProduct.packages;
+    const ids = new Set(setPackages.map((pkg) => pkg.id));
+    setProducts((value) =>
+      value.map((p) => p.id === productId ? { ...p, packages: p.packages.filter((pkg) => !ids.has(pkg.id)) } : p)
+    );
+    setExpandedPackageSets((prev) => {
+      const next = { ...prev };
+      delete next[packageSetKey(setLabel)];
+      return next;
+    });
+    try {
+      await Promise.all(setPackages.map((pkg) => productsApi.deletePackage(productId, pkg.id)));
+      showToast(`Removed set "${setLabel}".`);
+    } catch (err: any) {
+      setProducts((value) => value.map((p) => p.id === productId ? { ...p, packages: previousPackages } : p));
+      showToast(`Failed to remove set: ${err?.message ?? "please retry"}.`);
+    }
+  };
+
   // Toggle live/draft — quick action from the package row.
   const togglePackageActive = (item: ProductPackage) => {
     if (!selectedProduct) return;
@@ -48599,17 +48710,18 @@ ${waybillLineItems(w).length > 1
                             const setOfferCount = setPackages.reduce((sum, pkg) => sum + (pkg.companionProducts?.length ?? 0), 0);
                             const setHiddenOfferCount = setPackages.reduce((sum, pkg) => sum + (pkg.companionProducts ?? []).filter((companion) => !companionIsActive(companion)).length, 0);
                             const isSetExpanded = expandedPackageSets[setKey] === true;
+                            const setIsFullyLive = setLiveCount === setPackages.length && setPackages.length > 0;
                             return (
                               <Fragment key={setKey}>
                                 <tr className="bg-slate-50/90">
                                   <td colSpan={7} className="px-4 py-3">
-                                    <button
-                                      type="button"
-                                      className="!min-h-0 flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition-all hover:border-blue-200 hover:bg-blue-50/50"
-                                      onClick={() => setExpandedPackageSets((prev) => ({ ...prev, [setKey]: !prev[setKey] }))}
-                                      aria-expanded={isSetExpanded}
-                                    >
-                                      <div className="flex min-w-0 items-center gap-3">
+                                    <div className="flex w-full flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition-all hover:border-blue-200 hover:bg-blue-50/40 sm:flex-row sm:items-center sm:justify-between">
+                                      <button
+                                        type="button"
+                                        className="!min-h-0 flex min-w-0 flex-1 items-center gap-3 text-left"
+                                        onClick={() => setExpandedPackageSets((prev) => ({ ...prev, [setKey]: !prev[setKey] }))}
+                                        aria-expanded={isSetExpanded}
+                                      >
                                         <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${isSetExpanded ? "bg-blue-600 text-white shadow-sm" : "bg-slate-100 text-slate-500"}`}>
                                           {isSetExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                                         </span>
@@ -48619,11 +48731,43 @@ ${waybillLineItems(w).length > 1
                                             {setPackages.length} package{setPackages.length === 1 ? "" : "s"} · {setLiveCount} live · {setOfferCount} offer{setOfferCount === 1 ? "" : "s"}{setHiddenOfferCount > 0 ? ` · ${setHiddenOfferCount} hidden` : ""}
                                           </p>
                                         </div>
+                                      </button>
+                                      <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+                                        <button
+                                          type="button"
+                                          className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-black text-blue-700 transition-colors hover:bg-blue-100"
+                                          onClick={() => setExpandedPackageSets((prev) => ({ ...prev, [setKey]: !prev[setKey] }))}
+                                        >
+                                          {isSetExpanded ? "Hide packages" : `View packages (${setPackages.length})`}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-indigo-100 bg-white px-3 py-1.5 text-xs font-black text-indigo-700 transition-colors hover:bg-indigo-50"
+                                          onClick={() => duplicatePackageSet(setLabel, setPackages)}
+                                          title="Duplicate every package inside this set as a new draft set"
+                                        >
+                                          <Copy className="h-3.5 w-3.5" />
+                                          Copy set
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-black transition-colors ${setIsFullyLive ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100" : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"}`}
+                                          onClick={() => setPackageSetActive(setLabel, setPackages, !setIsFullyLive)}
+                                          title={setIsFullyLive ? "Hide every package in this set from the public form" : "Make every package in this set live"}
+                                        >
+                                          {setIsFullyLive ? "Set draft" : "Go live set"}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-red-100 bg-white px-3 py-1.5 text-xs font-black text-red-600 transition-colors hover:bg-red-50"
+                                          onClick={() => removePackageSet(setLabel, setPackages)}
+                                          title="Delete every package inside this set"
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                          Remove set
+                                        </button>
                                       </div>
-                                      <span className="shrink-0 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-black text-blue-700">
-                                        {isSetExpanded ? "Hide packages" : `View packages (${setPackages.length})`}
-                                      </span>
-                                    </button>
+                                    </div>
                                   </td>
                                 </tr>
                                 {isSetExpanded && setPackages.map((item) => {
