@@ -6405,6 +6405,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return stored === "pricing" || stored === "packages" ? "dashboard" : stored;
   });
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
+  const [expandedPackageRows, setExpandedPackageRows] = useState<Record<string, boolean>>({});
   const [addOnPerformanceRange, setAddOnPerformanceRange] = useState<AddOnPerformanceRange>("all");
   const [stateStockProductId, setStateStockProductId] = useState("");
   const [stateStockStateFilter, setStateStockStateFilter] = useState("");
@@ -48527,6 +48528,24 @@ ${waybillLineItems(w).length > 1
                   <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-100">
                     <Boxes className="w-4 h-4 text-[#1F8FE0]" />
                     <h2 className="text-sm font-bold text-gray-900">Product Packages</h2>
+                    {selectedProduct.packages.some((pkg) => (pkg.companionProducts ?? []).length > 0) && (
+                      <div className="ml-auto flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="!min-h-0 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+                          onClick={() => setExpandedPackageRows(Object.fromEntries(selectedProduct.packages.map((pkg) => [pkg.id, true])))}
+                        >
+                          Expand all
+                        </button>
+                        <button
+                          type="button"
+                          className="!min-h-0 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+                          onClick={() => setExpandedPackageRows({})}
+                        >
+                          Collapse all
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -48552,6 +48571,7 @@ ${waybillLineItems(w).length > 1
                             const hasCarousel = isComboLikePackage(item) && (item.imageUrls?.length ?? 0) > 1;
                             const hasContentBadges = packageComponentCount > 0 || freeGiftCount > 0 || extraOfferCount > 0;
                             const hasRuleBadges = hasStateRule || item.requiresStateStock || item.featuredComboCard || hasCarousel;
+                            const isPackageExpanded = expandedPackageRows[item.id] === true;
                             return (
                             <tr key={item.id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4 font-bold text-gray-900 min-w-[220px]">
@@ -48609,6 +48629,18 @@ ${waybillLineItems(w).length > 1
                                     </div>
                                   )}
                                   {companionRows.length > 0 && (
+                                    <button
+                                      type="button"
+                                      className="!min-h-0 mt-1 inline-flex w-fit items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.12em] text-gray-600 shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                                      onClick={() => setExpandedPackageRows((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                                      aria-expanded={isPackageExpanded}
+                                      title={isPackageExpanded ? "Hide this package's add-on offers" : "View this package's add-on offers"}
+                                    >
+                                      {isPackageExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                                      {isPackageExpanded ? "Hide offers" : `View offers (${companionRows.length})`}
+                                    </button>
+                                  )}
+                                  {isPackageExpanded && companionRows.length > 0 && (
                                     <div className="mt-1 space-y-1.5">
                                       {companionRows.map((companion, companionIdx) => {
                                         const offerProduct = products.find((p) => p.id === companion.productId);
