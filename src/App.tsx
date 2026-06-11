@@ -50744,7 +50744,7 @@ ${waybillLineItems(w).length > 1
 	                        Icon: ShoppingBag,
 	                        timestamp: selectedOrder.createdAt ?? selectedOrder.date ?? selectedOrder.updatedAt,
 	                        doneClass: "bg-[#1F8FE0] border-[#1F8FE0] text-white shadow-[0_14px_32px_rgba(31,143,224,0.28)]",
-	                        softClass: "border-sky-300/50 bg-slate-950/76 text-sky-50 shadow-[0_0_26px_rgba(56,189,248,0.20),inset_0_1px_0_rgba(255,255,255,0.12)]",
+	                        softClass: "border-sky-600/55 bg-sky-700 text-white shadow-[0_12px_28px_rgba(56,189,248,0.22),inset_0_1px_0_rgba(255,255,255,0.20)] dark:border-sky-300/45 dark:bg-sky-950/80 dark:text-sky-50 dark:shadow-[0_0_26px_rgba(56,189,248,0.20),inset_0_1px_0_rgba(255,255,255,0.12)]",
 	                        lineClass: "from-[#1F8FE0] to-sky-200 dark:from-sky-400 dark:to-sky-900/70",
 	                        textClass: "text-[#1F8FE0] dark:text-sky-100",
 	                        cardClass: "border-sky-200/80 bg-[linear-gradient(135deg,rgba(240,249,255,0.96),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(31,143,224,0.16),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-sky-300/38 dark:bg-[linear-gradient(135deg,rgba(14,165,233,0.30),rgba(7,18,34,0.86))] dark:shadow-[0_24px_65px_rgba(14,165,233,0.20),inset_0_1px_0_rgba(255,255,255,0.10)]"
@@ -50756,7 +50756,7 @@ ${waybillLineItems(w).length > 1
 	                        Icon: CheckCircle2,
 	                        timestamp: timestampForStatus("Confirmed", auditByStatus.get("In Process")),
 	                        doneClass: "bg-yellow-400 border-yellow-300 text-yellow-950 shadow-[0_14px_32px_rgba(250,204,21,0.30)]",
-	                        softClass: "border-yellow-200/55 bg-slate-950/76 text-yellow-50 shadow-[0_0_26px_rgba(250,204,21,0.22),inset_0_1px_0_rgba(255,255,255,0.12)]",
+	                        softClass: "border-yellow-500/55 bg-yellow-400 text-yellow-950 shadow-[0_12px_28px_rgba(250,204,21,0.24),inset_0_1px_0_rgba(255,255,255,0.26)] dark:border-yellow-200/45 dark:bg-yellow-950/80 dark:text-yellow-50 dark:shadow-[0_0_26px_rgba(250,204,21,0.22),inset_0_1px_0_rgba(255,255,255,0.12)]",
 	                        lineClass: "from-yellow-400 to-amber-200 dark:from-yellow-300 dark:to-yellow-900/60",
 	                        textClass: "text-yellow-700 dark:text-yellow-50",
 	                        cardClass: "border-yellow-200/85 bg-[linear-gradient(135deg,rgba(254,252,232,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(250,204,21,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-yellow-300/38 dark:bg-[linear-gradient(135deg,rgba(250,204,21,0.26),rgba(27,22,7,0.80))] dark:shadow-[0_24px_65px_rgba(250,204,21,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
@@ -50768,7 +50768,7 @@ ${waybillLineItems(w).length > 1
 	                        Icon: Truck,
 	                        timestamp: timestampForStatus("Dispatched"),
 	                        doneClass: "bg-orange-500 border-orange-400 text-white shadow-[0_14px_32px_rgba(249,115,22,0.30)]",
-	                        softClass: "border-orange-300/55 bg-slate-950/76 text-orange-50 shadow-[0_0_26px_rgba(249,115,22,0.22),inset_0_1px_0_rgba(255,255,255,0.12)]",
+	                        softClass: "border-orange-600/55 bg-orange-700 text-white shadow-[0_12px_28px_rgba(249,115,22,0.24),inset_0_1px_0_rgba(255,255,255,0.20)] dark:border-orange-300/45 dark:bg-orange-950/80 dark:text-orange-50 dark:shadow-[0_0_26px_rgba(249,115,22,0.22),inset_0_1px_0_rgba(255,255,255,0.12)]",
 	                        lineClass: "from-orange-500 to-orange-200 dark:from-orange-300 dark:to-orange-900/60",
 	                        textClass: "text-orange-700 dark:text-orange-50",
 	                        cardClass: "border-orange-200/85 bg-[linear-gradient(135deg,rgba(255,247,237,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(249,115,22,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-orange-300/38 dark:bg-[linear-gradient(135deg,rgba(249,115,22,0.28),rgba(28,15,5,0.82))] dark:shadow-[0_24px_65px_rgba(249,115,22,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
@@ -50780,7 +50780,7 @@ ${waybillLineItems(w).length > 1
 	                        Icon: CheckCircle2,
 	                        timestamp: timestampForStatus("Delivered", selectedOrder.deliveredDate),
 	                        doneClass: "bg-emerald-500 border-emerald-400 text-white shadow-[0_14px_32px_rgba(16,185,129,0.30)]",
-	                        softClass: "border-emerald-300/55 bg-slate-950/76 text-emerald-50 shadow-[0_0_26px_rgba(16,185,129,0.22),inset_0_1px_0_rgba(255,255,255,0.12)]",
+	                        softClass: "border-emerald-600/55 bg-emerald-700 text-white shadow-[0_12px_28px_rgba(16,185,129,0.24),inset_0_1px_0_rgba(255,255,255,0.20)] dark:border-emerald-300/45 dark:bg-emerald-950/80 dark:text-emerald-50 dark:shadow-[0_0_26px_rgba(16,185,129,0.22),inset_0_1px_0_rgba(255,255,255,0.12)]",
 	                        lineClass: "from-emerald-500 to-emerald-200 dark:from-emerald-300 dark:to-emerald-900/60",
 	                        textClass: "text-emerald-700 dark:text-emerald-50",
 	                        cardClass: "border-emerald-200/85 bg-[linear-gradient(135deg,rgba(236,253,245,0.98),rgba(255,255,255,0.72))] shadow-[0_24px_55px_rgba(16,185,129,0.17),inset_0_1px_0_rgba(255,255,255,0.92)] dark:border-emerald-300/38 dark:bg-[linear-gradient(135deg,rgba(16,185,129,0.28),rgba(5,26,18,0.84))] dark:shadow-[0_24px_65px_rgba(16,185,129,0.18),inset_0_1px_0_rgba(255,255,255,0.10)]"
