@@ -40556,12 +40556,14 @@ ${waybillLineItems(w).length > 1
                         ) : financeChartData.map((row, index) => {
                           const height = row.revenue <= 0 ? 0 : Math.max(4, Math.round((row.revenue / reportRevenueTrendMax) * 100));
                           return (
-                            <div key={`${row.label}-${index}`} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
-                              <div
-                                className="w-full rounded-t-xl bg-gradient-to-t from-cyan-900 to-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.18)]"
-                                style={{ height: `${height}%` }}
-                                title={`${row.label}: ${formatMoney(row.revenue)}`}
-                              />
+                            <div key={`${row.label}-${index}`} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-2">
+                              <div className="flex min-h-0 w-full flex-1 items-end">
+                                <div
+                                  className="w-full rounded-t-xl bg-gradient-to-t from-cyan-900 to-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.18)]"
+                                  style={{ height: `${height}%` }}
+                                  title={`${row.label}: ${formatMoney(row.revenue)}`}
+                                />
+                              </div>
                               <span className="max-w-full truncate text-[10px] font-bold text-slate-500">{row.label}</span>
                             </div>
                           );
