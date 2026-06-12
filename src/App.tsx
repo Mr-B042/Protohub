@@ -17124,6 +17124,58 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const financeChartRangeDays = Math.max(1, Math.round((financeChartEnd.getTime() - financeChartStart.getTime()) / 86_400_000) + 1);
   const financeChartBucketLabel = financePeriod === "This Year" || financeChartRangeDays > 45 ? "Monthly delivered revenue" : "Daily delivered revenue";
   const financeChartMax = Math.max(...financeChartData.map((d) => Math.max(d.revenue, d.expenses)), 1);
+  const reportPureProfitRows = (() => {
+    const range = explicitPeriodRange(financePeriod, financeDateRange, false);
+    const start = new Date(`${range.start}T00:00:00`);
+    const end = new Date(`${range.end}T00:00:00`);
+    const safeStart = Number.isNaN(start.getTime()) ? new Date() : start;
+    const safeEnd = Number.isNaN(end.getTime()) ? safeStart : end;
+    const diffDays = Math.max(1, Math.round((safeEnd.getTime() - safeStart.getTime()) / 86_400_000) + 1);
+    const useMonthly = financePeriod === "This Year" || diffDays > 45;
+    const buildRow = (key: string, label: string, delivered: TrackedOrder[], periodExpenses: ExpenseRecord[]) => {
+      const summary = summarizeRecognizedProfit(delivered, periodExpenses);
+      return {
+        key,
+        label,
+        delivered: delivered.length,
+        revenue: summary.revenue,
+        cogs: summary.cogs,
+        logistics: summary.recognizedLogistics,
+        operating: summary.operatingExpense,
+        netProfit: summary.netProfit,
+        margin: summary.revenue === 0 ? 0 : Math.round((summary.netProfit / summary.revenue) * 1000) / 10
+      };
+    };
+
+    if (useMonthly) {
+      const months: string[] = [];
+      const cur = new Date(safeStart.getFullYear(), safeStart.getMonth(), 1);
+      const endMonth = new Date(safeEnd.getFullYear(), safeEnd.getMonth(), 1);
+      while (cur <= endMonth) {
+        const mk = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}`;
+        if (!months.includes(mk)) months.push(mk);
+        cur.setMonth(cur.getMonth() + 1);
+      }
+      return months.map((mk) => buildRow(
+        mk,
+        new Date(`${mk}-01T00:00:00`).toLocaleDateString("en-US", { month: "short", year: "numeric" }),
+        financeDeliveredRows.filter((order) => (orderDeliveredKey(order) ?? "").startsWith(mk)),
+        financeExpenses.filter((expense) => normalizeDateKey(expense.date).startsWith(mk))
+      ));
+    }
+
+    return Array.from({ length: diffDays }, (_, i) => {
+      const d = new Date(safeStart);
+      d.setDate(safeStart.getDate() + i);
+      const day = formatDateKey(d);
+      return buildRow(
+        day,
+        displayDateFromKey(day),
+        financeDeliveredRows.filter((order) => orderDeliveredKey(order) === day),
+        financeExpenses.filter((expense) => normalizeDateKey(expense.date) === day)
+      );
+    });
+  })();
   const reportTotalOrders = financePeriodOrders.length;
   const reportDeliveredInCohort = financeCohortDeliveredRows.length;
   const reportDeliveredInPeriod = financeDeliveredRows.length;
@@ -17201,21 +17253,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .slice(0, 6);
   const reportMaxProductUnits = Math.max(1, ...reportProductUnitRows.map((row) => row.units));
   const reportMaxProductRevenue = Math.max(1, ...reportProductRevenueRows.map((row) => row.revenue));
-  const reportStaffRows = users.map((user) => {
-    const assigned = financePeriodOrders.filter((order) => order.assignedRepId === user.id);
-    const delivered = assigned.filter((order) => (order.status ?? "New") === "Delivered");
-    const deliveredRevenue = financeDeliveredRows.filter((order) => order.assignedRepId === user.id).reduce((sum, order) => sum + order.amount, 0);
-    return {
-      name: user.name,
-      role: user.role,
-      orders: assigned.length,
-      delivered: delivered.length,
-      revenue: deliveredRevenue,
-      rate: assigned.length === 0 ? 0 : Math.round((delivered.length / assigned.length) * 100)
+  const reportAssignedProfitRows = (() => {
+    const buildRow = (user: ManagedUser | null, assigned: TrackedOrder[], deliveredRows: TrackedOrder[]) => {
+      const revenue = deliveredRows.reduce((sum, order) => sum + order.amount, 0);
+      const cogs = deliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
+      const logistics = deliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+      const commission = user?.role === "Sales Rep" ? recognizedBonusTotalForRows(deliveredRows) : 0;
+      const directCost = cogs + logistics + commission;
+      const directProfit = revenue - directCost;
+      const cohortDelivered = assigned.filter((order) => (order.status ?? "New") === "Delivered").length;
+      return {
+        id: user?.id ?? "__unassigned__",
+        name: user?.name ?? "Unassigned orders",
+        role: user?.role ?? "No assignee",
+        orders: assigned.length,
+        delivered: deliveredRows.length,
+        cohortDelivered,
+        revenue,
+        cogs,
+        logistics,
+        commission,
+        directCost,
+        directProfit,
+        rate: assigned.length === 0 ? 0 : Math.round((cohortDelivered / assigned.length) * 100),
+        margin: revenue === 0 ? 0 : Math.round((directProfit / revenue) * 1000) / 10
+      };
     };
-  }).filter((row) => row.orders > 0 || row.delivered > 0 || row.revenue > 0)
-    .sort((a, b) => b.delivered - a.delivered || b.revenue - a.revenue || b.orders - a.orders)
-    .slice(0, 5);
+    const rows = users.map((user) => buildRow(
+      user,
+      financePeriodOrders.filter((order) => order.assignedRepId === user.id),
+      financeDeliveredRows.filter((order) => order.assignedRepId === user.id)
+    ));
+    rows.push(buildRow(
+      null,
+      financePeriodOrders.filter((order) => !order.assignedRepId),
+      financeDeliveredRows.filter((order) => !order.assignedRepId)
+    ));
+    return rows
+      .filter((row) => row.orders > 0 || row.delivered > 0 || row.revenue > 0 || row.directProfit !== 0)
+      .sort((a, b) => b.directProfit - a.directProfit || b.revenue - a.revenue || b.delivered - a.delivered || b.orders - a.orders)
+      .slice(0, 8);
+  })();
   const reportAgentRows = agents.map((agent) => {
     const assigned = financePeriodOrders.filter((order) => order.agentId === agent.id);
     const delivered = assigned.filter((order) => (order.status ?? "New") === "Delivered");
@@ -40571,6 +40649,48 @@ ${waybillLineItems(w).length > 1
                       </div>
                     </section>
 
+                    <section className="overflow-hidden rounded-3xl border border-slate-700 bg-slate-900/65" aria-label="Pure profit by day">
+                      <div className="flex flex-col gap-2 border-b border-slate-700 px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <h3 className="m-0 text-lg font-black text-white">Pure Profit by {financePeriod === "This Year" || financeChartRangeDays > 45 ? "Month" : "Day"}</h3>
+                          <p className="m-0 text-sm font-semibold text-slate-400">Revenue minus product cost, logistics, bonuses, and expenses.</p>
+                        </div>
+                        <span className={`rounded-2xl px-3 py-1 text-sm font-black ${financeNetProfit >= 0 ? "bg-emerald-400/10 text-emerald-300" : "bg-rose-400/10 text-rose-300"}`}>
+                          Total pure profit: {formatMoney(financeNetProfit)}
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-slate-950/35 text-[11px] uppercase tracking-wider text-slate-400">
+                            <tr>
+                              <th className="px-5 py-3 text-left">Period</th>
+                              <th className="px-5 py-3 text-right">Delivered</th>
+                              <th className="px-5 py-3 text-right">Revenue</th>
+                              <th className="px-5 py-3 text-right">COGS</th>
+                              <th className="px-5 py-3 text-right">Logistics</th>
+                              <th className="px-5 py-3 text-right">Opex + Bonus</th>
+                              <th className="px-5 py-3 text-right">Pure Profit</th>
+                              <th className="px-5 py-3 text-right">Margin</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800">
+                            {reportPureProfitRows.map((row) => (
+                              <tr key={row.key} className="text-slate-200">
+                                <td className="px-5 py-4 font-black text-white">{row.label}</td>
+                                <td className="px-5 py-4 text-right font-bold">{row.delivered.toLocaleString()}</td>
+                                <td className="px-5 py-4 text-right font-bold text-emerald-300">{formatMoney(row.revenue)}</td>
+                                <td className="px-5 py-4 text-right text-slate-400">{formatMoney(row.cogs)}</td>
+                                <td className="px-5 py-4 text-right text-slate-400">{formatMoney(row.logistics)}</td>
+                                <td className="px-5 py-4 text-right text-slate-400">{formatMoney(row.operating)}</td>
+                                <td className={`px-5 py-4 text-right font-black ${row.netProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatMoney(row.netProfit)}</td>
+                                <td className={`px-5 py-4 text-right font-black ${row.margin >= 0 ? "text-slate-200" : "text-rose-300"}`}>{row.revenue > 0 ? `${row.margin}%` : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+
                     <section className="grid grid-cols-1 gap-4 xl:grid-cols-2" aria-label="Report breakdowns">
                       <article className="rounded-3xl border border-slate-700 bg-slate-900/65 p-5">
                         <h3 className="m-0 text-lg font-black text-white">Financial Summary</h3>
@@ -40669,28 +40789,44 @@ ${waybillLineItems(w).length > 1
                         </article>
                       ))}
 
-                      <article className="rounded-3xl border border-slate-700 bg-slate-900/65 p-5">
-                        <h3 className="m-0 text-lg font-black text-white">Staff Performance</h3>
-                        <div className="mt-4 space-y-3">
-                          {reportStaffRows.length === 0 ? (
-                            <p className="m-0 rounded-2xl bg-slate-950/35 p-4 text-sm font-semibold text-slate-400">No assigned staff activity in this period.</p>
-                          ) : reportStaffRows.map((row, index) => (
-                            <div key={row.name} className="rounded-2xl bg-slate-950/25 p-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="m-0 truncate text-sm font-black text-white"><span className="mr-2 rounded-lg bg-slate-800 px-2 py-0.5 text-[10px] text-emerald-300">{index + 1}</span>{row.name}</p>
-                                  <p className="m-0 mt-0.5 text-xs font-semibold text-slate-400">{row.role} · {row.delivered.toLocaleString()} of {row.orders.toLocaleString()} orders delivered</p>
-                                </div>
-                                <div className="text-right">
-                                  <strong className="text-emerald-300">{row.rate}%</strong>
-                                  <p className="m-0 text-xs font-semibold text-slate-500">{formatMoney(row.revenue)}</p>
-                                </div>
-                              </div>
-                              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
-                                <div className="h-full rounded-full bg-emerald-400" style={{ width: `${row.rate <= 0 ? 0 : Math.min(100, Math.max(4, row.rate))}%` }} />
-                              </div>
-                            </div>
-                          ))}
+                      <article className="overflow-hidden rounded-3xl border border-slate-700 bg-slate-900/65">
+                        <div className="border-b border-slate-700 px-5 py-4">
+                          <h3 className="m-0 text-lg font-black text-white">Assigned Order Profit</h3>
+                          <p className="m-0 text-xs font-semibold text-slate-400">Direct contribution by whoever owns the order, not only sales reps.</p>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full text-sm">
+                            <thead className="bg-slate-950/35 text-[10px] uppercase tracking-wider text-slate-400">
+                              <tr>
+                                <th className="px-4 py-3 text-left">Assignee</th>
+                                <th className="px-4 py-3 text-right">Assigned</th>
+                                <th className="px-4 py-3 text-right">Delivered</th>
+                                <th className="px-4 py-3 text-right">Revenue</th>
+                                <th className="px-4 py-3 text-right">Direct Cost</th>
+                                <th className="px-4 py-3 text-right">Direct Profit</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800">
+                              {reportAssignedProfitRows.length === 0 ? (
+                                <tr><td colSpan={6} className="px-5 py-8 text-center font-semibold text-slate-400">No assigned order profit in this period.</td></tr>
+                              ) : reportAssignedProfitRows.map((row) => (
+                                <tr key={row.id} className="text-slate-200">
+                                  <td className="px-4 py-4">
+                                    <p className="m-0 font-black text-white">{row.name}</p>
+                                    <p className="m-0 mt-0.5 text-[11px] font-semibold text-slate-500">{row.role} · {row.rate}% cohort delivery</p>
+                                  </td>
+                                  <td className="px-4 py-4 text-right font-bold">{row.orders.toLocaleString()}</td>
+                                  <td className="px-4 py-4 text-right font-bold">{row.delivered.toLocaleString()}</td>
+                                  <td className="px-4 py-4 text-right font-bold text-emerald-300">{formatMoney(row.revenue)}</td>
+                                  <td className="px-4 py-4 text-right text-slate-400">{formatMoney(row.directCost)}</td>
+                                  <td className={`px-4 py-4 text-right font-black ${row.directProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                                    {formatMoney(row.directProfit)}
+                                    <span className="block text-[10px] font-bold text-slate-500">{row.revenue > 0 ? `${row.margin}% margin` : "no delivered revenue"}</span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
                       </article>
 
@@ -41064,13 +41200,16 @@ ${waybillLineItems(w).length > 1
                 const days = Array.from({ length: 7 }, (_, i) => {
                   const d = new Date(start); d.setDate(d.getDate() + i);
                   const key = formatDateKey(d);
-                  const adSpend  = weeklyExpenses.filter((e) => e.type === "Ad Spend" && normalizeDateKey(e.date) === key).reduce((s, e) => s + e.amount, 0);
+                  const dayExpenses = weeklyExpenses.filter((e) => normalizeDateKey(e.date) === key);
+                  const adSpend  = dayExpenses.filter((e) => e.type === "Ad Spend").reduce((s, e) => s + e.amount, 0);
                   const placed   = placedThisWeek.filter((o) => orderCreatedKey(o) === key);
                   const delivered = placed.filter((o) => (o.status ?? "New") === "Delivered");
                   const revenue  = delivered.reduce((s, o) => s + o.amount, 0);
                   const roi      = adSpend === 0 ? null : Math.round((revenue / adSpend) * 100);
-                  return { date: d, key, label: dayLabels[i], adSpend, ordersPlaced: placed.length, ordersDelivered: delivered.length, revenue, roi };
+                  const pureProfit = summarizeRecognizedProfit(delivered, dayExpenses).netProfit;
+                  return { date: d, key, label: dayLabels[i], adSpend, ordersPlaced: placed.length, ordersDelivered: delivered.length, revenue, pureProfit, roi };
                 });
+                const cohortPureProfit = summarizeRecognizedProfit(cohortDelivered, weeklyExpenses).netProfit;
 
                 const target = 60;
 
@@ -41416,14 +41555,14 @@ ${waybillLineItems(w).length > 1
                     {/* Per-day breakdown */}
                     <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                       <div className="px-5 py-4 border-b border-gray-100">
-                        <h3 className="text-base font-bold text-gray-900 m-0">Daily ad spend & cohort revenue</h3>
-                        <p className="text-xs text-gray-500 mt-0.5">Each day's ad spend matched to that day's order cohort. Revenue & ROI keep updating until those orders finalize.</p>
+                        <h3 className="text-base font-bold text-gray-900 m-0">Daily ad spend, cohort revenue & pure profit</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">Each day's ad spend matched to that day's order cohort. Revenue, ROI, and pure profit keep updating until those orders finalize.</p>
                       </div>
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead className="bg-gray-50">
                             <tr className="text-left">
-                              {["Day", "Date", "Ad spend", "Orders placed", "Delivered (so far)", "Revenue", "ROI"].map((h) => (
+                              {["Day", "Date", "Ad spend", "Orders placed", "Delivered (so far)", "Revenue", "Pure profit", "ROI"].map((h) => (
                                 <th key={h} className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">{h}</th>
                               ))}
                             </tr>
@@ -41437,6 +41576,7 @@ ${waybillLineItems(w).length > 1
                                 <td className="px-3 py-2.5 text-gray-700">{d.ordersPlaced}</td>
                                 <td className="px-3 py-2.5 text-gray-700">{d.ordersDelivered}{d.ordersPlaced > 0 && d.ordersDelivered < d.ordersPlaced && <span className="text-[10px] text-amber-700 font-bold ml-1">+{d.ordersPlaced - d.ordersDelivered} pending</span>}</td>
                                 <td className="px-3 py-2.5 text-gray-900 font-bold">{formatMoney(d.revenue)}</td>
+                                <td className={`px-3 py-2.5 font-extrabold ${d.pureProfit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{formatMoney(d.pureProfit)}</td>
                                 <td className={`px-3 py-2.5 font-bold ${d.roi !== null && d.roi >= 200 ? "text-emerald-700" : d.roi !== null && d.roi >= 100 ? "text-amber-700" : d.roi !== null ? "text-rose-700" : "text-gray-400"}`}>{d.roi !== null ? `${d.roi}%` : "—"}</td>
                               </tr>
                             ))}
@@ -41446,6 +41586,7 @@ ${waybillLineItems(w).length > 1
                               <td className="px-3 py-2.5">{cohort.length}</td>
                               <td className="px-3 py-2.5">{cohortDelivered.length}</td>
                               <td className="px-3 py-2.5">{formatMoney(cohortRevenue)}</td>
+                              <td className={`px-3 py-2.5 ${cohortPureProfit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{formatMoney(cohortPureProfit)}</td>
                               <td className={`px-3 py-2.5 ${cohortRoi !== null && cohortRoi >= 200 ? "text-emerald-700" : cohortRoi !== null && cohortRoi >= 100 ? "text-amber-700" : ""}`}>{cohortRoi !== null ? `${cohortRoi}%` : "—"}</td>
                             </tr>
                           </tbody>
@@ -41461,7 +41602,8 @@ ${waybillLineItems(w).length > 1
                         <li><strong>Cash received</strong> comes from remittance entries logged during this week, not just the total remitted sitting on the order now.</li>
                         <li><strong>Cohort week</strong> tells you whether the ads <em>this week</em> paid back. The number keeps rising until pending orders finalize, so a Monday review will show a lower delivery rate than a Friday review of the same week.</li>
                         <li><strong>Delivered by source cohort</strong> explains why the number of orders placed this week and the number delivered this week are usually different.</li>
-                        <li><strong>Daily ROI</strong> matches each day's ad budget to the orders that came in that day. Use it to spot which days of the week your ads work best.</li>
+                        <li><strong>Daily pure profit</strong> matches each day's ad budget and expenses to the orders that came in that day, then subtracts COGS, logistics, and bonuses from delivered revenue so far.</li>
+                        <li><strong>Daily ROI</strong> matches each day's ad budget to the orders that came in that day. Use it with pure profit to spot which days actually make money.</li>
                         <li><strong>60% target</strong>: aim for the <strong>finalized delivery rate</strong> on the cohort view (when all orders have settled, usually 7–14 days after the week ends).</li>
                       </ul>
                     </div>
