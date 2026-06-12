@@ -17237,7 +17237,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }).filter((row) => row.orders > 0 || row.delivered > 0 || row.revenue > 0)
     .sort((a, b) => b.delivered - a.delivered || b.revenue - a.revenue || b.orders - a.orders)
     .slice(0, 5);
-  const reportMaxStaffDelivered = Math.max(1, ...reportStaffRows.map((row) => row.delivered));
   const reportAgentRows = agents.map((agent) => {
     const assigned = financePeriodOrders.filter((order) => order.agentId === agent.id);
     const delivered = assigned.filter((order) => (order.status ?? "New") === "Delivered");
@@ -17253,7 +17252,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }).filter((row) => row.orders > 0 || row.delivered > 0 || row.revenue > 0)
     .sort((a, b) => b.delivered - a.delivered || b.revenue - a.revenue || b.orders - a.orders)
     .slice(0, 5);
-  const reportMaxAgentDelivered = Math.max(1, ...reportAgentRows.map((row) => row.delivered));
   const reportRevenueTrendMax = Math.max(1, ...financeChartData.map((row) => row.revenue));
 
   const agentStockIssueLoss = totalAgentDefectiveValue + totalAgentMissingValue;
@@ -40696,7 +40694,7 @@ ${waybillLineItems(w).length > 1
                               <div className="flex items-center justify-between gap-3">
                                 <div className="min-w-0">
                                   <p className="m-0 truncate text-sm font-black text-white"><span className="mr-2 rounded-lg bg-slate-800 px-2 py-0.5 text-[10px] text-emerald-300">{index + 1}</span>{row.name}</p>
-                                  <p className="m-0 mt-0.5 text-xs font-semibold text-slate-400">{row.role} · {row.delivered}/{row.orders} delivered</p>
+                                  <p className="m-0 mt-0.5 text-xs font-semibold text-slate-400">{row.role} · {row.delivered.toLocaleString()} of {row.orders.toLocaleString()} orders delivered</p>
                                 </div>
                                 <div className="text-right">
                                   <strong className="text-emerald-300">{row.rate}%</strong>
@@ -40704,7 +40702,7 @@ ${waybillLineItems(w).length > 1
                                 </div>
                               </div>
                               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
-                                <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.max(4, (row.delivered / reportMaxStaffDelivered) * 100)}%` }} />
+                                <div className="h-full rounded-full bg-emerald-400" style={{ width: `${row.rate <= 0 ? 0 : Math.min(100, Math.max(4, row.rate))}%` }} />
                               </div>
                             </div>
                           ))}
@@ -40721,7 +40719,7 @@ ${waybillLineItems(w).length > 1
                               <div className="flex items-center justify-between gap-3">
                                 <div className="min-w-0">
                                   <p className="m-0 truncate text-sm font-black text-white"><span className="mr-2 rounded-lg bg-slate-800 px-2 py-0.5 text-[10px] text-cyan-300">{index + 1}</span>{row.name}</p>
-                                  <p className="m-0 mt-0.5 text-xs font-semibold text-slate-400">{row.zone} · {row.delivered}/{row.orders} delivered</p>
+                                  <p className="m-0 mt-0.5 text-xs font-semibold text-slate-400">{row.zone} · {row.delivered.toLocaleString()} of {row.orders.toLocaleString()} orders delivered</p>
                                 </div>
                                 <div className="text-right">
                                   <strong className="text-emerald-300">{row.rate}%</strong>
@@ -40729,7 +40727,7 @@ ${waybillLineItems(w).length > 1
                                 </div>
                               </div>
                               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
-                                <div className="h-full rounded-full bg-cyan-400" style={{ width: `${Math.max(4, (row.delivered / reportMaxAgentDelivered) * 100)}%` }} />
+                                <div className="h-full rounded-full bg-cyan-400" style={{ width: `${row.rate <= 0 ? 0 : Math.min(100, Math.max(4, row.rate))}%` }} />
                               </div>
                             </div>
                           ))}
