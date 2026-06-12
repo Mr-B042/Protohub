@@ -3869,6 +3869,18 @@ const cartCapturePayloadFor = (cart: AbandonedCartRecord): Record<string, unknow
   const payload = cart.capturePayload;
   return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
 };
+const cartEmbedLabelFor = (cart: AbandonedCartRecord): string => {
+  const direct = typeof cart.embedLabel === "string" ? cart.embedLabel.trim() : "";
+  if (direct) return direct;
+  const payload = cartCapturePayloadFor(cart);
+  if (!payload) return "";
+  for (const key of ["embedLabel", "embed_label", "formLabel", "form_label", "label"]) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return "";
+};
 const capturedCartOfferLinesFor = (cart: AbandonedCartRecord, key: "selectedCrossSellLines" | "autoCompanionLines" = "selectedCrossSellLines") => {
   const payload = cartCapturePayloadFor(cart);
   const rawLines = payload?.[key];
@@ -12883,7 +12895,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
     const conversionKind = abandonedCartConversionKindFor(linkedOrder);
     const linkedOrderStatus = linkedOrder?.status ?? "New";
-    const matchesSearch = !search || `${cart.id} ${cart.customer} ${cart.phone} ${cart.productName}`.toLowerCase().includes(search);
+    const embedLabel = cartEmbedLabelFor(cart);
+    const matchesSearch = !search || `${cart.id} ${cart.customer} ${cart.phone} ${cart.productName} ${cart.packageName} ${cart.source} ${embedLabel}`.toLowerCase().includes(search);
     const matchesStatus = cartStatus === "All statuses" || cart.status === cartStatus;
     const matchesConversion =
       cartConversionFilter === "All conversion paths"
@@ -27185,7 +27198,7 @@ ${waybillLineItems(w).length > 1
       ["Lost", String(exportLost)],
       ["Conversion Rate", `${exportRate}%`],
       [],
-      ["Cart ID", "Customer", "Phone", "Product", "Package", "Amount", "Cart Status", "Conversion Path", "Linked Order", "Linked Order Status", "Recovered By", "Outcome Bucket", "Source", "Rep", "Created", "Last Activity"],
+      ["Cart ID", "Customer", "Phone", "Product", "Package", "Amount", "Cart Status", "Conversion Path", "Linked Order", "Linked Order Status", "Recovered By", "Outcome Bucket", "Source", "Embed Label", "Rep", "Created", "Last Activity"],
       ...filteredAbandonedCarts.map((cart) => {
         const recoveryRow = abandonedCartRecoveryRows.find((row) => row.cart.id === cart.id);
         const linkedStatus = recoveryRow?.linkedStatus ?? "";
@@ -27214,6 +27227,7 @@ ${waybillLineItems(w).length > 1
           recoveryRow?.conversionKind === "manual_recovery" ? recoveryRow.converterName : "",
           outcomeBucket,
           cart.source,
+          cartEmbedLabelFor(cart),
           users.find((u) => u.id === cart.assignedRepId)?.name ?? "Unassigned",
           cart.createdAt,
           cart.lastActivity
@@ -34004,7 +34018,7 @@ ${waybillLineItems(w).length > 1
                         className="pl-9 pr-4 h-9 border border-gray-200 rounded-md text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white w-full sm:w-56 transition-colors"
                         value={cartSearch}
                         onChange={(event) => setCartSearch(event.target.value)}
-                        placeholder="Search customer, phone, cart..."
+                        placeholder="Search customer, phone, form..."
                       />
                     </label>
                     {cartSearch && (
@@ -34053,6 +34067,7 @@ ${waybillLineItems(w).length > 1
                   ) : (
                     pagedAbandonedCarts.map((cart) => {
                       const assignedRep = users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned";
+                      const embedLabel = cartEmbedLabelFor(cart);
                       const recovery = abandonedCartRecoveryById[cart.id];
                       const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
                       const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder) : null;
@@ -34102,6 +34117,13 @@ ${waybillLineItems(w).length > 1
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Source</span>
                               <span className="text-gray-700">{cart.source}</span>
+                              {embedLabel ? (
+                                <span className="mt-1 inline-flex w-fit max-w-full items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700" title={`Embed label: ${embedLabel}`}>
+                                  <span className="truncate">Embed: {embedLabel}</span>
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-semibold text-gray-400">No embed label</span>
+                              )}
                             </div>
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Last activity</span>
@@ -34169,7 +34191,7 @@ ${waybillLineItems(w).length > 1
                         <th className="px-4 py-3 text-left">Customer</th>
                         <th className="px-4 py-3 text-left">Product</th>
                         <th className="px-4 py-3 text-left">Rep</th>
-                        <th className="px-4 py-3 text-left">Source</th>
+                        <th className="px-4 py-3 text-left">Source / Form</th>
                         <th className="px-4 py-3 text-left">Status</th>
                         <th className="px-4 py-3 text-left">Last Activity</th>
                         <th className="px-4 py-3 text-left">Actions</th>
@@ -34181,6 +34203,7 @@ ${waybillLineItems(w).length > 1
                       ) : (
                         pagedAbandonedCarts.map((cart) => {
                           const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
+                          const embedLabel = cartEmbedLabelFor(cart);
                           const conversionStatusLabel = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
                           const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder) : null;
                           return (
@@ -34223,7 +34246,16 @@ ${waybillLineItems(w).length > 1
                               ) : null}
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-700">{users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned"}</td>
-                            <td className="px-4 py-3 text-sm text-gray-600">{cart.source}</td>
+                            <td className="px-4 py-3 text-sm">
+                              <div className="font-medium text-gray-700">{cart.source}</div>
+                              {embedLabel ? (
+                                <div className="mt-1 inline-flex max-w-[220px] items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-bold text-sky-700" title={`Embed label: ${embedLabel}`}>
+                                  <span className="truncate">Embed: {embedLabel}</span>
+                                </div>
+                              ) : (
+                                <div className="mt-1 text-[11px] font-semibold text-gray-400">No embed label</div>
+                              )}
+                            </td>
                             <td className="px-4 py-3">
                               <div className="flex flex-col gap-1">
                                 <span className={`status-pill status-${slugify(cart.status)}`}>{cart.status}</span>
