@@ -1752,6 +1752,42 @@ const defaultLandingByRole: Record<EditableUserRole, AccessiblePage> = {
   "Viewer":            "Dashboard"
 };
 
+const dashboardHashByPage: Record<ActivePage, string> = {
+  Dashboard: "#/dashboard/admin",
+  Orders: "#/dashboard/admin/orders",
+  "Follow-up Queue": "#/dashboard/admin/follow-up-queue",
+  "Closed Orders": "#/dashboard/admin/closed-orders",
+  "Abandoned Carts": "#/dashboard/admin/abandoned-carts",
+  "Scheduled Deliveries": "#/dashboard/admin/scheduled-deliveries",
+  Deliveries: "#/dashboard/admin/deliveries",
+  Inventory: "#/dashboard/admin/inventory",
+  "Sales Reps": "#/dashboard/admin/sales-reps",
+  "Sales Teams": "#/dashboard/admin/sales-teams",
+  "Sales Rep Workspace": "#/dashboard/sales-rep",
+  "Call Rep Console": "#/dashboard/admin/call-rep-console",
+  "Weekend Stock Summary": "#/dashboard/admin/weekend-stock-summary",
+  Agents: "#/dashboard/admin/agents",
+  Waybill: "#/dashboard/admin/waybill",
+  Payroll: "#/dashboard/admin/payroll",
+  Customers: "#/dashboard/admin/customers",
+  Expenses: "#/dashboard/admin/expenses",
+  "Finance & Accounting": "#/dashboard/admin/reports",
+  "Ad Tracking": "#/dashboard/admin/utm-tracking",
+  Marketing: "#/dashboard/admin/marketing",
+  "User Management": "#/dashboard/admin/users",
+  "Round-Robin": "#/dashboard/admin/round-robin",
+  "Embed Form": "#/dashboard/admin/embed",
+  Notifications: "#/dashboard/admin/notifications",
+  Settings: "#/dashboard/admin/settings"
+};
+
+const dashboardHashForRolePage = (page: ActivePage, role: EditableUserRole): string => {
+  if (role === "Sales Rep" && page === "Sales Rep Workspace") return "#/dashboard/sales-rep";
+  return dashboardHashByPage[page] ?? "#/dashboard/admin";
+};
+
+const SPY_AS_STORAGE_KEY = "protohub.viewAsUserId";
+
 const allowedPagesFor = (role: EditableUserRole | undefined, extraPages: AccessiblePage[] = []): AccessiblePage[] => {
   if (!role) return roleAllowedPages["Viewer"];
   const base = roleAllowedPages[role] ?? [];
@@ -7234,9 +7270,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     ?? (authUser?.role as EditableUserRole | undefined)
     ?? "Viewer");
 
-  // Spy / View-as: Owner can preview the app as another user. Component
-  // state only — does not survive refresh.
-  const [spyAsUserId, setSpyAsUserId] = useState<string | null>(null);
+  // Spy / View-as: Owner can preview the app as another user. Persist the
+  // chosen preview user so refresh keeps the same role/page context.
+  const [spyAsUserId, setSpyAsUserId] = useState<string | null>(() =>
+    readPref<string | null>(SPY_AS_STORAGE_KEY, null, (raw) => raw.trim() || null)
+  );
   const spiedUser = spyAsUserId ? (users.find((u) => u.id === spyAsUserId) as ManagedUser | undefined) : undefined;
   const isSpying = realRole === "Owner" && Boolean(spiedUser);
 
@@ -7263,6 +7301,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const canUseAdminOrderActions = currentRole !== "Sales Rep" && currentRole !== "Marketer";
   const canContactCustomers = currentRole !== "Marketer";
 
+  const syncPageRoute = (page: ActivePage, role: EditableUserRole = currentRole) => {
+    const nextHash = dashboardHashForRolePage(page, role);
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+    }
+    setHashRoute(nextHash);
+  };
+
+  useEffect(() => {
+    if (!spyAsUserId) return;
+    if (realRole !== "Owner") {
+      setSpyAsUserId(null);
+      writePref(SPY_AS_STORAGE_KEY, "");
+      return;
+    }
+    if (users.length > 0 && !users.some((user) => user.id === spyAsUserId)) {
+      setSpyAsUserId(null);
+      writePref(SPY_AS_STORAGE_KEY, "");
+    }
+  }, [realRole, spyAsUserId, users]);
+
   useEffect(() => {
     if (settingsPanel === "email" && !canManageMessagingSettings) {
       setSettingsPanel(canViewSmsHealth ? "sms" : "workspace");
@@ -7274,14 +7333,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [settingsPanel, canManageMessagingSettings, canViewSmsHealth]);
 
   const enterSpy = (user: ManagedUser) => {
+    writePref(SPY_AS_STORAGE_KEY, user.id);
     setSpyAsUserId(user.id);
     const target = defaultLandingByRole[user.role] ?? "Dashboard";
+    syncPageRoute(target, user.role);
     setActivePage(target);
     showToast(`Viewing as ${user.name} (${user.role}).`);
   };
   const exitSpy = () => {
+    writePref(SPY_AS_STORAGE_KEY, "");
     setSpyAsUserId(null);
-    setActivePage(defaultLandingByRole[realRole] ?? "Dashboard");
+    const target = defaultLandingByRole[realRole] ?? "Dashboard";
+    syncPageRoute(target, realRole);
+    setActivePage(target);
     showToast("Exited view-as mode.");
   };
   const [calendarStartMonth, setCalendarStartMonth] = useState(() => new Date(2026, 4, 1));
@@ -13127,7 +13191,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const target = currentAllowedPages.includes(defaultLandingByRole[currentRole])
         ? defaultLandingByRole[currentRole]
         : currentAllowedPages[0];
-      if (target && target !== activePage) setActivePage(target);
+      if (target && target !== activePage) {
+        setActivePage(target);
+        syncPageRoute(target, currentRole);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, currentRole, currentAllowedPages.length]);
@@ -18341,10 +18408,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setActivePage("Inventory");
       setInventoryView("dashboard");
       const requestedProductId = parts[4];
-      const requestedProduct = requestedProductId
-        ? catalogProducts.find((product) => product.id === requestedProductId)
-        : undefined;
-      setStockProductId(requestedProduct?.id ?? catalogProducts[0]?.id ?? "");
+      // Keep the deep-linked product id even before catalogProducts hydrates.
+      // Otherwise a refresh can briefly pick the first product and reopen the
+      // update-stock modal on the wrong item.
+      setStockProductId(requestedProductId ?? catalogProducts[0]?.id ?? "");
       setStockChange("0");
       setStockAdjustmentNote("");
       setStockAdjustmentMode("add");
