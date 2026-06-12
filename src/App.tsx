@@ -17082,68 +17082,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const financeRoas = financeAdSpendTotal === 0 ? (financeRevenue > 0 ? "Uncapped" : "N/A") : (financeRevenue / financeAdSpendTotal).toFixed(2);
 
   const financeChartData = (() => {
-    const now = new Date();
-    const mkDay = (d: Date) => formatDateKey(d);
+    const range = explicitPeriodRange(financePeriod, financeDateRange, false);
+    const start = new Date(`${range.start}T00:00:00`);
+    const end = new Date(`${range.end}T00:00:00`);
+    const safeStart = Number.isNaN(start.getTime()) ? new Date() : start;
+    const safeEnd = Number.isNaN(end.getTime()) ? safeStart : end;
+    const diffDays = Math.max(1, Math.round((safeEnd.getTime() - safeStart.getTime()) / 86_400_000) + 1);
     const revForDay = (day: string) => financeDeliveredRows.filter((o) => orderDeliveredKey(o) === day).reduce((s, o) => s + o.amount, 0);
     const expForDay = (day: string) => financeExpenses.filter((e) => normalizeDateKey(e.date) === day).reduce((s, e) => s + e.amount, 0);
     const revForMonth = (mk: string) => financeDeliveredRows.filter((o) => (orderDeliveredKey(o) ?? "").startsWith(mk)).reduce((s, o) => s + o.amount, 0);
     const expForMonth = (mk: string) => financeExpenses.filter((e) => normalizeDateKey(e.date).startsWith(mk)).reduce((s, e) => s + e.amount, 0);
+    const dayLabel = (d: Date) => {
+      if (diffDays === 1) return financePeriod === "Yesterday" ? "Yesterday" : financePeriod === "Today" ? "Today" : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      if (diffDays <= 7) return d.toLocaleDateString("en-US", { weekday: "short" });
+      return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    };
 
-    if (financePeriod === "Today") {
-      const day = mkDay(now);
-      return [{ label: "Today", revenue: revForDay(day), expenses: expForDay(day) }];
-    }
-    if (financePeriod === "This Week") {
-      const weekStart = new Date(now);
-      weekStart.setDate(now.getDate() - now.getDay());
-      return Array.from({ length: 7 }, (_, i) => {
-        const d = new Date(weekStart);
-        d.setDate(weekStart.getDate() + i);
-        const day = mkDay(d);
-        return { label: d.toLocaleDateString("en-US", { weekday: "short" }), revenue: revForDay(day), expenses: expForDay(day) };
-      }).filter((_, i) => {
-        const d = new Date(weekStart);
-        d.setDate(weekStart.getDate() + i);
-        return d <= now;
-      });
-    }
-    if (financePeriod === "This Month") {
-      const year = now.getFullYear();
-      const month = now.getMonth();
-      return Array.from({ length: now.getDate() }, (_, i) => {
-        const day = formatDateKey(new Date(year, month, i + 1));
-        return { label: String(i + 1), revenue: revForDay(day), expenses: expForDay(day) };
-      });
-    }
-    if (financePeriod === "This Year") {
-      return Array.from({ length: now.getMonth() + 1 }, (_, i) => {
-        const mk = `${now.getFullYear()}-${String(i + 1).padStart(2, "0")}`;
-        return { label: new Date(`${mk}-01T00:00:00`).toLocaleDateString("en-US", { month: "short" }), revenue: revForMonth(mk), expenses: expForMonth(mk) };
-      });
-    }
-    if (financePeriod === "Custom" && financeDateRange.start && financeDateRange.end) {
-      const start = new Date(`${financeDateRange.start}T00:00:00`);
-      const end = new Date(`${financeDateRange.end}T00:00:00`);
-      const diffDays = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
-      if (diffDays <= 35) {
-        return Array.from({ length: diffDays }, (_, i) => {
-          const d = new Date(start);
-          d.setDate(start.getDate() + i);
-          const day = mkDay(d);
-          return { label: String(d.getDate()), revenue: revForDay(day), expenses: expForDay(day) };
-        });
-      }
+    if (financePeriod === "This Year" || diffDays > 45) {
       const months: string[] = [];
-      const cur = new Date(start);
-      while (cur <= end) {
+      const cur = new Date(safeStart.getFullYear(), safeStart.getMonth(), 1);
+      const endMonth = new Date(safeEnd.getFullYear(), safeEnd.getMonth(), 1);
+      while (cur <= endMonth) {
         const mk = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}`;
         if (!months.includes(mk)) months.push(mk);
         cur.setMonth(cur.getMonth() + 1);
       }
       return months.map((mk) => ({ label: new Date(`${mk}-01T00:00:00`).toLocaleDateString("en-US", { month: "short", year: "2-digit" }), revenue: revForMonth(mk), expenses: expForMonth(mk) }));
     }
-    return [{ label: "Period", revenue: financeRevenue, expenses: financeExpenseTotal }];
+
+    return Array.from({ length: diffDays }, (_, i) => {
+      const d = new Date(safeStart);
+      d.setDate(safeStart.getDate() + i);
+      const day = formatDateKey(d);
+      return { label: dayLabel(d), revenue: revForDay(day), expenses: expForDay(day) };
+    });
   })();
+  const financeChartHasRevenue = financeChartData.some((row) => row.revenue > 0);
+  const financeChartRange = explicitPeriodRange(financePeriod, financeDateRange, false);
+  const financeChartStart = new Date(`${financeChartRange.start}T00:00:00`);
+  const financeChartEnd = new Date(`${financeChartRange.end}T00:00:00`);
+  const financeChartRangeDays = Math.max(1, Math.round((financeChartEnd.getTime() - financeChartStart.getTime()) / 86_400_000) + 1);
+  const financeChartBucketLabel = financePeriod === "This Year" || financeChartRangeDays > 45 ? "Monthly delivered revenue" : "Daily delivered revenue";
   const financeChartMax = Math.max(...financeChartData.map((d) => Math.max(d.revenue, d.expenses)), 1);
   const reportTotalOrders = financePeriodOrders.length;
   const reportDeliveredInCohort = financeCohortDeliveredRows.length;
@@ -40565,13 +40544,17 @@ ${waybillLineItems(w).length > 1
                       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                         <div>
                           <h3 className="m-0 text-lg font-black text-white">Revenue Trend</h3>
-                          <p className="m-0 text-sm font-semibold text-slate-400">Daily delivered revenue · {selectedFinancePeriodLabel}</p>
+                          <p className="m-0 text-sm font-semibold text-slate-400">{financeChartBucketLabel} · {selectedFinancePeriodLabel}</p>
                         </div>
                         <strong className="text-2xl font-black text-emerald-300">{formatMoney(financeRevenue)}</strong>
                       </div>
                       <div className="flex h-48 items-end gap-1 rounded-2xl bg-slate-950/35 p-3">
-                        {financeChartData.map((row, index) => {
-                          const height = Math.max(4, Math.round((row.revenue / reportRevenueTrendMax) * 100));
+                        {!financeChartHasRevenue ? (
+                          <div className="flex h-full w-full items-center justify-center rounded-xl border border-dashed border-slate-700 text-center text-sm font-semibold text-slate-500">
+                            No delivered revenue in this period yet.
+                          </div>
+                        ) : financeChartData.map((row, index) => {
+                          const height = row.revenue <= 0 ? 0 : Math.max(4, Math.round((row.revenue / reportRevenueTrendMax) * 100));
                           return (
                             <div key={`${row.label}-${index}`} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
                               <div
