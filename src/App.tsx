@@ -198,7 +198,7 @@ type AgentZone = string;
 type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
-type FinanceTab = "Financial Overview" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
+type FinanceTab = "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
@@ -1471,7 +1471,7 @@ const customerTypeFilters = ["Customer Type: All", "New Customers", "Repeat Buye
 type CustomerTypeFilter = (typeof customerTypeFilters)[number];
 const customerDeliveryFilters = ["Delivery History: All", "Has Delivered", "No Delivered Yet", "Has Cancelled", "Needs Attention"] as const;
 type CustomerDeliveryFilter = (typeof customerDeliveryFilters)[number];
-const financeTabs: FinanceTab[] = ["Financial Overview", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Delivery Fee Audit", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance", "Profitability"];
+const financeTabs: FinanceTab[] = ["Financial Overview", "Reports", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Delivery Fee Audit", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance", "Profitability"];
 type FinanceLens = "Accounting" | "Performance" | "Cash Flow" | "Operational";
 const financeTabMeta: Record<FinanceTab, {
   primaryLens: FinanceLens;
@@ -1484,6 +1484,12 @@ const financeTabMeta: Record<FinanceTab, {
     lenses: ["Accounting", "Cash Flow"],
     summary: "Use this for the overall period snapshot: revenue, gross profit, net profit, expenses, and the high-level cash position.",
     caution: "Best for the big picture. Delivered revenue is period-based, while remittance cash depends on receipt entries being logged correctly."
+  },
+  "Reports": {
+    primaryLens: "Performance",
+    lenses: ["Performance", "Accounting", "Operational"],
+    summary: "Use this as the store command-center: orders, delivery quality, revenue, expenses, profit, products, states, staff, agents, and top customers in one view.",
+    caution: "Placed-order counts follow created dates. Revenue, AOV, profit, and delivery rankings use delivered orders in the selected period."
   },
   "Weekly Accounting": {
     primaryLens: "Accounting",
@@ -17139,6 +17145,116 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return [{ label: "Period", revenue: financeRevenue, expenses: financeExpenseTotal }];
   })();
   const financeChartMax = Math.max(...financeChartData.map((d) => Math.max(d.revenue, d.expenses)), 1);
+  const reportTotalOrders = financePeriodOrders.length;
+  const reportDeliveredInCohort = financeCohortDeliveredRows.length;
+  const reportDeliveredInPeriod = financeDeliveredRows.length;
+  const reportPendingUndelivered = Math.max(0, reportTotalOrders - reportDeliveredInCohort);
+  const reportDeliveryRate = reportTotalOrders === 0 ? 0 : Math.round((reportDeliveredInCohort / reportTotalOrders) * 100);
+  const reportCancelledOrders = financePeriodOrders.filter((order) => ["Cancelled", "Failed"].includes(order.status ?? "New"));
+  const reportCancelRate = reportTotalOrders === 0 ? 0 : Math.round((reportCancelledOrders.length / reportTotalOrders) * 100);
+  const reportAvgOrderValue = reportDeliveredInPeriod === 0 ? 0 : Math.round(financeRevenue / reportDeliveredInPeriod);
+  const reportExpenseCategoryRows = Array.from(financeExpenses.reduce((map, expense) => {
+    const key = expense.type || "Other";
+    map.set(key, (map.get(key) ?? 0) + expense.amount);
+    return map;
+  }, new Map<string, number>()).entries())
+    .map(([name, amount]) => ({ name, amount }))
+    .sort((a, b) => b.amount - a.amount);
+  const reportMaxExpenseCategory = Math.max(1, ...reportExpenseCategoryRows.map((row) => row.amount));
+  const reportCustomerKeyForOrder = (order: TrackedOrder) => {
+    const phoneKey = `${order.phone ?? ""}${order.whatsapp ?? ""}`.replace(/\D/g, "");
+    return phoneKey || (order.customer ?? "").trim().toLowerCase();
+  };
+  const reportCustomerMap = financePeriodOrders.reduce((map, order) => {
+    const key = reportCustomerKeyForOrder(order);
+    if (!key) return map;
+    const existing = map.get(key) ?? {
+      name: order.customer || "Unknown customer",
+      phone: order.phone || order.whatsapp || "—",
+      orders: 0,
+      delivered: 0,
+      totalSpend: 0
+    };
+    existing.orders += 1;
+    if ((order.status ?? "New") === "Delivered") {
+      existing.delivered += 1;
+      existing.totalSpend += order.amount;
+    }
+    map.set(key, existing);
+    return map;
+  }, new Map<string, { name: string; phone: string; orders: number; delivered: number; totalSpend: number }>());
+  const reportUniqueCustomers = reportCustomerMap.size;
+  const reportRepeatCustomers = Array.from(reportCustomerMap.values()).filter((customer) => customer.orders > 1).length;
+  const reportRepeatRate = reportUniqueCustomers === 0 ? 0 : Math.round((reportRepeatCustomers / reportUniqueCustomers) * 100);
+  const reportTopCustomers = Array.from(reportCustomerMap.values())
+    .sort((a, b) => b.totalSpend - a.totalSpend || b.orders - a.orders || a.name.localeCompare(b.name))
+    .slice(0, 8);
+  const reportStatusRows = Array.from(financePeriodOrders.reduce((map, order) => {
+    const status = order.status ?? "New";
+    map.set(status, (map.get(status) ?? 0) + 1);
+    return map;
+  }, new Map<string, number>()).entries())
+    .map(([status, count]) => ({ status, count, pct: reportTotalOrders === 0 ? 0 : Math.round((count / reportTotalOrders) * 100) }))
+    .sort((a, b) => b.count - a.count || a.status.localeCompare(b.status));
+  const reportTopStates = Array.from(financePeriodOrders.reduce((map, order) => {
+    const state = financeStateNameForOrder(order);
+    map.set(state, (map.get(state) ?? 0) + 1);
+    return map;
+  }, new Map<string, number>()).entries())
+    .map(([state, orders]) => ({ state, orders }))
+    .sort((a, b) => b.orders - a.orders || a.state.localeCompare(b.state))
+    .slice(0, 8);
+  const reportMaxStateOrders = Math.max(1, ...reportTopStates.map((row) => row.orders));
+  const reportProductRows = Array.from(financeDeliveredRows.reduce((map, order) => {
+    const key = order.productId ?? order.productName ?? "Unknown product";
+    const existing = map.get(key) ?? { name: order.productName || "Unknown product", units: 0, revenue: 0 };
+    existing.units += quantityForOrder(order);
+    existing.revenue += order.amount;
+    map.set(key, existing);
+    return map;
+  }, new Map<string, { name: string; units: number; revenue: number }>())
+    .values());
+  const reportProductUnitRows = [...reportProductRows]
+    .sort((a, b) => b.units - a.units || b.revenue - a.revenue || a.name.localeCompare(b.name))
+    .slice(0, 6);
+  const reportProductRevenueRows = [...reportProductRows]
+    .sort((a, b) => b.revenue - a.revenue || b.units - a.units || a.name.localeCompare(b.name))
+    .slice(0, 6);
+  const reportMaxProductUnits = Math.max(1, ...reportProductUnitRows.map((row) => row.units));
+  const reportMaxProductRevenue = Math.max(1, ...reportProductRevenueRows.map((row) => row.revenue));
+  const reportStaffRows = users.map((user) => {
+    const assigned = financePeriodOrders.filter((order) => order.assignedRepId === user.id);
+    const delivered = assigned.filter((order) => (order.status ?? "New") === "Delivered");
+    const deliveredRevenue = financeDeliveredRows.filter((order) => order.assignedRepId === user.id).reduce((sum, order) => sum + order.amount, 0);
+    return {
+      name: user.name,
+      role: user.role,
+      orders: assigned.length,
+      delivered: delivered.length,
+      revenue: deliveredRevenue,
+      rate: assigned.length === 0 ? 0 : Math.round((delivered.length / assigned.length) * 100)
+    };
+  }).filter((row) => row.orders > 0 || row.delivered > 0 || row.revenue > 0)
+    .sort((a, b) => b.delivered - a.delivered || b.revenue - a.revenue || b.orders - a.orders)
+    .slice(0, 5);
+  const reportMaxStaffDelivered = Math.max(1, ...reportStaffRows.map((row) => row.delivered));
+  const reportAgentRows = agents.map((agent) => {
+    const assigned = financePeriodOrders.filter((order) => order.agentId === agent.id);
+    const delivered = assigned.filter((order) => (order.status ?? "New") === "Delivered");
+    const deliveredRevenue = financeDeliveredRows.filter((order) => order.agentId === agent.id).reduce((sum, order) => sum + order.amount, 0);
+    return {
+      name: agent.name,
+      zone: agent.zone || agent.primaryBaseState || "No zone",
+      orders: assigned.length,
+      delivered: delivered.length,
+      revenue: deliveredRevenue,
+      rate: assigned.length === 0 ? 0 : Math.round((delivered.length / assigned.length) * 100)
+    };
+  }).filter((row) => row.orders > 0 || row.delivered > 0 || row.revenue > 0)
+    .sort((a, b) => b.delivered - a.delivered || b.revenue - a.revenue || b.orders - a.orders)
+    .slice(0, 5);
+  const reportMaxAgentDelivered = Math.max(1, ...reportAgentRows.map((row) => row.delivered));
+  const reportRevenueTrendMax = Math.max(1, ...financeChartData.map((row) => row.revenue));
 
   const agentStockIssueLoss = totalAgentDefectiveValue + totalAgentMissingValue;
   const agentStockLossRate = totalAgentStockValue === 0 ? 0 : Math.round((agentStockIssueLoss / totalAgentStockValue) * 1000) / 10;
@@ -21696,7 +21812,33 @@ ${waybillLineItems(w).length > 1
       []
     ];
     let tabRows: string[][] = [];
-    if (financeTab === "Sales Rep Finance") {
+    if (financeTab === "Reports") {
+      tabRows = [
+        ["SUMMARY"],
+        ["Total Orders", String(reportTotalOrders)],
+        ["Delivered", String(reportDeliveredInCohort)],
+        ["Pending / Undelivered", String(reportPendingUndelivered)],
+        ["Delivery Rate", `${reportDeliveryRate}%`],
+        ["Revenue", formatMoney(financeRevenue)],
+        ["Average Order Value", formatMoney(reportAvgOrderValue)],
+        ["Total Expenses", formatMoney(financeExpenseTotal)],
+        ["Net Profit", formatMoney(financeNetProfit)],
+        ["Unique Customers", String(reportUniqueCustomers)],
+        ["Repeat Rate", `${reportRepeatRate}%`],
+        [],
+        ["TOP STATES"],
+        ["State", "Orders"],
+        ...reportTopStates.map((row) => [row.state, String(row.orders)]),
+        [],
+        ["TOP PRODUCTS BY UNITS"],
+        ["Product", "Units", "Revenue"],
+        ...reportProductUnitRows.map((row) => [row.name, String(row.units), formatMoney(row.revenue)]),
+        [],
+        ["EXPENSES BY CATEGORY"],
+        ["Category", "Amount"],
+        ...reportExpenseCategoryRows.map((row) => [row.name, formatMoney(row.amount)])
+      ];
+    } else if (financeTab === "Sales Rep Finance") {
       tabRows = [
         ["Sales Rep", "Revenue", "Delivered", "Contribution", "Commission", "ROI %"],
         ...filteredFinanceRepRows.map((r) => [r.user.name, formatMoney(r.revenue), String(r.delivered), formatMoney(r.contribution), formatMoney(r.commission), `${r.roi}%`])
@@ -40272,6 +40414,296 @@ ${waybillLineItems(w).length > 1
                       ? "Refreshing full finance summary from the order book..."
                       : `Dedicated finance summary updated ${formatMoment(financeSummaryData?.generatedAt ?? "")}.`}
                 </section>
+              )}
+
+              {financeTab === "Reports" && (
+                <motion.section
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.35, ease: "easeOut" }}
+                  className="relative overflow-hidden rounded-[2rem] border border-slate-700 bg-[#07111f] p-4 text-slate-100 shadow-2xl shadow-slate-950/25 sm:p-6"
+                  aria-label="Finance reports dashboard"
+                >
+                  <div className="pointer-events-none absolute -top-32 right-8 h-72 w-72 rounded-full bg-cyan-300/10 blur-3xl" />
+                  <div className="pointer-events-none absolute left-1/4 top-1/3 h-80 w-80 rounded-full bg-emerald-300/10 blur-3xl" />
+                  <div className="pointer-events-none absolute bottom-0 right-1/4 h-64 w-64 rounded-full bg-violet-400/10 blur-3xl" />
+
+                  <div className="relative z-10 space-y-5">
+                    <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="m-0 text-xs font-black uppercase tracking-[0.28em] text-cyan-200/90">Reports</p>
+                        <h2 className="m-0 mt-2 text-2xl font-black tracking-tight text-white sm:text-3xl">In-depth store analytics</h2>
+                        <p className="m-0 mt-1 text-sm font-semibold text-slate-300">
+                          {selectedFinancePeriodLabel} · {productFilterActive ? `${financeProductFilter.length} product${financeProductFilter.length === 1 ? "" : "s"} selected` : "All products"}
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs sm:flex">
+                        <span className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 font-bold text-slate-200"><Package className="mr-1 inline h-3.5 w-3.5 text-cyan-200" /> {productFilterActive ? "Filtered" : "All products"}</span>
+                        <span className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 font-bold text-slate-200"><CalendarDays className="mr-1 inline h-3.5 w-3.5 text-emerald-200" /> {financePeriod}</span>
+                      </div>
+                    </header>
+
+                    <section className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-label="Report headline metrics">
+                      {[
+                        { title: "Total Orders", value: reportTotalOrders.toLocaleString(), helper: "Placed in selected period", icon: ShoppingCart, gradient: "from-cyan-500 via-teal-600 to-cyan-950" },
+                        { title: "Delivered", value: reportDeliveredInCohort.toLocaleString(), helper: `${reportDeliveredInPeriod.toLocaleString()} delivered in revenue period`, icon: BadgeCheck, gradient: "from-emerald-400 via-emerald-600 to-emerald-950" },
+                        { title: "Pending / Undelivered", value: reportPendingUndelivered.toLocaleString(), helper: "Placed orders minus delivered", icon: AlertTriangle, gradient: "from-amber-400 via-orange-600 to-orange-950" },
+                        { title: "Delivery Rate", value: `${reportDeliveryRate}%`, helper: `${reportDeliveredInCohort.toLocaleString()} of ${reportTotalOrders.toLocaleString()} placed orders`, icon: TrendingUp, gradient: "from-indigo-400 via-violet-600 to-violet-950" }
+                      ].map((card, index) => {
+                        const Icon = card.icon;
+                        return (
+                          <motion.article
+                            key={card.title}
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: index * 0.04, duration: 0.32 }}
+                            className={`relative min-h-[150px] overflow-hidden rounded-3xl bg-gradient-to-br ${card.gradient} p-5 shadow-xl shadow-slate-950/30`}
+                          >
+                            <div className="absolute -right-8 -top-8 h-36 w-36 rounded-full bg-white/15" />
+                            <div className="absolute -bottom-14 -left-12 h-36 w-36 rounded-full bg-white/10" />
+                            <div className="relative z-10">
+                              <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-white/20 text-white ring-1 ring-white/20"><Icon className="h-5 w-5" /></span>
+                              <p className="m-0 mt-3 text-xs font-black uppercase tracking-[0.18em] text-white/85">{card.title}</p>
+                              <strong className="mt-2 block text-5xl font-black leading-none tracking-tight text-white sm:text-6xl">{card.value}</strong>
+                              <p className="m-0 mt-3 text-sm font-extrabold text-white/85">{card.helper}</p>
+                            </div>
+                          </motion.article>
+                        );
+                      })}
+                    </section>
+
+                    <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Report financial metrics">
+                      {[
+                        { title: "Total Revenue", value: formatMoney(financeRevenue), helper: `from ${reportDeliveredInPeriod.toLocaleString()} deliveries`, icon: CircleDollarSign, tone: "text-emerald-300" },
+                        { title: "Avg Order Value", value: formatMoney(reportAvgOrderValue), helper: "per delivered order", icon: TrendingUp, tone: "text-violet-300" },
+                        { title: "Net Profit", value: formatMoney(financeNetProfit), helper: financeNetProfit >= 0 ? `${financeNetMargin}% net margin` : "Negative", icon: Gauge, tone: financeNetProfit >= 0 ? "text-emerald-300" : "text-rose-300" },
+                        { title: "Cancel Rate", value: `${reportCancelRate}%`, helper: `${reportCancelledOrders.length.toLocaleString()} cancelled / rejected`, icon: X, tone: reportCancelRate > 20 ? "text-rose-300" : "text-slate-200" },
+                        { title: "Unique Customers", value: reportUniqueCustomers.toLocaleString(), helper: `${reportRepeatCustomers.toLocaleString()} returning`, icon: Users, tone: "text-slate-100" },
+                        { title: "Repeat Rate", value: `${reportRepeatRate}%`, helper: "of all customers", icon: RefreshCw, tone: "text-slate-100" },
+                        { title: "Total Expenses", value: formatMoney(financeExpenseTotal), helper: `${financeExpenses.length.toLocaleString()} entries`, icon: AlertTriangle, tone: "text-amber-300" },
+                        { title: "Other Income", value: formatMoney(0), helper: "0 entries", icon: CircleDollarSign, tone: "text-emerald-300" }
+                      ].map((card) => {
+                        const Icon = card.icon;
+                        return (
+                          <article key={card.title} className="rounded-3xl border border-slate-700/90 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/20">
+                            <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-800 text-cyan-200"><Icon className="h-5 w-5" /></span>
+                            <p className="m-0 mt-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">{card.title}</p>
+                            <strong className={`mt-1 block text-2xl font-black ${card.tone}`}>{card.value}</strong>
+                            <p className="m-0 mt-1 text-xs font-semibold text-slate-400">{card.helper}</p>
+                          </article>
+                        );
+                      })}
+                    </section>
+
+                    <section className="rounded-3xl border border-slate-700 bg-slate-900/65 p-5" aria-label="Revenue trend">
+                      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <h3 className="m-0 text-lg font-black text-white">Revenue Trend</h3>
+                          <p className="m-0 text-sm font-semibold text-slate-400">Daily delivered revenue · {selectedFinancePeriodLabel}</p>
+                        </div>
+                        <strong className="text-2xl font-black text-emerald-300">{formatMoney(financeRevenue)}</strong>
+                      </div>
+                      <div className="flex h-48 items-end gap-1 rounded-2xl bg-slate-950/35 p-3">
+                        {financeChartData.map((row, index) => {
+                          const height = Math.max(4, Math.round((row.revenue / reportRevenueTrendMax) * 100));
+                          return (
+                            <div key={`${row.label}-${index}`} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
+                              <div
+                                className="w-full rounded-t-xl bg-gradient-to-t from-cyan-900 to-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.18)]"
+                                style={{ height: `${height}%` }}
+                                title={`${row.label}: ${formatMoney(row.revenue)}`}
+                              />
+                              <span className="max-w-full truncate text-[10px] font-bold text-slate-500">{row.label}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+
+                    <section className="grid grid-cols-1 gap-4 xl:grid-cols-2" aria-label="Report breakdowns">
+                      <article className="rounded-3xl border border-slate-700 bg-slate-900/65 p-5">
+                        <h3 className="m-0 text-lg font-black text-white">Financial Summary</h3>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                          {[
+                            ["Sales Revenue", formatMoney(financeRevenue), "text-emerald-300"],
+                            ["Other Income", formatMoney(0), "text-emerald-300"],
+                            ["Total Expenses", formatMoney(financeExpenseTotal), "text-amber-300"],
+                            ["Net Profit", formatMoney(financeNetProfit), financeNetProfit >= 0 ? "text-emerald-300" : "text-rose-300"]
+                          ].map(([label, value, tone]) => (
+                            <div key={label} className="rounded-2xl bg-slate-950/35 p-3">
+                              <p className="m-0 text-[10px] font-black uppercase tracking-wider text-slate-400">{label}</p>
+                              <strong className={`mt-1 block text-base font-black ${tone}`}>{value}</strong>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-5 space-y-3">
+                          <p className="m-0 text-xs font-black uppercase tracking-wider text-slate-400">Expenses by category</p>
+                          {reportExpenseCategoryRows.length === 0 ? (
+                            <p className="m-0 rounded-2xl bg-slate-950/35 p-4 text-sm font-semibold text-slate-400">No expenses in this period.</p>
+                          ) : reportExpenseCategoryRows.map((row) => (
+                            <div key={row.name}>
+                              <div className="mb-1 flex items-center justify-between text-sm font-bold">
+                                <span className="text-slate-300">{row.name}</span>
+                                <span className="text-white">{formatMoney(row.amount)}</span>
+                              </div>
+                              <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                                <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500" style={{ width: `${Math.max(4, (row.amount / reportMaxExpenseCategory) * 100)}%` }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+
+                      <article className="rounded-3xl border border-slate-700 bg-slate-900/65 p-5">
+                        <h3 className="m-0 text-lg font-black text-white">Order Status + States</h3>
+                        <div className="mt-4 grid gap-5 lg:grid-cols-2">
+                          <div className="space-y-3">
+                            <p className="m-0 text-xs font-black uppercase tracking-wider text-slate-400">Order status distribution</p>
+                            {reportStatusRows.length === 0 ? (
+                              <p className="m-0 rounded-2xl bg-slate-950/35 p-4 text-sm font-semibold text-slate-400">No orders in this period.</p>
+                            ) : reportStatusRows.map((row) => (
+                              <div key={row.status}>
+                                <div className="mb-1 flex items-center justify-between text-sm font-bold">
+                                  <span className="text-slate-300">{row.status}</span>
+                                  <span className="text-white">{row.count.toLocaleString()} <em className="not-italic text-slate-500">({row.pct}%)</em></span>
+                                </div>
+                                <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                                  <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400" style={{ width: `${Math.max(4, row.pct)}%` }} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="space-y-3">
+                            <p className="m-0 text-xs font-black uppercase tracking-wider text-slate-400">Top states by orders</p>
+                            {reportTopStates.length === 0 ? (
+                              <p className="m-0 rounded-2xl bg-slate-950/35 p-4 text-sm font-semibold text-slate-400">No state data yet.</p>
+                            ) : reportTopStates.map((row, index) => (
+                              <div key={row.state}>
+                                <div className="mb-1 flex items-center justify-between text-sm font-bold">
+                                  <span className="text-slate-300"><span className="mr-2 rounded-lg bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">{index + 1}</span>{row.state}</span>
+                                  <span className="text-white">{row.orders.toLocaleString()}</span>
+                                </div>
+                                <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                                  <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-300" style={{ width: `${Math.max(4, (row.orders / reportMaxStateOrders) * 100)}%` }} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </article>
+                    </section>
+
+                    <section className="grid grid-cols-1 gap-4 xl:grid-cols-2" aria-label="Product and people rankings">
+                      {([
+                        { title: "Top Products by Units Sold", rows: reportProductUnitRows, metric: "units", max: reportMaxProductUnits, format: (row: { name: string; units: number; revenue: number }) => `${row.units.toLocaleString()} units`, bar: "from-emerald-400 to-teal-300" },
+                        { title: "Top Products by Revenue", rows: reportProductRevenueRows, metric: "revenue", max: reportMaxProductRevenue, format: (row: { name: string; units: number; revenue: number }) => formatMoney(row.revenue), bar: "from-violet-400 to-fuchsia-300" }
+                      ] as const).map((block) => (
+                        <article key={block.title} className="rounded-3xl border border-slate-700 bg-slate-900/65 p-5">
+                          <h3 className="m-0 text-lg font-black text-white">{block.title}</h3>
+                          <div className="mt-4 space-y-3">
+                            {block.rows.length === 0 ? (
+                              <p className="m-0 rounded-2xl bg-slate-950/35 p-4 text-sm font-semibold text-slate-400">No delivered products in this period.</p>
+                            ) : block.rows.map((row, index) => (
+                              <div key={`${block.title}-${row.name}`}>
+                                <div className="mb-1 flex items-center justify-between text-sm font-bold">
+                                  <span className="text-white">{index + 1}. {row.name}</span>
+                                  <span className="text-emerald-300">{block.format(row)}</span>
+                                </div>
+                                <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                                  <div className={`h-full rounded-full bg-gradient-to-r ${block.bar}`} style={{ width: `${Math.max(4, ((row[block.metric] || 0) / block.max) * 100)}%` }} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </article>
+                      ))}
+
+                      <article className="rounded-3xl border border-slate-700 bg-slate-900/65 p-5">
+                        <h3 className="m-0 text-lg font-black text-white">Staff Performance</h3>
+                        <div className="mt-4 space-y-3">
+                          {reportStaffRows.length === 0 ? (
+                            <p className="m-0 rounded-2xl bg-slate-950/35 p-4 text-sm font-semibold text-slate-400">No assigned staff activity in this period.</p>
+                          ) : reportStaffRows.map((row, index) => (
+                            <div key={row.name} className="rounded-2xl bg-slate-950/25 p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="m-0 truncate text-sm font-black text-white"><span className="mr-2 rounded-lg bg-slate-800 px-2 py-0.5 text-[10px] text-emerald-300">{index + 1}</span>{row.name}</p>
+                                  <p className="m-0 mt-0.5 text-xs font-semibold text-slate-400">{row.role} · {row.delivered}/{row.orders} delivered</p>
+                                </div>
+                                <div className="text-right">
+                                  <strong className="text-emerald-300">{row.rate}%</strong>
+                                  <p className="m-0 text-xs font-semibold text-slate-500">{formatMoney(row.revenue)}</p>
+                                </div>
+                              </div>
+                              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
+                                <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.max(4, (row.delivered / reportMaxStaffDelivered) * 100)}%` }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+
+                      <article className="rounded-3xl border border-slate-700 bg-slate-900/65 p-5">
+                        <h3 className="m-0 text-lg font-black text-white">Top Delivery Agents</h3>
+                        <div className="mt-4 space-y-3">
+                          {reportAgentRows.length === 0 ? (
+                            <p className="m-0 rounded-2xl bg-slate-950/35 p-4 text-sm font-semibold text-slate-400">No delivery-agent activity in this period.</p>
+                          ) : reportAgentRows.map((row, index) => (
+                            <div key={row.name} className="rounded-2xl bg-slate-950/25 p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="m-0 truncate text-sm font-black text-white"><span className="mr-2 rounded-lg bg-slate-800 px-2 py-0.5 text-[10px] text-cyan-300">{index + 1}</span>{row.name}</p>
+                                  <p className="m-0 mt-0.5 text-xs font-semibold text-slate-400">{row.zone} · {row.delivered}/{row.orders} delivered</p>
+                                </div>
+                                <div className="text-right">
+                                  <strong className="text-emerald-300">{row.rate}%</strong>
+                                  <p className="m-0 text-xs font-semibold text-slate-500">{formatMoney(row.revenue)}</p>
+                                </div>
+                              </div>
+                              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
+                                <div className="h-full rounded-full bg-cyan-400" style={{ width: `${Math.max(4, (row.delivered / reportMaxAgentDelivered) * 100)}%` }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+                    </section>
+
+                    <section className="overflow-hidden rounded-3xl border border-slate-700 bg-slate-900/65" aria-label="Top customers">
+                      <div className="border-b border-slate-700 px-5 py-4">
+                        <h3 className="m-0 text-lg font-black text-white">Top Customers</h3>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-slate-950/35 text-[11px] uppercase tracking-wider text-slate-400">
+                            <tr>
+                              <th className="px-5 py-3 text-left">#</th>
+                              <th className="px-5 py-3 text-left">Customer</th>
+                              <th className="px-5 py-3 text-left">Phone</th>
+                              <th className="px-5 py-3 text-right">Orders</th>
+                              <th className="px-5 py-3 text-right">Delivered</th>
+                              <th className="px-5 py-3 text-right">Total Spend</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800">
+                            {reportTopCustomers.length === 0 ? (
+                              <tr><td colSpan={6} className="px-5 py-8 text-center font-semibold text-slate-400">No customer data in this period.</td></tr>
+                            ) : reportTopCustomers.map((customer, index) => (
+                              <tr key={`${customer.phone}-${customer.name}`} className="text-slate-200">
+                                <td className="px-5 py-4 text-slate-500">{index + 1}</td>
+                                <td className="px-5 py-4 font-black text-white">{customer.name}</td>
+                                <td className="px-5 py-4 text-slate-400">{customer.phone}</td>
+                                <td className="px-5 py-4 text-right font-bold">{customer.orders.toLocaleString()}</td>
+                                <td className="px-5 py-4 text-right font-bold">{customer.delivered.toLocaleString()}</td>
+                                <td className="px-5 py-4 text-right font-black text-emerald-300">{formatMoney(customer.totalSpend)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  </div>
+                </motion.section>
               )}
 
               {financeTab === "Financial Overview" && (
