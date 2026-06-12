@@ -41403,9 +41403,14 @@ ${waybillLineItems(w).length > 1
                         const cohortDeliveredOrders = cohortOrders.filter((o) => (o.status ?? "New") === "Delivered");
                         const cohortFinalizedOrders = cohortOrders.filter((o) => ["Delivered","Cancelled","Failed"].includes(o.status ?? "New"));
                         const revenue = cashOrders.reduce((s, o) => s + (o.amount || 0), 0);
+                        const cogs = cashOrders.reduce((s, o) => s + costForOrder(o), 0);
+                        const logistics = cashOrders.reduce((s, o) => s + (o.logisticsCost ?? 0), 0);
                         const repRs   = getRepCohortStats(u.id);
                         const bonusOrderBreakdowns = cashOrders.map((o) => buildOrderBonusBreakdownLine(o, repRs.rate, repRs.count, cashWeekRange));
                         const bonusEstimate = bonusOrderBreakdowns.reduce((s, o) => s + o.total, 0);
+                        const directCost = cogs + logistics + bonusEstimate;
+                        const directProfit = revenue - directCost;
+                        const directMargin = revenue > 0 ? Math.round((directProfit / revenue) * 1000) / 10 : null;
                         const aov     = cashOrders.length === 0 ? 0 : Math.round(revenue / cashOrders.length);
                         const cohortRate = cohortOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortOrders.length) * 100);
                         const finalRate  = cohortFinalizedOrders.length === 0 ? null : Math.round((cohortDeliveredOrders.length / cohortFinalizedOrders.length) * 100);
@@ -41414,7 +41419,12 @@ ${waybillLineItems(w).length > 1
                           delivered: cashOrders.length,
                           carryoverDelivered: carryoverOrders.length,
                           revenue,
+                          cogs,
+                          logistics,
                           bonusEstimate,
+                          directCost,
+                          directProfit,
+                          directMargin,
                           aov,
                           cohortPlaced: cohortOrders.length,
                           cohortDelivered: cohortDeliveredOrders.length,
@@ -41428,11 +41438,12 @@ ${waybillLineItems(w).length > 1
                         if (r.user.role === "Sales Rep") return r.cohortPlaced > 0 || r.delivered > 0;
                         return r.user.role === "Admin" && r.bonusEstimate > 0;
                       })
-                      .sort((a, b) => b.revenue - a.revenue);
+                      .sort((a, b) => b.directProfit - a.directProfit || b.revenue - a.revenue);
 
                       if (repStats.length === 0) return null;
                       const hasBonusAdmin = repStats.some((r) => r.user.role === "Admin" && r.bonusEstimate > 0);
                       const totalBonusEstimate = repStats.reduce((s, r) => s + r.bonusEstimate, 0);
+                      const totalDirectProfit = repStats.reduce((s, r) => s + r.directProfit, 0);
                       const totalAov   = repStats.length === 0 ? 0 : Math.round(repStats.reduce((s, r) => s + r.aov, 0) / repStats.length);
                       const totalCarryoverDelivered = repStats.reduce((s, r) => s + r.carryoverDelivered, 0);
 
@@ -41443,8 +41454,8 @@ ${waybillLineItems(w).length > 1
                               <h3 className="text-base font-bold text-gray-900 m-0">Top performers · {hasBonusAdmin ? "Sales Reps + bonus admins" : "Sales Reps"}</h3>
                               <p className="text-xs text-gray-500 mt-0.5">
                                 {hasBonusAdmin
-                                  ? "Delivered-this-week output with cohort-week quality. Admins appear here only when their delivered orders earned bonus in this week, and carry-over deliveries are marked clearly below."
-                                  : "Delivered-this-week output with cohort-week quality. Orders delivered this week count this week even when they were placed earlier, and carry-over deliveries are marked clearly below."}
+                                  ? "Ranked by direct profit from delivered orders this week. Admins appear here only when their delivered orders earned bonus, and carry-over deliveries are marked clearly below."
+                                  : "Ranked by direct profit from delivered orders this week. Orders delivered this week count this week even when they were placed earlier, and carry-over deliveries are marked clearly below."}
                               </p>
                             </div>
                             <div className="flex items-center gap-4 text-xs">
@@ -41455,6 +41466,11 @@ ${waybillLineItems(w).length > 1
                                   <p className="text-[10px] text-gray-400 mt-0.5">Placed before this week</p>
                                 </div>
                               )}
+                              <div className="text-right">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Direct profit</p>
+                                <p className={`text-base font-extrabold m-0 ${totalDirectProfit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{formatMoney(totalDirectProfit)}</p>
+                                <p className="text-[10px] text-gray-400 mt-0.5">Revenue − COGS − logistics − bonus</p>
+                              </div>
                               <div className="text-right">
                                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total bonus estimate</p>
                                 <p className="text-base font-extrabold text-emerald-700 m-0">{formatMoney(totalBonusEstimate)}</p>
@@ -41470,7 +41486,7 @@ ${waybillLineItems(w).length > 1
                             <table className="w-full text-sm">
                               <thead className="bg-gray-50">
                                 <tr className="text-left">
-                                  {["Rank", hasBonusAdmin ? "Person" : "Rep","Delivered this week","Revenue","AOV","Per-order bonus est.","This week's cohort","Cohort rate"].map((h) => (
+                                  {["Rank", hasBonusAdmin ? "Person" : "Rep","Delivered this week","Revenue","Direct profit","AOV","Per-order bonus est.","This week's cohort","Cohort rate"].map((h) => (
                                     <th key={h} className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">{h}</th>
                                   ))}
                                 </tr>
@@ -41494,6 +41510,12 @@ ${waybillLineItems(w).length > 1
                                         )}
                                       </td>
                                       <td className="px-3 py-2.5 text-gray-900 font-bold whitespace-nowrap">{formatMoney(r.revenue)}</td>
+                                      <td className="px-3 py-2.5 whitespace-nowrap">
+                                        <div className={`font-extrabold ${r.directProfit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{formatMoney(r.directProfit)}</div>
+                                        <div className="text-[10px] font-semibold text-gray-400">
+                                          {formatMoney(r.directCost)} cost{r.directMargin !== null ? ` · ${r.directMargin}%` : ""}
+                                        </div>
+                                      </td>
                                       <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{r.aov > 0 ? formatMoney(r.aov) : "—"}</td>
                                       <td className="px-3 py-2.5 whitespace-nowrap">
                                         <button
