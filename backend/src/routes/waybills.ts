@@ -36,31 +36,55 @@ function waybillItemsOf(row: { items?: unknown; product_id?: string | null; prod
 
 const waybillItemsLabel = (items: WaybillItem[]) => items.map((i) => `${i.product_name} x${i.quantity}`).join(", ");
 
+async function deleteLinkedWaybillExpenses(orgId: string, waybillId: string) {
+  await supabase.from("expenses").delete().eq("org_id", orgId).eq("waybill_id", waybillId);
+  // Legacy frontend-created waybill expenses used this deterministic id but did
+  // not set waybill_id, so clean that row too.
+  await supabase.from("expenses").delete().eq("org_id", orgId).eq("id", `EXP-WB-${waybillId}`);
+}
+
 /** Upsert a linked expense for a waybill's fee. Idempotent — updates if exists, inserts if not. */
 async function syncWaybillExpense(
   orgId: string,
   waybill: { id: string; waybill_fee: number; itemsLabel: string; from_location?: string | null; to_location?: string | null; dispatched_date?: string | null }
 ) {
   if (waybill.waybill_fee <= 0) {
-    // Fee is zero — remove any linked expense
-    await supabase.from("expenses").delete().eq("waybill_id", waybill.id);
+    // Fee is zero — remove any linked expense, including legacy unlinked rows.
+    await deleteLinkedWaybillExpenses(orgId, waybill.id);
     return;
   }
   const route = [waybill.from_location, waybill.to_location].filter(Boolean).join(" → ") || "—";
   const description = `Waybill #${waybill.id} — ${route} — ${waybill.itemsLabel}`;
   const date = waybill.dispatched_date ?? new Date().toISOString().split("T")[0];
+  const legacyExpenseId = `EXP-WB-${waybill.id}`;
 
-  // Check if linked expense already exists
-  const { data: existing } = await supabase
-    .from("expenses").select("id").eq("waybill_id", waybill.id).single();
+  // Older frontend code created EXP-WB-<waybill> without waybill_id while the
+  // backend created another linked row. Keep one canonical row and delete extras.
+  const { data: existingRows } = await supabase
+    .from("expenses")
+    .select("id, created_at, waybill_id")
+    .eq("org_id", orgId)
+    .or(`waybill_id.eq.${waybill.id},id.eq.${legacyExpenseId}`)
+    .order("created_at", { ascending: true });
+  const rows = existingRows ?? [];
+  const keep = rows.find((row) => row.id === legacyExpenseId) ?? rows[0] ?? null;
+  const extras = keep ? rows.filter((row) => row.id !== keep.id).map((row) => row.id) : [];
+  if (extras.length > 0) {
+    await supabase.from("expenses").delete().eq("org_id", orgId).in("id", extras);
+  }
 
-  if (existing) {
+  if (keep) {
     await supabase.from("expenses").update({
-      amount: waybill.waybill_fee, description, date
-    }).eq("id", existing.id);
+      amount: waybill.waybill_fee,
+      category: "Waybill",
+      description,
+      date,
+      currency: "NGN",
+      waybill_id: waybill.id
+    }).eq("org_id", orgId).eq("id", keep.id);
   } else {
     await supabase.from("expenses").insert({
-      id:          `EXP-WB-${Date.now()}`,
+      id:          legacyExpenseId,
       org_id:      orgId,
       date,
       category:    "Waybill",
@@ -70,6 +94,48 @@ async function syncWaybillExpense(
       waybill_id:  waybill.id
     });
   }
+}
+
+async function restoreWaybillSourceStock(
+  orgId: string,
+  waybill: {
+    from_agent_id?: string | null;
+    from_agent_location_id?: string | null;
+  },
+  items: WaybillItem[]
+) {
+  let restoredUnits = 0;
+  for (const item of items) {
+    if (item.quantity <= 0) continue;
+    restoredUnits += item.quantity;
+    if (waybill.from_agent_location_id && waybill.from_agent_id) {
+      const { data: sourceStock } = await supabase
+        .from("agent_location_stock")
+        .select("quantity")
+        .eq("agent_location_id", waybill.from_agent_location_id)
+        .eq("product_id", item.product_id)
+        .single();
+      const balanceAfter = (sourceStock?.quantity ?? 0) + item.quantity;
+      await supabase.from("agent_location_stock").upsert({
+        org_id: orgId,
+        agent_id: waybill.from_agent_id,
+        agent_location_id: waybill.from_agent_location_id,
+        product_id: item.product_id,
+        quantity: balanceAfter
+      }, { onConflict: "agent_location_id,product_id" });
+      await syncAgentStockAggregate(orgId, waybill.from_agent_id, item.product_id);
+    } else {
+      const { data: product } = await supabase
+        .from("products")
+        .select("warehouse_stock")
+        .eq("id", item.product_id)
+        .single();
+      await supabase.from("products").update({
+        warehouse_stock: Number(product?.warehouse_stock ?? 0) + item.quantity
+      }).eq("id", item.product_id);
+    }
+  }
+  return restoredUnits;
 }
 
 router.get("/", async (req, res) => {
@@ -145,6 +211,10 @@ router.post("/",
         return;
       }
     }
+    if (d.fromAgentLocationId && d.toAgentLocationId && d.fromAgentLocationId === d.toAgentLocationId) {
+      res.status(400).json({ error: "Choose a different receiving hub/state. A waybill cannot move stock to the same exact hub it was sent from." });
+      return;
+    }
 
     // Normalize to line items (multi-item waybills send `items`; legacy callers
     // send a single productId/quantity).
@@ -203,13 +273,6 @@ router.post("/",
           .eq("product_id", item.product_id);
         if (stockError) { res.status(500).json({ error: stockError.message }); return; }
         if (fromAgentId) await syncAgentStockAggregate(req.user!.orgId, fromAgentId, item.product_id);
-        const { data: product } = await supabase
-          .from("products").select("agent_stock").eq("id", item.product_id).single();
-        if (product) {
-          await supabase.from("products").update({
-            agent_stock: Math.max(0, Number(product.agent_stock ?? 0) - item.quantity)
-          }).eq("id", item.product_id);
-        }
       } else {
         await supabase.from("products").update({ warehouse_stock: balanceAfter }).eq("id", item.product_id);
       }
@@ -316,6 +379,22 @@ router.patch("/:id",
       res.status(400).json({ error: "No fields to update." });
       return;
     }
+    const { data: current, error: currentError } = await supabase
+      .from("waybill_records")
+      .select("id, from_agent_location_id, to_agent_location_id")
+      .eq("id", req.params.id).eq("org_id", req.user!.orgId)
+      .single();
+    if (currentError || !current) { res.status(404).json({ error: "Waybill not found." }); return; }
+    const nextFromLocationId = Object.prototype.hasOwnProperty.call(updates, "from_agent_location_id")
+      ? updates.from_agent_location_id
+      : current.from_agent_location_id;
+    const nextToLocationId = Object.prototype.hasOwnProperty.call(updates, "to_agent_location_id")
+      ? updates.to_agent_location_id
+      : current.to_agent_location_id;
+    if (nextFromLocationId && nextToLocationId && nextFromLocationId === nextToLocationId) {
+      res.status(400).json({ error: "Choose a different receiving hub/state. A waybill cannot move stock to the same exact hub it was sent from." });
+      return;
+    }
     const { data, error } = await supabase
       .from("waybill_records")
       .update(updates)
@@ -404,11 +483,6 @@ router.patch("/:id/status",
               quantity: balanceAfter
             }, { onConflict: "agent_location_id,product_id" });
             await syncAgentStockAggregate(req.user!.orgId, data.to_agent_id, item.product_id);
-            if (product) {
-              await supabase.from("products").update({
-                agent_stock: Number(product.agent_stock ?? 0) + item.quantity
-              }).eq("id", item.product_id);
-            }
           } else {
             balanceAfter = (product?.warehouse_stock ?? 0) + item.quantity;
             await supabase.from("products").update({ warehouse_stock: balanceAfter }).eq("id", item.product_id);
@@ -430,11 +504,6 @@ router.patch("/:id/status",
               quantity: balanceAfter
             }, { onConflict: "agent_location_id,product_id" });
             await syncAgentStockAggregate(req.user!.orgId, data.from_agent_id, item.product_id);
-            if (product) {
-              await supabase.from("products").update({
-                agent_stock: Number(product.agent_stock ?? 0) + item.quantity
-              }).eq("id", item.product_id);
-            }
           } else {
             balanceAfter = (product?.warehouse_stock ?? 0) + item.quantity;
             await supabase.from("products").update({ warehouse_stock: balanceAfter }).eq("id", item.product_id);
@@ -465,6 +534,10 @@ router.patch("/:id/status",
       }
     }
 
+    if (data && status === "Cancelled") {
+      await deleteLinkedWaybillExpenses(req.user!.orgId, data.id);
+    }
+
     if (data) {
       await notifyWaybillEvent(req.user!.orgId, {
         id: data.id,
@@ -479,6 +552,39 @@ router.patch("/:id/status",
     }
 
     res.json(data);
+  }
+);
+
+router.delete("/:id",
+  requireRole("Owner", "Admin", "Inventory Manager"),
+  async (req, res) => {
+    const { data, error } = await supabase
+      .from("waybill_records")
+      .select("*")
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId)
+      .single();
+    if (error || !data) { res.status(404).json({ error: "Waybill not found." }); return; }
+    if (!["In Transit", "Cancelled"].includes(data.status)) {
+      res.status(400).json({ error: "Only in-transit or cancelled waybills can be deleted. Received/returned/defective/missing waybills are kept for stock audit." });
+      return;
+    }
+
+    const items = waybillItemsOf(data);
+    const restoredUnits = data.status === "In Transit"
+      ? await restoreWaybillSourceStock(req.user!.orgId, data, items)
+      : 0;
+
+    await deleteLinkedWaybillExpenses(req.user!.orgId, data.id);
+    await supabase.from("stock_movements").delete().eq("org_id", req.user!.orgId).eq("waybill_id", data.id);
+    const { error: deleteError } = await supabase
+      .from("waybill_records")
+      .delete()
+      .eq("id", data.id)
+      .eq("org_id", req.user!.orgId);
+    if (deleteError) { res.status(500).json({ error: deleteError.message }); return; }
+
+    res.json({ deleted: true, restoredUnits });
   }
 );
 

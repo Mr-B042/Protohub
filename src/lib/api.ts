@@ -534,7 +534,8 @@ export const waybillsApi = {
   list: () => get<any[]>("/api/waybills"),
   create: (body: unknown) => post<any>("/api/waybills", body),
   update: (id: string, body: unknown) => patch<any>(`/api/waybills/${id}`, body),
-  updateStatus: (id: string, body: unknown) => patch<any>(`/api/waybills/${id}/status`, body)
+  updateStatus: (id: string, body: unknown) => patch<any>(`/api/waybills/${id}/status`, body),
+  delete: (id: string) => del<{ deleted: boolean; restoredUnits?: number }>(`/api/waybills/${id}`)
 };
 
 // ── Team (users in org) ───────────────────────────────────

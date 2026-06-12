@@ -26767,13 +26767,18 @@ ${waybillLineItems(w).length > 1
       ? (findAgentLocation(fromAgent, waybillFromAgentLocationId) ?? (fromLocationOptions.length === 1 ? fromLocationOptions[0] : null))
       : null;
     const toAgent = waybillToAgentId ? agents.find((ag) => ag.id === waybillToAgentId) : null;
-    const toLocationOptions = toAgent ? selectableAgentLocationRows(toAgent) : [];
+    const rawToLocationOptions = toAgent ? selectableAgentLocationRows(toAgent) : [];
+    const sameAgentTransfer = waybillFromType === "Agent" && Boolean(waybillFromAgentId) && waybillFromAgentId === waybillToAgentId;
+    const toLocationOptions = sameAgentTransfer && fromLocation?.id
+      ? rawToLocationOptions.filter((location) => location.id !== fromLocation.id)
+      : rawToLocationOptions;
     const toLocation = toAgent
       ? (findAgentLocation(toAgent, waybillToAgentLocationId) ?? (toLocationOptions.length === 1 ? toLocationOptions[0] : null))
       : null;
     const receivingState = toLocation?.state || waybillToState.trim();
     if (waybillFromType === "Agent" && !fromLocation?.id) errs.fromAgent = "Choose the exact sending hub/state for this agent.";
-    if (waybillToAgentId && !toLocation?.id) errs.toState = "Choose the exact receiving hub/state for this agent.";
+    if (sameAgentTransfer && fromLocation?.id && waybillToAgentLocationId === fromLocation.id) errs.toState = "Choose a different receiving hub/state for this same-agent transfer.";
+    else if (waybillToAgentId && !toLocation?.id) errs.toState = "Choose the exact receiving hub/state for this agent.";
     else if (!receivingState) errs.toState = "Receiving state is required.";
     if (!waybillDateSent) errs.dateSent = "Date sent is required.";
 
@@ -26863,35 +26868,15 @@ ${waybillLineItems(w).length > 1
     }
 
     setWaybillRecords((prev) => [record, ...prev]);
-    // Auto-book the waybill fee as a Waybill expense so it shows on the Expense
-    // board and Finance reports. Skip if no fee charged. One fee per waybill.
-    if (fee > 0) {
-      const expenseRecord: ExpenseRecord = {
-        id: `EXP-WB-${record.id}`,
-        type: "Waybill",
-        amount: fee,
-        currency: "NGN",
-        date: String(record.dateSent ?? todayKey()).slice(0, 10),
-        productId: record.productId,
-        productName: record.productName,
-        description: `Waybill ${record.id} — ${record.sendingState} → ${record.receivingState} via ${record.logisticsPartner} (${itemsLabel})`,
-        waybillId: record.id
-      };
-      setExpenses((prev) => [expenseRecord, ...prev]);
-      expensesApi.create({
-        id: expenseRecord.id, date: expenseRecord.date, category: expenseRecord.type,
-        description: expenseRecord.description, amount: expenseRecord.amount, currency: expenseRecord.currency,
-        productId: expenseRecord.productId
-      } as any).catch(() => {});
-    }
     closeModal();
     showToast(`Waybill created — ${itemsLabel} → ${receivingState}.${fee > 0 ? ` Fee ₦${fee.toLocaleString()} booked to expenses.` : ""}`);
-    // Roll back the waybill record (and the auto-booked expense) if the
+    // Roll back the waybill record if the
     // server rejects the create. Stock movement stays as a paper trail of
     // the attempt and is reconciled by the next stockApi.movements load.
-    waybillsApi.create({ id: record.id, items: itemsForRecord, productId: record.productId, productName: record.productName, quantity: record.quantity, waybillFee: record.waybillFee, fromLocation: record.sendingState, toLocation: record.receivingState, carrier: record.logisticsPartner, agentId: record.toAgentId, fromAgentId: record.fromAgentId, fromAgentLocationId: record.fromAgentLocationId, toAgentId: record.toAgentId, toAgentLocationId: record.toAgentLocationId, notes: record.note, dispatchedDate: record.dateSent } as any).catch((err: any) => {
+    waybillsApi.create({ id: record.id, items: itemsForRecord, productId: record.productId, productName: record.productName, quantity: record.quantity, waybillFee: record.waybillFee, fromLocation: record.sendingState, toLocation: record.receivingState, carrier: record.logisticsPartner, agentId: record.toAgentId, fromAgentId: record.fromAgentId, fromAgentLocationId: record.fromAgentLocationId, toAgentId: record.toAgentId, toAgentLocationId: record.toAgentLocationId, notes: record.note, dispatchedDate: record.dateSent } as any).then(() => {
+      if (fee > 0) expensesApi.list().then((rows) => setExpenses(rows.map(normalizeExpenseRecord))).catch(() => {});
+    }).catch((err: any) => {
       setWaybillRecords((prev) => prev.filter((w) => w.id !== record.id));
-      if (fee > 0) setExpenses((prev) => prev.filter((e) => e.id !== `EXP-WB-${record.id}`));
       showToast(`Waybill not synced: ${err?.message ?? "please retry"}.`);
     });
     pushSystemNotification({
@@ -27149,6 +27134,11 @@ ${waybillLineItems(w).length > 1
   const cancelWaybill = (waybillId: string) => {
     const record = waybillRecords.find((w) => w.id === waybillId);
     if (!record || record.status !== "In Transit") return;
+    const productsSnapshot = products;
+    const agentStockSnapshot = agentStock;
+    const stockMovementsSnapshot = stockMovements;
+    const waybillSnapshot = waybillRecords;
+    const expenseSnapshot = expenses;
     // Restore every line back to the source (per item for multi-item waybills).
     const lineItems = waybillLineItems(record);
     const fromAgent = record.fromAgentId ? agents.find((a) => a.id === record.fromAgentId) : null;
@@ -27157,6 +27147,14 @@ ${waybillLineItems(w).length > 1
       if (it.quantity <= 0) continue;
       const product = products.find((p) => p.id === it.productId);
       if (record.fromAgentId) {
+        if (record.fromAgentLocationId) {
+          adjustAgentLocationStock(record.fromAgentId, record.fromAgentLocationId, it.productId, (current) => ({
+            productId: it.productId,
+            quantity: Number(current?.quantity ?? 0) + it.quantity,
+            defective: Number(current?.defective ?? 0),
+            missing: Number(current?.missing ?? 0)
+          }));
+        }
         setAgentStock((prev) => prev.map((s) => s.agentId === record.fromAgentId && s.productId === it.productId ? { ...s, quantity: s.quantity + it.quantity } : s));
         setProducts((prev) => prev.map((p) => p.id === it.productId ? { ...p, agentStock: p.agentStock + it.quantity } : p));
       } else {
@@ -27178,8 +27176,13 @@ ${waybillLineItems(w).length > 1
     if (movements.length > 0) setStockMovements((prev) => [...movements, ...prev]);
 
     setWaybillRecords((prev) => prev.map((w) => w.id === waybillId ? { ...w, status: "Cancelled" } : w));
+    setExpenses((prev) => prev.filter((e) => e.waybillId !== record.id && e.id !== `EXP-WB-${record.id}`));
     waybillsApi.updateStatus(waybillId, { status: "Cancelled" }).catch((err: any) => {
-      setWaybillRecords((prev) => prev.map((w) => w.id === waybillId ? { ...w, status: "In Transit" } : w));
+      setProducts(productsSnapshot);
+      setAgentStock(agentStockSnapshot);
+      setStockMovements(stockMovementsSnapshot);
+      setWaybillRecords(waybillSnapshot);
+      setExpenses(expenseSnapshot);
       showToast(`Failed to cancel waybill: ${err.message}`);
     });
     showToast(`Waybill cancelled. Stock returned to sender.`);
@@ -27190,6 +27193,57 @@ ${waybillLineItems(w).length > 1
       message: `${record.id}: ${itemsLabel} returned to ${record.fromAgentId ? record.sendingState : "warehouse"}`,
       productId: lineItems[0]?.productId,
       link: `/dashboard/admin/waybill`
+    });
+  };
+
+  const deleteWaybill = (record: WaybillRecord) => {
+    if (!["In Transit", "Cancelled"].includes(record.status)) {
+      showToast("Only in-transit or cancelled waybills can be deleted. Received waybills stay for stock audit.");
+      return;
+    }
+    const lineItems = waybillLineItems(record);
+    const itemsLabel = lineItems.map((it) => `${it.quantity} × ${it.productName}`).join(", ");
+    if (!window.confirm(`Delete waybill ${record.id}?${record.status === "In Transit" ? " Stock will be returned to the sender first." : ""}\n\n${itemsLabel}\n\nThis cannot be undone.`)) return;
+
+    const productsSnapshot = products;
+    const agentStockSnapshot = agentStock;
+    const stockMovementsSnapshot = stockMovements;
+    const waybillSnapshot = waybillRecords;
+    const expenseSnapshot = expenses;
+
+    if (record.status === "In Transit") {
+      for (const it of lineItems) {
+        if (it.quantity <= 0) continue;
+        if (record.fromAgentId) {
+          if (record.fromAgentLocationId) {
+            adjustAgentLocationStock(record.fromAgentId, record.fromAgentLocationId, it.productId, (current) => ({
+              productId: it.productId,
+              quantity: Number(current?.quantity ?? 0) + it.quantity,
+              defective: Number(current?.defective ?? 0),
+              missing: Number(current?.missing ?? 0)
+            }));
+          }
+          setAgentStock((prev) => prev.map((s) => s.agentId === record.fromAgentId && s.productId === it.productId ? { ...s, quantity: s.quantity + it.quantity } : s));
+          setProducts((prev) => prev.map((p) => p.id === it.productId ? { ...p, agentStock: p.agentStock + it.quantity } : p));
+        } else {
+          setProducts((prev) => prev.map((p) => p.id === it.productId ? { ...p, warehouseStock: p.warehouseStock + it.quantity } : p));
+        }
+      }
+    }
+    setWaybillRecords((prev) => prev.filter((w) => w.id !== record.id));
+    setStockMovements((prev) => prev.filter((movement) => movement.waybillId !== record.id));
+    setExpenses((prev) => prev.filter((e) => e.waybillId !== record.id && e.id !== `EXP-WB-${record.id}`));
+
+    waybillsApi.delete(record.id).then((result) => {
+      showToast(`Waybill deleted${result.restoredUnits ? ` — ${result.restoredUnits} unit${result.restoredUnits === 1 ? "" : "s"} returned.` : "."}`);
+      if (record.waybillFee > 0) expensesApi.list().then((rows) => setExpenses(rows.map(normalizeExpenseRecord))).catch(() => {});
+    }).catch((err: any) => {
+      setProducts(productsSnapshot);
+      setAgentStock(agentStockSnapshot);
+      setStockMovements(stockMovementsSnapshot);
+      setWaybillRecords(waybillSnapshot);
+      setExpenses(expenseSnapshot);
+      showToast(`Failed to delete waybill: ${err?.message ?? "please retry"}.`);
     });
   };
 
@@ -27236,13 +27290,19 @@ ${waybillLineItems(w).length > 1
   const saveEditWaybill = () => {
     const errs: Record<string, string> = {};
     if (!waybillPartner.trim()) errs.partner = "Logistics partner is required.";
+    const currentWaybill = waybillRecords.find((w) => w.id === waybillEditId);
     const toAgent = waybillToAgentId ? agents.find((a) => a.id === waybillToAgentId) : null;
-    const toLocationOptions = toAgent ? selectableAgentLocationRows(toAgent) : [];
+    const rawToLocationOptions = toAgent ? selectableAgentLocationRows(toAgent) : [];
+    const sameAgentTransfer = Boolean(currentWaybill?.fromAgentId) && currentWaybill?.fromAgentId === waybillToAgentId;
+    const toLocationOptions = sameAgentTransfer && currentWaybill?.fromAgentLocationId
+      ? rawToLocationOptions.filter((location) => location.id !== currentWaybill.fromAgentLocationId)
+      : rawToLocationOptions;
     const toLocation = toAgent
       ? (findAgentLocation(toAgent, waybillToAgentLocationId) ?? (toLocationOptions.length === 1 ? toLocationOptions[0] : null))
       : null;
     const receivingState = toAgent ? (toLocation?.state || "") : waybillToState.trim();
-    if (waybillToAgentId && !toLocation?.id) errs.toState = "Choose the exact receiving hub/state for this agent.";
+    if (sameAgentTransfer && currentWaybill?.fromAgentLocationId && waybillToAgentLocationId === currentWaybill.fromAgentLocationId) errs.toState = "Choose a different receiving hub/state for this same-agent transfer.";
+    else if (waybillToAgentId && !toLocation?.id) errs.toState = "Choose the exact receiving hub/state for this agent.";
     else if (!receivingState) errs.toState = "Receiving state is required.";
     if (!waybillDateSent) errs.dateSent = "Date sent is required.";
     if (Object.keys(errs).length > 0) { setWaybillErrors(errs); return; }
@@ -27270,6 +27330,8 @@ ${waybillLineItems(w).length > 1
       to_agent_location_id: waybillToAgentId ? (toLocation?.id ?? null) : null,
       dispatched_date: waybillDateSent,
       notes: waybillNote.trim() || null,
+    }).then(() => {
+      expensesApi.list().then((rows) => setExpenses(rows.map(normalizeExpenseRecord))).catch(() => {});
     }).catch((err: any) => showToast(`Failed to save waybill: ${err.message}`));
   };
 
@@ -39032,6 +39094,9 @@ ${waybillLineItems(w).length > 1
                           )}
                           <button className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg border border-blue-100 text-blue-700 bg-blue-50 text-sm font-semibold hover:bg-blue-100 transition-colors" onClick={() => openEditWaybill(w)}>Edit</button>
                           <button className="!min-h-0 inline-flex items-center justify-center px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => printWaybill(w)}>Print</button>
+                          {["In Transit", "Cancelled"].includes(w.status) && (
+                            <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-rose-200 text-rose-700 bg-rose-50 text-sm font-semibold hover:bg-rose-100 transition-colors" onClick={() => deleteWaybill(w)}><Trash2 className="w-4 h-4" /> Delete</button>
+                          )}
                         </div>
                       </article>
                     ))}
@@ -39101,6 +39166,9 @@ ${waybillLineItems(w).length > 1
                                 )}
                                 <button className="inline-flex items-center px-2.5 py-1 rounded-md border border-blue-100 text-blue-700 bg-blue-50 text-xs font-semibold hover:bg-blue-100 transition-colors" onClick={() => openEditWaybill(w)}>Edit</button>
                                 <button className="inline-flex items-center px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-100 transition-colors" onClick={() => printWaybill(w)}>Print</button>
+                                {["In Transit", "Cancelled"].includes(w.status) && (
+                                  <button className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-rose-200 text-rose-700 bg-rose-50 text-xs font-semibold hover:bg-rose-100 transition-colors" onClick={() => deleteWaybill(w)}><Trash2 className="w-3.5 h-3.5" /> Delete</button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -57874,6 +57942,9 @@ ${waybillLineItems(w).length > 1
                   </section>
 
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100 dark:border-slate-800/80">
+                    {["In Transit", "Cancelled"].includes(w.status) && (
+                      <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-rose-200 text-rose-700 bg-rose-50 text-sm font-semibold hover:bg-rose-100 transition-colors dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200" onClick={() => deleteWaybill(w)}><Trash2 className="w-4 h-4" /> Delete</button>
+                    )}
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800/60" onClick={() => printWaybill(w)}>Print</button>
                     {w.status === "In Transit" && (
                       <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 transition-colors" onClick={() => openReceiveWaybill(w)}>Mark Received</button>
@@ -57999,7 +58070,11 @@ ${waybillLineItems(w).length > 1
               const wbFromLocationOptions = selectableAgentLocationRows(wbFromAgent);
               const wbSelectedFromLocation = findAgentLocation(wbFromAgent, waybillFromAgentLocationId) ?? (wbFromLocationOptions.length === 1 ? wbFromLocationOptions[0] : null);
               const wbToAgent = waybillToAgentId ? agents.find((a) => a.id === waybillToAgentId) : null;
-              const wbToLocationOptions = selectableAgentLocationRows(wbToAgent);
+              const wbRawToLocationOptions = selectableAgentLocationRows(wbToAgent);
+              const wbSameAgentTransfer = waybillFromType === "Agent" && Boolean(waybillFromAgentId) && waybillFromAgentId === waybillToAgentId;
+              const wbToLocationOptions = wbSameAgentTransfer && wbSelectedFromLocation?.id
+                ? wbRawToLocationOptions.filter((location) => location.id !== wbSelectedFromLocation.id)
+                : wbRawToLocationOptions;
               const wbSelectedToLocation = findAgentLocation(wbToAgent, waybillToAgentLocationId) ?? (wbToLocationOptions.length === 1 ? wbToLocationOptions[0] : null);
               const locationStockSummary = (
                 agent: DeliveryAgentRecord | null | undefined,
@@ -58107,10 +58182,10 @@ ${waybillLineItems(w).length > 1
                             onChange={(ev) => {
                               const nextAgent = agents.find((a) => a.id === ev.target.value) ?? null;
                               const locations = selectableAgentLocationRows(nextAgent);
+                              const nextFromLocationId = locations.length === 1 ? locations[0].id : "";
                               setWaybillFromAgentId(ev.target.value);
-                              setWaybillFromAgentLocationId(locations.length === 1 ? locations[0].id : "");
-                              if (ev.target.value && ev.target.value === waybillToAgentId) {
-                                setWaybillToAgentId("");
+                              setWaybillFromAgentLocationId(nextFromLocationId);
+                              if (ev.target.value && ev.target.value === waybillToAgentId && nextFromLocationId && nextFromLocationId === waybillToAgentLocationId) {
                                 setWaybillToAgentLocationId("");
                                 setWaybillToState("");
                               }
@@ -58128,7 +58203,14 @@ ${waybillLineItems(w).length > 1
                               <select
                                 className={fieldCls("fromAgent")}
                                 value={wbSelectedFromLocation?.id ?? ""}
-                                onChange={(ev) => { setWaybillFromAgentLocationId(ev.target.value); setWaybillErrors((prev) => ({ ...prev, fromAgent: "", qty: "" })); }}
+                                onChange={(ev) => {
+                                  setWaybillFromAgentLocationId(ev.target.value);
+                                  if (waybillFromAgentId === waybillToAgentId && ev.target.value === waybillToAgentLocationId) {
+                                    setWaybillToAgentLocationId("");
+                                    setWaybillToState("");
+                                  }
+                                  setWaybillErrors((prev) => ({ ...prev, fromAgent: "", qty: "" }));
+                                }}
                               >
                                 <option value="">Choose the exact hub/state to deduct from</option>
                                 {wbFromLocationOptions.map((location) => (
@@ -58151,7 +58233,10 @@ ${waybillLineItems(w).length > 1
                         value={waybillToAgentId}
                         onChange={(ev) => {
                           const nextAgent = agents.find((ag) => ag.id === ev.target.value) ?? null;
-                          const locations = selectableAgentLocationRows(nextAgent);
+                          const rawLocations = selectableAgentLocationRows(nextAgent);
+                          const locations = waybillFromType === "Agent" && ev.target.value === waybillFromAgentId && waybillFromAgentLocationId
+                            ? rawLocations.filter((location) => location.id !== waybillFromAgentLocationId)
+                            : rawLocations;
                           const autoLocation = locations.length === 1 ? locations[0] : null;
                           setWaybillToAgentId(ev.target.value);
                           setWaybillToAgentLocationId(autoLocation?.id ?? "");
@@ -58160,7 +58245,7 @@ ${waybillLineItems(w).length > 1
                         }}
                       >
                         <option value="">No specific agent (enter state below)</option>
-                        {agents.filter((a) => a.active && a.id !== waybillFromAgentId).map((a) => (
+                        {agents.filter((a) => a.active).map((a) => (
                           <option key={a.id} value={a.id}>{a.name} · {agentCoverageCompactLabel(a)}</option>
                         ))}
                       </select>
@@ -58189,7 +58274,9 @@ ${waybillLineItems(w).length > 1
                               <p className="mt-1.5 text-xs font-semibold text-emerald-700">{locationStockSummary(wbToAgent, wbSelectedToLocation, waybillItems)}</p>
                             </>
                           ) : (
-                            <p className="text-xs font-semibold text-amber-700">This agent has no hub locations saved yet. Add their hubs under Agents before routing stock to a specific state.</p>
+                            <p className="text-xs font-semibold text-amber-700">
+                              {wbSameAgentTransfer ? "Choose a different sending hub first, or add another hub/state under this agent." : "This agent has no hub locations saved yet. Add their hubs under Agents before routing stock to a specific state."}
+                            </p>
                           )}
                         </div>
                       ) : (
@@ -58222,7 +58309,11 @@ ${waybillLineItems(w).length > 1
               const editRecord = waybillRecords.find((w) => w.id === waybillEditId);
               const wbProduct = products.find((p) => p.id === editRecord?.productId);
               const editToAgent = waybillToAgentId ? agents.find((a) => a.id === waybillToAgentId) : null;
-              const editToLocationOptions = selectableAgentLocationRows(editToAgent);
+              const editRawToLocationOptions = selectableAgentLocationRows(editToAgent);
+              const editSameAgentTransfer = Boolean(editRecord?.fromAgentId) && editRecord?.fromAgentId === waybillToAgentId;
+              const editToLocationOptions = editSameAgentTransfer && editRecord?.fromAgentLocationId
+                ? editRawToLocationOptions.filter((location) => location.id !== editRecord.fromAgentLocationId)
+                : editRawToLocationOptions;
               const editSelectedToLocation = findAgentLocation(editToAgent, waybillToAgentLocationId) ?? (editToLocationOptions.length === 1 ? editToLocationOptions[0] : null);
               const toAgentBalance = editToAgent && editSelectedToLocation?.id && editRecord?.productId
                 ? agentLocationStockQuantity(editToAgent, editSelectedToLocation.id, editRecord.productId)
@@ -58264,7 +58355,10 @@ ${waybillLineItems(w).length > 1
                         value={waybillToAgentId}
                         onChange={(ev) => {
                           const nextAgent = agents.find((ag) => ag.id === ev.target.value) ?? null;
-                          const locations = selectableAgentLocationRows(nextAgent);
+                          const rawLocations = selectableAgentLocationRows(nextAgent);
+                          const locations = editRecord?.fromAgentId && ev.target.value === editRecord.fromAgentId && editRecord.fromAgentLocationId
+                            ? rawLocations.filter((location) => location.id !== editRecord.fromAgentLocationId)
+                            : rawLocations;
                           const autoLocation = locations.length === 1 ? locations[0] : null;
                           setWaybillToAgentId(ev.target.value);
                           setWaybillToAgentLocationId(autoLocation?.id ?? "");
@@ -58300,7 +58394,9 @@ ${waybillLineItems(w).length > 1
                               ))}
                             </select>
                           ) : (
-                            <p className="text-xs font-semibold text-amber-700">This agent has no hub locations saved yet. Add their hubs under Agents before routing stock to a specific state.</p>
+                            <p className="text-xs font-semibold text-amber-700">
+                              {editSameAgentTransfer ? "Choose a different receiving hub/state. The destination cannot be the same exact hub as the source." : "This agent has no hub locations saved yet. Add their hubs under Agents before routing stock to a specific state."}
+                            </p>
                           )}
                         </div>
                       ) : null}
