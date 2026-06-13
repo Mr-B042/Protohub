@@ -919,6 +919,19 @@ type ConvertedCartLinkRepairStatus =
   | "manual_review:no_journey_order_id"
   | "manual_review:journey_order_missing"
   | "manual_review:order_linked_to_another_cart";
+type ConvertedCartLinkRepairOrderPreview = {
+  id: string;
+  customer?: string;
+  phone?: string;
+  productName?: string;
+  packageName?: string;
+  amount?: number;
+  currency?: ProductCurrencyCode;
+  status?: string;
+  date?: string | null;
+  createdAt?: string | null;
+  sourceCartId?: string | null;
+};
 type ConvertedCartLinkRepairRow = {
   cartId: string;
   orderId?: string | null;
@@ -927,9 +940,17 @@ type ConvertedCartLinkRepairRow = {
   phone?: string;
   productName?: string;
   packageName?: string;
+  amount?: number;
+  currency?: ProductCurrencyCode;
+  source?: string;
+  embedLabel?: string | null;
   lastActivity?: string | null;
+  submittedAt?: string | null;
   alreadyLinkedOrderId?: string | null;
   journeyOrderSourceCartId?: string | null;
+  order?: ConvertedCartLinkRepairOrderPreview | null;
+  canApply?: boolean;
+  manualReviewMessage?: string;
 };
 type ConvertedCartLinkRepairReport = {
   total: number;
@@ -8233,6 +8254,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartLinkRepairReport, setCartLinkRepairReport] = useState<ConvertedCartLinkRepairReport | null>(null);
   const [cartLinkRepairLoading, setCartLinkRepairLoading] = useState(false);
   const [cartLinkRepairApplying, setCartLinkRepairApplying] = useState(false);
+  const [cartLinkRepairApplyingId, setCartLinkRepairApplyingId] = useState<string | null>(null);
   const [orderFormName, setOrderFormName] = useState("");
   const [orderFormPhone, setOrderFormPhone] = useState("");
   const [orderFormWhatsapp, setOrderFormWhatsapp] = useState("");
@@ -27662,6 +27684,43 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  const applyConvertedCartLinkRepairRow = async (row: ConvertedCartLinkRepairRow) => {
+    if (!canUseCartLinkRepairTool || cartLinkRepairApplyingId || cartLinkRepairApplying) return;
+    if (!row.orderId) {
+      showToast("This cart has no submitted order number to verify.");
+      return;
+    }
+    const label = `${row.cartId} → order #${row.orderId}`;
+    if (!window.confirm(`Re-check and link ${label}? The backend will block this if the order is missing, belongs to another cart, or changed while reviewing.`)) {
+      return;
+    }
+
+    setCartLinkRepairApplyingId(row.cartId);
+    try {
+      const result = await cartsApi.applyConvertedLinkRepair(row.cartId, row.orderId) as {
+        repaired?: { cartId: string; orderId: string }[];
+        repairedCount?: number;
+        report?: ConvertedCartLinkRepairReport;
+      };
+      const repaired = result.repaired ?? [];
+      if (repaired.length > 0) {
+        const cartIdByOrderId = new Map(repaired.map((item) => [String(item.orderId), String(item.cartId)]));
+        setTrackedOrders((prev) => prev.map((order) => {
+          const cartId = cartIdByOrderId.get(order.id);
+          return cartId ? { ...order, sourceCartId: cartId } : order;
+        }));
+      }
+      if (result.report) setCartLinkRepairReport(result.report);
+      showToast((result.repairedCount ?? repaired.length) > 0
+        ? `Linked ${label}.`
+        : `${label} was already linked.`);
+    } catch (err: any) {
+      showToast(`Could not link ${label}: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setCartLinkRepairApplyingId(null);
+    }
+  };
+
   const deleteCartRecord = (cart: AbandonedCartRecord) => {
     const canDelete = auth.getUser()?.role === "Owner" || auth.getUser()?.role === "Admin";
     if (!canDelete) {
@@ -34292,7 +34351,7 @@ ${waybillLineItems(w).length > 1
                       <button
                         className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-white px-4 py-2.5 text-sm font-black text-amber-800 shadow-sm transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-500/30 dark:bg-slate-950/60 dark:text-amber-200 dark:hover:bg-amber-500/10"
                         onClick={scanConvertedCartLinkRepairs}
-                        disabled={cartLinkRepairLoading || cartLinkRepairApplying}
+                        disabled={cartLinkRepairLoading || cartLinkRepairApplying || Boolean(cartLinkRepairApplyingId)}
                       >
                         <RefreshCw className={`h-4 w-4 ${cartLinkRepairLoading ? "animate-spin" : ""}`} />
                         {cartLinkRepairLoading ? "Scanning..." : "Scan safe matches"}
@@ -34300,7 +34359,7 @@ ${waybillLineItems(w).length > 1
                       <button
                         className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-500 dark:text-slate-950 dark:hover:bg-emerald-400"
                         onClick={applyConvertedCartLinkRepairs}
-                        disabled={cartLinkRepairApplying || cartLinkRepairLoading || (cartLinkRepairReport?.repairableCount ?? 0) <= 0}
+                        disabled={cartLinkRepairApplying || cartLinkRepairLoading || Boolean(cartLinkRepairApplyingId) || (cartLinkRepairReport?.repairableCount ?? 0) <= 0}
                       >
                         <CheckCircle2 className="h-4 w-4" />
                         {cartLinkRepairApplying ? "Applying..." : `Apply safe repairs${cartLinkRepairReport?.repairableCount ? ` (${cartLinkRepairReport.repairableCount})` : ""}`}
@@ -34350,15 +34409,102 @@ ${waybillLineItems(w).length > 1
                         {cartLinkManualReviewRows.length === 0 ? (
                           <p className="m-0 mt-3 text-sm font-semibold text-rose-800/80 dark:text-rose-100/80">No ambiguous converted carts found in this scan.</p>
                         ) : (
-                          <div className="mt-3 space-y-2">
+                          <div className="mt-3 space-y-3">
                             {cartLinkManualReviewRows.slice(0, 5).map((row) => (
-                              <div key={row.cartId} className="rounded-xl border border-rose-100 bg-white px-3 py-2 text-sm dark:border-rose-500/20 dark:bg-slate-950/45">
-                                <p className="m-0 font-black text-gray-900 dark:text-slate-100">{row.cartId}{row.orderId ? ` -> order #${row.orderId}` : ""}</p>
-                                <p className="m-0 mt-1 text-xs font-semibold text-gray-500 dark:text-slate-400">
-                                  {row.repairStatus.replace("manual_review:", "").replace(/_/g, " ")}
-                                </p>
-                              </div>
+                              (() => {
+                                const localOrder = row.orderId ? trackedOrders.find((order) => order.id === String(row.orderId)) : undefined;
+                                const orderPreview: ConvertedCartLinkRepairOrderPreview | null = row.order ?? (localOrder ? {
+                                  id: localOrder.id,
+                                  customer: localOrder.customer,
+                                  phone: localOrder.phone,
+                                  productName: localOrder.productName,
+                                  packageName: localOrder.packageName,
+                                  amount: localOrder.amount,
+                                  currency: localOrder.currency,
+                                  status: localOrder.status,
+                                  date: localOrder.date,
+                                  createdAt: localOrder.createdAt,
+                                  sourceCartId: localOrder.sourceCartId ?? null
+                                } : null);
+                                const rowCurrency = (orderPreview?.currency ?? row.currency ?? "NGN") as ProductCurrencyCode;
+                                const canTryLink = Boolean(row.orderId) && row.repairStatus !== "manual_review:order_linked_to_another_cart";
+                                const isBusy = cartLinkRepairApplyingId === row.cartId;
+                                return (
+                                  <div key={row.cartId} className="rounded-2xl border border-rose-100 bg-white p-3 text-sm shadow-sm dark:border-rose-500/20 dark:bg-slate-950/45">
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                      <div>
+                                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.16em] text-rose-500 dark:text-rose-200">Needs review</p>
+                                        <p className="m-0 mt-1 text-base font-black text-gray-900 dark:text-slate-100">
+                                          {row.cartId}{row.orderId ? ` -> order #${row.orderId}` : ""}
+                                        </p>
+                                        <p className="m-0 mt-1 text-xs font-semibold leading-relaxed text-gray-500 dark:text-slate-400">
+                                          {row.manualReviewMessage || row.repairStatus.replace("manual_review:", "").replace(/_/g, " ")}
+                                        </p>
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        {row.orderId && (
+                                          <button
+                                            type="button"
+                                            className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-black text-sky-700 transition-colors hover:bg-sky-100 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200 dark:hover:bg-sky-500/20"
+                                            onClick={() => openAdminOrderDetail(String(row.orderId))}
+                                          >
+                                            <Eye className="h-3.5 w-3.5" />
+                                            Open order
+                                          </button>
+                                        )}
+                                        {canTryLink && (
+                                          <button
+                                            type="button"
+                                            className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-3 py-2 text-xs font-black text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-rose-500 dark:text-slate-950 dark:hover:bg-rose-400"
+                                            disabled={isBusy || cartLinkRepairApplying || cartLinkRepairLoading}
+                                            onClick={() => applyConvertedCartLinkRepairRow(row)}
+                                          >
+                                            <RefreshCw className={`h-3.5 w-3.5 ${isBusy ? "animate-spin" : ""}`} />
+                                            {isBusy ? "Checking..." : "Re-check & link"}
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
+                                      <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/60">
+                                        <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400 dark:text-slate-500">Captured cart</p>
+                                        <p className="m-0 mt-1 font-black text-gray-900 dark:text-slate-100">{row.customer || "Unknown customer"}</p>
+                                        <p className="m-0 mt-0.5 text-xs font-semibold text-gray-500 dark:text-slate-400">{row.phone || "No phone"} · {row.productName || "Unknown product"}</p>
+                                        <p className="m-0 mt-0.5 text-xs font-semibold text-gray-500 dark:text-slate-400">{row.packageName || "No package"} · {formatProductMoney(row.amount ?? 0, (row.currency ?? "NGN") as ProductCurrencyCode)}</p>
+                                        <p className="m-0 mt-1 text-[11px] font-black text-gray-400 dark:text-slate-500">
+                                          {row.source || "Website"}{row.embedLabel ? ` · ${row.embedLabel}` : " · No embed label"}
+                                        </p>
+                                        {row.lastActivity && <p className="m-0 mt-1 text-[11px] font-semibold text-gray-400 dark:text-slate-500">Cart activity: {formatMoment(row.lastActivity)}</p>}
+                                      </div>
+                                      <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/60">
+                                        <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400 dark:text-slate-500">Candidate order</p>
+                                        {orderPreview ? (
+                                          <>
+                                            <p className="m-0 mt-1 font-black text-gray-900 dark:text-slate-100">#{orderPreview.id} · {orderPreview.customer || "Unknown customer"}</p>
+                                            <p className="m-0 mt-0.5 text-xs font-semibold text-gray-500 dark:text-slate-400">{orderPreview.phone || "No phone"} · {orderPreview.productName || "Unknown product"}</p>
+                                            <p className="m-0 mt-0.5 text-xs font-semibold text-gray-500 dark:text-slate-400">{orderPreview.packageName || "No package"} · {formatProductMoney(orderPreview.amount ?? 0, rowCurrency)}</p>
+                                            <p className="m-0 mt-1 text-[11px] font-black text-gray-400 dark:text-slate-500">
+                                              {orderPreview.status || "No status"}{orderPreview.createdAt || orderPreview.date ? ` · ${formatMoment(orderPreview.createdAt ?? orderPreview.date)}` : ""}
+                                            </p>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <p className="m-0 mt-1 font-black text-gray-900 dark:text-slate-100">{row.orderId ? `Order #${row.orderId}` : "No order number saved"}</p>
+                                            <p className="m-0 mt-0.5 text-xs font-semibold text-gray-500 dark:text-slate-400">
+                                              {row.orderId ? "Not verified in the current order database yet. Use Re-check & link to ask the backend to verify again." : "The cart journey does not contain enough order data for auto-linking."}
+                                            </p>
+                                          </>
+                                        )}
+                                        {row.submittedAt && <p className="m-0 mt-1 text-[11px] font-semibold text-gray-400 dark:text-slate-500">Submitted: {formatMoment(row.submittedAt)}</p>}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })()
                             ))}
+                            {cartLinkManualReviewRows.length > 5 && (
+                              <p className="m-0 text-xs font-semibold text-rose-700 dark:text-rose-200">Showing first 5 of {cartLinkManualReviewRows.length}. Use search/date filters or scan again after handling these.</p>
+                            )}
                           </div>
                         )}
                       </div>
