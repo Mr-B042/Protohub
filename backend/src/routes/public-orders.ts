@@ -838,9 +838,17 @@ router.post("/", submitRateLimit, async (req, res) => {
 
   // 5. Mark linked abandoned cart as Converted (best-effort).
   if (d.cartId) {
+    const submittedEmbedLabel = cleanEmbedLabel(d.embedLabel);
+    const cartUpdate: Record<string, unknown> = {
+      status: "Converted",
+      last_activity: new Date().toISOString()
+    };
+    if (submittedEmbedLabel) {
+      cartUpdate.embed_label = submittedEmbedLabel;
+    }
     await supabase
       .from("abandoned_carts")
-      .update({ status: "Converted", last_activity: new Date().toISOString() })
+      .update(cartUpdate)
       .eq("id", d.cartId)
       .eq("org_id", product.org_id);
 

@@ -47,6 +47,7 @@ const CartUpsertSchema = z.object({
   amount:       z.number().min(0),
   currency:     z.enum(["NGN", "USD", "GBP"]),
   source:       z.string().optional(),
+  embedLabel:   z.string().max(120).optional(),
   preferredDelivery: z.string().optional(),
   capturePayload: z.record(z.string(), z.unknown()).optional(),
   status:       z.string().optional()  // accepted iff present in cart_status enum (DB will reject otherwise)
@@ -199,6 +200,7 @@ router.post("/", async (req, res) => {
     amount:       d.amount,
     currency:     d.currency,
     source:       d.source ?? "Website",
+    embed_label:  (d.embedLabel ?? "").trim().slice(0, 120) || null,
     preferred_delivery: d.preferredDelivery?.trim() || null,
     capture_payload:
       d.capturePayload && typeof d.capturePayload === "object" && !Array.isArray(d.capturePayload)
@@ -224,10 +226,12 @@ router.post("/", async (req, res) => {
     .maybeSingle();
 
   if (existingOrder) {
-    if (existing && existing.status !== "Converted") {
+    if (existing && (existing.status !== "Converted" || row.embed_label)) {
+      const convertedUpdate: Record<string, unknown> = { status: "Converted", last_activity: new Date().toISOString() };
+      if (row.embed_label) convertedUpdate.embed_label = row.embed_label;
       await supabase
         .from("abandoned_carts")
-        .update({ status: "Converted", last_activity: new Date().toISOString() })
+        .update(convertedUpdate)
         .eq("id", d.id)
         .eq("org_id", req.user!.orgId);
     }

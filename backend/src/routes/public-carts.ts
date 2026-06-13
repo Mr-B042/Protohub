@@ -142,10 +142,15 @@ router.post("/", captureRateLimit, async (req, res) => {
     .maybeSingle();
 
   if (existingOrder) {
-    if (existing && existing.org_id === product.org_id && existing.status !== "Converted") {
+    if (existing && existing.org_id === product.org_id && (existing.status !== "Converted" || row.embed_label)) {
+      const convertedUpdate: Record<string, unknown> = {
+        status: "Converted",
+        last_activity: new Date().toISOString()
+      };
+      if (row.embed_label) convertedUpdate.embed_label = row.embed_label;
       await supabase
         .from("abandoned_carts")
-        .update({ status: "Converted", last_activity: new Date().toISOString() })
+        .update(convertedUpdate)
         .eq("id", d.id)
         .eq("org_id", product.org_id);
     }

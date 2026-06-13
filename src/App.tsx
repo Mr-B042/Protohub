@@ -3911,17 +3911,40 @@ const cartCapturePayloadFor = (cart: AbandonedCartRecord): Record<string, unknow
   const payload = cart.capturePayload;
   return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
 };
-const cartEmbedLabelFor = (cart: AbandonedCartRecord): string => {
+const cartJourneyEmbedLabelFor = (journeyEvents: CartJourneyEvent[] = []): string => {
+  for (const event of [...journeyEvents].reverse()) {
+    const metadata = event.metadata;
+    if (!metadata || typeof metadata !== "object") continue;
+    for (const key of ["embedLabel", "embed_label", "formLabel", "form_label", "label"]) {
+      const value = metadata[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+  }
+  return "";
+};
+const cartEmbedLabelFor = (cart: AbandonedCartRecord, linkedOrder?: Pick<TrackedOrder, "embedLabel"> | null, journeyEvents: CartJourneyEvent[] = []): string => {
   const direct = typeof cart.embedLabel === "string" ? cart.embedLabel.trim() : "";
   if (direct) return direct;
   const payload = cartCapturePayloadFor(cart);
-  if (!payload) return "";
-  for (const key of ["embedLabel", "embed_label", "formLabel", "form_label", "label"]) {
-    const value = payload[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (payload) {
+    for (const key of ["embedLabel", "embed_label", "formLabel", "form_label", "label"]) {
+      const value = payload[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+    const formContext = payload.formContext;
+    if (formContext && typeof formContext === "object" && !Array.isArray(formContext)) {
+      for (const key of ["embedLabel", "embed_label", "formLabel", "form_label", "label"]) {
+        const value = (formContext as Record<string, unknown>)[key];
+        if (typeof value === "string" && value.trim()) return value.trim();
+        if (typeof value === "number" && Number.isFinite(value)) return String(value);
+      }
+    }
   }
-  return "";
+  const orderLabel = typeof linkedOrder?.embedLabel === "string" ? linkedOrder.embedLabel.trim() : "";
+  if (orderLabel) return orderLabel;
+  return cartJourneyEmbedLabelFor(journeyEvents);
 };
 const capturedCartOfferLinesFor = (cart: AbandonedCartRecord, key: "selectedCrossSellLines" | "autoCompanionLines" = "selectedCrossSellLines") => {
   const payload = cartCapturePayloadFor(cart);
@@ -4600,7 +4623,7 @@ const hiddenFormFieldSectionsFor = ({
     }
   ].filter((section) => section.rows.length > 0);
 };
-const cartHiddenFieldSectionsFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = []) => {
+const cartHiddenFieldSectionsFor = (cart: AbandonedCartRecord, journeyEvents: CartJourneyEvent[] = [], embedLabelOverride = "") => {
   const payload = cartCapturePayloadFor(cart);
   const payloadContext = payload?.formContext && typeof payload.formContext === "object" && !Array.isArray(payload.formContext)
     ? payload.formContext as Record<string, unknown>
@@ -4608,7 +4631,7 @@ const cartHiddenFieldSectionsFor = (cart: AbandonedCartRecord, journeyEvents: Ca
   const journeyContext = latestHiddenContextFromJourney(journeyEvents);
   return hiddenFormFieldSectionsFor({
     source: cart.source,
-    embedLabel: cart.embedLabel ?? hiddenFieldValueToString(payload?.embedLabel),
+    embedLabel: embedLabelOverride || cart.embedLabel || hiddenFieldValueToString(payload?.embedLabel) || cartJourneyEmbedLabelFor(journeyEvents),
     linkedSessionId: cart.id,
     formContext: payloadContext ?? journeyContext
   });
@@ -12965,7 +12988,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
     const conversionKind = abandonedCartConversionKindFor(linkedOrder);
     const linkedOrderStatus = linkedOrder?.status ?? "New";
-    const embedLabel = cartEmbedLabelFor(cart);
+    const embedLabel = cartEmbedLabelFor(cart, linkedOrder, abandonedCartJourneyMap[cart.id] ?? []);
     const matchesSearch = !search || `${cart.id} ${cart.customer} ${cart.phone} ${cart.productName} ${cart.packageName} ${cart.source} ${embedLabel}`.toLowerCase().includes(search);
     const matchesStatus = cartStatus === "All statuses" || cart.status === cartStatus;
     const matchesConversion =
@@ -27553,7 +27576,7 @@ ${waybillLineItems(w).length > 1
           recoveryRow?.conversionKind === "manual_recovery" ? recoveryRow.converterName : "",
           outcomeBucket,
           cart.source,
-          cartEmbedLabelFor(cart),
+          cartEmbedLabelFor(cart, recoveryRow?.linkedOrder, abandonedCartJourneyMap[cart.id] ?? []),
           users.find((u) => u.id === cart.assignedRepId)?.name ?? "Unassigned",
           cart.createdAt,
           cart.lastActivity
@@ -34393,9 +34416,9 @@ ${waybillLineItems(w).length > 1
                   ) : (
                     pagedAbandonedCarts.map((cart) => {
                       const assignedRep = users.find((user) => user.id === cart.assignedRepId)?.name ?? "Unassigned";
-                      const embedLabel = cartEmbedLabelFor(cart);
-                      const recovery = abandonedCartRecoveryById[cart.id];
                       const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
+                      const embedLabel = cartEmbedLabelFor(cart, linkedOrder, abandonedCartJourneyMap[cart.id] ?? []);
+                      const recovery = abandonedCartRecoveryById[cart.id];
                       const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder) : null;
                       return (
                         <article key={cart.id} className="px-4 py-4 flex flex-col gap-3">
@@ -34529,7 +34552,7 @@ ${waybillLineItems(w).length > 1
                       ) : (
                         pagedAbandonedCarts.map((cart) => {
                           const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
-                          const embedLabel = cartEmbedLabelFor(cart);
+                          const embedLabel = cartEmbedLabelFor(cart, linkedOrder, abandonedCartJourneyMap[cart.id] ?? []);
                           const conversionStatusLabel = cart.status === "Converted" ? abandonedCartConversionStatusLabel(linkedOrder) : null;
                           const conversionMarker = cart.status === "Converted" ? abandonedCartConversionMarkerFor(linkedOrder) : null;
                           return (
@@ -53531,7 +53554,8 @@ ${waybillLineItems(w).length > 1
 			              const secondsSinceJourney = Number.isFinite(lastJourneyMs) ? Math.max(0, (journeyNow - lastJourneyMs) / 1000) : Infinity;
 			              const journeyLive = !journeyFinished && secondsSinceJourney <= 30;
 			              const journeyIdleLabel = secondsSinceJourney < 60 ? "moments ago" : secondsSinceJourney < 3600 ? `${Math.floor(secondsSinceJourney / 60)}m ago` : formatMoment(lastJourneyAt);
-			              const selectedCartHiddenFieldSections = cartHiddenFieldSectionsFor(selectedCart, selectedCartJourney);
+			              const selectedCartEmbedLabel = cartEmbedLabelFor(selectedCart, linkedOrder, selectedCartJourney);
+			              const selectedCartHiddenFieldSections = cartHiddenFieldSectionsFor(selectedCart, selectedCartJourney, selectedCartEmbedLabel);
 		              const cartCaptureDataExpanded = expandedCartCaptureDataId === selectedCart.id;
 			              const recoveryInfo = cartCustomerInfoCompletion(selectedCart, { showEmail: showEmailField, showWhatsapp: showWhatsappField });
 			              const recovery = cartJourneyRecoveryScore(selectedCartJourney, recoveryInfo.total ? recoveryInfo.done / recoveryInfo.total : undefined);
