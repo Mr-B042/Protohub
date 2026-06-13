@@ -913,6 +913,31 @@ type AbandonedCartRecord = {
   outageCapturedAt?: string;
   capturePayload?: Record<string, any> | null;
 };
+type ConvertedCartLinkRepairStatus =
+  | "already_linked"
+  | "repairable"
+  | "manual_review:no_journey_order_id"
+  | "manual_review:journey_order_missing"
+  | "manual_review:order_linked_to_another_cart";
+type ConvertedCartLinkRepairRow = {
+  cartId: string;
+  orderId?: string | null;
+  repairStatus: ConvertedCartLinkRepairStatus;
+  customer?: string;
+  phone?: string;
+  productName?: string;
+  packageName?: string;
+  lastActivity?: string | null;
+  alreadyLinkedOrderId?: string | null;
+  journeyOrderSourceCartId?: string | null;
+};
+type ConvertedCartLinkRepairReport = {
+  total: number;
+  summary: Partial<Record<ConvertedCartLinkRepairStatus, number>>;
+  repairableCount: number;
+  manualReviewCount: number;
+  rows: ConvertedCartLinkRepairRow[];
+};
 type AbandonedCartConversionKind = "manual_recovery" | "customer_self_completed";
 type DeliveryAgentCoverage = {
   id?: string;
@@ -8205,6 +8230,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [marketingVariantSavingProductIds, setMarketingVariantSavingProductIds] = useState<string[]>([]);
   const [trackedOrders, setTrackedOrders] = useState<TrackedOrder[]>([]);
   const [abandonedCarts, setAbandonedCarts] = useState<AbandonedCartRecord[]>([]);
+  const [cartLinkRepairReport, setCartLinkRepairReport] = useState<ConvertedCartLinkRepairReport | null>(null);
+  const [cartLinkRepairLoading, setCartLinkRepairLoading] = useState(false);
+  const [cartLinkRepairApplying, setCartLinkRepairApplying] = useState(false);
   const [orderFormName, setOrderFormName] = useState("");
   const [orderFormPhone, setOrderFormPhone] = useState("");
   const [orderFormWhatsapp, setOrderFormWhatsapp] = useState("");
@@ -13129,6 +13157,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const teamRecoveredFailedRows = teamRecoveredCartRows.filter((row) => abandonedCartIsBadRecoveredOutcome(row.linkedStatus));
   const teamRecoveredPendingRows = teamRecoveredCartRows.filter((row) => abandonedCartIsPendingRecoveredOutcome(row.linkedStatus));
   const convertedMissingLinkedOrderRows = filteredAbandonedCarts.filter((cart) => cart.status === "Converted" && !linkedOrderBySourceCartId.has(cart.id));
+  const cartLinkRepairRows = cartLinkRepairReport?.rows ?? [];
+  const cartLinkRepairableRows = cartLinkRepairRows.filter((row) => row.repairStatus === "repairable");
+  const cartLinkAlreadyLinkedRows = cartLinkRepairRows.filter((row) => row.repairStatus === "already_linked");
+  const cartLinkManualReviewRows = cartLinkRepairRows.filter((row) => row.repairStatus.startsWith("manual_review:"));
+  const canUseCartLinkRepairTool = currentRole === "Owner" || currentRole === "Admin";
   const teamRecoveryCurrency = teamRecoveredCartRows[0]?.linkedOrder?.currency ?? teamRecoveredCartRows[0]?.cart.currency ?? "NGN";
   const teamRecoveredRevenue = teamRecoveredDeliveredRows.reduce((sum, row) => sum + (row.linkedOrder?.amount ?? row.cart.amount), 0);
   const teamRecoveredPipelineValue = teamRecoveredPendingRows.reduce((sum, row) => sum + (row.linkedOrder?.amount ?? row.cart.amount), 0);
@@ -27578,6 +27611,57 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  const scanConvertedCartLinkRepairs = async () => {
+    if (!canUseCartLinkRepairTool || cartLinkRepairLoading) return;
+    setCartLinkRepairLoading(true);
+    try {
+      const report = await cartsApi.convertedLinkRepairs() as ConvertedCartLinkRepairReport;
+      setCartLinkRepairReport(report);
+      showToast(report.repairableCount > 0
+        ? `${report.repairableCount} safe converted cart link${report.repairableCount === 1 ? "" : "s"} found.`
+        : "No safe converted cart link repairs found.");
+    } catch (err: any) {
+      showToast(`Could not scan converted cart links: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setCartLinkRepairLoading(false);
+    }
+  };
+
+  const applyConvertedCartLinkRepairs = async () => {
+    if (!canUseCartLinkRepairTool || cartLinkRepairApplying) return;
+    const safeCount = cartLinkRepairReport?.repairableCount ?? 0;
+    if (safeCount <= 0) {
+      showToast("Scan first — no safe converted cart repairs are ready to apply.");
+      return;
+    }
+    if (!window.confirm(`Apply ${safeCount} safe converted cart link repair${safeCount === 1 ? "" : "s"}? Ambiguous rows will be left untouched.`)) {
+      return;
+    }
+
+    setCartLinkRepairApplying(true);
+    try {
+      const result = await cartsApi.applyConvertedLinkRepairs() as {
+        repaired?: { cartId: string; orderId: string }[];
+        repairedCount?: number;
+        report?: ConvertedCartLinkRepairReport;
+      };
+      const repaired = result.repaired ?? [];
+      if (repaired.length > 0) {
+        const cartIdByOrderId = new Map(repaired.map((row) => [String(row.orderId), String(row.cartId)]));
+        setTrackedOrders((prev) => prev.map((order) => {
+          const cartId = cartIdByOrderId.get(order.id);
+          return cartId ? { ...order, sourceCartId: cartId } : order;
+        }));
+      }
+      if (result.report) setCartLinkRepairReport(result.report);
+      showToast(`Repaired ${result.repairedCount ?? repaired.length} converted cart link${(result.repairedCount ?? repaired.length) === 1 ? "" : "s"}.`);
+    } catch (err: any) {
+      showToast(`Could not apply converted cart repairs: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setCartLinkRepairApplying(false);
+    }
+  };
+
   const deleteCartRecord = (cart: AbandonedCartRecord) => {
     const canDelete = auth.getUser()?.role === "Owner" || auth.getUser()?.role === "Admin";
     if (!canDelete) {
@@ -34186,6 +34270,102 @@ ${waybillLineItems(w).length > 1
                   </div>
                 </article>
               </section>
+
+              {canUseCartLinkRepairTool && (convertedMissingLinkedOrderRows.length > 0 || cartLinkRepairReport) && (
+                <section className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-sky-50 p-5 shadow-sm dark:border-amber-500/30 dark:from-amber-500/10 dark:via-slate-900/70 dark:to-sky-500/10" aria-label="Converted cart link repair">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="max-w-3xl">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200">
+                          <AlertTriangle className="h-5 w-5" />
+                        </span>
+                        <div>
+                          <p className="m-0 text-[11px] font-black uppercase tracking-[0.16em] text-amber-700 dark:text-amber-200">Converted cart link repair</p>
+                          <h2 className="m-0 text-xl font-black text-gray-900 dark:text-slate-100">Fix carts that converted but did not attach to the final order</h2>
+                        </div>
+                      </div>
+                      <p className="m-0 mt-3 text-sm font-semibold leading-relaxed text-gray-600 dark:text-slate-300">
+                        The scanner uses the cart journey's submitted order id. Safe repairs link only the exact order that the customer submitted; anything missing or conflicting stays in manual review.
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row lg:flex-col xl:flex-row">
+                      <button
+                        className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-white px-4 py-2.5 text-sm font-black text-amber-800 shadow-sm transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-500/30 dark:bg-slate-950/60 dark:text-amber-200 dark:hover:bg-amber-500/10"
+                        onClick={scanConvertedCartLinkRepairs}
+                        disabled={cartLinkRepairLoading || cartLinkRepairApplying}
+                      >
+                        <RefreshCw className={`h-4 w-4 ${cartLinkRepairLoading ? "animate-spin" : ""}`} />
+                        {cartLinkRepairLoading ? "Scanning..." : "Scan safe matches"}
+                      </button>
+                      <button
+                        className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-500 dark:text-slate-950 dark:hover:bg-emerald-400"
+                        onClick={applyConvertedCartLinkRepairs}
+                        disabled={cartLinkRepairApplying || cartLinkRepairLoading || (cartLinkRepairReport?.repairableCount ?? 0) <= 0}
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        {cartLinkRepairApplying ? "Applying..." : `Apply safe repairs${cartLinkRepairReport?.repairableCount ? ` (${cartLinkRepairReport.repairableCount})` : ""}`}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    {[
+                      { label: "Visible missing", value: convertedMissingLinkedOrderRows.length, tone: "text-amber-700 dark:text-amber-200" },
+                      { label: "Safe to repair", value: cartLinkRepairReport?.repairableCount ?? "Scan", tone: "text-emerald-700 dark:text-emerald-200" },
+                      { label: "Manual review", value: cartLinkRepairReport?.manualReviewCount ?? "Scan", tone: "text-rose-700 dark:text-rose-200" },
+                      { label: "Already linked", value: cartLinkRepairReport ? cartLinkAlreadyLinkedRows.length : "Scan", tone: "text-sky-700 dark:text-sky-200" }
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-2xl border border-white/80 bg-white/80 px-4 py-3 shadow-sm dark:border-slate-700/70 dark:bg-slate-950/40">
+                        <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400 dark:text-slate-500">{item.label}</p>
+                        <p className={`m-0 mt-1 text-2xl font-black ${item.tone}`}>{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {cartLinkRepairReport && (
+                    <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="m-0 text-sm font-black text-emerald-900 dark:text-emerald-100">Safe matches</p>
+                          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-emerald-700 dark:bg-slate-950/60 dark:text-emerald-200">{cartLinkRepairableRows.length}</span>
+                        </div>
+                        {cartLinkRepairableRows.length === 0 ? (
+                          <p className="m-0 mt-3 text-sm font-semibold text-emerald-800/80 dark:text-emerald-100/80">No safe unlinked converted carts are waiting.</p>
+                        ) : (
+                          <div className="mt-3 space-y-2">
+                            {cartLinkRepairableRows.slice(0, 5).map((row) => (
+                              <div key={row.cartId} className="rounded-xl border border-emerald-100 bg-white px-3 py-2 text-sm dark:border-emerald-500/20 dark:bg-slate-950/45">
+                                <p className="m-0 font-black text-gray-900 dark:text-slate-100">{row.cartId}{" -> "}order #{row.orderId}</p>
+                                <p className="m-0 mt-1 text-xs font-semibold text-gray-500 dark:text-slate-400">{row.customer || "Unknown customer"} · {row.productName || "Unknown product"}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="rounded-2xl border border-rose-200 bg-rose-50/80 p-4 dark:border-rose-500/30 dark:bg-rose-500/10">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="m-0 text-sm font-black text-rose-900 dark:text-rose-100">Manual review needed</p>
+                          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-rose-700 dark:bg-slate-950/60 dark:text-rose-200">{cartLinkManualReviewRows.length}</span>
+                        </div>
+                        {cartLinkManualReviewRows.length === 0 ? (
+                          <p className="m-0 mt-3 text-sm font-semibold text-rose-800/80 dark:text-rose-100/80">No ambiguous converted carts found in this scan.</p>
+                        ) : (
+                          <div className="mt-3 space-y-2">
+                            {cartLinkManualReviewRows.slice(0, 5).map((row) => (
+                              <div key={row.cartId} className="rounded-xl border border-rose-100 bg-white px-3 py-2 text-sm dark:border-rose-500/20 dark:bg-slate-950/45">
+                                <p className="m-0 font-black text-gray-900 dark:text-slate-100">{row.cartId}{row.orderId ? ` -> order #${row.orderId}` : ""}</p>
+                                <p className="m-0 mt-1 text-xs font-semibold text-gray-500 dark:text-slate-400">
+                                  {row.repairStatus.replace("manual_review:", "").replace(/_/g, " ")}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
 
               <section className="grid grid-cols-2 lg:grid-cols-6 gap-4" aria-label="Abandoned carts summary">
                 {(() => {

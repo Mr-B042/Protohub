@@ -59,6 +59,165 @@ const JourneyBulkSchema = z.object({
   ).max(500)
 });
 
+type ConvertedCartLinkRepairStatus =
+  | "already_linked"
+  | "repairable"
+  | "manual_review:no_journey_order_id"
+  | "manual_review:journey_order_missing"
+  | "manual_review:order_linked_to_another_cart";
+
+type ConvertedCartLinkRepairRow = {
+  cartId: string;
+  orderId: string | null;
+  repairStatus: ConvertedCartLinkRepairStatus;
+  customer: string;
+  phone: string;
+  productName: string;
+  packageName: string;
+  lastActivity: string | null;
+  alreadyLinkedOrderId: string | null;
+  journeyOrderSourceCartId: string | null;
+};
+
+const submittedOrderIdFromMetadata = (metadata: unknown): string | null => {
+  if (!metadata || typeof metadata !== "object") return null;
+  const record = metadata as Record<string, unknown>;
+  for (const key of ["orderId", "order_id", "linkedOrderId", "linked_order_id"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return null;
+};
+
+const summarizeConvertedCartLinkRows = (rows: ConvertedCartLinkRepairRow[]) => {
+  const summary = rows.reduce<Record<ConvertedCartLinkRepairStatus, number>>((acc, row) => {
+    acc[row.repairStatus] = (acc[row.repairStatus] ?? 0) + 1;
+    return acc;
+  }, {
+    already_linked: 0,
+    repairable: 0,
+    "manual_review:no_journey_order_id": 0,
+    "manual_review:journey_order_missing": 0,
+    "manual_review:order_linked_to_another_cart": 0
+  });
+
+  return {
+    total: rows.length,
+    summary,
+    repairableCount: summary.repairable ?? 0,
+    manualReviewCount:
+      (summary["manual_review:no_journey_order_id"] ?? 0) +
+      (summary["manual_review:journey_order_missing"] ?? 0) +
+      (summary["manual_review:order_linked_to_another_cart"] ?? 0)
+  };
+};
+
+const buildConvertedCartLinkRepairReport = async (orgId: string) => {
+  const { data: carts, error: cartsError } = await supabase
+    .from("abandoned_carts")
+    .select("id, customer, phone, product_name, package_name, status, last_activity")
+    .eq("org_id", orgId)
+    .eq("status", "Converted")
+    .order("last_activity", { ascending: false });
+
+  if (cartsError) throw cartsError;
+
+  const cartRows = (carts ?? []).filter((cart: any) => typeof cart.id === "string" && cart.id.trim());
+  if (cartRows.length === 0) {
+    const rows: ConvertedCartLinkRepairRow[] = [];
+    return { rows, ...summarizeConvertedCartLinkRows(rows) };
+  }
+
+  const cartIds = cartRows.map((cart: any) => cart.id as string);
+  const { data: linkedOrders, error: linkedOrdersError } = await supabase
+    .from("orders")
+    .select("id, source_cart_id")
+    .eq("org_id", orgId)
+    .in("source_cart_id", cartIds);
+
+  if (linkedOrdersError) throw linkedOrdersError;
+
+  const linkedOrderByCartId = new Map<string, any>();
+  for (const order of linkedOrders ?? []) {
+    const cartId = typeof order.source_cart_id === "string" ? order.source_cart_id.trim() : "";
+    if (!cartId || linkedOrderByCartId.has(cartId)) continue;
+    linkedOrderByCartId.set(cartId, order);
+  }
+
+  const { data: submittedEvents, error: eventsError } = await supabase
+    .from("cart_journey_events")
+    .select("cart_id, metadata, created_at")
+    .eq("org_id", orgId)
+    .in("cart_id", cartIds)
+    .eq("event_type", "order_submitted")
+    .order("created_at", { ascending: false });
+
+  if (eventsError) throw eventsError;
+
+  const submittedOrderIdByCartId = new Map<string, string>();
+  for (const event of submittedEvents ?? []) {
+    const cartId = typeof event.cart_id === "string" ? event.cart_id.trim() : "";
+    if (!cartId || submittedOrderIdByCartId.has(cartId)) continue;
+    const orderId = submittedOrderIdFromMetadata(event.metadata);
+    if (orderId) submittedOrderIdByCartId.set(cartId, orderId);
+  }
+
+  const submittedOrderIds = Array.from(new Set(Array.from(submittedOrderIdByCartId.values())));
+  const submittedOrdersById = new Map<string, any>();
+  if (submittedOrderIds.length > 0) {
+    const { data: submittedOrders, error: submittedOrdersError } = await supabase
+      .from("orders")
+      .select("id, source_cart_id")
+      .eq("org_id", orgId)
+      .in("id", submittedOrderIds);
+
+    if (submittedOrdersError) throw submittedOrdersError;
+
+    for (const order of submittedOrders ?? []) {
+      const id = typeof order.id === "string" ? order.id : String(order.id ?? "");
+      if (!id) continue;
+      submittedOrdersById.set(id, order);
+    }
+  }
+
+  const rows: ConvertedCartLinkRepairRow[] = cartRows.map((cart: any) => {
+    const cartId = cart.id as string;
+    const alreadyLinkedOrder = linkedOrderByCartId.get(cartId);
+    const orderId = submittedOrderIdByCartId.get(cartId) ?? null;
+    const submittedOrder = orderId ? submittedOrdersById.get(orderId) : null;
+    const submittedOrderSourceCartId = typeof submittedOrder?.source_cart_id === "string" && submittedOrder.source_cart_id.trim()
+      ? submittedOrder.source_cart_id.trim()
+      : null;
+
+    let repairStatus: ConvertedCartLinkRepairStatus = "repairable";
+    if (alreadyLinkedOrder) {
+      repairStatus = "already_linked";
+    } else if (!orderId) {
+      repairStatus = "manual_review:no_journey_order_id";
+    } else if (!submittedOrder) {
+      repairStatus = "manual_review:journey_order_missing";
+    } else if (submittedOrderSourceCartId && submittedOrderSourceCartId !== cartId) {
+      repairStatus = "manual_review:order_linked_to_another_cart";
+    }
+
+    return {
+      cartId,
+      orderId,
+      repairStatus,
+      customer: typeof cart.customer === "string" ? cart.customer : "",
+      phone: typeof cart.phone === "string" ? cart.phone : "",
+      productName: typeof cart.product_name === "string" ? cart.product_name : "",
+      packageName: typeof cart.package_name === "string" ? cart.package_name : "",
+      lastActivity: typeof cart.last_activity === "string" ? cart.last_activity : null,
+      alreadyLinkedOrderId: alreadyLinkedOrder?.id ? String(alreadyLinkedOrder.id) : null,
+      journeyOrderSourceCartId: submittedOrderSourceCartId
+    };
+  });
+
+  return { rows, ...summarizeConvertedCartLinkRows(rows) };
+};
+
 const LIVE_PULSE_EVENT_TYPES = new Set([
   "form_opened",
   "first_interaction",
@@ -331,6 +490,49 @@ router.post("/journey-bulk", async (req, res) => {
   }
 
   res.json(grouped);
+});
+
+// ── Converted cart link repair ───────────────────────────
+// Owner/Admin-only safety tool: backfills source_cart_id for converted carts
+// only when the cart journey recorded the exact submitted order id and that
+// order is still unlinked. Ambiguous rows are reported for manual review.
+router.get("/converted-link-repairs", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const report = await buildConvertedCartLinkRepairReport(req.user!.orgId);
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Could not scan converted cart links." });
+  }
+});
+
+router.post("/converted-link-repairs/apply", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const before = await buildConvertedCartLinkRepairReport(req.user!.orgId);
+    const repairableRows = before.rows.filter((row) => row.repairStatus === "repairable" && row.orderId);
+    const repaired: { cartId: string; orderId: string }[] = [];
+
+    for (const row of repairableRows) {
+      const { data, error } = await supabase
+        .from("orders")
+        .update({ source_cart_id: row.cartId })
+        .eq("org_id", req.user!.orgId)
+        .eq("id", row.orderId)
+        .is("source_cart_id", null)
+        .select("id, source_cart_id");
+
+      if (error) throw error;
+
+      const updatedOrder = (data ?? [])[0];
+      if (updatedOrder?.id) {
+        repaired.push({ cartId: row.cartId, orderId: String(updatedOrder.id) });
+      }
+    }
+
+    const report = await buildConvertedCartLinkRepairReport(req.user!.orgId);
+    res.json({ repaired, repairedCount: repaired.length, report });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Could not repair converted cart links." });
+  }
 });
 
 // ── GET /api/carts/live-pulse ───────────────────────────

@@ -677,6 +677,8 @@ export const cartsApi = {
   },
   journey: (id: string) => get<any[]>(`/api/carts/${encodeURIComponent(id)}/journey`),
   journeyBulk: (cartIds: string[]) => post<Record<string, any[]>>("/api/carts/journey-bulk", { cartIds }),
+  convertedLinkRepairs: () => get<any>("/api/carts/converted-link-repairs"),
+  applyConvertedLinkRepairs: () => post<any>("/api/carts/converted-link-repairs/apply", {}),
   livePulse: (params?: { productIds?: string[]; embedLabels?: string[]; activeWindowMinutes?: number; dateFrom?: string; dateTo?: string }) => {
     const qs = new URLSearchParams();
     if (params?.productIds?.length) {
