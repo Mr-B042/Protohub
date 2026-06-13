@@ -5023,6 +5023,35 @@ const normalizeCartJourneyEvent = (value: any): CartJourneyEvent => {
   };
 };
 
+const submittedOrderIdFromCartJourney = (journeyEvents: CartJourneyEvent[] = []): string => {
+  for (const event of [...journeyEvents].reverse()) {
+    if (event.eventType !== "order_submitted") continue;
+    const metadata = event.metadata ?? {};
+    for (const key of ["orderId", "order_id", "linkedOrderId", "linked_order_id"]) {
+      const value = metadata[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+  }
+  return "";
+};
+
+const addJourneyRecoveredOrderLinks = (
+  map: Map<string, TrackedOrder>,
+  journeyMap: Record<string, CartJourneyEvent[]>,
+  ordersById: Map<string, TrackedOrder>,
+  options: { excludeReviewHold?: boolean } = {}
+) => {
+  for (const [cartId, events] of Object.entries(journeyMap)) {
+    if (!cartId || map.has(cartId)) continue;
+    const orderId = submittedOrderIdFromCartJourney(events);
+    if (!orderId) continue;
+    const order = ordersById.get(orderId);
+    if (!order || (options.excludeReviewHold && order.reviewHold)) continue;
+    map.set(cartId, order);
+  }
+};
+
 const normalizeRealtimeUser = (value: any): ManagedUser => {
   const user = snakeToCamel<any>(value);
   return {
@@ -11123,14 +11152,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     return Array.from(options.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   })();
-  const adTrackingLinkedOrderBySourceCartId = trackedOrders.reduce((map, order) => {
-    // A held duplicate must not register as a cart's recovered conversion.
-    if (order.reviewHold) return map;
-    if (order.sourceCartId && !map.has(order.sourceCartId)) {
-      map.set(order.sourceCartId, order);
+  const trackedOrderById = useMemo(() => {
+    const next = new Map<string, TrackedOrder>();
+    for (const order of trackedOrders) {
+      if (order.id) next.set(String(order.id), order);
     }
+    return next;
+  }, [trackedOrders]);
+  const adTrackingLinkedOrderBySourceCartId = useMemo(() => {
+    const map = trackedOrders.reduce((next, order) => {
+      // A held duplicate must not register as a cart's recovered conversion.
+      if (order.reviewHold) return next;
+      if (order.sourceCartId && !next.has(order.sourceCartId)) {
+        next.set(order.sourceCartId, order);
+      }
+      return next;
+    }, new Map<string, TrackedOrder>());
+    addJourneyRecoveredOrderLinks(map, adTrackingCartJourneyMap, trackedOrderById, { excludeReviewHold: true });
     return map;
-  }, new Map<string, TrackedOrder>());
+  }, [adTrackingCartJourneyMap, trackedOrderById, trackedOrders]);
   const campaignBaseCarts = abandonedCarts
     .filter((cart) => isInPeriod(normalizeDateKey(cart.createdAt ?? cart.lastActivity), campaignPeriod, campaignDateRange))
     .filter((cart) => matchesProductFilter(cart.productId, cart.productName, campaignProductIds));
@@ -13036,8 +13076,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (!cartId || next.has(cartId)) continue;
       next.set(cartId, order);
     }
+    addJourneyRecoveredOrderLinks(next, abandonedCartJourneyMap, trackedOrderById);
     return next;
-  }, [trackedOrders]);
+  }, [abandonedCartJourneyMap, trackedOrderById, trackedOrders]);
   const filteredAbandonedCarts = abandonedCarts.filter((cart) => {
     const search = cartSearch.trim().toLowerCase();
     const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
