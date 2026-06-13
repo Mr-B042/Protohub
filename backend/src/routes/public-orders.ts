@@ -10,7 +10,7 @@
 //
 // Org context derives from the package's product (same pattern as public-carts).
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import rateLimit from "express-rate-limit";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
@@ -19,6 +19,7 @@ import { logger } from "../lib/logger.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
+import { resolveMetaTrackingConfig, sendMetaCapiPurchase } from "../lib/meta-capi.js";
 import { readSettings } from "./embed-settings.js";
 import {
   sendNewOrderEmail,
@@ -75,6 +76,21 @@ const PublicOrderSchema = z.object({
   // Honeypot — must be empty. Bots tend to fill every field they see.
   company:      z.string().max(0).optional()
 });
+
+const contextString = (context: Record<string, unknown> | undefined, ...keys: string[]) => {
+  for (const key of keys) {
+    const value = context?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+};
+
+const clientIpFromRequest = (req: Request) => {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (Array.isArray(forwarded)) return forwarded[0]?.split(",")[0]?.trim() || req.ip;
+  if (typeof forwarded === "string" && forwarded.trim()) return forwarded.split(",")[0]?.trim();
+  return req.ip;
+};
 
 type CompanionOverride = {
   companionId?: string;
@@ -876,6 +892,47 @@ router.post("/", submitRateLimit, async (req, res) => {
         error: journeyInsertError.message
       });
     }
+  }
+
+  // Optional Meta Conversions API Purchase. This is deliberately opt-in per
+  // generated link/package-set: the safe default is landing-page tracking only,
+  // so Protohub never starts a second Purchase sender silently.
+  const formContext = (d.formContext ?? {}) as Record<string, unknown>;
+  const metaPurchaseEventId = contextString(formContext, "metaPurchaseEventId", "metaEventId")
+    || `protohub_purchase_${order.id}`;
+  const metaConfig = resolveMetaTrackingConfig({
+    productId: product.id,
+    packageSet: requestedPackageSet || (pkg as { package_set?: string | null }).package_set || null,
+    trackingKey: contextString(formContext, "metaTrackingKey", "trackingKey"),
+    modeOverride: contextString(formContext, "metaTrackingMode", "trackingMode"),
+    pixelIdOverride: contextString(formContext, "metaPixelId", "pixelId"),
+    testModeOverride: contextString(formContext, "metaTestMode", "metaTest", "trackingTestMode")
+  });
+  if (!reviewHold) {
+    void sendMetaCapiPurchase({
+      config: metaConfig,
+      eventId: metaPurchaseEventId,
+      eventSourceUrl: contextString(formContext, "landingUrl") || d.referrer || null,
+      clientIp: clientIpFromRequest(req),
+      userAgent: contextString(formContext, "userAgent") || String(req.headers["user-agent"] ?? ""),
+      customer: d.customer,
+      phone: d.phone,
+      email: d.email || null,
+      city: d.city || null,
+      state: d.state || null,
+      country: "ng",
+      fbp: contextString(formContext, "fbp", "_fbp", "Fbp") || null,
+      fbc: contextString(formContext, "fbc", "_fbc", "Fbc") || null,
+      fbclid: contextString(formContext, "fbclid") || null,
+      value: Number(order.amount ?? amount),
+      currency: String(order.currency ?? pkg.currency),
+      orderId: String(order.id),
+      productId: String(stampProductId),
+      productName: String(stampProductName),
+      packageId: String(pkg.id),
+      packageName: String(pkg.name),
+      quantity: Number(pkg.quantity ?? 1)
+    });
   }
 
   // 6. Audit, in-app notification, emails (fire-and-forget).

@@ -883,6 +883,10 @@ type PublicFormHiddenContext = Record<string, string | number | boolean | null>;
 const PUBLIC_FORM_CONTEXT_VERSION = "2026-05-26.hidden-context.v1";
 const PUBLIC_FORM_CLICK_PARAM_KEYS = [
   "fbclid",
+  "fbp",
+  "fbc",
+  "_fbp",
+  "_fbc",
   "gclid",
   "gbraid",
   "wbraid",
@@ -898,8 +902,15 @@ const PUBLIC_FORM_CLICK_PARAM_KEYS = [
   "landing_page",
   "landing_page_url",
   "placement",
-  "utm_id"
+  "utm_id",
+  "tracking_mode",
+  "meta_pixel_id",
+  "meta_tracking_key",
+  "meta_test",
+  "meta_test_mode"
 ] as const;
+
+type PublicMetaTrackingMode = "off" | "landing_page" | "protohub" | "hybrid";
 
 function safeHiddenContextValue(value: string | null | undefined, maxLength = 180) {
   const trimmed = (value ?? "").trim();
@@ -907,7 +918,28 @@ function safeHiddenContextValue(value: string | null | undefined, maxLength = 18
 }
 
 function hiddenContextParamKey(key: string) {
-  return key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+  return key.replace(/^_/, "").replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+}
+
+function publicCookieValue(name: string) {
+  if (typeof document === "undefined") return "";
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = document.cookie.match(new RegExp(`(?:^|; )${escaped}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function parsePublicMetaTrackingMode(value: string | null | undefined): PublicMetaTrackingMode {
+  const normalized = (value ?? "").trim().toLowerCase().replace(/-/g, "_");
+  if (normalized === "off" || normalized === "disabled" || normalized === "none") return "off";
+  if (normalized === "protohub" || normalized === "web_app" || normalized === "webapp" || normalized === "app") return "protohub";
+  if (normalized === "hybrid" || normalized === "both") return "hybrid";
+  return "landing_page";
+}
+
+function parsePublicBoolean(value: string | null | undefined) {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (!normalized) return false;
+  return ["1", "true", "yes", "on", "test", "dry_run", "dry-run"].includes(normalized);
 }
 
 function currentFormLandingPath() {
@@ -958,6 +990,8 @@ function buildPublicFormHiddenContext(params: URLSearchParams | null): PublicFor
   for (const key of PUBLIC_FORM_CLICK_PARAM_KEYS) {
     context[hiddenContextParamKey(key)] = safeHiddenContextValue(hiddenParams.get(key), 180);
   }
+  context.fbp = context.fbp || safeHiddenContextValue(publicCookieValue("_fbp"), 180);
+  context.fbc = context.fbc || safeHiddenContextValue(publicCookieValue("_fbc"), 180);
 
   return context;
 }
@@ -978,6 +1012,10 @@ export default function PublicOrderFormPage() {
   const publicUtmTerm = (params?.get("utm_term") ?? "").slice(0, 100);
   const publicEmbedLabel = (params?.get("embed_label") ?? "").trim().slice(0, 120);
   const publicPackageSet = cleanPackageSetLabel(params?.get("package_set") ?? params?.get("packageSet") ?? "");
+  const publicMetaTrackingMode = parsePublicMetaTrackingMode(params?.get("tracking_mode") ?? params?.get("trackingMode"));
+  const publicMetaPixelId = (params?.get("meta_pixel_id") ?? params?.get("metaPixelId") ?? "").trim().slice(0, 80);
+  const publicMetaTrackingKey = (params?.get("meta_tracking_key") ?? params?.get("metaTrackingKey") ?? "").trim().slice(0, 120);
+  const publicMetaTestMode = parsePublicBoolean(params?.get("meta_test") ?? params?.get("metaTest") ?? params?.get("meta_test_mode") ?? params?.get("metaTestMode"));
   const publicEmbedIsPreview = params?.get("preview") === "1";
   const publicEmbedIsLocalTest = publicEmbedIsPreview && typeof window !== "undefined" && (
     window.location.hostname === "localhost" ||
@@ -1070,6 +1108,9 @@ export default function PublicOrderFormPage() {
   const abandonedDraftCartIdRef = useRef("");
   const formOpenedAtRef = useRef(Date.now());
   const journeyDedupRef = useRef<Set<string>>(new Set());
+  const metaEventIdsRef = useRef<Record<string, string>>({});
+  const metaBrowserEventsSentRef = useRef<Set<string>>(new Set());
+  const lastMetaPurchaseEventIdRef = useRef("");
   const previousCrossSellKeysRef = useRef<string[]>([]);
   const lastTrackedPackageIdRef = useRef("");
   const lastTrackedStateRef = useRef("");
@@ -1116,8 +1157,13 @@ export default function PublicOrderFormPage() {
       adId: context.adId,
       adsetId: context.adsetId,
       campaignId: context.campaignId,
+      fbp: context.fbp,
+      fbc: context.fbc,
       placement: context.placement,
-      utmId: context.utmId
+      utmId: context.utmId,
+      trackingMode: context.trackingMode,
+      metaTrackingKey: context.metaTrackingKey,
+      metaTestMode: context.metaTestMode || context.metaTest
     };
   }, [params]);
   const buildPublicFormContext = useCallback((contextEvent: string): PublicFormHiddenContext => ({
@@ -1125,6 +1171,40 @@ export default function PublicOrderFormPage() {
     contextEvent: safeHiddenContextValue(contextEvent, 80),
     secondsSinceOpen: Math.max(0, Math.round((Date.now() - formOpenedAtRef.current) / 1000))
   }), [params]);
+  const getMetaEventId = useCallback((kind: "Lead" | "Purchase", seed?: string) => {
+    const key = `${kind}:${seed || "current"}`;
+    if (metaEventIdsRef.current[key]) return metaEventIdsRef.current[key];
+    const randomPart = typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const cleanSeed = seed ? seed.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 48) : "current";
+    const eventId = `protohub_${kind.toLowerCase()}_${cleanSeed}_${randomPart}`;
+    metaEventIdsRef.current[key] = eventId.slice(0, 120);
+    return metaEventIdsRef.current[key];
+  }, []);
+  const postMetaBrowserEvent = useCallback((
+    eventName: "Lead" | "Purchase",
+    eventId: string,
+    customData: Record<string, unknown>
+  ) => {
+    if (publicEmbedIsPreview || !eventId || publicMetaTrackingMode === "off" || publicMetaTrackingMode === "landing_page") return;
+    const dedupeKey = `${eventName}:${eventId}`;
+    if (metaBrowserEventsSentRef.current.has(dedupeKey)) return;
+    metaBrowserEventsSentRef.current.add(dedupeKey);
+    try {
+      window.parent?.postMessage({
+        type: "ordo-meta-event",
+        eventName,
+        eventId,
+        pixelId: publicMetaPixelId || null,
+        trackingMode: publicMetaTrackingMode,
+        testMode: publicMetaTestMode,
+        customData
+      }, "*");
+    } catch {
+      // Browser-side Meta bridge is best-effort only.
+    }
+  }, [publicEmbedIsPreview, publicMetaPixelId, publicMetaTestMode, publicMetaTrackingMode]);
   const publicJourneyAttributionMetadata = useMemo(
     () => ({
       source: orderSourceFromUtm(publicUtmSource),
@@ -2452,20 +2532,30 @@ export default function PublicOrderFormPage() {
 
   function redirectToPublicTarget() {
     if (!publicRedirectUrl) return;
+    const redirectUrl = (() => {
+      if (!lastMetaPurchaseEventIdRef.current) return publicRedirectUrl;
+      try {
+        const url = new URL(publicRedirectUrl);
+        url.searchParams.set("ordo_event_id", lastMetaPurchaseEventIdRef.current);
+        return url.toString();
+      } catch {
+        return publicRedirectUrl;
+      }
+    })();
     if (redirectTimerRef.current) {
       window.clearTimeout(redirectTimerRef.current);
       redirectTimerRef.current = null;
     }
     try {
-      window.parent?.postMessage({ type: "ordo-redirect", url: publicRedirectUrl }, "*");
+      window.parent?.postMessage({ type: "ordo-redirect", url: redirectUrl }, "*");
     } catch {
       // Direct-link or blocked parent access; the fallback below still runs.
     }
     redirectTimerRef.current = window.setTimeout(() => {
       try {
-        (window.top ?? window).location.assign(publicRedirectUrl);
+        (window.top ?? window).location.assign(redirectUrl);
       } catch {
-        window.location.assign(publicRedirectUrl);
+        window.location.assign(redirectUrl);
       }
     }, 350);
   }
@@ -2674,6 +2764,13 @@ export default function PublicOrderFormPage() {
     const submittedPackageId = chosenPackage.id;
     const submittedPackageName = chosenPackage.name;
     const submittedState = orderFormState.trim();
+    const leadEventId = getMetaEventId("Lead", submissionCartId || submittedPackageId);
+    const purchaseEventId = getMetaEventId("Purchase", `${submissionCartId || "direct"}_${submittedPackageId}`);
+    postMetaBrowserEvent("Lead", leadEventId, {
+      content_name: `${publicProduct?.name ?? "Product"} - ${submittedPackageName}`,
+      content_ids: [submittedPackageId],
+      content_type: "product"
+    });
     trackCartJourney("submit_attempted", {
       cartId: submissionCartId || undefined,
       packageId: submittedPackageId,
@@ -2683,10 +2780,13 @@ export default function PublicOrderFormPage() {
         customerName: customerName || "Customer",
         packageName: submittedPackageName,
         additionalItems: orderFormCrossSells.length,
-        source: orderSourceFromUtm(publicUtmSource)
+        source: orderSourceFromUtm(publicUtmSource),
+        metaEventName: "Lead",
+        metaEventId: leadEventId,
+        metaTrackingMode: publicMetaTrackingMode,
+        metaTestMode: publicMetaTestMode
       }
     });
-
     const submissionBody = {
       cartId: publicEmbedIsPreview ? undefined : (submissionCartId || undefined),
       customer: customerName,
@@ -2718,6 +2818,15 @@ export default function PublicOrderFormPage() {
       formContext: buildPublicFormContext("submit"),
       company: publicHoneypot,
     };
+    Object.assign(submissionBody.formContext, {
+      packageSet: publicPackageSet || null,
+      metaTrackingMode: publicMetaTrackingMode,
+      metaPixelId: publicMetaPixelId || null,
+      metaTrackingKey: publicMetaTrackingKey || null,
+      metaTestMode: publicMetaTestMode,
+      metaLeadEventId: leadEventId,
+      metaPurchaseEventId: purchaseEventId
+    });
 
     if (publicEmbedIsPreview) {
       resetOrderForm();
@@ -2755,6 +2864,19 @@ export default function PublicOrderFormPage() {
         ? (products.flatMap((item) => item.packages ?? []).find((pkg) => pkg.id === upsellPackageId) ?? null)
         : null;
       const hasAfterSubmitOffer = Boolean(created.upsellToken && created.upsellOffer && upsellCompanion && upsellProduct);
+      if (!created.reviewHold) {
+        lastMetaPurchaseEventIdRef.current = purchaseEventId;
+        postMetaBrowserEvent("Purchase", purchaseEventId, {
+          value: Number(created.amount || 0),
+          currency: created.currency || chosenPackageCurrency,
+          content_name: `${publicProduct?.name ?? "Product"} - ${submittedPackageName}`,
+          content_ids: [publicProduct?.id ?? publicProductId, submittedPackageId].filter(Boolean),
+          content_type: "product",
+          contents: [{ id: submittedPackageId, quantity: chosenPackage.quantity || 1 }],
+          num_items: chosenPackage.quantity || 1,
+          order_id: created.id
+        });
+      }
 
       trackCartJourney("order_submitted", {
         cartId: submissionCartId || undefined,
@@ -2766,7 +2888,11 @@ export default function PublicOrderFormPage() {
           customerName: customerName || "Customer",
           packageName: submittedPackageName,
           additionalItems: orderFormCrossSells.length,
-          source: orderSourceFromUtm(publicUtmSource)
+          source: orderSourceFromUtm(publicUtmSource),
+          metaEventName: "Purchase",
+          metaEventId: purchaseEventId,
+          metaTrackingMode: publicMetaTrackingMode,
+          metaTestMode: publicMetaTestMode
         }
       });
 

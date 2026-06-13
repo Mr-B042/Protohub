@@ -10085,7 +10085,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // Forward ad/UTM params from this page into the iframe so orders
     // are correctly attributed to Facebook / TikTok / etc. Use set()
     // instead of appending so the landing page's creative/ad id wins.
-    var trackingKeys = ["utm_source","utm_medium","utm_campaign","utm_content","utm_term","utm_id","ad_id","adset_id","campaign_id","creative_id","fbclid","gclid","gbraid","wbraid","ttclid","msclkid"];
+    var trackingKeys = ["utm_source","utm_medium","utm_campaign","utm_content","utm_term","utm_id","ad_id","adset_id","campaign_id","creative_id","fbclid","gclid","gbraid","wbraid","ttclid","msclkid","tracking_mode","meta_pixel_id","meta_tracking_key","meta_test","meta_test_mode"];
     var pageParams = new URLSearchParams(window.location.search);
     var src = iframe.getAttribute("src") || iframe.src;
     var hashIndex = src.indexOf("#");
@@ -10102,21 +10102,76 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         changed = true;
       }
     });
+    function readCookie(name) {
+      var specials = "\\\\^$*+?.()|{}[]";
+      var escaped = "";
+      for (var i = 0; i < name.length; i++) {
+        var ch = name.charAt(i);
+        escaped += specials.indexOf(ch) >= 0 ? "\\\\" + ch : ch;
+      }
+      var match = document.cookie.match(new RegExp("(?:^|; )" + escaped + "=([^;]*)"));
+      return match ? decodeURIComponent(match[1]) : "";
+    }
+    var fbp = pageParams.get("_fbp") || pageParams.get("fbp") || readCookie("_fbp");
+    var fbc = pageParams.get("_fbc") || pageParams.get("fbc") || readCookie("_fbc");
+    if (fbp) { embedParams.set("fbp", fbp); changed = true; }
+    if (fbc) { embedParams.set("fbc", fbc); changed = true; }
     if (changed) iframe.src = beforeHash + hashPath + "?" + embedParams.toString();
+    function truthy(value) {
+      return /^(1|true|yes|on|test|dry_run|dry-run)$/i.test(String(value || "").trim());
+    }
+    var metaTestMode = truthy(embedParams.get("meta_test")) || truthy(embedParams.get("meta_test_mode"));
 
     // Auto-resize iframe to fit form content, and let the embedded form move
     // this landing page to the configured thank-you URL after a successful order.
+    var sentMetaEvents = {};
+    var lastPurchaseEventId = "";
+    function redirectWithEventId(url) {
+      try {
+        var target = new URL(url, window.location.href);
+        if (target.protocol === "http:" || target.protocol === "https:") {
+          if (lastPurchaseEventId) {
+            target.searchParams.set("ordo_event_id", lastPurchaseEventId);
+          }
+          window.location.href = target.toString();
+        }
+      } catch (_) {}
+    }
     window.addEventListener("message", function(e) {
       if (e.data && e.data.type === "ordo-resize") {
         iframe.style.height = (e.data.height + 20) + "px";
       }
-      if (e.data && e.data.type === "ordo-redirect" && e.data.url) {
-        try {
-          var target = new URL(e.data.url, window.location.href);
-          if (target.protocol === "http:" || target.protocol === "https:") {
-            window.location.href = target.toString();
+      if (e.data && e.data.type === "ordo-meta-event" && e.data.eventName && e.data.eventId) {
+        var metaKey = e.data.eventName + ":" + e.data.eventId;
+        if (sentMetaEvents[metaKey]) {
+          if (window.console && console.warn) console.warn("[Protohub Meta] duplicate browser event blocked", metaKey);
+          return;
+        }
+        sentMetaEvents[metaKey] = true;
+        if (metaTestMode || e.data.testMode) {
+          if (window.console && console.info) {
+            console.info("[Protohub Meta Test] would send browser event", {
+              eventName: e.data.eventName,
+              eventId: e.data.eventId,
+              pixelId: e.data.pixelId || null,
+              customData: e.data.customData || {}
+            });
           }
-        } catch (_) {}
+        } else if (typeof window.fbq === "function") {
+          var payload = e.data.customData || {};
+          var options = { eventID: e.data.eventId };
+          if (e.data.pixelId && typeof window.fbq === "function") {
+            window.fbq("trackSingle", e.data.pixelId, e.data.eventName, payload, options);
+          } else {
+            window.fbq("track", e.data.eventName, payload, options);
+          }
+        }
+        if (e.data.eventName === "Purchase") {
+          lastPurchaseEventId = e.data.eventId;
+        }
+      }
+      if (e.data && e.data.type === "ordo-redirect" && e.data.url) {
+        redirectWithEventId(e.data.url);
       }
     });
   })();
