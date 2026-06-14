@@ -906,7 +906,8 @@ router.post("/", submitRateLimit, async (req, res) => {
     trackingKey: contextString(formContext, "metaTrackingKey", "trackingKey"),
     modeOverride: contextString(formContext, "metaTrackingMode", "trackingMode"),
     pixelIdOverride: contextString(formContext, "metaPixelId", "pixelId"),
-    testModeOverride: contextString(formContext, "metaTestMode", "metaTest", "trackingTestMode")
+    testModeOverride: contextString(formContext, "metaTestMode", "metaTest", "trackingTestMode"),
+    testEventCodeOverride: contextString(formContext, "metaTestEventCode", "testEventCode", "meta_test_event_code", "test_event_code")
   });
   if (!reviewHold) {
     void sendMetaCapiPurchase({

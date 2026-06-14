@@ -216,6 +216,7 @@ type EmbedMetaTrackingSettings = {
   pixelId: string;
   trackingKey: string;
   testMode: boolean;
+  testEventCode: string;
 };
 type StockMovementType = "Stock Added" | "Distributed to Agent" | "Order Fulfilled" | "Return" | "Correction" | "Waybill Out" | "Waybill In" | "Status Reversal";
 type InventoryHistoryMovementDrill = "" | "returned" | "transfer_out" | "restored" | "write_off";
@@ -1623,7 +1624,8 @@ const defaultEmbedMetaTrackingSettings: EmbedMetaTrackingSettings = {
   mode: "landing_page",
   pixelId: "",
   trackingKey: "",
-  testMode: false
+  testMode: false,
+  testEventCode: ""
 };
 const embedMetaTrackingModeOptions: Array<{ value: EmbedMetaTrackingMode; label: string; hint: string }> = [
   { value: "landing_page", label: "Landing page only", hint: "Use the Pixel/CAPI already installed on the landing page. Safest default." },
@@ -4606,6 +4608,7 @@ const latestHiddenContextFromJourney = (events: CartJourneyEvent[] = []): Record
     "metaPixelId",
     "metaTrackingKey",
     "metaTestMode",
+    "metaTestEventCode",
     "metaEventId",
     "metaPurchaseEventId",
     "eventId",
@@ -4672,7 +4675,9 @@ const hiddenFormFieldSectionsFor = ({
         maybeField("Embed Label", embedLabel),
         maybeField("Linked Form Session", linkedSessionId, { wide: true }),
         maybeField("Landing URL", contextValue("landingUrl"), { wide: true }),
-        maybeField("Landing Path", contextValue("landingPath"), { wide: true })
+        maybeField("Landing Path", contextValue("landingPath"), { wide: true }),
+        maybeField("Meta Tracking Mode", contextValue("metaTrackingMode") || contextValue("trackingMode")),
+        maybeField("Meta Test Code", contextValue("metaTestEventCode") || contextValue("testEventCode"))
       ].filter(Boolean) as PublicFormSubmissionField[]
     },
     {
@@ -4763,6 +4768,9 @@ const cartTrackingMonitorFor = (
   const trackingMode = normalizeMetaTrackingMode(rawMode);
   const pixelId = read("metaPixelId", "pixelId", "meta_pixel_id");
   const trackingKey = read("metaTrackingKey", "trackingKey", "meta_tracking_key");
+  const testEventCode = read("metaTestEventCode", "testEventCode", "meta_test_event_code", "test_event_code");
+  const rawTestMode = read("metaTestMode", "metaTest", "trackingTestMode", "meta_test", "meta_test_mode");
+  const metaTestMode = /^(1|true|yes|on|test|dry_run|dry-run)$/i.test(rawTestMode) || Boolean(testEventCode);
   const eventId = read("metaPurchaseEventId", "purchaseEventId", "metaEventId", "eventId", "event_id");
   const redirectUrl = read("redirectUrl", "redirect_url");
   const fbp = read("fbp", "_fbp");
@@ -4797,11 +4805,16 @@ const cartTrackingMonitorFor = (
   if (metaNeedsProtohubConfig && (!pixelId || !trackingKey)) {
     warnings.push("Protohub/Hybrid Meta mode needs both a pixel ID and tracking key to send server events.");
   }
-  if (trackingMode === "landing_page" && !redirectUrl && isSubmitted) {
-    warnings.push("Landing-page Meta mode needs a thank-you/redirect page to fire Purchase after submit.");
+  if (trackingMode === "landing_page" && isSubmitted) {
+    warnings.push(redirectUrl
+      ? "Landing-page Meta mode means Protohub did not fire Purchase; verify the thank-you page sends Purchase."
+      : "Landing-page Meta mode needs a thank-you/redirect page to fire Purchase after submit.");
   }
   if ((trackingMode === "protohub" || trackingMode === "hybrid") && !fbp && !fbc && !fbclid) {
     warnings.push("No browser click/session ID was captured. CAPI can still send, but match quality may be lower.");
+  }
+  if (metaNeedsProtohubConfig && metaTestMode && !testEventCode && isSubmitted) {
+    warnings.push("Meta test mode is dry-run only unless a Meta TEST event code is captured.");
   }
 
   const utmSummary = [
@@ -4843,6 +4856,16 @@ const cartTrackingMonitorFor = (
           : "Not required",
       tone: metaNeedsProtohubConfig && (!pixelId || !trackingKey) ? "warn" : "good",
       detail: metaNeedsProtohubConfig ? "Needed for Protohub server-side tracking." : "Depends on selected tracking mode."
+    },
+    {
+      label: "Meta test code",
+      value: testEventCode ? shortTrackingValue(testEventCode, 8) : metaTestMode ? "Dry-run only" : "Live / none",
+      tone: testEventCode ? "good" : metaTestMode ? "warn" : "muted",
+      detail: testEventCode
+        ? "CAPI can appear in Meta Test Events with this code."
+        : metaTestMode
+          ? "Browser events log locally and backend CAPI does not call Meta without a TEST code."
+          : "No Meta test code captured."
     },
     {
       label: "Dedup event",
@@ -10351,8 +10374,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (metaTrackingKey) {
         params.set("meta_tracking_key", metaTrackingKey);
       }
-      if (metaTracking.testMode) {
+      const metaTestEventCode = metaTracking.testEventCode.trim().slice(0, 80);
+      if (metaTracking.testMode || metaTestEventCode) {
         params.set("meta_test", "1");
+      }
+      if (metaTestEventCode) {
+        params.set("meta_test_event_code", metaTestEventCode);
       }
     }
     if (previewMode) {
@@ -10382,7 +10409,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // Forward ad/UTM params from this page into the iframe so orders
     // are correctly attributed to Facebook / TikTok / etc. Use set()
     // instead of appending so the landing page's creative/ad id wins.
-    var trackingKeys = ["utm_source","utm_medium","utm_campaign","utm_content","utm_term","utm_id","ad_id","adset_id","campaign_id","creative_id","fbclid","gclid","gbraid","wbraid","ttclid","msclkid","tracking_mode","meta_pixel_id","meta_tracking_key","meta_test","meta_test_mode"];
+    var trackingKeys = ["utm_source","utm_medium","utm_campaign","utm_content","utm_term","utm_id","ad_id","adset_id","campaign_id","creative_id","fbclid","gclid","gbraid","wbraid","ttclid","msclkid","tracking_mode","meta_pixel_id","meta_tracking_key","meta_test","meta_test_mode","meta_test_event_code","test_event_code"];
     var pageParams = new URLSearchParams(window.location.search);
     var src = iframe.getAttribute("src") || iframe.src;
     var hashIndex = src.indexOf("#");
@@ -10417,7 +10444,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     function truthy(value) {
       return /^(1|true|yes|on|test|dry_run|dry-run)$/i.test(String(value || "").trim());
     }
-    var metaTestMode = truthy(embedParams.get("meta_test")) || truthy(embedParams.get("meta_test_mode"));
+    var metaTestEventCode = embedParams.get("meta_test_event_code") || embedParams.get("test_event_code") || "";
+    var metaTestMode = truthy(embedParams.get("meta_test")) || truthy(embedParams.get("meta_test_mode")) || !!metaTestEventCode;
 
     // Auto-resize iframe to fit form content, and let the embedded form move
     // this landing page to the configured thank-you URL after a successful order.
@@ -10451,6 +10479,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               eventName: e.data.eventName,
               eventId: e.data.eventId,
               pixelId: e.data.pixelId || null,
+              testEventCode: e.data.testEventCode || metaTestEventCode || null,
               customData: e.data.customData || {}
             });
           }
@@ -47214,8 +47243,8 @@ ${waybillLineItems(w).length > 1
                                           <p className="m-0 flex items-center gap-2 text-sm font-bold text-slate-900"><ShieldCheck className="h-4 w-4 text-[#1F8FE0]" /> Meta Pixel / CAPI setup</p>
                                           <p className="m-0 mt-1 text-xs text-slate-500">Optional. Controls what this generated link tells Protohub to do for Meta tracking.</p>
                                         </div>
-                                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${metaTracking.testMode ? "bg-amber-100 text-amber-800" : "bg-white text-slate-500 border border-slate-200"}`}>
-                                          {metaTracking.testMode ? "Test mode ON" : "Live mode"}
+                                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${metaTracking.testMode || metaTracking.testEventCode.trim() ? "bg-amber-100 text-amber-800" : "bg-white text-slate-500 border border-slate-200"}`}>
+                                          {metaTracking.testEventCode.trim() ? "Test code set" : metaTracking.testMode ? "Test mode ON" : "Live mode"}
                                         </span>
                                       </div>
                                       <label className="flex flex-col gap-1">
@@ -47261,8 +47290,19 @@ ${waybillLineItems(w).length > 1
                                         />
                                         <span>
                                           <span className={`block text-sm font-bold ${usesProtohubMetaTracking ? "text-amber-900" : "text-slate-600"}`}>Add test mode to this link</span>
-                                          <span className={`block text-xs ${usesProtohubMetaTracking ? "text-amber-800" : "text-slate-500"}`}>{usesProtohubMetaTracking ? <>Adds <code className="rounded bg-white/70 px-1">meta_test=1</code>. Browser events log instead of firing, and backend CAPI uses dry-run/test safety.</> : "Switch to Protohub app tracking or Hybrid to test Protohub-fired events."}</span>
+                                          <span className={`block text-xs ${usesProtohubMetaTracking ? "text-amber-800" : "text-slate-500"}`}>{usesProtohubMetaTracking ? <>Adds <code className="rounded bg-white/70 px-1">meta_test=1</code>. Without a TEST code, browser events log locally and backend CAPI stays dry-run.</> : "Switch to Protohub app tracking or Hybrid to test Protohub-fired events."}</span>
                                         </span>
+                                      </label>
+                                      <label className="flex flex-col gap-1">
+                                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meta test event code <span className="font-normal normal-case text-slate-400">(optional)</span></span>
+                                        <input
+                                          className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                          value={metaTracking.testEventCode}
+                                          onChange={(e) => updateProductEmbedMetaTracking(product.id, { testEventCode: e.target.value })}
+                                          placeholder="e.g. TEST65434"
+                                          disabled={!usesProtohubMetaTracking}
+                                        />
+                                        <span className="text-xs text-slate-500">Paste the code from Meta Events Manager to send CAPI Purchase into Test Events.</span>
                                       </label>
                                       <div className="grid gap-2 text-[11px] font-semibold text-slate-500 sm:grid-cols-2">
                                         <span className="rounded-lg bg-white px-3 py-2 border border-slate-200">Browser duplicate protection: on</span>
@@ -47377,7 +47417,7 @@ ${waybillLineItems(w).length > 1
                                   </div>
                                   {!isMarketerEmbedMode && (
                                     <details className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
-                                      <summary className="cursor-pointer text-sm font-bold text-slate-800">Meta Pixel / CAPI setup: {selectedMetaMode.label}{metaTracking.testMode ? " · test" : ""}</summary>
+                                      <summary className="cursor-pointer text-sm font-bold text-slate-800">Meta Pixel / CAPI setup: {selectedMetaMode.label}{metaTracking.testMode || metaTracking.testEventCode.trim() ? " · test" : ""}</summary>
                                       <div className="mt-3 grid gap-3 md:grid-cols-2">
                                         <label className="flex flex-col gap-1">
                                           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Tracking mode</span>
@@ -47413,6 +47453,17 @@ ${waybillLineItems(w).length > 1
                                         <label className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold ${usesProtohubMetaTracking ? "border-amber-200 bg-amber-50 text-amber-900" : "border-slate-200 bg-white text-slate-500"}`}>
                                           <input type="checkbox" className="h-4 w-4 rounded border-amber-300 text-[#1F8FE0] focus:ring-[#1F8FE0] disabled:cursor-not-allowed disabled:opacity-50" checked={metaTracking.testMode} onChange={(e) => updateProductEmbedMetaTracking(product.id, { testMode: e.target.checked })} disabled={!usesProtohubMetaTracking} />
                                           Add <code className="rounded bg-white/70 px-1">meta_test=1</code>
+                                        </label>
+                                        <label className="flex flex-col gap-1 md:col-span-2">
+                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meta test event code</span>
+                                          <input
+                                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                            value={metaTracking.testEventCode}
+                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { testEventCode: e.target.value })}
+                                            placeholder="TEST65434"
+                                            disabled={!usesProtohubMetaTracking}
+                                          />
+                                          <span className="text-xs text-slate-500">A TEST code keeps backend CAPI visible in Meta Test Events; no code means dry-run only.</span>
                                         </label>
                                       </div>
                                       <p className="m-0 mt-3 text-xs text-slate-500">Change anything here, then click Refresh above or copy the updated code. Backend CAPI still needs its server token/config in Railway env.</p>

@@ -18,6 +18,7 @@ type ResolveMetaTrackingConfigArgs = {
   modeOverride?: string | null;
   pixelIdOverride?: string | null;
   testModeOverride?: string | null;
+  testEventCodeOverride?: string | null;
 };
 
 type SendMetaPurchaseArgs = {
@@ -123,6 +124,7 @@ export function resolveMetaTrackingConfig(args: ResolveMetaTrackingConfigArgs): 
   const overrideMode = parseMode(args.modeOverride);
   const envTestMode = parseBoolean(process.env.META_CAPI_TEST_MODE ?? process.env.FACEBOOK_CAPI_TEST_MODE);
   const overrideTestMode = parseBoolean(args.testModeOverride);
+  const overrideTestEventCode = String(args.testEventCodeOverride ?? "").trim();
   const fallbackMode = envMode ?? "landing_page";
   const fallbackPixelId = (process.env.META_PIXEL_ID || process.env.FACEBOOK_PIXEL_ID || process.env.FB_PIXEL_ID || "").trim();
   const fallbackAccessToken = (process.env.META_CAPI_ACCESS_TOKEN || process.env.FACEBOOK_CAPI_ACCESS_TOKEN || process.env.FB_CAPI_ACCESS_TOKEN || "").trim();
@@ -132,7 +134,7 @@ export function resolveMetaTrackingConfig(args: ResolveMetaTrackingConfigArgs): 
     mode: overrideMode ?? mapped.mode ?? fallbackMode,
     pixelId: (args.pixelIdOverride?.trim() || mapped.pixelId || fallbackPixelId || undefined),
     accessToken: mapped.accessToken || fallbackAccessToken || undefined,
-    testEventCode: mapped.testEventCode || fallbackTestEventCode || undefined,
+    testEventCode: overrideTestEventCode || mapped.testEventCode || fallbackTestEventCode || undefined,
     testMode: overrideTestMode ?? mapped.testMode ?? envTestMode ?? false
   };
 }

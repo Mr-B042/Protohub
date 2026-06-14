@@ -907,7 +907,9 @@ const PUBLIC_FORM_CLICK_PARAM_KEYS = [
   "meta_pixel_id",
   "meta_tracking_key",
   "meta_test",
-  "meta_test_mode"
+  "meta_test_mode",
+  "meta_test_event_code",
+  "test_event_code"
 ] as const;
 
 type PublicMetaTrackingMode = "off" | "landing_page" | "protohub" | "hybrid";
@@ -1015,7 +1017,8 @@ export default function PublicOrderFormPage() {
   const publicMetaTrackingMode = parsePublicMetaTrackingMode(params?.get("tracking_mode") ?? params?.get("trackingMode"));
   const publicMetaPixelId = (params?.get("meta_pixel_id") ?? params?.get("metaPixelId") ?? "").trim().slice(0, 80);
   const publicMetaTrackingKey = (params?.get("meta_tracking_key") ?? params?.get("metaTrackingKey") ?? "").trim().slice(0, 120);
-  const publicMetaTestMode = parsePublicBoolean(params?.get("meta_test") ?? params?.get("metaTest") ?? params?.get("meta_test_mode") ?? params?.get("metaTestMode"));
+  const publicMetaTestEventCode = (params?.get("meta_test_event_code") ?? params?.get("metaTestEventCode") ?? params?.get("test_event_code") ?? params?.get("testEventCode") ?? "").trim().slice(0, 80);
+  const publicMetaTestMode = parsePublicBoolean(params?.get("meta_test") ?? params?.get("metaTest") ?? params?.get("meta_test_mode") ?? params?.get("metaTestMode")) || Boolean(publicMetaTestEventCode);
   const publicEmbedIsPreview = params?.get("preview") === "1";
   const publicEmbedIsLocalTest = publicEmbedIsPreview && typeof window !== "undefined" && (
     window.location.hostname === "localhost" ||
@@ -1163,7 +1166,8 @@ export default function PublicOrderFormPage() {
       utmId: context.utmId,
       trackingMode: context.trackingMode,
       metaTrackingKey: context.metaTrackingKey,
-      metaTestMode: context.metaTestMode || context.metaTest
+      metaTestMode: context.metaTestMode || context.metaTest,
+      metaTestEventCode: context.metaTestEventCode || context.testEventCode
     };
   }, [params]);
   const buildPublicFormContext = useCallback((contextEvent: string): PublicFormHiddenContext => ({
@@ -1199,12 +1203,13 @@ export default function PublicOrderFormPage() {
         pixelId: publicMetaPixelId || null,
         trackingMode: publicMetaTrackingMode,
         testMode: publicMetaTestMode,
+        testEventCode: publicMetaTestEventCode || null,
         customData
       }, "*");
     } catch {
       // Browser-side Meta bridge is best-effort only.
     }
-  }, [publicEmbedIsPreview, publicMetaPixelId, publicMetaTestMode, publicMetaTrackingMode]);
+  }, [publicEmbedIsPreview, publicMetaPixelId, publicMetaTestEventCode, publicMetaTestMode, publicMetaTrackingMode]);
   const publicJourneyAttributionMetadata = useMemo(
     () => ({
       source: orderSourceFromUtm(publicUtmSource),
@@ -2784,7 +2789,8 @@ export default function PublicOrderFormPage() {
         metaEventName: "Lead",
         metaEventId: leadEventId,
         metaTrackingMode: publicMetaTrackingMode,
-        metaTestMode: publicMetaTestMode
+        metaTestMode: publicMetaTestMode,
+        metaTestEventCode: publicMetaTestEventCode || null
       }
     });
     const submissionBody = {
@@ -2824,6 +2830,7 @@ export default function PublicOrderFormPage() {
       metaPixelId: publicMetaPixelId || null,
       metaTrackingKey: publicMetaTrackingKey || null,
       metaTestMode: publicMetaTestMode,
+      metaTestEventCode: publicMetaTestEventCode || null,
       metaLeadEventId: leadEventId,
       metaPurchaseEventId: purchaseEventId
     });
@@ -2892,7 +2899,8 @@ export default function PublicOrderFormPage() {
           metaEventName: "Purchase",
           metaEventId: purchaseEventId,
           metaTrackingMode: publicMetaTrackingMode,
-          metaTestMode: publicMetaTestMode
+          metaTestMode: publicMetaTestMode,
+          metaTestEventCode: publicMetaTestEventCode || null
         }
       });
 
