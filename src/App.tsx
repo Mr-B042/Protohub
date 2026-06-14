@@ -4600,7 +4600,18 @@ const latestHiddenContextFromJourney = (events: CartJourneyEvent[] = []): Record
     "adsetId",
     "campaignId",
     "placement",
-    "utmId"
+    "utmId",
+    "trackingMode",
+    "metaTrackingMode",
+    "metaPixelId",
+    "metaTrackingKey",
+    "metaTestMode",
+    "metaEventId",
+    "metaPurchaseEventId",
+    "eventId",
+    "fbp",
+    "fbc",
+    "redirectUrl"
   ];
   const context: Record<string, unknown> = {};
   for (const event of [...events].reverse()) {
@@ -4700,6 +4711,166 @@ const cartHiddenFieldSectionsFor = (cart: AbandonedCartRecord, journeyEvents: Ca
     linkedSessionId: cart.id,
     formContext: payloadContext ?? journeyContext
   });
+};
+type CartTrackingMonitorTone = "good" | "warn" | "bad" | "muted";
+type CartTrackingMonitorRow = {
+  label: string;
+  value: string;
+  tone: CartTrackingMonitorTone;
+  detail?: string;
+};
+const normalizeMetaTrackingMode = (value: string) => {
+  const mode = value.trim().toLowerCase().replace(/[-\s]+/g, "_");
+  return ["landing_page", "protohub", "hybrid", "off"].includes(mode) ? mode : "";
+};
+const metaTrackingModeLabel = (mode: string) => {
+  if (mode === "landing_page") return "Landing page handles Meta";
+  if (mode === "protohub") return "Protohub handles Meta";
+  if (mode === "hybrid") return "Hybrid Meta tracking";
+  if (mode === "off") return "Meta tracking off";
+  return "Not captured";
+};
+const shortTrackingValue = (value: string, keep = 11) => {
+  const clean = value.trim();
+  return clean.length > keep * 2 + 3 ? `${clean.slice(0, keep)}...${clean.slice(-keep)}` : clean;
+};
+const cartTrackingMonitorFor = (
+  cart: AbandonedCartRecord,
+  linkedOrder: TrackedOrder | undefined,
+  journeyEvents: CartJourneyEvent[] = []
+) => {
+  const payload = cartCapturePayloadFor(cart);
+  const payloadContext = payload?.formContext && typeof payload.formContext === "object" && !Array.isArray(payload.formContext)
+    ? payload.formContext as Record<string, unknown>
+    : null;
+  const orderContext = linkedOrder?.formContext && typeof linkedOrder.formContext === "object" && !Array.isArray(linkedOrder.formContext)
+    ? linkedOrder.formContext as Record<string, unknown>
+    : null;
+  const journeyContext = latestHiddenContextFromJourney(journeyEvents);
+  const sources = [orderContext, payloadContext, payload, journeyContext].filter(Boolean) as Record<string, unknown>[];
+  const read = (...keys: string[]) => {
+    for (const source of sources) {
+      for (const key of keys) {
+        const value = hiddenFieldValueToString(source[key]);
+        if (value) return value;
+      }
+    }
+    return "";
+  };
+  const attribution = cartAttributionFor(cart, journeyEvents);
+  const embedLabel = cartEmbedLabelFor(cart, linkedOrder, journeyEvents);
+  const rawMode = read("trackingMode", "metaTrackingMode", "tracking_mode", "meta_tracking_mode");
+  const trackingMode = normalizeMetaTrackingMode(rawMode);
+  const pixelId = read("metaPixelId", "pixelId", "meta_pixel_id");
+  const trackingKey = read("metaTrackingKey", "trackingKey", "meta_tracking_key");
+  const eventId = read("metaPurchaseEventId", "purchaseEventId", "metaEventId", "eventId", "event_id");
+  const redirectUrl = read("redirectUrl", "redirect_url");
+  const fbp = read("fbp", "_fbp");
+  const fbc = read("fbc", "_fbc");
+  const fbclid = read("fbclid");
+  const isSubmitted = cart.status === "Converted" || journeyEvents.some((event) => event.eventType === "order_submitted");
+  const hasAdTags = Boolean(
+    (attribution.utmSource && attribution.utmSource.toLowerCase() !== "direct")
+    || attribution.utmCampaign
+    || attribution.utmContent
+    || fbclid
+  );
+  const metaNeedsProtohubConfig = trackingMode === "protohub" || trackingMode === "hybrid";
+  const issues: string[] = [];
+  const warnings: string[] = [];
+
+  if (cart.status === "Converted" && !linkedOrder) {
+    issues.push("This cart is marked converted, but no linked order was found.");
+  }
+  if (metaNeedsProtohubConfig && isSubmitted && !eventId) {
+    issues.push("No Purchase event ID was captured, so Meta deduplication cannot be verified.");
+  }
+  if (!embedLabel) {
+    warnings.push("No embed label was captured. This is usually an old link or an iframe generated before labels were added.");
+  }
+  if (!hasAdTags) {
+    warnings.push("No UTM/ad tag was captured, so the cart may only show as Website/general traffic.");
+  }
+  if (!trackingMode) {
+    warnings.push("No tracking mode was captured. This looks like a normal/legacy embed link.");
+  }
+  if (metaNeedsProtohubConfig && (!pixelId || !trackingKey)) {
+    warnings.push("Protohub/Hybrid Meta mode needs both a pixel ID and tracking key to send server events.");
+  }
+  if (trackingMode === "landing_page" && !redirectUrl && isSubmitted) {
+    warnings.push("Landing-page Meta mode needs a thank-you/redirect page to fire Purchase after submit.");
+  }
+  if ((trackingMode === "protohub" || trackingMode === "hybrid") && !fbp && !fbc && !fbclid) {
+    warnings.push("No browser click/session ID was captured. CAPI can still send, but match quality may be lower.");
+  }
+
+  const utmSummary = [
+    attribution.utmSource ? `source: ${attribution.utmSource}` : "",
+    attribution.utmCampaign ? `campaign: ${shortTrackingValue(attribution.utmCampaign, 14)}` : "",
+    attribution.utmContent ? `creative: ${shortTrackingValue(attribution.utmContent, 14)}` : ""
+  ].filter(Boolean).join(" · ");
+  const rows: CartTrackingMonitorRow[] = [
+    {
+      label: "Embed label",
+      value: embedLabel || "Missing",
+      tone: embedLabel ? "good" : "warn",
+      detail: embedLabel ? "Form/source name captured." : "Regenerate the embed or add an embed label to new links."
+    },
+    {
+      label: "Ad attribution",
+      value: utmSummary || "No UTM/ad tag",
+      tone: hasAdTags ? "good" : "warn",
+      detail: hasAdTags ? "Buyer/source tags are present." : "Forward UTMs or use generated marketer links."
+    },
+    {
+      label: "Meta mode",
+      value: metaTrackingModeLabel(trackingMode),
+      tone: trackingMode === "off" ? "muted" : trackingMode ? "good" : "warn",
+      detail: trackingMode === "landing_page"
+        ? "Protohub stays quiet; landing/thank-you page should fire Meta."
+        : trackingMode === "off"
+          ? "No Meta browser/CAPI event expected from this link."
+          : trackingMode
+            ? "Mode was captured on this cart."
+            : "Old links may not include this setting."
+    },
+    {
+      label: "Pixel / CAPI setup",
+      value: metaNeedsProtohubConfig
+        ? `${pixelId ? "Pixel OK" : "Pixel missing"} · ${trackingKey ? "CAPI key OK" : "CAPI key missing"}`
+        : trackingMode === "landing_page"
+          ? "Handled outside Protohub"
+          : "Not required",
+      tone: metaNeedsProtohubConfig && (!pixelId || !trackingKey) ? "warn" : "good",
+      detail: metaNeedsProtohubConfig ? "Needed for Protohub server-side tracking." : "Depends on selected tracking mode."
+    },
+    {
+      label: "Dedup event",
+      value: eventId ? shortTrackingValue(eventId, 12) : isSubmitted ? "Missing after submit" : "Created on submit",
+      tone: eventId ? "good" : isSubmitted && metaNeedsProtohubConfig ? "bad" : "muted",
+      detail: eventId ? "Browser + CAPI can share this ID." : "Purchase event ID appears after a successful order."
+    },
+    {
+      label: "Linked order",
+      value: linkedOrder ? `Order #${linkedOrder.id}` : cart.status === "Converted" ? "Missing" : "Not converted yet",
+      tone: linkedOrder ? "good" : cart.status === "Converted" ? "bad" : "muted",
+      detail: linkedOrder ? "Recovered cart is tied to the final order." : "Only converted carts should have a linked order."
+    }
+  ];
+
+  const tone: CartTrackingMonitorTone = issues.length > 0 ? "bad" : warnings.length > 0 ? "warn" : "good";
+  return {
+    tone,
+    title: tone === "bad" ? "Tracking needs repair" : tone === "warn" ? "Tracking partially captured" : "Tracking looks healthy",
+    summary: tone === "bad"
+      ? "Important tracking data is missing after conversion."
+      : tone === "warn"
+        ? "The cart is usable, but attribution or Meta quality may be incomplete."
+        : "This cart has the main attribution signals needed for reporting.",
+    rows,
+    issues,
+    warnings
+  };
 };
 const parsePublicFormSubmissionNote = (noteText: string): PublicFormSubmissionDetails => {
   const out: PublicFormSubmissionDetails = {};
@@ -54136,6 +54307,7 @@ ${waybillLineItems(w).length > 1
 			              const journeyIdleLabel = secondsSinceJourney < 60 ? "moments ago" : secondsSinceJourney < 3600 ? `${Math.floor(secondsSinceJourney / 60)}m ago` : formatMoment(lastJourneyAt);
 			              const selectedCartEmbedLabel = cartEmbedLabelFor(selectedCart, linkedOrder, selectedCartJourney);
 			              const selectedCartHiddenFieldSections = cartHiddenFieldSectionsFor(selectedCart, selectedCartJourney, selectedCartEmbedLabel);
+			              const selectedCartTrackingMonitor = cartTrackingMonitorFor(selectedCart, linkedOrder, selectedCartJourney);
 		              const cartCaptureDataExpanded = expandedCartCaptureDataId === selectedCart.id;
 			              const recoveryInfo = cartCustomerInfoCompletion(selectedCart, { showEmail: showEmailField, showWhatsapp: showWhatsappField });
 			              const recovery = cartJourneyRecoveryScore(selectedCartJourney, recoveryInfo.total ? recoveryInfo.done / recoveryInfo.total : undefined);
@@ -54344,6 +54516,75 @@ ${waybillLineItems(w).length > 1
 		                        </div>
 		                      ) : null}
 		                    </div>
+		                    {(() => {
+		                      const monitor = selectedCartTrackingMonitor;
+		                      const shellClass = monitor.tone === "bad"
+		                        ? "border-rose-300 bg-rose-50/90 dark:border-rose-500/40 dark:bg-rose-500/10"
+		                        : monitor.tone === "warn"
+		                          ? "border-amber-300 bg-amber-50/90 dark:border-amber-500/40 dark:bg-amber-500/10"
+		                          : "border-emerald-300 bg-emerald-50/90 dark:border-emerald-500/40 dark:bg-emerald-500/10";
+		                      const iconClass = monitor.tone === "bad"
+		                        ? "bg-rose-100 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-200 dark:ring-rose-400/30"
+		                        : monitor.tone === "warn"
+		                          ? "bg-amber-100 text-amber-800 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-100 dark:ring-amber-400/30"
+		                          : "bg-emerald-100 text-emerald-800 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-100 dark:ring-emerald-400/30";
+		                      const itemClass = (tone: CartTrackingMonitorTone) => tone === "bad"
+		                        ? "border-rose-200 bg-white text-rose-900 dark:border-rose-500/30 dark:bg-[#180d14] dark:text-rose-100"
+		                        : tone === "warn"
+		                          ? "border-amber-200 bg-white text-amber-950 dark:border-amber-500/30 dark:bg-[#1d1609] dark:text-amber-50"
+		                          : tone === "muted"
+		                            ? "border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-[#111b26] dark:text-slate-200"
+		                            : "border-emerald-200 bg-white text-emerald-950 dark:border-emerald-500/30 dark:bg-[#0b1b16] dark:text-emerald-50";
+		                      const dotClass = (tone: CartTrackingMonitorTone) => tone === "bad"
+		                        ? "bg-rose-500"
+		                        : tone === "warn"
+		                          ? "bg-amber-500"
+		                          : tone === "muted"
+		                            ? "bg-slate-400"
+		                            : "bg-emerald-500";
+		                      return (
+		                        <div className={`mt-3 rounded-2xl border p-4 shadow-sm ${shellClass}`}>
+		                          <div className="flex items-start gap-3">
+		                            <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ring-1 ${iconClass}`}>
+		                              {monitor.tone === "bad" ? <AlertTriangle className="h-5 w-5" /> : monitor.tone === "warn" ? <Info className="h-5 w-5" /> : <ShieldCheck className="h-5 w-5" />}
+		                            </div>
+		                            <div className="min-w-0 flex-1">
+		                              <div className="flex items-start justify-between gap-3 flex-wrap">
+		                                <div>
+		                                  <p className="m-0 text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">Tracking monitor</p>
+		                                  <h5 className="m-0 mt-1 text-base font-extrabold text-slate-950 dark:text-white">{monitor.title}</h5>
+		                                  <p className="m-0 mt-0.5 text-xs font-semibold text-slate-600 dark:text-slate-300">{monitor.summary}</p>
+		                                </div>
+		                                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-extrabold ${monitor.tone === "bad" ? "border-rose-200 bg-rose-100 text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/15 dark:text-rose-100" : monitor.tone === "warn" ? "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-100" : "border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-100"}`}>
+		                                  <span className={`h-2 w-2 rounded-full ${dotClass(monitor.tone)}`} />
+		                                  {monitor.tone === "bad" ? "Repair" : monitor.tone === "warn" ? "Check" : "Healthy"}
+		                                </span>
+		                              </div>
+		                              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+		                                {monitor.rows.map((row) => (
+		                                  <div key={row.label} className={`rounded-xl border px-3 py-2 ${itemClass(row.tone)}`}>
+		                                    <div className="flex items-center justify-between gap-2">
+		                                      <p className="m-0 text-[10px] font-extrabold uppercase tracking-[0.14em] opacity-70">{row.label}</p>
+		                                      <span className={`h-2 w-2 rounded-full ${dotClass(row.tone)}`} />
+		                                    </div>
+		                                    <p className="m-0 mt-1 text-sm font-extrabold break-words">{row.value}</p>
+		                                    {row.detail ? <p className="m-0 mt-0.5 text-[11px] leading-snug opacity-75">{row.detail}</p> : null}
+		                                  </div>
+		                                ))}
+		                              </div>
+		                              {(monitor.issues.length > 0 || monitor.warnings.length > 0) && (
+		                                <div className="mt-3 rounded-xl border border-white/70 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-black/20">
+		                                  <p className="m-0 text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-700 dark:text-slate-200">What to fix</p>
+		                                  <ul className="m-0 mt-1 space-y-1 pl-4 text-xs font-semibold text-slate-700 dark:text-slate-200">
+		                                    {[...monitor.issues, ...monitor.warnings].map((item) => <li key={item}>{item}</li>)}
+		                                  </ul>
+		                                </div>
+		                              )}
+		                            </div>
+		                          </div>
+		                        </div>
+		                      );
+		                    })()}
 			                    <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/70 dark:border-sky-500/30 dark:bg-sky-500/10 overflow-hidden">
 			                      <button
 			                        type="button"
