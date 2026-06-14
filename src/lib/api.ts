@@ -586,6 +586,12 @@ export const marketingSpendApi = {
   delete: (id: string) => del<void>(`/api/marketing-spend/${encodeURIComponent(id)}`)
 };
 
+export const metaCapiSettingsApi = {
+  list: () => get<any[]>("/api/meta-capi-settings"),
+  save: (body: unknown) => post<any>("/api/meta-capi-settings", body),
+  delete: (id: string) => del<{ ok: boolean }>(`/api/meta-capi-settings/${encodeURIComponent(id)}`)
+};
+
 export const emailSettingsApi = {
   get:  async ()            => normalizeEmailSettingsResponse(await get<any>("/api/email-settings")),
   save: async (body: any) => normalizeEmailSettingsResponse(await request<any>("PUT", "/api/email-settings", {

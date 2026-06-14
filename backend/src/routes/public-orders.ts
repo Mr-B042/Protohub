@@ -19,7 +19,7 @@ import { logger } from "../lib/logger.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
-import { resolveMetaTrackingConfig, sendMetaCapiPurchase } from "../lib/meta-capi.js";
+import { resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
 import { readSettings } from "./embed-settings.js";
 import {
   sendNewOrderEmail,
@@ -84,6 +84,38 @@ const contextString = (context: Record<string, unknown> | undefined, ...keys: st
   }
   return "";
 };
+
+async function readStoredMetaCapiConfig(
+  orgId: string,
+  trackingKey: string
+): Promise<Partial<MetaTrackingConfig> | null> {
+  const key = trackingKey.trim().toLowerCase();
+  if (!key) return null;
+
+  const { data, error } = await supabase
+    .from("meta_capi_configs")
+    .select("mode, pixel_id, access_token")
+    .eq("org_id", orgId)
+    .eq("tracking_key", key)
+    .eq("active", true)
+    .maybeSingle();
+
+  if (error) {
+    logger.warn("public-orders: failed to read stored Meta CAPI config", {
+      orgId,
+      trackingKey: key,
+      error: error.message
+    });
+    return null;
+  }
+
+  if (!data?.access_token) return null;
+  return {
+    mode: data.mode,
+    pixelId: data.pixel_id,
+    accessToken: data.access_token
+  };
+}
 
 const clientIpFromRequest = (req: Request) => {
   const forwarded = req.headers["x-forwarded-for"];
@@ -900,10 +932,15 @@ router.post("/", submitRateLimit, async (req, res) => {
   const formContext = (d.formContext ?? {}) as Record<string, unknown>;
   const metaPurchaseEventId = contextString(formContext, "metaPurchaseEventId", "metaEventId")
     || `protohub_purchase_${order.id}`;
+  const metaTrackingKey = contextString(formContext, "metaTrackingKey", "trackingKey");
+  const storedMetaConfig = metaTrackingKey
+    ? await readStoredMetaCapiConfig(product.org_id, metaTrackingKey)
+    : null;
   const metaConfig = resolveMetaTrackingConfig({
     productId: product.id,
     packageSet: requestedPackageSet || (pkg as { package_set?: string | null }).package_set || null,
-    trackingKey: contextString(formContext, "metaTrackingKey", "trackingKey"),
+    trackingKey: metaTrackingKey,
+    configOverride: storedMetaConfig,
     modeOverride: contextString(formContext, "metaTrackingMode", "trackingMode"),
     pixelIdOverride: contextString(formContext, "metaPixelId", "pixelId"),
     testModeOverride: contextString(formContext, "metaTestMode", "metaTest", "trackingTestMode"),

@@ -3,7 +3,7 @@ import { logger } from "./logger.js";
 
 export type MetaTrackingMode = "off" | "landing_page" | "protohub" | "hybrid";
 
-type MetaTrackingConfig = {
+export type MetaTrackingConfig = {
   mode: MetaTrackingMode;
   pixelId?: string;
   accessToken?: string;
@@ -19,6 +19,7 @@ type ResolveMetaTrackingConfigArgs = {
   pixelIdOverride?: string | null;
   testModeOverride?: string | null;
   testEventCodeOverride?: string | null;
+  configOverride?: Partial<MetaTrackingConfig> | null;
 };
 
 type SendMetaPurchaseArgs = {
@@ -108,6 +109,7 @@ function packageSetKey(productId: string, packageSet?: string | null) {
 
 export function resolveMetaTrackingConfig(args: ResolveMetaTrackingConfigArgs): MetaTrackingConfig {
   const configMap = parseConfigJson();
+  const storedConfig = configFromUnknown(args.configOverride);
   const keys = [
     args.trackingKey?.trim(),
     packageSetKey(args.productId, args.packageSet),
@@ -131,11 +133,11 @@ export function resolveMetaTrackingConfig(args: ResolveMetaTrackingConfigArgs): 
   const fallbackTestEventCode = (process.env.META_TEST_EVENT_CODE || process.env.FACEBOOK_TEST_EVENT_CODE || "").trim();
 
   return {
-    mode: overrideMode ?? mapped.mode ?? fallbackMode,
-    pixelId: (args.pixelIdOverride?.trim() || mapped.pixelId || fallbackPixelId || undefined),
-    accessToken: mapped.accessToken || fallbackAccessToken || undefined,
-    testEventCode: overrideTestEventCode || mapped.testEventCode || fallbackTestEventCode || undefined,
-    testMode: overrideTestMode ?? mapped.testMode ?? envTestMode ?? false
+    mode: overrideMode ?? storedConfig.mode ?? mapped.mode ?? fallbackMode,
+    pixelId: (args.pixelIdOverride?.trim() || storedConfig.pixelId || mapped.pixelId || fallbackPixelId || undefined),
+    accessToken: storedConfig.accessToken || mapped.accessToken || fallbackAccessToken || undefined,
+    testEventCode: overrideTestEventCode || storedConfig.testEventCode || mapped.testEventCode || fallbackTestEventCode || undefined,
+    testMode: overrideTestMode ?? storedConfig.testMode ?? mapped.testMode ?? envTestMode ?? false
   };
 }
 

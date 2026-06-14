@@ -112,7 +112,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
 } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
@@ -217,6 +217,18 @@ type EmbedMetaTrackingSettings = {
   trackingKey: string;
   testMode: boolean;
   testEventCode: string;
+};
+type MetaCapiConfigRecord = {
+  id: string;
+  trackingKey: string;
+  label: string;
+  mode: EmbedMetaTrackingMode;
+  pixelId: string;
+  accessToken?: string;
+  hasAccessToken?: boolean;
+  active: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 type StockMovementType = "Stock Added" | "Distributed to Agent" | "Order Fulfilled" | "Return" | "Correction" | "Waybill Out" | "Waybill In" | "Status Reversal";
 type InventoryHistoryMovementDrill = "" | "returned" | "transfer_out" | "restored" | "write_off";
@@ -7006,6 +7018,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [smsInboundLoading, setSmsInboundLoading] = useState(false);
   const [smsWebhookRotateLoading, setSmsWebhookRotateLoading] = useState(false);
   const [smsTemplateKey, setSmsTemplateKey] = useState<string>(defaultSmsTemplateKey);
+  const [metaCapiConfigs, setMetaCapiConfigs] = useState<MetaCapiConfigRecord[]>([]);
+  const [metaCapiConfigsLoading, setMetaCapiConfigsLoading] = useState(false);
+  const [metaCapiSavingProductId, setMetaCapiSavingProductId] = useState<string | null>(null);
+  const [metaCapiAccessTokenDrafts, setMetaCapiAccessTokenDrafts] = useState<Record<string, string>>({});
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>("workspace");
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
@@ -7604,6 +7620,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const activeHelpRoleNote = activeHelp.roleNotes?.[currentRole];
   const isPageAllowed = (page: ActivePage) => currentAllowedPages.includes(page);
   const canManageMessagingSettings = currentRole === "Owner";
+  const canManageMetaCapiSettings = currentRole === "Owner";
   const canViewSmsHealth = currentRole === "Owner" || currentRole === "Admin";
   const canManageAdTrackingLabels = ["Owner", "Admin", "Manager"].includes(currentRole);
   const emailActivityPageSize = 10;
@@ -8029,6 +8046,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       });
     return () => { cancelled = true; };
   }, [authUser?.id, canManageMessagingSettings, activePage, settingsPanel]);
+
+  useEffect(() => {
+    if (!auth.getAccessToken()) return;
+    if (activePage !== "Embed Form") return;
+    if (!authUser?.id || !canManageMetaCapiSettings) {
+      setMetaCapiConfigs([]);
+      setMetaCapiConfigsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setMetaCapiConfigsLoading(true);
+    metaCapiSettingsApi.list()
+      .then((configs: MetaCapiConfigRecord[]) => {
+        if (!cancelled) setMetaCapiConfigs(Array.isArray(configs) ? configs : []);
+      })
+      .catch((err: any) => {
+        if (!cancelled) showToast(`Failed to load Meta CAPI configs: ${err?.message ?? "please retry"}.`);
+      })
+      .finally(() => {
+        if (!cancelled) setMetaCapiConfigsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [authUser?.id, canManageMetaCapiSettings, activePage]);
 
   const loadEmailMessages = async (page = emailActivityPage, options: { quiet?: boolean } = {}) => {
     setEmailMessagesLoading(true);
@@ -10284,6 +10324,75 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ...value,
       [productId]: { ...defaultEmbedMetaTrackingSettings, ...(value[productId] ?? {}), ...patch }
     }));
+  };
+  const suggestedMetaTrackingKey = (product: Product) => {
+    const base = slugify(product.name || "product").replace(/-/g, "_") || "product";
+    return `${base}_${String(product.id).slice(0, 8)}`.toLowerCase();
+  };
+  const metaCapiConfigForTrackingKey = (trackingKey: string) => {
+    const key = trackingKey.trim().toLowerCase();
+    return key ? metaCapiConfigs.find((config) => config.trackingKey.toLowerCase() === key) : undefined;
+  };
+  const applyMetaCapiConfigToProduct = (productId: string, configId: string) => {
+    const config = metaCapiConfigs.find((item) => item.id === configId);
+    if (!config) return;
+    updateProductEmbedMetaTracking(productId, {
+      mode: config.mode,
+      pixelId: config.pixelId,
+      trackingKey: config.trackingKey
+    });
+    setMetaCapiAccessTokenDrafts((value) => ({ ...value, [productId]: "" }));
+  };
+  const updateMetaCapiAccessTokenDraft = (productId: string, value: string) => {
+    setMetaCapiAccessTokenDrafts((current) => ({ ...current, [productId]: value }));
+  };
+  const saveMetaCapiConfigForProduct = async (product: Product) => {
+    if (!canManageMetaCapiSettings) {
+      showToast("Only the Owner can save Meta CAPI tokens.");
+      return;
+    }
+    const current = productEmbedMetaTracking(product);
+    const trackingKey = (current.trackingKey.trim() || suggestedMetaTrackingKey(product)).toLowerCase();
+    const mode = current.mode === "landing_page" ? "protohub" : current.mode;
+    const pixelId = current.pixelId.trim();
+    const tokenDraft = (metaCapiAccessTokenDrafts[product.id] ?? "").trim();
+    const existing = metaCapiConfigForTrackingKey(trackingKey);
+
+    if (!pixelId) {
+      showToast("Paste the Meta Pixel ID before saving CAPI setup.");
+      return;
+    }
+    if (!tokenDraft && !existing?.hasAccessToken) {
+      showToast("Paste the Meta CAPI access token before saving this product setup.");
+      return;
+    }
+
+    setMetaCapiSavingProductId(product.id);
+    try {
+      const saved = await metaCapiSettingsApi.save({
+        trackingKey,
+        label: product.name,
+        mode,
+        pixelId,
+        accessToken: tokenDraft || existing?.accessToken || "",
+        active: true
+      });
+      setMetaCapiConfigs((configs) => {
+        const withoutSaved = configs.filter((config) => config.id !== saved.id && config.trackingKey !== saved.trackingKey);
+        return [...withoutSaved, saved].sort((a, b) => a.label.localeCompare(b.label));
+      });
+      updateProductEmbedMetaTracking(product.id, {
+        mode: saved.mode,
+        pixelId: saved.pixelId,
+        trackingKey: saved.trackingKey
+      });
+      setMetaCapiAccessTokenDrafts((value) => ({ ...value, [product.id]: "" }));
+      showToast("Meta CAPI setup saved for this product.");
+    } catch (err: any) {
+      showToast(`Failed to save Meta CAPI setup: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setMetaCapiSavingProductId(null);
+    }
   };
   const productEmbedPackageSet = (product: Product | undefined) => {
     if (!product) return DEFAULT_PACKAGE_SET_LABEL;
@@ -47180,6 +47289,10 @@ ${waybillLineItems(w).length > 1
                         const metaTracking = productEmbedMetaTracking(product);
                         const selectedMetaMode = embedMetaTrackingModeOptions.find((option) => option.value === metaTracking.mode) ?? embedMetaTrackingModeOptions[0];
                         const usesProtohubMetaTracking = metaTracking.mode === "protohub" || metaTracking.mode === "hybrid";
+                        const currentMetaCapiConfig = metaCapiConfigForTrackingKey(metaTracking.trackingKey);
+                        const selectedMetaCapiConfigId = currentMetaCapiConfig?.id ?? "";
+                        const metaCapiTokenDraft = metaCapiAccessTokenDrafts[product.id] ?? "";
+                        const metaCapiSaving = metaCapiSavingProductId === product.id;
                         const marketerLinkReady = !isMarketerEmbedMode || Boolean(primaryMarketerEmbedTag);
                         const directUrlValue = marketerLinkReady ? embedUrl : "Owner must assign your marketer tag first";
                         const productMarketingVariants = marketingVariantsForProduct(product.id);
@@ -47258,6 +47371,47 @@ ${waybillLineItems(w).length > 1
                                         </select>
                                         <span className="text-xs text-slate-500">{selectedMetaMode.hint}</span>
                                       </label>
+                                      {canManageMetaCapiSettings && (
+                                        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                                          <label className="flex min-w-0 flex-col gap-1">
+                                            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Saved product CAPI setup</span>
+                                            <select
+                                              className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                              value={selectedMetaCapiConfigId}
+                                              onChange={(e) => applyMetaCapiConfigToProduct(product.id, e.target.value)}
+                                              disabled={metaCapiConfigsLoading || metaCapiConfigs.length === 0}
+                                            >
+                                              <option value="">{metaCapiConfigsLoading ? "Loading saved configs..." : "Manual / unsaved setup"}</option>
+                                              {metaCapiConfigs.map((config) => (
+                                                <option key={config.id} value={config.id}>{config.label} · {config.pixelId}</option>
+                                              ))}
+                                            </select>
+                                          </label>
+                                          <label className="flex min-w-0 flex-col gap-1">
+                                            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">CAPI access token</span>
+                                            <input
+                                              type="password"
+                                              autoComplete="off"
+                                              className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                              value={metaCapiTokenDraft}
+                                              onChange={(e) => updateMetaCapiAccessTokenDraft(product.id, e.target.value)}
+                                              placeholder={currentMetaCapiConfig?.hasAccessToken ? "Saved token on file" : "Paste token once"}
+                                              disabled={!usesProtohubMetaTracking}
+                                            />
+                                          </label>
+                                          <div className="flex items-end">
+                                            <button
+                                              type="button"
+                                              className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 lg:w-auto"
+                                              onClick={() => { void saveMetaCapiConfigForProduct(product); }}
+                                              disabled={metaCapiSaving || !usesProtohubMetaTracking}
+                                            >
+                                              {metaCapiSaving ? "Saving..." : currentMetaCapiConfig?.hasAccessToken ? "Update CAPI Setup" : "Save CAPI Setup"}
+                                            </button>
+                                          </div>
+                                          <p className="m-0 text-xs text-slate-500 lg:col-span-3">The token is saved on the backend only. The generated embed link uses the tracking key, not the token.</p>
+                                        </div>
+                                      )}
                                       <div className="grid gap-3 md:grid-cols-2">
                                         <label className="flex flex-col gap-1">
                                           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meta Pixel ID <span className="font-normal normal-case text-slate-400">(optional)</span></span>
@@ -47418,6 +47572,47 @@ ${waybillLineItems(w).length > 1
                                   {!isMarketerEmbedMode && (
                                     <details className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
                                       <summary className="cursor-pointer text-sm font-bold text-slate-800">Meta Pixel / CAPI setup: {selectedMetaMode.label}{metaTracking.testMode || metaTracking.testEventCode.trim() ? " · test" : ""}</summary>
+                                      {canManageMetaCapiSettings && (
+                                        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                                          <label className="flex min-w-0 flex-col gap-1">
+                                            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Saved product CAPI setup</span>
+                                            <select
+                                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400"
+                                              value={selectedMetaCapiConfigId}
+                                              onChange={(e) => applyMetaCapiConfigToProduct(product.id, e.target.value)}
+                                              disabled={metaCapiConfigsLoading || metaCapiConfigs.length === 0}
+                                            >
+                                              <option value="">{metaCapiConfigsLoading ? "Loading saved configs..." : "Manual / unsaved setup"}</option>
+                                              {metaCapiConfigs.map((config) => (
+                                                <option key={config.id} value={config.id}>{config.label} · {config.pixelId}</option>
+                                              ))}
+                                            </select>
+                                          </label>
+                                          <label className="flex min-w-0 flex-col gap-1">
+                                            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">CAPI access token</span>
+                                            <input
+                                              type="password"
+                                              autoComplete="off"
+                                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                              value={metaCapiTokenDraft}
+                                              onChange={(e) => updateMetaCapiAccessTokenDraft(product.id, e.target.value)}
+                                              placeholder={currentMetaCapiConfig?.hasAccessToken ? "Saved token on file" : "Paste token once"}
+                                              disabled={!usesProtohubMetaTracking}
+                                            />
+                                          </label>
+                                          <div className="flex items-end">
+                                            <button
+                                              type="button"
+                                              className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 lg:w-auto"
+                                              onClick={() => { void saveMetaCapiConfigForProduct(product); }}
+                                              disabled={metaCapiSaving || !usesProtohubMetaTracking}
+                                            >
+                                              {metaCapiSaving ? "Saving..." : currentMetaCapiConfig?.hasAccessToken ? "Update CAPI Setup" : "Save CAPI Setup"}
+                                            </button>
+                                          </div>
+                                          <p className="m-0 text-xs text-slate-500 lg:col-span-3">Saved tokens stay backend-only. Refresh after changes so the copied link includes the tracking key.</p>
+                                        </div>
+                                      )}
                                       <div className="mt-3 grid gap-3 md:grid-cols-2">
                                         <label className="flex flex-col gap-1">
                                           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Tracking mode</span>
@@ -47466,7 +47661,7 @@ ${waybillLineItems(w).length > 1
                                           <span className="text-xs text-slate-500">A TEST code keeps backend CAPI visible in Meta Test Events; no code means dry-run only.</span>
                                         </label>
                                       </div>
-                                      <p className="m-0 mt-3 text-xs text-slate-500">Change anything here, then click Refresh above or copy the updated code. Backend CAPI still needs its server token/config in Railway env.</p>
+                                      <p className="m-0 mt-3 text-xs text-slate-500">Change anything here, then click Refresh above or copy the updated code. Backend CAPI uses the owner-saved config for this tracking key.</p>
                                     </details>
                                   )}
                                   {isMarketerEmbedMode && (
