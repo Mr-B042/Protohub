@@ -210,6 +210,13 @@ type ManagerQueueActionType = "reviewed_queue" | "nudged_rep" | "escalated_order
 type NotificationFilter = "All" | "Unread";
 type InventoryView = "dashboard" | "combos" | "history" | "pricing" | "packages" | "stockcount" | "state-stock" | "agent-hubs";
 type EmbedCodeTab = "Direct Link" | "HTML/Iframe" | "Elementor";
+type EmbedMetaTrackingMode = "landing_page" | "protohub" | "hybrid" | "off";
+type EmbedMetaTrackingSettings = {
+  mode: EmbedMetaTrackingMode;
+  pixelId: string;
+  trackingKey: string;
+  testMode: boolean;
+};
 type StockMovementType = "Stock Added" | "Distributed to Agent" | "Order Fulfilled" | "Return" | "Correction" | "Waybill Out" | "Waybill In" | "Status Reversal";
 type InventoryHistoryMovementDrill = "" | "returned" | "transfer_out" | "restored" | "write_off";
 type WaybillStatus = "In Transit" | "Received" | "Returned" | "Cancelled" | "Defective" | "Missing";
@@ -1612,6 +1619,18 @@ const userStatuses: UserStatus[] = ["All Status", "Active", "Inactive"];
 const roundRobinTabs: RoundRobinTab[] = ["Active Sequence", "Temporarily Excluded"];
 const embedTabs: EmbedTab[] = ["Create Order Form", "Extra Offers", "Generate"];
 const embedCodeTabs: EmbedCodeTab[] = ["Direct Link", "HTML/Iframe", "Elementor"];
+const defaultEmbedMetaTrackingSettings: EmbedMetaTrackingSettings = {
+  mode: "landing_page",
+  pixelId: "",
+  trackingKey: "",
+  testMode: false
+};
+const embedMetaTrackingModeOptions: Array<{ value: EmbedMetaTrackingMode; label: string; hint: string }> = [
+  { value: "landing_page", label: "Landing page only", hint: "Use the Pixel/CAPI already installed on the landing page. Safest default." },
+  { value: "protohub", label: "Protohub app tracking", hint: "Protohub fires browser Pixel + backend CAPI from the order form." },
+  { value: "hybrid", label: "Hybrid dedupe", hint: "Landing page and Protohub can both fire using shared event IDs for dedupe." },
+  { value: "off", label: "Off", hint: "Do not fire Protohub Meta browser/CAPI tracking from this link." }
+];
 const stockMovementTypes: ("All Types" | StockMovementType)[] = ["All Types", "Stock Added", "Distributed to Agent", "Order Fulfilled", "Return", "Correction", "Waybill Out", "Waybill In", "Status Reversal"];
 const repConsoleTabs: RepConsoleTab[] = ["Dashboard", "Products", "Orders", "Scheduled Deliveries", "Abandoned Carts", "Customers", "Leaderboard", "Notifications", "Settings"];
 const repOrderStatusTabs: RepOrderStatusTab[] = ["All Orders", "Pending", "Confirmed", "Follow-up"];
@@ -8246,6 +8265,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [embedRedirectUrls, setEmbedRedirectUrls] = useState<Record<string, string>>({});
   const [embedPackageSetsByProduct, setEmbedPackageSetsByProduct] = useState<Record<string, string>>({});
   const [embedCodeTabsByProduct, setEmbedCodeTabsByProduct] = useState<Record<string, EmbedCodeTab>>({});
+  const [embedMetaTrackingByProduct, setEmbedMetaTrackingByProduct] = useState<Record<string, EmbedMetaTrackingSettings>>({});
   const [marketingLinkVariants, setMarketingLinkVariants] = useState<MarketingLinkVariant[]>([]);
   const [marketingVariantDrafts, setMarketingVariantDrafts] = useState<Record<string, MarketingVariantDraft>>({});
   const [marketingVariantSavingProductIds, setMarketingVariantSavingProductIds] = useState<string[]>([]);
@@ -10062,6 +10082,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }).format(amount);
   const productEmbedCurrency = (product: Product | undefined) => (product ? embedCurrencyByProduct[product.id] ?? "NGN" : "NGN");
   const productEmbedRedirect = (product: Product | undefined) => (product ? embedRedirectUrls[product.id] ?? "" : "");
+  const productEmbedMetaTracking = (product: Product | undefined): EmbedMetaTrackingSettings => (
+    product ? { ...defaultEmbedMetaTrackingSettings, ...(embedMetaTrackingByProduct[product.id] ?? {}) } : defaultEmbedMetaTrackingSettings
+  );
+  const updateProductEmbedMetaTracking = (productId: string, patch: Partial<EmbedMetaTrackingSettings>) => {
+    setEmbedMetaTrackingByProduct((value) => ({
+      ...value,
+      [productId]: { ...defaultEmbedMetaTrackingSettings, ...(value[productId] ?? {}), ...patch }
+    }));
+  };
   const productEmbedPackageSet = (product: Product | undefined) => {
     if (!product) return DEFAULT_PACKAGE_SET_LABEL;
     const options = packageSetOptionsForProduct(product, true);
@@ -10136,6 +10165,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const redirect = (redirectOverride ?? productEmbedRedirect(product)).trim();
     if (redirect) {
       params.set("redirect_url", redirect);
+    }
+    const metaTracking = productEmbedMetaTracking(product);
+    if (metaTracking.mode !== "landing_page") {
+      params.set("tracking_mode", metaTracking.mode);
+    }
+    const usesProtohubMetaTracking = metaTracking.mode === "protohub" || metaTracking.mode === "hybrid";
+    if (usesProtohubMetaTracking) {
+      const metaPixelId = metaTracking.pixelId.trim();
+      if (metaPixelId) {
+        params.set("meta_pixel_id", metaPixelId);
+      }
+      const metaTrackingKey = metaTracking.trackingKey.trim();
+      if (metaTrackingKey) {
+        params.set("meta_tracking_key", metaTrackingKey);
+      }
+      if (metaTracking.testMode) {
+        params.set("meta_test", "1");
+      }
     }
     if (previewMode) {
       params.set("preview", "1");
@@ -46930,6 +46977,9 @@ ${waybillLineItems(w).length > 1
                         const packageSetOptions = packageSetOptionsForProduct(product, true);
                         const selectedPackageSet = productEmbedPackageSet(product);
                         const redirectUrl = productEmbedRedirect(product);
+                        const metaTracking = productEmbedMetaTracking(product);
+                        const selectedMetaMode = embedMetaTrackingModeOptions.find((option) => option.value === metaTracking.mode) ?? embedMetaTrackingModeOptions[0];
+                        const usesProtohubMetaTracking = metaTracking.mode === "protohub" || metaTracking.mode === "hybrid";
                         const marketerLinkReady = !isMarketerEmbedMode || Boolean(primaryMarketerEmbedTag);
                         const directUrlValue = marketerLinkReady ? embedUrl : "Owner must assign your marketer tag first";
                         const productMarketingVariants = marketingVariantsForProduct(product.id);
@@ -46986,6 +47036,71 @@ ${waybillLineItems(w).length > 1
                                     <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200" value={redirectUrl} onChange={(e) => setEmbedRedirectUrls((v) => ({ ...v, [product.id]: e.target.value }))} placeholder="https://yourwebsite.com/thank-you" />
                                     <span className="text-xs text-gray-400">After a successful order, send the customer to this page. Leave empty to show the built-in success screen.</span>
                                   </label>
+                                  {!isMarketerEmbedMode && (
+                                    <section className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
+                                      <div className="flex flex-wrap items-start justify-between gap-3">
+                                        <div>
+                                          <p className="m-0 flex items-center gap-2 text-sm font-bold text-slate-900"><ShieldCheck className="h-4 w-4 text-[#1F8FE0]" /> Meta Pixel / CAPI setup</p>
+                                          <p className="m-0 mt-1 text-xs text-slate-500">Optional. Controls what this generated link tells Protohub to do for Meta tracking.</p>
+                                        </div>
+                                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${metaTracking.testMode ? "bg-amber-100 text-amber-800" : "bg-white text-slate-500 border border-slate-200"}`}>
+                                          {metaTracking.testMode ? "Test mode ON" : "Live mode"}
+                                        </span>
+                                      </div>
+                                      <label className="flex flex-col gap-1">
+                                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Tracking mode</span>
+                                        <select
+                                          className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 w-full"
+                                          value={metaTracking.mode}
+                                          onChange={(e) => updateProductEmbedMetaTracking(product.id, { mode: e.target.value as EmbedMetaTrackingMode })}
+                                        >
+                                          {embedMetaTrackingModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                        </select>
+                                        <span className="text-xs text-slate-500">{selectedMetaMode.hint}</span>
+                                      </label>
+                                      <div className="grid gap-3 md:grid-cols-2">
+                                        <label className="flex flex-col gap-1">
+                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meta Pixel ID <span className="font-normal normal-case text-slate-400">(optional)</span></span>
+                                          <input
+                                            className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                            value={metaTracking.pixelId}
+                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { pixelId: e.target.value })}
+                                            placeholder="e.g. 1264176945876165"
+                                            disabled={!usesProtohubMetaTracking}
+                                          />
+                                        </label>
+                                        <label className="flex flex-col gap-1">
+                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Server tracking key <span className="font-normal normal-case text-slate-400">(optional)</span></span>
+                                          <input
+                                            className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                            value={metaTracking.trackingKey}
+                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { trackingKey: e.target.value })}
+                                            placeholder="e.g. edge_brusher_default"
+                                            disabled={!usesProtohubMetaTracking}
+                                          />
+                                        </label>
+                                      </div>
+                                      <label className={`flex items-start gap-3 rounded-lg border px-3 py-2 ${usesProtohubMetaTracking ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}>
+                                        <input
+                                          type="checkbox"
+                                          className="mt-1 h-4 w-4 rounded border-amber-300 text-[#1F8FE0] focus:ring-[#1F8FE0] disabled:cursor-not-allowed disabled:opacity-50"
+                                          checked={metaTracking.testMode}
+                                          onChange={(e) => updateProductEmbedMetaTracking(product.id, { testMode: e.target.checked })}
+                                          disabled={!usesProtohubMetaTracking}
+                                        />
+                                        <span>
+                                          <span className={`block text-sm font-bold ${usesProtohubMetaTracking ? "text-amber-900" : "text-slate-600"}`}>Add test mode to this link</span>
+                                          <span className={`block text-xs ${usesProtohubMetaTracking ? "text-amber-800" : "text-slate-500"}`}>{usesProtohubMetaTracking ? <>Adds <code className="rounded bg-white/70 px-1">meta_test=1</code>. Browser events log instead of firing, and backend CAPI uses dry-run/test safety.</> : "Switch to Protohub app tracking or Hybrid to test Protohub-fired events."}</span>
+                                        </span>
+                                      </label>
+                                      <div className="grid gap-2 text-[11px] font-semibold text-slate-500 sm:grid-cols-2">
+                                        <span className="rounded-lg bg-white px-3 py-2 border border-slate-200">Browser duplicate protection: on</span>
+                                        <span className="rounded-lg bg-white px-3 py-2 border border-slate-200">Backend CAPI duplicate protection: on</span>
+                                        <span className="rounded-lg bg-white px-3 py-2 border border-slate-200">Event ID shared for dedupe</span>
+                                        <span className="rounded-lg bg-white px-3 py-2 border border-slate-200">CAPI token stays server-side</span>
+                                      </div>
+                                    </section>
+                                  )}
                                   <label className="flex flex-col gap-1">
                                     <span className="text-sm font-semibold text-gray-700">Select Currency</span>
                                     <select className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 w-full" value={selectedCurrencyCode} onChange={(e) => setEmbedCurrencyByProduct((v) => ({ ...v, [product.id]: e.target.value as ProductCurrencyCode }))}>
@@ -47089,6 +47204,49 @@ ${waybillLineItems(w).length > 1
                                     </label>
                                     <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed" disabled={productSyncing} onClick={() => { void generateEmbedUrl(product); }}><RefreshCw className="w-3 h-3" /> {productSyncing ? "Verifying..." : "Refresh"}</button>
                                   </div>
+                                  {!isMarketerEmbedMode && (
+                                    <details className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                                      <summary className="cursor-pointer text-sm font-bold text-slate-800">Meta Pixel / CAPI setup: {selectedMetaMode.label}{metaTracking.testMode ? " · test" : ""}</summary>
+                                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                                        <label className="flex flex-col gap-1">
+                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Tracking mode</span>
+                                          <select
+                                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                                            value={metaTracking.mode}
+                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { mode: e.target.value as EmbedMetaTrackingMode })}
+                                          >
+                                            {embedMetaTrackingModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                          </select>
+                                          <span className="text-xs text-slate-500">{selectedMetaMode.hint}</span>
+                                        </label>
+                                        <label className="flex flex-col gap-1">
+                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meta Pixel ID</span>
+                                          <input
+                                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                            value={metaTracking.pixelId}
+                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { pixelId: e.target.value })}
+                                            placeholder="1264176945876165"
+                                            disabled={!usesProtohubMetaTracking}
+                                          />
+                                        </label>
+                                        <label className="flex flex-col gap-1">
+                                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Server tracking key</span>
+                                          <input
+                                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                            value={metaTracking.trackingKey}
+                                            onChange={(e) => updateProductEmbedMetaTracking(product.id, { trackingKey: e.target.value })}
+                                            placeholder="edge_brusher_default"
+                                            disabled={!usesProtohubMetaTracking}
+                                          />
+                                        </label>
+                                        <label className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold ${usesProtohubMetaTracking ? "border-amber-200 bg-amber-50 text-amber-900" : "border-slate-200 bg-white text-slate-500"}`}>
+                                          <input type="checkbox" className="h-4 w-4 rounded border-amber-300 text-[#1F8FE0] focus:ring-[#1F8FE0] disabled:cursor-not-allowed disabled:opacity-50" checked={metaTracking.testMode} onChange={(e) => updateProductEmbedMetaTracking(product.id, { testMode: e.target.checked })} disabled={!usesProtohubMetaTracking} />
+                                          Add <code className="rounded bg-white/70 px-1">meta_test=1</code>
+                                        </label>
+                                      </div>
+                                      <p className="m-0 mt-3 text-xs text-slate-500">Change anything here, then click Refresh above or copy the updated code. Backend CAPI still needs its server token/config in Railway env.</p>
+                                    </details>
+                                  )}
                                   {isMarketerEmbedMode && (
                                     <div className="space-y-3 pt-3 border-t border-gray-100">
                                       <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-3">
