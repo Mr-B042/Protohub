@@ -623,6 +623,7 @@ type ProductPackage = {
   packageComponents?: PackageComponent[];
 };
 type PackagePageTab = "Packages" | "Add-on Performance";
+type PackageCompanionSyncScope = "current_product" | "all_products";
 type AddOnPerformanceRange = "all" | "30d" | "month" | "week";
 type PackBonusRule = {
   id: string;
@@ -6940,6 +6941,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageImageSyncToTiers, setPackageImageSyncToTiers] = useState(false);
   const [packageFreeGiftSyncToTiers, setPackageFreeGiftSyncToTiers] = useState(false);
   const [packageCompanionSyncToPackages, setPackageCompanionSyncToPackages] = useState(false);
+  const [packageCompanionSyncScope, setPackageCompanionSyncScope] = useState<PackageCompanionSyncScope>("current_product");
   const packageImageUploadTokenRef = useRef(0);
   const companionGalleryUploadTokenRef = useRef(0);
   const packageFormHydrationKeyRef = useRef("");
@@ -9318,12 +9320,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const packageFreeGiftCount = packageComponents.filter((component) => component.productId && component.isFreeGift).length;
   const canSyncPackageFreeGiftsToComboTiers =
     currentPackageFormIsComboLike && packageFreeGiftCount > 0 && packageGallerySyncTargetCount > 0;
-  const packageCompanionSyncTargetCount = selectedProduct
-    ? selectedProduct.packages.filter((pkg) =>
-        !(modal === "editPackage" && selectedPackage && pkg.id === selectedPackage.id) &&
+  const packageCompanionSyncTargetEntries = products.flatMap((product) => {
+    if (isTemporaryProductId(product.id)) return [];
+    if (packageCompanionSyncScope === "current_product" && product.id !== selectedProduct?.id) return [];
+    if (packageCompanionSyncScope === "all_products" && product.active === false) return [];
+    return product.packages
+      .filter((pkg) =>
+        !(modal === "editPackage" && selectedProduct && selectedPackage && product.id === selectedProduct.id && pkg.id === selectedPackage.id) &&
         !isTemporaryPackageId(pkg.id)
-      ).length
-    : 0;
+      )
+      .map((pkg) => ({ product, pkg }));
+  });
+  const packageCompanionSyncTargetCount = packageCompanionSyncTargetEntries.length;
+  const packageCompanionSyncTargetProductCount = new Set(packageCompanionSyncTargetEntries.map((entry) => entry.product.id)).size;
   const packageCompanionSyncOfferCount = packageCompanions.filter((companion) => companion.productId).length;
   const canSyncPackageCompanionsToPackages = packageCompanionSyncTargetCount > 0 && packageCompanionSyncOfferCount > 0;
   useEffect(() => {
@@ -10039,6 +10048,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageImageSyncToTiers(false);
     setPackageFreeGiftSyncToTiers(false);
     setPackageCompanionSyncToPackages(false);
+    setPackageCompanionSyncScope("current_product");
   }, [modal, selectedPackage, selectedProductId]);
   useEffect(() => {
     if (modal !== "recordRemittance" || !remittanceTargetOrderId) {
@@ -23371,6 +23381,7 @@ ${waybillLineItems(w).length > 1
     setPackageImageSyncToTiers(false);
     setPackageFreeGiftSyncToTiers(false);
     setPackageCompanionSyncToPackages(false);
+    setPackageCompanionSyncScope("current_product");
     setSelectedPackageId("");
   };
 
@@ -23414,6 +23425,7 @@ ${waybillLineItems(w).length > 1
     setPackageImageSyncToTiers(false);
     setPackageFreeGiftSyncToTiers(false);
     setPackageCompanionSyncToPackages(false);
+    setPackageCompanionSyncScope("current_product");
     if (!productId) return;
     openInventoryEditPackageRoute(productId, item.id);
   };
@@ -23557,92 +23569,127 @@ ${waybillLineItems(w).length > 1
     return targetPackages.length;
   };
 
-  const packageCompanionSyncKey = (companion: PackageCompanion) =>
+  const packageCompanionSignature = (companion: PackageCompanion) =>
     [
       companion.productId,
       companion.packageId ?? "",
-      companion.placement ?? "inline"
+      companion.placement ?? "inline",
+      companion.headline?.trim() ?? "",
+      companion.pricingMode,
+      companion.fixedPrice ?? "",
+      companion.quantity,
+      (companion.bundleComponents ?? [])
+        .map(normalisePackageComponent)
+        .filter((component) => component.productId)
+        .map((component) => [
+          component.productId,
+          component.quantity,
+          component.isFreeGift ? "gift" : "paid",
+          component.hiddenFromCustomer ? "hidden" : "shown"
+        ].join(":"))
+        .sort()
+        .join("|")
     ].join("::");
+
+  const packageCompanionSyncKeys = (companion: PackageCompanion) => [
+    companion.companionId?.trim() || "",
+    packageCompanionSignature(companion)
+  ].filter(Boolean);
 
   const syncPackageCompanionsToSiblingPackages = async (
     productId: string,
     sourcePackageId: string,
     sourceCompanions: PackageCompanion[],
-    productSnapshot: Product
+    productSnapshots: Product[],
+    syncScope: PackageCompanionSyncScope
   ) => {
     const sourceOffers = sourceCompanions
       .map(normalisePackageCompanion)
       .filter((companion) => companion.productId);
     if (sourceOffers.length === 0) return 0;
 
-    const targetPackages = productSnapshot.packages.filter((pkg) => pkg.id !== sourcePackageId && !isTemporaryPackageId(pkg.id));
+    const targetPackages = productSnapshots.flatMap((product) => {
+      if (isTemporaryProductId(product.id)) return [];
+      if (syncScope === "current_product" && product.id !== productId) return [];
+      if (syncScope === "all_products" && product.active === false) return [];
+      return product.packages
+        .filter((pkg) => !(product.id === productId && pkg.id === sourcePackageId) && !isTemporaryPackageId(pkg.id))
+        .map((pkg) => ({ productId: product.id, pkg }));
+    });
     if (targetPackages.length === 0) return 0;
 
-    const companionPatchByPackageId = new Map(
-      targetPackages.map((pkg) => {
+    const companionPatchByPackageId = new Map<string, PackageCompanion[]>(
+      targetPackages.map(({ productId: targetProductId, pkg }) => {
         const existing = (pkg.companionProducts ?? []).map(normalisePackageCompanion);
-        const existingIndexByKey = new Map(existing.map((companion, index) => [packageCompanionSyncKey(companion), index]));
+        const existingIndexByKey = new Map<string, number>();
+        existing.forEach((companion, index) => {
+          packageCompanionSyncKeys(companion).forEach((key) => existingIndexByKey.set(key, index));
+        });
         const nextCompanions = existing.map(normalisePackageCompanion);
 
         sourceOffers.forEach((offer) => {
-          const key = packageCompanionSyncKey(offer);
-          const existingIndex = existingIndexByKey.get(key);
+          const existingIndex = packageCompanionSyncKeys(offer)
+            .map((key) => existingIndexByKey.get(key))
+            .find((index): index is number => typeof index === "number");
           if (typeof existingIndex === "number") {
             const current = nextCompanions[existingIndex];
             nextCompanions[existingIndex] = normalisePackageCompanion({
               ...offer,
-              companionId: current.companionId,
+              companionId: current.companionId || offer.companionId,
               active: current.active !== false
             });
             return;
           }
           nextCompanions.push(normalisePackageCompanion({
             ...offer,
-            companionId: makeCompanionId(),
+            companionId: offer.companionId || makeCompanionId(),
             active: false
           }));
         });
 
-        return [pkg.id, nextCompanions] as const;
+        return [`${targetProductId}:${pkg.id}`, nextCompanions] as const;
       })
     );
 
     const savedSiblings = await Promise.all(
-      targetPackages.map((pkg) =>
-        productsApi.updatePackage(productId, pkg.id, {
-          companionProducts: companionPatchByPackageId.get(pkg.id) ?? []
-        })
-      )
+      targetPackages.map(async ({ productId: targetProductId, pkg }) => {
+        const key = `${targetProductId}:${pkg.id}`;
+        const savedPackage = await productsApi.updatePackage(targetProductId, pkg.id, {
+          companionProducts: companionPatchByPackageId.get(key) ?? []
+        });
+        return { productId: targetProductId, packageId: pkg.id, savedPackage: savedPackage as ProductPackage };
+      })
     );
-    const savedById = new Map(savedSiblings.map((pkg: ProductPackage) => [pkg.id, pkg]));
-    const targetIdSet = new Set(targetPackages.map((pkg) => pkg.id));
+    const savedByKey = new Map<string, ProductPackage>(savedSiblings.map((entry) => [`${entry.productId}:${entry.packageId}`, entry.savedPackage]));
+    const targetKeySet = new Set<string>(targetPackages.map(({ productId: targetProductId, pkg }) => `${targetProductId}:${pkg.id}`));
     setProducts((prev) =>
-      prev.map((product) =>
-        product.id !== productId
-          ? product
-          : {
-              ...product,
-              packages: product.packages.map((pkg) => {
-                if (!targetIdSet.has(pkg.id)) return pkg;
-                const savedPackage = savedById.get(pkg.id);
-                const companionProducts = savedPackage?.companionProducts ?? companionPatchByPackageId.get(pkg.id) ?? pkg.companionProducts;
-                if (!savedPackage) return { ...pkg, companionProducts };
-                const savedImages = savedPackageCarouselImagePatch(savedPackage, pkg);
-                return {
-                  ...pkg,
-                  ...savedPackage,
-                  packageComponents: savedPackage.packageComponents ?? pkg.packageComponents,
-                  companionProducts,
-                  stateFilterMode: savedPackage.stateFilterMode ?? pkg.stateFilterMode,
-                  stateRestrictions: savedPackage.stateRestrictions ?? pkg.stateRestrictions,
-                  requiresStateStock: savedPackage.requiresStateStock ?? pkg.requiresStateStock,
-                  featuredComboCard: savedPackage.featuredComboCard ?? pkg.featuredComboCard,
-                  imageUrl: savedImages.imageUrl,
-                  imageUrls: savedImages.imageUrls
-                };
-              })
-            }
-      )
+      prev.map((product) => {
+        const productHasTarget = product.packages.some((pkg) => targetKeySet.has(`${product.id}:${pkg.id}`));
+        if (!productHasTarget) return product;
+        return {
+          ...product,
+          packages: product.packages.map((pkg) => {
+            const key = `${product.id}:${pkg.id}`;
+            if (!targetKeySet.has(key)) return pkg;
+            const savedPackage = savedByKey.get(key);
+            const companionProducts = savedPackage?.companionProducts ?? companionPatchByPackageId.get(key) ?? pkg.companionProducts;
+            if (!savedPackage) return { ...pkg, companionProducts };
+            const savedImages = savedPackageCarouselImagePatch(savedPackage, pkg);
+            return {
+              ...pkg,
+              ...savedPackage,
+              packageComponents: savedPackage.packageComponents ?? pkg.packageComponents,
+              companionProducts,
+              stateFilterMode: savedPackage.stateFilterMode ?? pkg.stateFilterMode,
+              stateRestrictions: savedPackage.stateRestrictions ?? pkg.stateRestrictions,
+              requiresStateStock: savedPackage.requiresStateStock ?? pkg.requiresStateStock,
+              featuredComboCard: savedPackage.featuredComboCard ?? pkg.featuredComboCard,
+              imageUrl: savedImages.imageUrl,
+              imageUrls: savedImages.imageUrls
+            };
+          })
+        };
+      })
     );
     return targetPackages.length;
   };
@@ -23862,7 +23909,7 @@ ${waybillLineItems(w).length > 1
         if (count > 0) showToast(`Free gift copied to ${count} other combo tier${count === 1 ? "" : "s"}.`);
       }
       if (shouldSyncPackageCompanionsToPackages) {
-        const count = await syncPackageCompanionsToSiblingPackages(_pkgProdId, sourcePackageId, normalisedCopyableCompanions, productSnapshot);
+        const count = await syncPackageCompanionsToSiblingPackages(_pkgProdId, sourcePackageId, normalisedCopyableCompanions, products, packageCompanionSyncScope);
         if (count > 0) showToast(`Extra offer setup copied to ${count} other package${count === 1 ? "" : "s"}. New copies stay hidden until you turn them on.`);
       }
     };
@@ -56300,8 +56347,22 @@ ${waybillLineItems(w).length > 1
                       {packageCompanionSyncOfferCount === 0
                         ? "Add at least one extra offer first, then you can copy the setup across."
                         : packageCompanionSyncTargetCount > 0
-                          ? `When you save, ${packageCompanionSyncOfferCount} offer row${packageCompanionSyncOfferCount === 1 ? "" : "s"} will copy to ${packageCompanionSyncTargetCount} other package${packageCompanionSyncTargetCount === 1 ? "" : "s"}. New copies stay hidden so you can tweak each package before making them live.`
+                          ? `When you save, ${packageCompanionSyncOfferCount} offer row${packageCompanionSyncOfferCount === 1 ? "" : "s"} will copy to ${packageCompanionSyncTargetCount} package${packageCompanionSyncTargetCount === 1 ? "" : "s"} across ${packageCompanionSyncTargetProductCount} product${packageCompanionSyncTargetProductCount === 1 ? "" : "s"}. New copies stay hidden so you can tweak each package before making them live.`
                           : "No other saved packages are available yet. Create another package first, then copy the offer setup across."}
+                    </span>
+                  </label>
+                  <label className="flex flex-col gap-1 rounded-lg border border-violet-100 bg-white px-3 py-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-violet-700">Copy target</span>
+                    <select
+                      className="border border-violet-100 rounded-md px-2 py-1.5 text-sm bg-violet-50/40 font-semibold text-gray-900"
+                      value={packageCompanionSyncScope}
+                      onChange={(event) => setPackageCompanionSyncScope(event.target.value as PackageCompanionSyncScope)}
+                    >
+                      <option value="current_product">Only other packages on this product</option>
+                      <option value="all_products">All packages on all active products</option>
+                    </select>
+                    <span className="text-[10px] text-gray-500">
+                      Use all products when the same add-on/combo offer should be available everywhere, then edit or turn on each copy later.
                     </span>
                   </label>
                   {packageCompanions.length === 0 ? (
