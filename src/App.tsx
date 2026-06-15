@@ -30479,8 +30479,8 @@ ${waybillLineItems(w).length > 1
               {repBonusCoach?.snapshot.ordersNeededForNextTier
                 ? `${repBonusCoach.snapshot.ordersNeededForNextTier} more delivery${repBonusCoach.snapshot.ordersNeededForNextTier === 1 ? "" : "ies"} unlock the next bonus tier this week.`
                 : repBonusCoach?.snapshot.deliveriesNeededForRateTarget
-                  ? `${repBonusCoach.snapshot.deliveriesNeededForRateTarget} more successful delivery${repBonusCoach.snapshot.deliveriesNeededForRateTarget === 1 ? "" : "ies"} push you to the next delivery-rate gate.`
-                  : "There is no higher weekly gate blocking extra payout right now."}
+                  ? `${repBonusCoach.snapshot.deliveriesNeededForRateTarget} more successful delivery${repBonusCoach.snapshot.deliveriesNeededForRateTarget === 1 ? "" : "ies"} push you to the next weekly delivery-rate bonus target.`
+                  : "There is no higher weekly delivery-rate bonus target right now."}
             </p>
             <div className="mt-3 h-2 rounded-full bg-violet-100 overflow-hidden">
               <div
@@ -31226,7 +31226,7 @@ ${waybillLineItems(w).length > 1
                       <p className="mt-1 text-xs text-amber-800">
                         {repBonusCoach.snapshot.nextDeliveryRateTarget
                           ? `Next target: ${repBonusCoach.snapshot.nextDeliveryRateTarget}%`
-                          : "No higher delivery-rate gate blocking bonus right now."}
+                          : "No higher weekly delivery-rate bonus target right now."}
                       </p>
                     </article>
                     <article className="rounded-xl border border-violet-100 bg-violet-50 p-4">
@@ -59266,7 +59266,7 @@ ${waybillLineItems(w).length > 1
                     <div className="flex items-center justify-between">
                       <div>
                         <strong className="text-sm">5. Weekly Delivery Rate Bonus</strong>
-                        <p className="text-[11px] text-gray-500">Unlock with min order count below.</p>
+                        <p className="text-[11px] text-gray-500">Payout tiers for weekly delivery-rate bonuses, such as 70/80/90%.</p>
                       </div>
                       <button className="!min-h-0 text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, deliveryRateBonuses: [...c.deliveryRateBonuses, { id: makeBonusRuleId(), ratePercent: 60, amount: 0 }] }))}>+ Add</button>
                     </div>
@@ -59286,7 +59286,7 @@ ${waybillLineItems(w).length > 1
                       ))}
                     </div>
                     <label className="text-xs flex items-center gap-2 pt-1">
-                      <span className="text-gray-600">Poor delivery rate threshold (%) — only base bonus paid below this</span>
+                      <span className="text-gray-600">Base-only protection gate (%) — only base bonus paid below this</span>
                       <input className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={cfg.poorDeliveryRatePercent} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, poorDeliveryRatePercent: Number(e.target.value) || 0 }))} />
                     </label>
                   </section>

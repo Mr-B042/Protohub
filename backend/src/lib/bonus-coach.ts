@@ -186,7 +186,7 @@ const nextPerformanceTier = (structure: PayStructure | null, deliveredCount: num
   };
 };
 
-const nextDeliveryRateGoal = (
+export const nextDeliveryRateBonusGoal = (
   productMap: Map<string, Required<ProductBonusConfig>>,
   relevantProductIds: string[],
   deliveredCount: number,
@@ -195,12 +195,8 @@ const nextDeliveryRateGoal = (
   const targets = Array.from(new Set(
     relevantProductIds.flatMap((productId) => {
       const cfg = productMap.get(productId) ?? defaultBonusConfig();
-      return [
-        cfg.poorDeliveryRatePercent,
-        cfg.upgradeRequiresMinDeliveryRate,
-        cfg.aovRequiresMinDeliveryRate,
-        ...cfg.deliveryRateBonuses.map((entry) => entry.ratePercent)
-      ]
+      return cfg.deliveryRateBonuses
+        .map((entry) => entry.ratePercent)
         .map((value) => Number(value ?? 0))
         .filter((value) => value > 0 && value <= 100);
     })
@@ -386,7 +382,7 @@ export const buildRepBonusSnapshot = async (
       .map((order) => order.product_id)
       .filter((value): value is string => !!value)
   ));
-  const { nextDeliveryRateTarget, deliveriesNeededForRateTarget } = nextDeliveryRateGoal(
+  const { nextDeliveryRateTarget, deliveriesNeededForRateTarget } = nextDeliveryRateBonusGoal(
     productMap,
     relevantProductIds,
     repStats.delivered,
