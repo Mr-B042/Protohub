@@ -56106,10 +56106,10 @@ ${waybillLineItems(w).length > 1
                         />
                       </label>
                     </div>
-                    {packageImageUrls.length > 0 && (
-                      <>
-                        <p className="text-[11px] text-amber-800/80 -mt-1">Drag any image to reorder. The first image is your main one — shown on the order form and as the product thumbnail.</p>
-                        <DndContext sensors={packageImageSortableSensors} collisionDetection={closestCenter} onDragEnd={handlePackageImageDragEnd}>
+	                    {packageImageUrls.length > 0 && (
+	                      <>
+	                        <p className="text-[11px] text-amber-800/80 -mt-1">Drag any image to reorder. The first image is your main one — shown on the order form and as the product thumbnail.</p>
+	                        <DndContext sensors={packageImageSortableSensors} collisionDetection={closestCenter} onDragEnd={handlePackageImageDragEnd}>
                           <SortableContext items={packageImageUrls} strategy={rectSortingStrategy}>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                               {packageImageUrls.map((url, index) => (
@@ -56128,13 +56128,113 @@ ${waybillLineItems(w).length > 1
                             </div>
                           </SortableContext>
                         </DndContext>
-                      </>
-                    )}
-                  </div>
-                </section>
-                <section className="border border-blue-100 bg-blue-50/60 rounded-xl p-4 space-y-3">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div>
+	                      </>
+	                    )}
+	                  </div>
+	                </section>
+	                <section className="border border-slate-200 bg-white rounded-xl p-4">
+	                  {(() => {
+	                    const previewImage = normalisePackageImageUrls(packageImageUrls)[0] ?? "";
+	                    const paidComponents = packageComponents.filter((component) => component.productId && !component.isFreeGift);
+	                    const freeGiftCount = packageComponents.filter((component) => component.productId && component.isFreeGift).length;
+	                    const componentSummary = summarizePackageComponents(packageComponents, products);
+	                    const packageQty = Math.max(1, Number(packageQuantity) || 1);
+	                    const regularTotal = paidComponents.length > 0
+	                      ? paidComponents.reduce((sum, component) => {
+	                          const item = products.find((product) => product.id === component.productId);
+	                          const itemPrice = item ? primaryPricing(item)?.sellingPrice ?? 0 : 0;
+	                          return sum + itemPrice * Math.max(1, Number(component.quantity) || 1);
+	                        }, 0)
+	                      : (primaryPricing(selectedProduct)?.sellingPrice ?? 0) * packageQty;
+	                    const packagePriceValue = Math.max(0, Number(packagePrice) || 0);
+	                    const savings = Math.max(0, regularTotal - packagePriceValue);
+	                    const discount = regularTotal > packagePriceValue && regularTotal > 0
+	                      ? Math.round((savings / regularTotal) * 100)
+	                      : 0;
+	                    const packageUnit = packageUnitFor(
+	                      {
+	                        unitSingular: packageUnitSingular || undefined,
+	                        unitPlural: packageUnitPlural || undefined
+	                      },
+	                      packageQty
+	                    );
+	                    const detailText = packageDescription.trim() || componentSummary || `${packageQty} ${packageUnit} in this package`;
+	                    const bundleCount = Math.max(
+	                      packageCompanions.filter((companion) => companion.productId).length,
+	                      paidComponents.length,
+	                      freeGiftCount,
+	                      1
+	                    );
+	                    return (
+	                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr),minmax(280px,360px)] lg:items-start">
+	                        <div className="space-y-2">
+	                          <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-600">
+	                            <Eye className="h-3.5 w-3.5" />
+	                            Customer visual
+	                          </div>
+	                          <h4 className="m-0 text-sm font-bold text-slate-950">Package card preview</h4>
+	                        </div>
+	                        <div className="mx-auto w-full max-w-[360px] rounded-[24px] border-[3px] border-slate-300 bg-slate-50 p-4 shadow-sm">
+	                          <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
+	                            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+	                              <h5 className="m-0 min-w-0 flex-1 break-words text-2xl font-black leading-[1.05] tracking-normal text-slate-950">
+	                                {packageName.trim() || selectedProduct.name}
+	                              </h5>
+	                              <span className="shrink-0 rounded-full bg-amber-100 px-4 py-2 text-[12px] font-black uppercase tracking-normal text-orange-700">
+	                                Flash sale
+	                              </span>
+	                            </div>
+	                            <p className="m-0 text-base leading-7 text-slate-500">
+	                              {detailText}
+	                            </p>
+	                            <div className="my-5 overflow-hidden rounded-[18px] border border-slate-200 bg-slate-100">
+	                              {previewImage ? (
+	                                <img
+	                                  src={previewImage}
+	                                  alt={`${packageName.trim() || selectedProduct.name} preview`}
+	                                  className="block aspect-square w-full object-contain"
+	                                />
+	                              ) : (
+	                                <div className="grid aspect-square place-items-center px-6 text-center text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+	                                  Add package image
+	                                </div>
+	                              )}
+	                            </div>
+	                            <div className="space-y-2">
+	                              <strong className="block text-2xl font-black leading-tight text-slate-950">
+	                                {packageQty}{packageUnit ? packageUnit : "pcs"} for {formatProductMoney(packagePriceValue, packageCurrency)}
+	                              </strong>
+	                              {savings > 0 && (
+	                                <p className="m-0 flex flex-wrap items-center gap-2 text-sm font-black text-emerald-700">
+	                                  <span className="font-semibold text-slate-400 line-through">{formatProductMoney(regularTotal, packageCurrency)}</span>
+	                                  <span>Save {formatProductMoney(savings, packageCurrency)}</span>
+	                                  {discount > 0 && <span>· {discount}% off</span>}
+	                                </p>
+	                              )}
+	                              <p className="m-0 text-sm font-black leading-6 text-orange-700">
+	                                Special price only when added with the main offer
+	                              </p>
+	                              <p className="m-0 text-[12px] font-black uppercase tracking-[0.12em] text-slate-500">
+	                                {bundleCount} bundle choice{bundleCount === 1 ? "" : "s"} inside
+	                              </p>
+	                            </div>
+	                            <div className="mt-5 text-center text-3xl font-light leading-none text-orange-500">↓</div>
+	                            <button
+	                              type="button"
+	                              className="!min-h-0 mt-3 w-full rounded-full bg-blue-600 px-5 py-4 text-base font-black text-white shadow-sm"
+	                              tabIndex={-1}
+	                            >
+	                              Choose your bundle
+	                            </button>
+	                          </div>
+	                        </div>
+	                      </div>
+	                    );
+	                  })()}
+	                </section>
+	                <section className="border border-blue-100 bg-blue-50/60 rounded-xl p-4 space-y-3">
+	                  <div className="flex items-start justify-between gap-3 flex-wrap">
+	                    <div>
                       <h4 className="text-sm font-bold text-blue-950 m-0 flex items-center gap-2">
                         <Sparkles className="w-4 h-4 text-[#1F8FE0]" />
                         Combo Builder
