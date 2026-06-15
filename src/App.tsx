@@ -56184,13 +56184,15 @@ ${waybillLineItems(w).length > 1
 	                  {(() => {
 	                    const previewImage = normalisePackageImageUrls(packageImageUrls)[0] ?? "";
 	                    const paidComponents = packageComponents.filter((component) => component.productId && !component.isFreeGift);
-	                    const freeGiftCount = packageComponents.filter((component) => component.productId && component.isFreeGift).length;
-	                    const componentSummary = summarizePackageComponents(packageComponents, products);
-	                    const packageQty = Math.max(1, Number(packageQuantity) || 1);
-	                    const regularTotal = paidComponents.length > 0
-	                      ? paidComponents.reduce((sum, component) => {
-	                          const item = products.find((product) => product.id === component.productId);
-	                          const itemPrice = item ? primaryPricing(item)?.sellingPrice ?? 0 : 0;
+		                    const freeGiftCount = packageComponents.filter((component) => component.productId && component.isFreeGift).length;
+		                    const componentSummary = summarizePackageComponents(packageComponents, products);
+		                    const packageQty = Math.max(1, Number(packageQuantity) || 1);
+		                    const packageIsAddOnOnly = isAddOnOnlyPackageSet(packageSet);
+		                    const activeExtraOfferCount = packageCompanions.filter((companion) => companion.productId && companionIsActive(companion)).length;
+		                    const regularTotal = paidComponents.length > 0
+		                      ? paidComponents.reduce((sum, component) => {
+		                          const item = products.find((product) => product.id === component.productId);
+		                          const itemPrice = item ? primaryPricing(item)?.sellingPrice ?? 0 : 0;
 	                          return sum + itemPrice * Math.max(1, Number(component.quantity) || 1);
 	                        }, 0)
 	                      : (primaryPricing(selectedProduct)?.sellingPrice ?? 0) * packageQty;
@@ -56202,26 +56204,36 @@ ${waybillLineItems(w).length > 1
 	                    const packageUnit = packageUnitFor(
 	                      {
 	                        unitSingular: packageUnitSingular || undefined,
-	                        unitPlural: packageUnitPlural || undefined
-	                      },
-	                      packageQty
-	                    );
-	                    const detailText = packageDescription.trim() || componentSummary || `${packageQty} ${packageUnit} in this package`;
-	                    const bundleCount = Math.max(
-	                      packageCompanions.filter((companion) => companion.productId).length,
-	                      paidComponents.length,
-	                      freeGiftCount,
-	                      1
-	                    );
-	                    return (
-	                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr),minmax(280px,360px)] lg:items-start">
-	                        <div className="space-y-2">
-	                          <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-600">
-	                            <Eye className="h-3.5 w-3.5" />
-	                            Customer visual
-	                          </div>
-	                          <h4 className="m-0 text-sm font-bold text-slate-950">Package card preview</h4>
-	                        </div>
+		                        unitPlural: packageUnitPlural || undefined
+		                      },
+		                      packageQty
+		                    );
+		                    const detailText = packageDescription.trim() || componentSummary || `${packageQty} ${packageUnit} in this package`;
+		                    const stockItemCount = Math.max(paidComponents.length + freeGiftCount, 1);
+		                    const previewNote = packageIsAddOnOnly
+		                      ? "Special price only when added with the main offer"
+		                      : packageActive
+		                        ? "Shown as a main package option on the order form"
+		                        : "Draft package preview only";
+		                    const previewSummary = packageIsAddOnOnly
+		                      ? `${stockItemCount} stock item${stockItemCount === 1 ? "" : "s"} inside`
+		                      : activeExtraOfferCount > 0
+		                        ? `${activeExtraOfferCount} discounted extra${activeExtraOfferCount === 1 ? "" : "s"} shown after selection`
+		                        : "No discounted extras attached yet";
+		                    return (
+		                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr),minmax(280px,360px)] lg:items-start">
+		                        <div className="space-y-2">
+		                          <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-600">
+		                            <Eye className="h-3.5 w-3.5" />
+		                            Customer visual
+		                          </div>
+		                          <h4 className="m-0 text-sm font-bold text-slate-950">Package card preview</h4>
+		                          <p className="m-0 text-xs font-semibold text-slate-500">
+		                            {packageIsAddOnOnly
+		                              ? "This is how the bundle can appear under discounted extras."
+		                              : "This is how the package can appear in the main package picker."}
+		                          </p>
+		                        </div>
 	                        <div className="mx-auto w-full max-w-[360px] rounded-[24px] border-[3px] border-slate-300 bg-slate-50 p-4 shadow-sm">
 	                          <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
 	                            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -56258,22 +56270,22 @@ ${waybillLineItems(w).length > 1
 	                                  <span>Save {formatProductMoney(savings, packageCurrency)}</span>
 	                                  {discount > 0 && <span>· {discount}% off</span>}
 	                                </p>
-	                              )}
-	                              <p className="m-0 text-sm font-black leading-6 text-orange-700">
-	                                Special price only when added with the main offer
-	                              </p>
-	                              <p className="m-0 text-[12px] font-black uppercase tracking-[0.12em] text-slate-500">
-	                                {bundleCount} bundle choice{bundleCount === 1 ? "" : "s"} inside
-	                              </p>
-	                            </div>
-	                            <div className="mt-5 text-center text-3xl font-light leading-none text-orange-500">↓</div>
+		                              )}
+		                              <p className="m-0 text-sm font-black leading-6 text-orange-700">
+		                                {previewNote}
+		                              </p>
+		                              <p className="m-0 text-[12px] font-black uppercase tracking-[0.12em] text-slate-500">
+		                                {previewSummary}
+		                              </p>
+		                            </div>
+		                            <div className="mt-5 text-center text-3xl font-light leading-none text-orange-500">↓</div>
 	                            <button
 	                              type="button"
 	                              className="!min-h-0 mt-3 w-full rounded-full bg-blue-600 px-5 py-4 text-base font-black text-white shadow-sm"
-	                              tabIndex={-1}
-	                            >
-	                              Choose your bundle
-	                            </button>
+		                              tabIndex={-1}
+		                            >
+		                              {packageIsAddOnOnly ? "Choose your bundle" : `Select ${packageName.trim() || "package"}`}
+		                            </button>
 	                          </div>
 	                        </div>
 	                      </div>
