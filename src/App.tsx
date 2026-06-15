@@ -2495,9 +2495,11 @@ const primaryPricing = (product: Product) =>
   ?? product.pricings[0];
 const totalProductStock = (product: Product) => product.warehouseStock + product.agentStock;
 const DEFAULT_PACKAGE_SET_LABEL = "Default";
+const ADD_ON_ONLY_PACKAGE_SET_LABEL = "Add-ons only";
 const cleanPackageSetLabel = (value?: string | null) => String(value ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
 const packageSetLabelFor = (pkg?: Pick<ProductPackage, "packageSet"> | null) => cleanPackageSetLabel(pkg?.packageSet) || DEFAULT_PACKAGE_SET_LABEL;
 const packageSetKey = (value?: string | null) => (cleanPackageSetLabel(value) || DEFAULT_PACKAGE_SET_LABEL).toLowerCase();
+const isAddOnOnlyPackageSet = (value?: string | null) => packageSetKey(value) === packageSetKey(ADD_ON_ONLY_PACKAGE_SET_LABEL);
 const packageMatchesSet = (pkg: Pick<ProductPackage, "packageSet">, selectedSet?: string | null) => {
   const selected = cleanPackageSetLabel(selectedSet);
   return !selected || packageSetKey(pkg.packageSet) === selected.toLowerCase();
@@ -29908,6 +29910,7 @@ ${waybillLineItems(w).length > 1
     packageFormHydrationKeyRef.current = packageAddHydrationKey(product.id);
     setSelectedProductId(product.id);
     setPackageName(`${product.name}${bundleQualifier} bundle`);
+    setPackageSet(ADD_ON_ONLY_PACKAGE_SET_LABEL);
     setPackageDescription(`Bundle offer for ${product.name}`);
     setPackageFeaturedComboCard(true);
     setPackageStateFilterMode(stateOnly ? "allow" : "all");
@@ -55852,14 +55855,30 @@ ${waybillLineItems(w).length > 1
                   />
                   <div className="text-sm font-medium text-gray-700 dark:text-gray-200">
                     <strong className={`block ${packageActive ? "text-emerald-800 dark:text-emerald-100" : "text-amber-800 dark:text-amber-100"}`}>
-                      {packageActive ? "Live on customer form" : "Draft package"}
+                      {packageActive ? (isAddOnOnlyPackageSet(packageSet) ? "Available as add-on bundle" : "Live on customer form") : "Draft package"}
                     </strong>
                     {packageActive
-                      ? "Customers can see and pick this package right now."
+                      ? isAddOnOnlyPackageSet(packageSet)
+                        ? "Customers can only see this through a discounted extra that points to this bundle."
+                        : "Customers can see and pick this package right now."
                       : "Hidden from the public order form while you build, price, add images, or test it."}
                   </div>
                 </label>
                 <label><span>Package Name *</span><input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="Starter package" /></label>
+                <label className={`!flex-row items-start gap-3 rounded-xl border px-4 py-3 ${isAddOnOnlyPackageSet(packageSet) ? "border-violet-200 bg-violet-50 dark:border-violet-800 dark:bg-violet-950/30" : "border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"}`}>
+                  <input
+                    type="checkbox"
+                    className="mt-1 w-4 h-4 accent-violet-600"
+                    checked={isAddOnOnlyPackageSet(packageSet)}
+                    onChange={(event) => {
+                      setPackageSet(event.target.checked ? ADD_ON_ONLY_PACKAGE_SET_LABEL : DEFAULT_PACKAGE_SET_LABEL);
+                    }}
+                  />
+                  <div className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                    <strong className="block text-gray-900 dark:text-slate-100">Add-on bundle only</strong>
+                    Hide this package from the main package picker. It can still be selected as a discounted extra / bundle target under "Before you submit".
+                  </div>
+                </label>
                 <label>
                   <span>Package set</span>
                   <input
@@ -55872,7 +55891,9 @@ ${waybillLineItems(w).length > 1
                   <datalist id="package-set-options">
                     {packageSetOptionsForProduct(selectedProduct).map((setLabel) => <option key={setLabel} value={setLabel} />)}
                   </datalist>
-                  <small className="text-gray-500 dark:text-gray-400">Packages with the same set show together when generating a special order-form link.</small>
+                  <small className="text-gray-500 dark:text-gray-400">
+                    Packages with the same set show together when generating a special order-form link. "{ADD_ON_ONLY_PACKAGE_SET_LABEL}" packages are hidden from the main picker and used for extras.
+                  </small>
                 </label>
                 <label><span>Description</span><textarea value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} placeholder="Package description..." /></label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -56422,13 +56443,13 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
                 </section>
-                {/* Offer placement — reuse this package as a quick add-on or after-submit offer */}
+                {/* Extras shown when customers select this package. */}
                 <section className="border border-gray-200 rounded-xl p-4 space-y-3">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
-                      <h4 className="text-sm font-bold text-gray-900 m-0">Promote This Package</h4>
+                      <h4 className="text-sm font-bold text-gray-900 m-0">Discounted extras for this package</h4>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        Use this package as a <strong>quick add-on</strong> inside the order form or as an <strong>after-submit offer</strong>. Set it up once here, then the embed link picks it up automatically.
+                        These are the optional add-ons customers see under "Before you submit" after choosing this package. Pick a single product, or pick one of that product's saved bundle packages for multi-product combos.
                       </p>
                     </div>
                     <button

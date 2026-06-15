@@ -400,6 +400,10 @@ function packageSetKey(value?: string | null) {
   return (cleanPackageSetLabel(value) || "Default").toLowerCase();
 }
 
+const ADD_ON_ONLY_PACKAGE_SET_LABEL = "Add-ons only";
+const isAddOnOnlyPackage = (pkg: Pick<PublicPackage, "packageSet">) =>
+  packageSetKey(pkg.packageSet) === packageSetKey(ADD_ON_ONLY_PACKAGE_SET_LABEL);
+
 function packageMatchesSet(pkg: PublicPackage, selectedSet?: string | null) {
   const selected = cleanPackageSetLabel(selectedSet);
   return !selected || packageSetKey(pkg.packageSet) === selected.toLowerCase();
@@ -1239,7 +1243,7 @@ export default function PublicOrderFormPage() {
     [products, publicProductId]
   );
   const publicPackages = useMemo(
-    () => (publicProduct ? activeProductPackages(publicProduct).filter((pkg) => packageMatchesSet(pkg, publicPackageSet)) : []),
+    () => (publicProduct ? activeProductPackages(publicProduct).filter((pkg) => !isAddOnOnlyPackage(pkg)).filter((pkg) => packageMatchesSet(pkg, publicPackageSet)) : []),
     [publicPackageSet, publicProduct]
   );
   const normalizedSelectedState = normalizeStateName(orderFormState);
