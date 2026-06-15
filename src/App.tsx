@@ -1931,6 +1931,8 @@ const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-
 const makeProductId = () => `prod-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 const makePackageId = () => `pkg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 const makeCompanionId = () => `cmp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const isUuidValue = (value?: string | null) => Boolean(value && UUID_PATTERN.test(value));
 const isTemporaryProductId = (id: string) => id.startsWith("prod-");
 const isTemporaryPackageId = (id: string) => id.startsWith("pkg-");
 const makeMovementId = () => `mov-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -4354,6 +4356,14 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
   priority: typeof companion.priority === "number" ? companion.priority : 0,
   displayMode: companion.displayMode === "showcase" ? "showcase" : companion.displayMode === "card" ? "card" : "compact"
 });
+const packageCompanionForSave = (companion: Partial<PackageCompanion>): PackageCompanion | null => {
+  const normalised = normalisePackageCompanion(companion);
+  if (!isUuidValue(normalised.productId)) return null;
+  return {
+    ...normalised,
+    packageId: isUuidValue(normalised.packageId) ? normalised.packageId : undefined
+  };
+};
 const companionIsActive = (companion: Pick<PackageCompanion, "active"> | null | undefined) => companion?.active !== false;
 const normalisePackageComponent = (component: Partial<PackageComponent>): PackageComponent => ({
   componentId: component.componentId || `pkg-comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -23728,7 +23738,14 @@ ${waybillLineItems(w).length > 1
     }
 
     const normalisedComponents = packageComponents.map(normalisePackageComponent).filter((component) => component.productId);
-    const normalisedCompanions = packageCompanions.map(normalisePackageCompanion);
+    const normalisedCompanionDrafts = packageCompanions.map(normalisePackageCompanion);
+    const normalisedCompanions = normalisedCompanionDrafts
+      .map(packageCompanionForSave)
+      .filter((companion): companion is PackageCompanion => Boolean(companion));
+    const skippedCompanionCount = normalisedCompanionDrafts.length - normalisedCompanions.length;
+    const cleanedCompanionTargetCount = normalisedCompanionDrafts.filter(
+      (companion) => isUuidValue(companion.productId) && Boolean(companion.packageId) && !isUuidValue(companion.packageId)
+    ).length;
     const invalidStateScopedOffer = normalisedCompanions.find(
       (companion) => companion.stateFilterMode === "allow" && companion.stateRestrictions.length === 0
     );
@@ -23910,7 +23927,17 @@ ${waybillLineItems(w).length > 1
           });
         }
       }
-      showToast(`Package "${packageRecord.name}" saved ${packageRecord.active ? "and live" : "as draft"}.`);
+      const saveWarnings = [
+        skippedCompanionCount > 0
+          ? `${skippedCompanionCount} unfinished extra offer${skippedCompanionCount === 1 ? "" : "s"} skipped.`
+          : "",
+        cleanedCompanionTargetCount > 0
+          ? `${cleanedCompanionTargetCount} stale bundle target${cleanedCompanionTargetCount === 1 ? "" : "s"} cleared.`
+          : ""
+      ].filter(Boolean);
+      showToast(
+        `Package "${packageRecord.name}" saved ${packageRecord.active ? "and live" : "as draft"}.${saveWarnings.length > 0 ? ` ${saveWarnings.join(" ")}` : ""}`
+      );
       resetPackageForm();
       closeModal();
     } catch (err: any) {
