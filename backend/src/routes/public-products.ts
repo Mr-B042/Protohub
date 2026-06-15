@@ -22,6 +22,7 @@ type DbPricing = { currency: string; selling_price: number; is_primary: boolean 
 type DbCompanion = {
   companionId?: string;
   productId: string; packageId?: string; quantity: number; pricingMode: string;
+  bundleComponents?: DbPackageComponent[] | null;
   active?: boolean;
   fixedPrice?: number; stateFilterMode?: "all" | "allow" | "block"; stateRestrictions?: string[]; autoInclude?: boolean;
   placement?: "inline" | "upsell";
@@ -104,6 +105,19 @@ const sanitisePricing = (p: DbPricing) => ({
 
 const companionIsActive = (companion: Pick<DbCompanion, "active"> | null | undefined) => companion?.active !== false;
 
+const sanitisePackageComponents = (components: DbPackageComponent[] | null | undefined) =>
+  (components ?? []).map((component) => {
+    const productId = component.productId ?? component.product_id ?? "";
+    return {
+      componentId: component.componentId ?? component.component_id ?? "",
+      productId,
+      quantity: component.quantity,
+      isFreeGift: component.isFreeGift ?? component.is_free_gift ?? false,
+      hiddenFromCustomer: component.hiddenFromCustomer ?? component.hidden_from_customer ?? false,
+      note: component.note ?? ""
+    };
+  });
+
 const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<string, CompanionSocialProof>) => ({
   id:           p.id,
   name:         p.name,
@@ -135,6 +149,7 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
       companionId:       c.companionId ?? "",
       productId:         c.productId,
       packageId:         c.packageId ?? null,
+      bundleComponents:  sanitisePackageComponents(c.bundleComponents),
       active:            true,
       quantity:          c.quantity,
       pricingMode:       c.pricingMode,
@@ -170,17 +185,7 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
       promoIsMostAdded: c.promoIsMostAdded === true,
       socialProof: companionSocialProofByProductId?.[c.productId] ?? null
     })}),
-  packageComponents: (p.package_components ?? []).map((component) => {
-    const productId = component.productId ?? component.product_id ?? "";
-    return {
-      componentId: component.componentId ?? component.component_id ?? "",
-      productId,
-      quantity: component.quantity,
-      isFreeGift: component.isFreeGift ?? component.is_free_gift ?? false,
-      hiddenFromCustomer: component.hiddenFromCustomer ?? component.hidden_from_customer ?? false,
-      note: component.note ?? ""
-    };
-  })
+  packageComponents: sanitisePackageComponents(p.package_components)
 });
 
 const sanitiseProduct = (p: DbProduct, companionSocialProofByProductId?: Record<string, CompanionSocialProof>) => ({

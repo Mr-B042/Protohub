@@ -569,6 +569,7 @@ type PackageCompanion = {
   companionId: string;
   productId: string;
   packageId?: string;
+  bundleComponents?: PackageComponent[];
   active?: boolean;
   quantity: number;
   pricingMode: "free" | "fixed" | "use_product_price";
@@ -4333,6 +4334,7 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
   companionId: companion.companionId || makeCompanionId(),
   productId: companion.productId || "",
   packageId: companion.packageId || undefined,
+  bundleComponents: Array.isArray(companion.bundleComponents) ? companion.bundleComponents.map(normalisePackageComponent) : [],
   active: companion.active !== false,
   quantity: Math.max(1, Number(companion.quantity) || 1),
   pricingMode: companion.pricingMode === "fixed" || companion.pricingMode === "use_product_price" ? companion.pricingMode : "free",
@@ -4361,9 +4363,13 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
 const packageCompanionForSave = (companion: Partial<PackageCompanion>): PackageCompanion | null => {
   const normalised = normalisePackageCompanion(companion);
   if (!isUuidValue(normalised.productId)) return null;
+  const bundleComponents = (normalised.bundleComponents ?? [])
+    .map(normalisePackageComponent)
+    .filter((component) => isUuidValue(component.productId));
   return {
     ...normalised,
-    packageId: isUuidValue(normalised.packageId) ? normalised.packageId : undefined
+    packageId: bundleComponents.length > 0 ? undefined : isUuidValue(normalised.packageId) ? normalised.packageId : undefined,
+    bundleComponents
   };
 };
 const companionIsActive = (companion: Pick<PackageCompanion, "active"> | null | undefined) => companion?.active !== false;
@@ -56479,9 +56485,9 @@ ${waybillLineItems(w).length > 1
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
                       <h4 className="text-sm font-bold text-gray-900 m-0">Discounted extras for this package</h4>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        These are the optional add-ons customers see under "Before you submit" after choosing this package. Pick a single product, or pick one of that product's saved bundle packages for multi-product combos.
-                      </p>
+	                      <p className="text-xs text-gray-500 mt-0.5">
+	                        These are the optional add-ons customers see under "Before you submit" after choosing this package. Turn on combo contents inside an add-on when the offer contains more than one stock item.
+	                      </p>
                     </div>
                     <button
                       type="button"
@@ -56528,10 +56534,38 @@ ${waybillLineItems(w).length > 1
                           showToast("Offer duplicated as hidden. Tweak it, then turn it on when ready.");
                         };
                         const remove = () => setPackageCompanions((prev) => prev.filter((_, i) => i !== idx));
-                        const targetProduct = products.find((p) => p.id === c.productId);
-                        const targetPackages = targetProduct?.packages?.filter((pkg) => pkg.active) ?? [];
-                        const targetPackage = targetProduct?.packages?.find((pkg) => pkg.id === c.packageId);
-                        const targetPackageImages = targetPackage ? packageCarouselImages(targetPackage) : [];
+	                        const targetProduct = products.find((p) => p.id === c.productId);
+	                        const targetPackages = targetProduct?.packages?.filter((pkg) => pkg.active) ?? [];
+	                        const targetPackage = targetProduct?.packages?.find((pkg) => pkg.id === c.packageId);
+	                        const bundleComponents = Array.isArray(c.bundleComponents) ? c.bundleComponents.map(normalisePackageComponent) : [];
+	                        const inlineBundleEnabled = bundleComponents.length > 0;
+	                        const updateBundleComponent = (componentIndex: number, patch: Partial<PackageComponent>) => {
+	                          const nextComponents = bundleComponents.map((component, componentIdx) =>
+	                            componentIdx === componentIndex ? normalisePackageComponent({ ...component, ...patch }) : component
+	                          );
+	                          update({ bundleComponents: nextComponents, packageId: undefined });
+	                        };
+	                        const addBundleComponent = () => update({
+	                          bundleComponents: [...bundleComponents, normalisePackageComponent({ productId: "", quantity: 1 })],
+	                          packageId: undefined
+	                        });
+	                        const removeBundleComponent = (componentIndex: number) => {
+	                          const nextComponents = bundleComponents.filter((_, componentIdx) => componentIdx !== componentIndex);
+	                          update({ bundleComponents: nextComponents });
+	                        };
+	                        const setInlineBundleEnabled = (enabled: boolean) => {
+	                          if (!enabled) {
+	                            update({ bundleComponents: [] });
+	                            return;
+	                          }
+	                          update({
+	                            packageId: undefined,
+	                            bundleComponents: bundleComponents.length > 0
+	                              ? bundleComponents
+	                              : [normalisePackageComponent({ productId: c.productId || "", quantity: Math.max(1, Number(c.quantity) || 1) })]
+	                          });
+	                        };
+	                        const targetPackageImages = targetPackage ? packageCarouselImages(targetPackage) : [];
                         const companionGalleryKey = c.companionId || `offer-${idx}`;
                         const companionGalleryDraft = companionGalleryUrlDrafts[companionGalleryKey] ?? "";
                         const setCompanionGalleryDraft = (value: string) =>
@@ -56845,18 +56879,31 @@ ${waybillLineItems(w).length > 1
                             </div>
                             <div className="space-y-2">
                               <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 m-0">1. What customers can buy</p>
-                              <p className="text-[11px] text-gray-500 m-0">
-                                Pick any product, including this same one, or point the offer at one of that product&apos;s real bundle packages if it should sell a combo.
-                              </p>
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                              <label className="flex flex-col gap-1">
-                                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Product</span>
-                                <select
-                                  className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
-                                  value={c.productId}
-                                  onChange={(e) => update({ productId: e.target.value, packageId: undefined })}
-                                >
+	                              <p className="text-[11px] text-gray-500 m-0">
+	                                Pick the product name customers will see. For a combo offer, turn on combo contents and add every real stock item inside it.
+	                              </p>
+	                            </div>
+	                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+	                              <label className="flex flex-col gap-1">
+	                                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Product</span>
+	                                <select
+	                                  className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+	                                  value={c.productId}
+	                                  onChange={(e) => {
+	                                    const nextProductId = e.target.value;
+	                                    update({
+	                                      productId: nextProductId,
+	                                      packageId: undefined,
+	                                      bundleComponents: inlineBundleEnabled
+	                                        ? bundleComponents.map((component, componentIndex) =>
+	                                            componentIndex === 0 && (!component.productId || component.productId === c.productId)
+	                                              ? normalisePackageComponent({ ...component, productId: nextProductId })
+	                                              : component
+	                                          )
+	                                        : bundleComponents
+	                                    });
+	                                  }}
+	                                >
                                   <option value="">Select a product…</option>
                                   {products.filter((p) => p.active !== false).map((p) => (
                                     <option key={p.id} value={p.id}>
@@ -56864,42 +56911,25 @@ ${waybillLineItems(w).length > 1
                                       {p.id === selectedProduct?.id ? " · Current product" : isComboLibraryProduct(p) ? " · Combo Library" : ""}
                                     </option>
                                   ))}
-                                </select>
-                              </label>
-                              <label className="flex flex-col gap-1">
-                                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Bundle target</span>
-                                <select
-                                  className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
-                                  value={c.packageId ?? ""}
-                                  onChange={(e) => update({ packageId: e.target.value || undefined })}
-                                  disabled={!c.productId}
-                                >
-                                  <option value="">Use single item only</option>
-                                  {targetPackages.map((pkg) => (
-                                    <option key={pkg.id} value={pkg.id}>
-                                      {pkg.name} · {pkg.quantity} pcs · {formatProductMoney(pkg.price, pkg.currency)}
-                                    </option>
-                                  ))}
-                                </select>
-                                <span className="text-[10px] text-gray-400">
-                                  Optional. Pick a real package if this offer should sell a bundle/combo instead of one plain item.
-                                </span>
-                              </label>
-                              <label className="flex flex-col gap-1">
-                                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
-                                  {c.packageId ? "Bundle count" : "Quantity"}
-                                </span>
-                                <input
-                                  type="number" min={1} className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
-                                  value={c.quantity}
-                                  onChange={(e) => update({ quantity: Math.max(1, Number(e.target.value) || 1) })}
-                                />
-                                {c.packageId && (
-                                  <span className="text-[10px] text-gray-400">Use separate offer rows for x1 / x3 / x6 choices. This field is how many of that chosen bundle to add.</span>
-                                )}
-                              </label>
-                              <label className="flex flex-col gap-1">
-                                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Pricing</span>
+	                                </select>
+	                              </label>
+	                              <label className="flex flex-col gap-1">
+	                                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
+	                                  {inlineBundleEnabled || c.packageId ? "Bundle count" : "Quantity"}
+	                                </span>
+	                                <input
+	                                  type="number" min={1} className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+	                                  value={c.quantity}
+	                                  onChange={(e) => update({ quantity: Math.max(1, Number(e.target.value) || 1) })}
+	                                />
+	                                <span className="text-[10px] text-gray-400">
+	                                  {inlineBundleEnabled || c.packageId
+	                                    ? "Use 1 for one combo. Use 3 only if the stock lines below should be multiplied by 3."
+	                                    : "How many pieces of this add-on product should be added."}
+	                                </span>
+	                              </label>
+	                              <label className="flex flex-col gap-1">
+	                                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Pricing</span>
                                 <select
                                   className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
                                   value={c.pricingMode}
@@ -56919,10 +56949,121 @@ ${waybillLineItems(w).length > 1
                                     value={c.fixedPrice ?? 0}
                                     onChange={(e) => update({ fixedPrice: Math.max(0, Number(e.target.value) || 0) })}
                                   />
-                                </label>
-                              )}
-                            </div>
-                            <div className="space-y-2">
+	                                </label>
+	                              )}
+	                            </div>
+	                            <div className={`rounded-xl border p-3 space-y-3 ${inlineBundleEnabled ? "border-blue-200 bg-blue-50/70" : "border-gray-100 bg-white"}`}>
+	                              <label className="flex items-start gap-3">
+	                                <input
+	                                  type="checkbox"
+	                                  className="mt-1 h-4 w-4 accent-[#1F8FE0]"
+	                                  checked={inlineBundleEnabled}
+	                                  onChange={(event) => setInlineBundleEnabled(event.target.checked)}
+	                                />
+	                                <span>
+	                                  <span className="block text-sm font-bold text-gray-900">Combo add-on</span>
+	                                  <span className="block text-xs text-gray-500">
+	                                    Turn this on for offers like 2 pcs Product A + 3 pcs Product B + FREE gift. These lines are used for stock deduction.
+	                                  </span>
+	                                </span>
+	                              </label>
+	                              {inlineBundleEnabled && (
+	                                <div className="space-y-2">
+	                                  {bundleComponents.length === 0 ? (
+	                                    <p className="m-0 rounded-lg border border-dashed border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-700">
+	                                      Add at least one stock item inside this combo.
+	                                    </p>
+	                                  ) : (
+	                                    <div className="space-y-2">
+	                                      {bundleComponents.map((component, componentIndex) => (
+	                                        <div key={component.componentId ?? componentIndex} className="rounded-lg border border-blue-100 bg-white p-2.5 space-y-2">
+	                                          <div className="grid grid-cols-1 sm:grid-cols-[1fr,110px,auto] gap-2 items-end">
+	                                            <label className="flex flex-col gap-1">
+	                                              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Stock item</span>
+	                                              <select
+	                                                className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+	                                                value={component.productId}
+	                                                onChange={(event) => updateBundleComponent(componentIndex, { productId: event.target.value })}
+	                                              >
+	                                                <option value="">Select product...</option>
+	                                                {products.filter((p) => p.active !== false).map((p) => (
+	                                                  <option key={p.id} value={p.id}>{p.name}</option>
+	                                                ))}
+	                                              </select>
+	                                            </label>
+	                                            <label className="flex flex-col gap-1">
+	                                              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Qty</span>
+	                                              <input
+	                                                type="number"
+	                                                min={1}
+	                                                className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white"
+	                                                value={component.quantity}
+	                                                onChange={(event) => updateBundleComponent(componentIndex, { quantity: Math.max(1, Number(event.target.value) || 1) })}
+	                                              />
+	                                            </label>
+	                                            <button
+	                                              type="button"
+	                                              className="!min-h-0 inline-flex items-center justify-center rounded-md border border-red-100 px-2.5 py-2 text-xs font-bold text-red-600 hover:bg-red-50"
+	                                              onClick={() => removeBundleComponent(componentIndex)}
+	                                            >
+	                                              Remove
+	                                            </button>
+	                                          </div>
+	                                          <div className="flex flex-wrap gap-3">
+	                                            <label className="inline-flex items-center gap-2 text-xs font-semibold text-gray-600">
+	                                              <input
+	                                                type="checkbox"
+	                                                checked={Boolean(component.isFreeGift)}
+	                                                onChange={(event) => updateBundleComponent(componentIndex, { isFreeGift: event.target.checked })}
+	                                              />
+	                                              Free gift
+	                                            </label>
+	                                            <label className="inline-flex items-center gap-2 text-xs font-semibold text-gray-600" title="Still deducts stock, but does not show this line in the customer summary.">
+	                                              <input
+	                                                type="checkbox"
+	                                                checked={Boolean(component.hiddenFromCustomer)}
+	                                                onChange={(event) => updateBundleComponent(componentIndex, { hiddenFromCustomer: event.target.checked })}
+	                                              />
+	                                              Hide from customer
+	                                            </label>
+	                                          </div>
+	                                        </div>
+	                                      ))}
+	                                    </div>
+	                                  )}
+	                                  <button
+	                                    type="button"
+	                                    className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50"
+	                                    onClick={addBundleComponent}
+	                                  >
+	                                    + Add stock item
+	                                  </button>
+	                                </div>
+	                              )}
+	                              <details className="rounded-lg border border-gray-100 bg-white px-3 py-2">
+	                                <summary className="cursor-pointer text-xs font-bold text-gray-600">Advanced: reuse a saved package as this add-on</summary>
+	                                <label className="mt-2 flex flex-col gap-1">
+	                                  <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Saved package target</span>
+	                                  <select
+	                                    className="border border-gray-200 rounded-md px-2 py-1.5 text-sm bg-white disabled:bg-gray-100 disabled:text-gray-400"
+	                                    value={c.packageId ?? ""}
+	                                    onChange={(event) => update({ packageId: event.target.value || undefined, bundleComponents: [] })}
+	                                    disabled={!c.productId || inlineBundleEnabled}
+	                                  >
+	                                    <option value="">Do not reuse a saved package</option>
+	                                    {targetPackages.map((pkg) => (
+	                                      <option key={pkg.id} value={pkg.id}>
+	                                        {pkg.name} · {pkg.quantity} pcs · {formatProductMoney(pkg.price, pkg.currency)}
+	                                      </option>
+	                                    ))}
+	                                  </select>
+	                                  <span className="text-[10px] text-gray-400">
+	                                    Most combo add-ons should use the stock lines above. This option is only for older saved bundles you already built.
+	                                  </span>
+	                                </label>
+	                              </details>
+	                            </div>
+	                            <div className="space-y-2">
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                                 <label className="flex flex-col gap-1">
                                   <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">2. Who should see it?</span>

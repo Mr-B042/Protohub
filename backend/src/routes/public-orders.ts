@@ -128,6 +128,7 @@ type CompanionOverride = {
   companionId?: string;
   productId: string;
   packageId?: string;
+  bundleComponents?: unknown;
   active?: boolean;
   quantity: number;
   pricingMode: "standard" | "fixed" | "free" | "use_product_price";
@@ -267,6 +268,28 @@ const buildResolvedPackageSnapshot = async (
     isFreeGift: false,
     sourceType: "cross_sell" as const
   }];
+};
+
+const buildResolvedCompanionSnapshot = async (
+  orgId: string,
+  companion: CompanionOverride | undefined,
+  targetPackage: ResolvedPackageRow | undefined | null,
+  productId: string,
+  productName: string,
+  bundleCount: number
+) => {
+  if (targetPackage) {
+    return buildResolvedPackageSnapshot(orgId, targetPackage, productId, productName, bundleCount);
+  }
+  if (!companion) return undefined;
+  const snapshot = await buildPackageComponentSnapshot(orgId, companion.bundleComponents ?? []);
+  if (snapshot.length === 0) return undefined;
+  const normalizedBundleCount = Math.max(1, bundleCount);
+  return snapshot.map((line) => ({
+    ...line,
+    quantity: line.quantity * normalizedBundleCount,
+    sourceType: "cross_sell" as const
+  }));
 };
 
 type PublicUpsellTokenPayload = {
@@ -642,9 +665,14 @@ router.post("/", submitRateLimit, async (req, res) => {
     const lineTotal = companion && companion.pricingMode === "fixed"
       ? companionLineAmount(companion, unitPrice, line.quantity)
       : unitPrice * line.quantity;
-    const packageComponentsSnapshot = targetPackage
-      ? await buildResolvedPackageSnapshot(product.org_id, targetPackage, line.productId, xsProduct.name, line.quantity)
-      : undefined;
+    const packageComponentsSnapshot = await buildResolvedCompanionSnapshot(
+      product.org_id,
+      companion,
+      targetPackage,
+      line.productId,
+      xsProduct.name,
+      line.quantity
+    );
     amount += lineTotal;
     resolved.push({
       productId:   line.productId,
@@ -691,9 +719,14 @@ router.post("/", submitRateLimit, async (req, res) => {
       unitPrice = Number(primary?.selling_price ?? 0);
     }
     const lineTotal = companionLineAmount(c, unitPrice, c.quantity);
-    const packageComponentsSnapshot = targetPackage
-      ? await buildResolvedPackageSnapshot(product.org_id, targetPackage, c.productId, autoProduct.name, c.quantity)
-      : undefined;
+    const packageComponentsSnapshot = await buildResolvedCompanionSnapshot(
+      product.org_id,
+      c,
+      targetPackage,
+      c.productId,
+      autoProduct.name,
+      c.quantity
+    );
     amount += lineTotal;
     resolved.push({
       productId: c.productId,
@@ -1155,9 +1188,14 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
   const acceptedQuantity = Math.max(1, Number(tokenPayload.quantity) || companion.quantity || 1);
   const lineAmount = Math.max(0, Number(tokenPayload.amount) || 0);
   const lineProductName = targetPackage ? `${upsellProduct.name} · ${targetPackage.name}` : upsellProduct.name;
-  const packageComponentsSnapshot = targetPackage
-    ? await buildResolvedPackageSnapshot(order.org_id, targetPackage, tokenPayload.productId, upsellProduct.name, acceptedQuantity)
-    : undefined;
+  const packageComponentsSnapshot = await buildResolvedCompanionSnapshot(
+    order.org_id,
+    companion,
+    targetPackage,
+    tokenPayload.productId,
+    upsellProduct.name,
+    acceptedQuantity
+  );
   const nextLines = [
     ...existingLines,
     {

@@ -22,6 +22,7 @@ type PublicCompanion = {
   companionId?: string;
   productId: string;
   packageId?: string | null;
+  bundleComponents?: PublicPackageComponent[];
   active?: boolean;
   quantity: number;
   pricingMode: "free" | "fixed" | "use_product_price" | "standard";
@@ -432,7 +433,14 @@ function packageUnitFor(
 }
 
 function packageComponentSummary(pkg: PublicPackage, products: PublicProduct[]) {
-  const components = pkg.packageComponents ?? [];
+  return componentListSummary(pkg.packageComponents ?? [], products, pkg);
+}
+
+function componentListSummary(
+  components: PublicPackageComponent[],
+  products: PublicProduct[],
+  unitSource?: Pick<PublicPackage, "unitSingular" | "unitPlural"> | null
+) {
   if (components.length === 0) return "";
   return components
     .filter((component) => component.productId || component.product_id)
@@ -446,13 +454,21 @@ function packageComponentSummary(pkg: PublicPackage, products: PublicProduct[]) 
       const isFreeGift = Boolean(component.isFreeGift ?? component.is_free_gift);
       const productName = products.find((product) => product.id === productId)?.name ?? "Item";
       const qty = Math.max(1, Number(component.quantity) || 1);
-      return `${isFreeGift ? "FREE " : ""}${qty} ${packageUnitFor(pkg, qty)} of ${productName}`;
+      return `${isFreeGift ? "FREE " : ""}${qty} ${packageUnitFor(unitSource, qty)} of ${productName}`;
     })
     .join(" + ");
 }
 
 function packageFreeGiftItems(pkg: PublicPackage, products: PublicProduct[]) {
-  return (pkg.packageComponents ?? [])
+  return componentFreeGiftItems(pkg.packageComponents ?? [], products, pkg);
+}
+
+function componentFreeGiftItems(
+  components: PublicPackageComponent[],
+  products: PublicProduct[],
+  unitSource?: Pick<PublicPackage, "unitSingular" | "unitPlural"> | null
+) {
+  return components
     .filter((component) => (component.productId || component.product_id) && Boolean(component.isFreeGift ?? component.is_free_gift))
     .map((component) => {
       const productId = component.productId || component.product_id || "";
@@ -462,7 +478,7 @@ function packageFreeGiftItems(pkg: PublicPackage, products: PublicProduct[]) {
         id: component.componentId || component.component_id || productId,
         name: productName,
         quantity: qty,
-        label: `${qty} ${packageUnitFor(pkg, qty)} of ${productName}`
+        label: `${qty} ${packageUnitFor(unitSource, qty)} of ${productName}`
       };
     });
 }
@@ -528,6 +544,50 @@ function targetPackageForCompanion(companion: PublicCompanion, products: PublicP
   return null;
 }
 
+function companionBundleComponents(companion: PublicCompanion) {
+  return Array.isArray(companion.bundleComponents) ? companion.bundleComponents : [];
+}
+
+function companionInlineBundleUnitCount(companion: PublicCompanion) {
+  const bundleCount = Math.max(1, Number(companion.quantity) || 1);
+  return companionBundleComponents(companion)
+    .filter((component) => component.productId || component.product_id)
+    .filter((component) => !(component.hiddenFromCustomer ?? component.hidden_from_customer))
+    .reduce((sum, component) => sum + Math.max(1, Number(component.quantity) || 1) * bundleCount, 0);
+}
+
+function companionComponentSummary(companion: PublicCompanion, products: PublicProduct[], targetPackage?: PublicPackage | null) {
+  return targetPackage
+    ? packageComponentSummary(targetPackage, products)
+    : componentListSummary(companionBundleComponents(companion), products, null);
+}
+
+function companionFreeGiftItems(companion: PublicCompanion, products: PublicProduct[], targetPackage?: PublicPackage | null) {
+  return targetPackage
+    ? packageFreeGiftItems(targetPackage, products)
+    : componentFreeGiftItems(companionBundleComponents(companion), products, null);
+}
+
+function companionStandardTotal(
+  companion: PublicCompanion,
+  product: PublicProduct,
+  products: PublicProduct[],
+  targetPackage?: PublicPackage | null
+) {
+  if (targetPackage) return Number(targetPackage.price ?? 0) * Math.max(1, Number(companion.quantity) || 1);
+  const bundleComponents = companionBundleComponents(companion).filter((component) => component.productId || component.product_id);
+  if (bundleComponents.length > 0) {
+    const bundleCount = Math.max(1, Number(companion.quantity) || 1);
+    return bundleComponents.reduce((sum, component) => {
+      const componentProductId = component.productId || component.product_id || "";
+      const componentProduct = products.find((item) => item.id === componentProductId);
+      const unit = componentProduct ? primaryPricing(componentProduct)?.sellingPrice ?? 0 : 0;
+      return sum + unit * Math.max(1, Number(component.quantity) || 1) * bundleCount;
+    }, 0);
+  }
+  return (primaryPricing(product)?.sellingPrice ?? 0) * Math.max(1, Number(companion.quantity) || 1);
+}
+
 function companionUnitPrice(companion: PublicCompanion, product: PublicProduct, targetPackage?: PublicPackage | null) {
   const standard = targetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
   if (companion.pricingMode === "free") return 0;
@@ -564,18 +624,22 @@ function companionDisplayName(companion: PublicCompanion, product: PublicProduct
   return targetPackage ? `${product.name} · ${targetPackage.name}` : product.name;
 }
 
-function companionDisplayDetail(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
+function companionDisplayDetail(companion: PublicCompanion, targetPackage?: PublicPackage | null, products: PublicProduct[] = []) {
   if (targetPackage) {
     if (targetPackage.description.trim()) {
       return targetPackage.description.trim();
     }
     return `${companion.quantity} ${companion.quantity === 1 ? "bundle" : "bundles"} · ${targetPackage.quantity} ${targetPackage.quantity === 1 ? "pc" : "pcs"} in this add-on`;
   }
+  const bundleSummary = products.length > 0 ? componentListSummary(companionBundleComponents(companion), products, null) : "";
+  if (bundleSummary) return bundleSummary;
   return `${companion.quantity} ${companion.quantity === 1 ? "pc" : "pcs"} in this add-on`;
 }
 
 function companionOfferUnits(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
-  const qty = Math.max(1, Number(targetPackage?.quantity ?? companion.quantity) || 1);
+  const inlineBundleQty = targetPackage ? 0 : companionInlineBundleUnitCount(companion);
+  const quantitySource = targetPackage?.quantity ?? (inlineBundleQty || companion.quantity);
+  const qty = Math.max(1, Number(quantitySource) || 1);
   return `${qty}${qty === 1 ? "pc" : "pcs"}`;
 }
 
@@ -1671,7 +1735,7 @@ export default function PublicOrderFormPage() {
           packageId: targetPackage?.id ?? companion.packageId ?? undefined,
           packageName: targetPackage?.name ?? undefined,
           name: companionDisplayName(companion, product, targetPackage),
-          detail: companionDisplayDetail(companion, targetPackage),
+          detail: companionDisplayDetail(companion, targetPackage, products),
           qty: companion.quantity,
           total: companionLineTotal(companion, product, targetPackage)
         };
@@ -1702,7 +1766,7 @@ export default function PublicOrderFormPage() {
         packageId: targetPackage?.id ?? companion.packageId ?? undefined,
         packageName: targetPackage?.name ?? undefined,
         name: `${companionDisplayName(companion, product, targetPackage)} (bundled)`,
-        detail: companionDisplayDetail(companion, targetPackage),
+        detail: companionDisplayDetail(companion, targetPackage, products),
         qty: companion.quantity,
         total: companionLineTotal(companion, product, targetPackage)
       };
@@ -3815,7 +3879,7 @@ export default function PublicOrderFormPage() {
                         {companionDisplayName(publicUpsellOffer.companion, publicUpsellOffer.product, publicUpsellOffer.targetPackage)}
                       </strong>
                       <span style={{ fontSize: 13, color: "#6b7280", fontWeight: 700 }}>
-                        {companionDisplayDetail(publicUpsellOffer.companion, publicUpsellOffer.targetPackage)}
+                        {companionDisplayDetail(publicUpsellOffer.companion, publicUpsellOffer.targetPackage, products)}
                       </span>
                       {publicUpsellOffer.product.description && (
                         <span style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
@@ -4523,15 +4587,14 @@ export default function PublicOrderFormPage() {
                     const selected = isOrderFormCrossSellSelected(companion);
                     const currency = targetPackage?.currency ?? primaryPricing(product)?.currency ?? "NGN";
                     const total = companionLineTotal(companion, product, targetPackage);
-                    const standardUnit = targetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
-                    const standardTotal = standardUnit * Math.max(1, Number(companion.quantity) || 1);
+                    const standardTotal = companionStandardTotal(companion, product, products, targetPackage);
                     const savings = Math.max(0, standardTotal - total);
                     const discountPercent = companionDiscountPercent(standardTotal, total);
                     const title = targetPackage?.name || product.name;
-                    const componentSummary = targetPackage ? packageComponentSummary(targetPackage, products) : "";
+                    const componentSummary = companionComponentSummary(companion, products, targetPackage);
                     const packageDescriptionText = targetPackage?.description.trim() ?? "";
-                    const packageDetailText = packageDescriptionText || companion.pitch?.trim() || companionDisplayDetail(companion, targetPackage);
-                    const freeGiftItems = targetPackage ? packageFreeGiftItems(targetPackage, products) : [];
+                    const packageDetailText = packageDescriptionText || companion.pitch?.trim() || componentSummary || companionDisplayDetail(companion, targetPackage, products);
+                    const freeGiftItems = companionFreeGiftItems(companion, products, targetPackage);
                     const freeGiftQuantity = freeGiftItems.reduce((sum, gift) => sum + gift.quantity, 0);
                     const freeGiftBadge = `${freeGiftQuantity} FREE GIFT${freeGiftQuantity === 1 ? "" : "S"}`;
                     const badgeText = companion.badgeText?.trim();
@@ -4716,7 +4779,7 @@ export default function PublicOrderFormPage() {
                             <div className={`public-package-option__description ${packageDescriptionText ? "public-package-option__description--custom" : "public-package-option__description--fallback"}`} style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.5 }}>
                               {packageDetailText}
                             </div>
-                            {componentSummary && packageDescriptionText && (
+                            {componentSummary && (packageDescriptionText || companion.pitch?.trim()) && (
                               <div className="public-package-option__components" style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>{componentSummary}</div>
                             )}
                             {freeGiftItems.length > 0 && (
@@ -4785,7 +4848,7 @@ export default function PublicOrderFormPage() {
                         <span style={{ display: "grid", gap: 4, minWidth: 0 }}>
                           <strong style={{ fontSize: 16, color: "#111827" }}>{companionDisplayName(companion, product, targetPackage)}</strong>
                           <span style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.45 }}>
-                            {companionDisplayDetail(companion, targetPackage)}
+                            {companionDisplayDetail(companion, targetPackage, products)}
                             {companion.pitch?.trim() ? ` · ${companion.pitch.trim()}` : ""}
                           </span>
                           <span style={{ fontSize: 16, fontWeight: 800, color: "#111827" }}>
@@ -4821,8 +4884,7 @@ export default function PublicOrderFormPage() {
                         const displayCompanion = selectedVariant ?? group.companions[0];
                         const displayTargetPackage = targetPackageForCompanion(displayCompanion, products);
                         const total = companionLineTotal(displayCompanion, product, displayTargetPackage);
-                        const standard = displayTargetPackage?.price ?? primaryPricing(product)?.sellingPrice ?? 0;
-                        const standardTotal = standard * displayCompanion.quantity;
+                        const standardTotal = companionStandardTotal(displayCompanion, product, products, displayTargetPackage);
                         const savings = Math.max(0, standardTotal - total);
                         const discountPercent = companionDiscountPercent(standardTotal, total);
                         const teaserOfferLabel = companionOfferPriceLabel(previewCompanion, teaserTotal, currency, previewTargetPackage);
@@ -5166,7 +5228,7 @@ export default function PublicOrderFormPage() {
                                             </span>
                                           </>
                                         )
-                                        : companionDisplayDetail(displayCompanion, displayTargetPackage)}
+                                        : companionDisplayDetail(displayCompanion, displayTargetPackage, products)}
                                     </span>
                                     <div
                                       style={{
@@ -5281,7 +5343,7 @@ export default function PublicOrderFormPage() {
                                                   {companionOfferPriceLabel(variant, variantPrice, currency, variantTargetPackage)}
                                                 </span>
                                                 <span style={{ display: "block", fontSize: 13, color: "#475569", marginTop: 4, lineHeight: 1.45 }}>
-                                                  {companionDisplayDetail(variant, variantTargetPackage)}
+                                                  {companionDisplayDetail(variant, variantTargetPackage, products)}
                                                   {variant.pitch?.trim() ? ` · ${variant.pitch.trim()}` : ""}
                                                 </span>
                                               </span>

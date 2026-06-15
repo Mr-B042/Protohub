@@ -327,10 +327,23 @@ router.post("/package-images/upload",
 );
 
 // ── POST /api/products/:id/packages ──────────────────────
+const PackageComponentSchema = z.object({
+  componentId: z.string().min(1).max(120).optional(),
+  productId: z.string().uuid(),
+  quantity: z.number().int().min(1).default(1),
+  isFreeGift: z.boolean().default(false),
+  // When true, this component still deducts stock on delivery but is hidden
+  // from the customer-facing breakdown on the order form (e.g. a part already
+  // implied by the combo name, so listing it would just confuse the buyer).
+  hiddenFromCustomer: z.boolean().optional(),
+  note: z.string().max(160).optional()
+});
+
 const CompanionSchema = z.object({
   companionId:        z.string().min(1).max(120).optional(),
   productId:         z.string().uuid(),
   packageId:         z.string().uuid().optional(),
+  bundleComponents:  z.array(PackageComponentSchema).default([]),
   active:            z.boolean().default(true),
   quantity:          z.number().int().min(1).default(1),
   pricingMode:       z.enum(["free", "fixed", "use_product_price"]).default("free"),
@@ -356,17 +369,6 @@ const CompanionSchema = z.object({
   promoBuyersLast24HoursCount:  z.number().int().min(0).max(10_000).optional(),
   promoLastAddedRelative:       z.string().max(60).optional(),
   promoIsMostAdded:             z.boolean().optional()
-});
-const PackageComponentSchema = z.object({
-  componentId: z.string().min(1).max(120).optional(),
-  productId: z.string().uuid(),
-  quantity: z.number().int().min(1).default(1),
-  isFreeGift: z.boolean().default(false),
-  // When true, this component still deducts stock on delivery but is hidden
-  // from the customer-facing breakdown on the order form (e.g. a part already
-  // implied by the combo name, so listing it would just confuse the buyer).
-  hiddenFromCustomer: z.boolean().optional(),
-  note: z.string().max(160).optional()
 });
 const PackageSchema = z.object({
   name:         z.string().min(1),

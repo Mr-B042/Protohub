@@ -136,6 +136,7 @@ export type PackageCompanion = {
   companionId?: string;
   productId: string;
   packageId?: string | null;
+  bundleComponents?: PackageComponent[];
   quantity: number;
   pricingMode?: "free" | "fixed" | "use_product_price" | "standard";
   fixedPrice?: number | null;
@@ -169,6 +170,7 @@ export type PackageComponent = {
   productId: string;
   quantity: number;
   isFreeGift?: boolean;
+  hiddenFromCustomer?: boolean;
   note?: string;
 };
 
