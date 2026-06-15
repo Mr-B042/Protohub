@@ -4469,6 +4469,8 @@ const isComboLikePackage = (pkg: Pick<ProductPackage, "name" | "stateFilterMode"
       /combo/i.test(pkg.name)
   );
 };
+const packageAddHydrationKey = (productId: string) => `add:${productId}`;
+const packageEditHydrationKey = (productId: string, packageId: string) => `edit:${productId}:${packageId}`;
 const scalePackageNameForMultiplier = (name: string, multiplier: number) => {
   const trimmed = name.trim();
   if (!trimmed) return `x${multiplier} Bundle`;
@@ -6922,6 +6924,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageCompanionSyncToPackages, setPackageCompanionSyncToPackages] = useState(false);
   const packageImageUploadTokenRef = useRef(0);
   const companionGalleryUploadTokenRef = useRef(0);
+  const packageFormHydrationKeyRef = useRef("");
   // Drag-and-drop sensors for the package image gallery. PointerSensor needs an
   // 8px activation distance so a click on the trash button doesn't start a drag.
   // TouchSensor needs a long-press (250 ms) so a tap on the trash isn't a drag.
@@ -9978,13 +9981,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (modal !== "addPackage") {
       return;
     }
+    const hydrationKey = packageAddHydrationKey(selectedProductId);
+    if (packageFormHydrationKeyRef.current === hydrationKey) {
+      return;
+    }
     resetPackageForm();
-  }, [modal]);
+    packageFormHydrationKeyRef.current = hydrationKey;
+  }, [modal, selectedProductId]);
   useEffect(() => {
     if (modal !== "editPackage" || !selectedPackage) {
       return;
     }
+    const hydrationKey = packageEditHydrationKey(selectedProductId, selectedPackage.id);
+    if (packageFormHydrationKeyRef.current === hydrationKey) {
+      return;
+    }
+    packageFormHydrationKeyRef.current = hydrationKey;
     setPackageName(selectedPackage.name);
+    setPackageSet(packageSetLabelFor(selectedPackage));
     setPackageDescription(selectedPackage.description);
     setPackageQuantity(String(selectedPackage.quantity));
     setPackageUnitSingular(selectedPackage.unitSingular ?? "");
@@ -9992,6 +10006,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackagePrice(String(selectedPackage.price));
     setPackageCurrency(selectedPackage.currency);
     setPackageDisplayOrder(String(selectedPackage.displayOrder));
+    setPackageActive(selectedPackage.active !== false);
     setPackageComponents((selectedPackage.packageComponents ?? []).map(normalisePackageComponent));
     setPackageCompanions((selectedPackage.companionProducts ?? []).map(normalisePackageCompanion));
     setPackageStateFilterMode(normalisePackageStateFilterMode(selectedPackage.stateFilterMode));
@@ -10005,7 +10020,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageImageUploading(0);
     setPackageImageSyncToTiers(false);
     setPackageFreeGiftSyncToTiers(false);
-  }, [modal, selectedPackage]);
+    setPackageCompanionSyncToPackages(false);
+  }, [modal, selectedPackage, selectedProductId]);
   useEffect(() => {
     if (modal !== "recordRemittance" || !remittanceTargetOrderId) {
       return;
@@ -23308,6 +23324,7 @@ ${waybillLineItems(w).length > 1
   };
 
   const resetPackageForm = () => {
+    packageFormHydrationKeyRef.current = "";
     setPackageName("");
     setPackageSet(DEFAULT_PACKAGE_SET_LABEL);
     setPackageDescription("");
@@ -23349,6 +23366,7 @@ ${waybillLineItems(w).length > 1
     const productId = sourceProductId ?? selectedProduct?.id;
     if (productId) {
       setSelectedProductId(productId);
+      packageFormHydrationKeyRef.current = packageEditHydrationKey(productId, item.id);
     }
     setSelectedPackageId(item.id);
     setPackageName(item.name);
@@ -29860,6 +29878,7 @@ ${waybillLineItems(w).length > 1
           ? " stock-gated"
           : "";
     resetPackageForm();
+    packageFormHydrationKeyRef.current = packageAddHydrationKey(product.id);
     setSelectedProductId(product.id);
     setPackageName(`${product.name}${bundleQualifier} bundle`);
     setPackageDescription(`Bundle offer for ${product.name}`);
@@ -32228,6 +32247,9 @@ ${waybillLineItems(w).length > 1
     setSalesRepName("");
     setSalesRepEmail("");
     setSalesRepPassword("");
+    if (modalBeforeClose && ["addPackage", "editPackage", "deletePackage"].includes(modalBeforeClose)) {
+      packageFormHydrationKeyRef.current = "";
+    }
     if (modalBeforeClose === "bonusBreakdown") {
       setBonusBreakdownData(null);
     }
