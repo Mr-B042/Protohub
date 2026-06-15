@@ -51069,10 +51069,11 @@ ${waybillLineItems(w).length > 1
                             const setPackages = setGroup.packages;
                             const setLiveCount = setPackages.filter((pkg) => pkg.active).length;
                             const setOfferCount = setPackages.reduce((sum, pkg) => sum + (pkg.companionProducts?.length ?? 0), 0);
-                            const setHiddenOfferCount = setPackages.reduce((sum, pkg) => sum + (pkg.companionProducts ?? []).filter((companion) => !companionIsActive(companion)).length, 0);
-                            const isSetExpanded = expandedPackageSets[setKey] === true;
-                            const setIsFullyLive = setLiveCount === setPackages.length && setPackages.length > 0;
-                            return (
+	                            const setHiddenOfferCount = setPackages.reduce((sum, pkg) => sum + (pkg.companionProducts ?? []).filter((companion) => !companionIsActive(companion)).length, 0);
+	                            const isSetExpanded = expandedPackageSets[setKey] === true;
+	                            const setIsFullyLive = setLiveCount === setPackages.length && setPackages.length > 0;
+	                            const setIsAddOnOnly = isAddOnOnlyPackageSet(setLabel);
+	                            return (
                               <Fragment key={setKey}>
                                 <tr className="bg-slate-50/90">
                                   <td colSpan={7} className="px-4 py-3">
@@ -51087,7 +51088,7 @@ ${waybillLineItems(w).length > 1
                                           {isSetExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                                         </span>
                                         <div className="min-w-0">
-                                          <p className="m-0 truncate text-sm font-black text-slate-900">Set: {setLabel}</p>
+	                                          <p className="m-0 truncate text-sm font-black text-slate-900">{setIsAddOnOnly ? "Add-on bundles" : `Set: ${setLabel}`}</p>
                                           <p className="m-0 text-xs font-semibold text-slate-500">
                                             {setPackages.length} package{setPackages.length === 1 ? "" : "s"} · {setLiveCount} live · {setOfferCount} offer{setOfferCount === 1 ? "" : "s"}{setHiddenOfferCount > 0 ? ` · ${setHiddenOfferCount} hidden` : ""}
                                           </p>
@@ -51150,9 +51151,9 @@ ${waybillLineItems(w).length > 1
                               <td className="px-4 py-4 font-bold text-gray-900 min-w-[220px]">
                                 <div className="flex flex-col gap-2">
                                   <span className="leading-tight">{item.name}</span>
-                                  <span className="inline-flex w-fit items-center rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.16em] text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200" title="Only packages with the same set show together on package-set embed links">
-                                    Set: {packageSetLabelFor(item)}
-                                  </span>
+	                                  <span className={`inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.16em] ${isAddOnOnlyPackageSet(item.packageSet) ? "border-violet-100 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200" : "border-blue-100 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200"}`} title="Only packages with the same set show together on package-set embed links">
+	                                    {isAddOnOnlyPackageSet(item.packageSet) ? "Add-on bundle" : `Set: ${packageSetLabelFor(item)}`}
+	                                  </span>
                                   {hasContentBadges && (
                                     <div className="flex flex-wrap items-center gap-1.5">
                                       {packageComponentCount > 0 && (
@@ -55865,36 +55866,47 @@ ${waybillLineItems(w).length > 1
                   </div>
                 </label>
                 <label><span>Package Name *</span><input value={packageName} onChange={(event) => setPackageName(event.target.value)} placeholder="Starter package" /></label>
-                <label className={`!flex-row items-start gap-3 rounded-xl border px-4 py-3 ${isAddOnOnlyPackageSet(packageSet) ? "border-violet-200 bg-violet-50 dark:border-violet-800 dark:bg-violet-950/30" : "border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"}`}>
-                  <input
-                    type="checkbox"
-                    className="mt-1 w-4 h-4 accent-violet-600"
-                    checked={isAddOnOnlyPackageSet(packageSet)}
-                    onChange={(event) => {
-                      setPackageSet(event.target.checked ? ADD_ON_ONLY_PACKAGE_SET_LABEL : DEFAULT_PACKAGE_SET_LABEL);
-                    }}
-                  />
-                  <div className="text-sm font-medium text-gray-700 dark:text-gray-200">
-                    <strong className="block text-gray-900 dark:text-slate-100">Add-on bundle only</strong>
-                    Hide this package from the main package picker. It can still be selected as a discounted extra / bundle target under "Before you submit".
-                  </div>
-                </label>
                 <label>
-                  <span>Package set</span>
-                  <input
-                    value={packageSet}
-                    onChange={(event) => setPackageSet(event.target.value)}
-                    placeholder="Default, Package Set 1, TikTok Offer..."
-                    list="package-set-options"
-                    maxLength={80}
-                  />
-                  <datalist id="package-set-options">
-                    {packageSetOptionsForProduct(selectedProduct).map((setLabel) => <option key={setLabel} value={setLabel} />)}
-                  </datalist>
+                  <span>Package role</span>
+                  <select
+                    value={isAddOnOnlyPackageSet(packageSet) ? "addon" : "main"}
+                    onChange={(event) => {
+                      const nextRole = event.target.value;
+                      if (nextRole === "addon") {
+                        setPackageSet(ADD_ON_ONLY_PACKAGE_SET_LABEL);
+                        setPackageCompanions([]);
+                        setPackageCompanionSyncToPackages(false);
+                      } else if (isAddOnOnlyPackageSet(packageSet)) {
+                        setPackageSet(DEFAULT_PACKAGE_SET_LABEL);
+                      }
+                    }}
+                  >
+                    <option value="main">Main offer - customer chooses this first</option>
+                    <option value="addon">Add-on bundle - shown under discounted extras</option>
+                  </select>
                   <small className="text-gray-500 dark:text-gray-400">
-                    Packages with the same set show together when generating a special order-form link. "{ADD_ON_ONLY_PACKAGE_SET_LABEL}" packages are hidden from the main picker and used for extras.
+                    Main offers appear in the first package list. Add-on bundles are hidden there and only appear when a main offer points to them.
                   </small>
                 </label>
+                <details className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-900/40">
+                  <summary className="cursor-pointer text-sm font-bold text-gray-700 dark:text-gray-200">Advanced link group</summary>
+                  <label className="mt-3">
+                    <span>Package set</span>
+                    <input
+                      value={packageSet}
+                      onChange={(event) => setPackageSet(event.target.value)}
+                      placeholder="Default, Package Set 1, TikTok Offer..."
+                      list="package-set-options"
+                      maxLength={80}
+                    />
+                    <datalist id="package-set-options">
+                      {packageSetOptionsForProduct(selectedProduct).map((setLabel) => <option key={setLabel} value={setLabel} />)}
+                    </datalist>
+                    <small className="text-gray-500 dark:text-gray-400">
+                      Use this only when generating links that should show a specific package group.
+                    </small>
+                  </label>
+                </details>
                 <label><span>Description</span><textarea value={packageDescription} onChange={(event) => setPackageDescription(event.target.value)} placeholder="Package description..." /></label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <label><span>Main Product Quantity</span><input value={packageQuantity} onChange={(event) => setPackageQuantity(event.target.value)} inputMode="numeric" /></label>
@@ -56455,7 +56467,14 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
                 </section>
-                {/* Extras shown when customers select this package. */}
+                {isAddOnOnlyPackageSet(packageSet) ? (
+                  <section className="rounded-xl border border-violet-200 bg-violet-50 p-4">
+                    <h4 className="m-0 text-sm font-bold text-violet-950">Add-on bundle</h4>
+                    <p className="m-0 mt-1 text-xs text-violet-900/75">
+                      Build the bundle contents here. To show it to customers, open a main offer and add this package under Discounted extras.
+                    </p>
+                  </section>
+                ) : (
                 <section className="border border-gray-200 rounded-xl p-4 space-y-3">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
@@ -57223,6 +57242,7 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
                 </section>
+                )}
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={packageSaving} onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled={packageSaving || packageImageUploading > 0 || companionGalleryUploading > 0} onClick={savePackage}>{packageSaving ? "Saving package..." : (packageImageUploading > 0 || companionGalleryUploading > 0) ? "Loading images..." : modal === "addPackage" ? "Create Package" : "Save Package"}</button></div>
               </div>
             )}
