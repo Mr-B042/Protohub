@@ -10660,6 +10660,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     var metaTestEventCode = embedParams.get("meta_test_event_code") || embedParams.get("test_event_code") || "";
     var metaTestMode = truthy(embedParams.get("meta_test")) || truthy(embedParams.get("meta_test_mode")) || !!metaTestEventCode;
+    var metaTrackingMode = String(embedParams.get("tracking_mode") || embedParams.get("trackingMode") || "").toLowerCase().replace(/-/g, "_");
+    var appendMetaEventIdToRedirect = metaTrackingMode === "hybrid";
 
     // Auto-resize iframe to fit form content, and let the embedded form move
     // this landing page to the configured thank-you URL after a successful order.
@@ -10669,7 +10671,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       try {
         var target = new URL(url, window.location.href);
         if (target.protocol === "http:" || target.protocol === "https:") {
-          if (lastPurchaseEventId) {
+          if (appendMetaEventIdToRedirect && lastPurchaseEventId) {
             target.searchParams.set("ordo_event_id", lastPurchaseEventId);
           }
           window.location.href = target.toString();
@@ -47647,6 +47649,7 @@ ${waybillLineItems(w).length > 1
                         const redirectUrl = productEmbedRedirect(product);
                         const metaTracking = productEmbedMetaTracking(product);
                         const selectedMetaMode = embedMetaTrackingModeOptions.find((option) => option.value === metaTracking.mode) ?? embedMetaTrackingModeOptions[0];
+                        const usesLandingPageMetaTracking = metaTracking.mode === "landing_page";
                         const usesProtohubMetaTracking = metaTracking.mode === "protohub" || metaTracking.mode === "hybrid";
                         const currentMetaCapiConfig = metaCapiConfigForTrackingKey(metaTracking.trackingKey);
                         const selectedMetaCapiConfigId = currentMetaCapiConfig?.id ?? "";
@@ -47725,11 +47728,16 @@ ${waybillLineItems(w).length > 1
                                           className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200 w-full"
                                           value={metaTracking.mode}
                                           onChange={(e) => updateProductEmbedMetaTracking(product.id, { mode: e.target.value as EmbedMetaTrackingMode })}
-                                        >
-                                          {embedMetaTrackingModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                                        </select>
-                                        <span className="text-xs text-slate-500">{selectedMetaMode.hint}</span>
-                                      </label>
+	                                        >
+	                                          {embedMetaTrackingModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+	                                        </select>
+	                                        <span className="text-xs text-slate-500">{selectedMetaMode.hint}</span>
+	                                        {usesLandingPageMetaTracking && (
+	                                          <span className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+	                                            Protohub will not send Purchase in this mode. Your thank-you page Pixel or WordPress CAPI must fire Purchase, and the redirect URL stays exact for Meta URL rules.
+	                                          </span>
+	                                        )}
+	                                      </label>
                                       {canManageMetaCapiSettings && (
                                         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
                                           <label className="flex min-w-0 flex-col gap-1">
@@ -47979,11 +47987,16 @@ ${waybillLineItems(w).length > 1
                                             className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
                                             value={metaTracking.mode}
                                             onChange={(e) => updateProductEmbedMetaTracking(product.id, { mode: e.target.value as EmbedMetaTrackingMode })}
-                                          >
-                                            {embedMetaTrackingModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                                          </select>
-                                          <span className="text-xs text-slate-500">{selectedMetaMode.hint}</span>
-                                        </label>
+	                                          >
+	                                            {embedMetaTrackingModeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+	                                          </select>
+	                                          <span className="text-xs text-slate-500">{selectedMetaMode.hint}</span>
+	                                          {usesLandingPageMetaTracking && (
+	                                            <span className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+	                                              Protohub will not send Purchase here. The thank-you page must fire Purchase, and the redirect URL stays exact for strict Meta URL rules.
+	                                            </span>
+	                                          )}
+	                                        </label>
                                         <label className="flex flex-col gap-1">
                                           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meta Pixel ID</span>
                                           <input

@@ -2538,7 +2538,7 @@ export default function PublicOrderFormPage() {
   function redirectToPublicTarget() {
     if (!publicRedirectUrl) return;
     const redirectUrl = (() => {
-      if (!lastMetaPurchaseEventIdRef.current) return publicRedirectUrl;
+      if (publicMetaTrackingMode !== "hybrid" || !lastMetaPurchaseEventIdRef.current) return publicRedirectUrl;
       try {
         const url = new URL(publicRedirectUrl);
         url.searchParams.set("ordo_event_id", lastMetaPurchaseEventIdRef.current);
