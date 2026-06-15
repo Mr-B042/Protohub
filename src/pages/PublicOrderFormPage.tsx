@@ -621,6 +621,8 @@ function companionSelectionKey(companion: { companionId?: string; productId: str
 }
 
 function companionDisplayName(companion: PublicCompanion, product: PublicProduct, targetPackage?: PublicPackage | null) {
+  const headline = companion.headline?.trim();
+  if (headline) return headline;
   return targetPackage ? `${product.name} · ${targetPackage.name}` : product.name;
 }
 
@@ -4590,7 +4592,7 @@ export default function PublicOrderFormPage() {
                     const standardTotal = companionStandardTotal(companion, product, products, targetPackage);
                     const savings = Math.max(0, standardTotal - total);
                     const discountPercent = companionDiscountPercent(standardTotal, total);
-                    const title = targetPackage?.name || product.name;
+                    const title = companionDisplayName(companion, product, targetPackage);
                     const componentSummary = companionComponentSummary(companion, products, targetPackage);
                     const packageDescriptionText = targetPackage?.description.trim() ?? "";
                     const packageDetailText = packageDescriptionText || companion.pitch?.trim() || componentSummary || companionDisplayDetail(companion, targetPackage, products);
@@ -4889,7 +4891,10 @@ export default function PublicOrderFormPage() {
                         const discountPercent = companionDiscountPercent(standardTotal, total);
                         const teaserOfferLabel = companionOfferPriceLabel(previewCompanion, teaserTotal, currency, previewTargetPackage);
                         const displayOfferLabel = companionOfferPriceLabel(displayCompanion, total, currency, displayTargetPackage);
-                        const media = renderCompanionMedia(displayCompanion, product.name, displayTargetPackage);
+                        const groupTitle = hasVariantChoices
+                          ? product.name
+                          : companionDisplayName(previewCompanion, product, previewTargetPackage);
+                        const media = renderCompanionMedia(displayCompanion, groupTitle, displayTargetPackage);
                         const socialProofUi = companionSocialProofUi(displayCompanion);
                         const teaserCtaLabel = selectedVariant
                           ? "Already added"
@@ -4937,7 +4942,7 @@ export default function PublicOrderFormPage() {
                                   <>
                                     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
                                       <strong style={{ fontSize: 22, lineHeight: 1.08, color: "#111827", flex: 1, minWidth: 0 }}>
-                                        {product.name}
+                                        {groupTitle}
                                       </strong>
                                       <span
                                         style={{
@@ -4959,7 +4964,7 @@ export default function PublicOrderFormPage() {
                                       {previewCompanion.pitch?.trim() || "Quick extra additional item that fits this order."}
                                     </span>
                                     <div style={{ width: "100%", maxWidth: 240, justifySelf: "center" }}>
-                                      {renderCompanionTeaserVisual(previewCompanion, product.name, previewTargetPackage)}
+                                      {renderCompanionTeaserVisual(previewCompanion, groupTitle, previewTargetPackage)}
                                     </div>
                                     {(socialProofUi.badgeText || socialProofUi.stats.length > 0) && (
                                       <div style={{ display: "grid", gap: 6 }}>
@@ -5063,12 +5068,12 @@ export default function PublicOrderFormPage() {
                                 ) : (
                                   <>
                                     <div style={{ width: 120 }}>
-                                      {renderCompanionTeaserVisual(previewCompanion, product.name, previewTargetPackage)}
+                                      {renderCompanionTeaserVisual(previewCompanion, groupTitle, previewTargetPackage)}
                                     </div>
                                     <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
                                       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                                         <strong style={{ fontSize: 19, lineHeight: 1.15, color: "#111827", maxWidth: 220 }}>
-                                          {product.name}
+                                          {groupTitle}
                                         </strong>
                                         <span
                                           style={{
