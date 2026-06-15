@@ -56165,7 +56165,7 @@ ${waybillLineItems(w).length > 1
                     <div>
                       <h4 className="text-sm font-bold text-gray-900 m-0">Stock Components</h4>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        Use this for combo offers like <strong>2pcs Window Tool + 1pc Mini Mop + free towel</strong>. Inventory will deduct these real items on delivery. If you leave this empty, Protohub falls back to the main product quantity above.
+                        This is only for what is inside the selected main package. It still deducts real inventory on delivery, but it does not create a discounted extra. For add-on offers, use <strong>Discounted extras for this package</strong> below.
                       </p>
                     </div>
                     <button

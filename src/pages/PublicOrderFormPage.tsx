@@ -436,6 +436,10 @@ function packageComponentSummary(pkg: PublicPackage, products: PublicProduct[]) 
   return componentListSummary(pkg.packageComponents ?? [], products, pkg);
 }
 
+function packageShowsCustomerComponentBreakdown(pkg: PublicPackage) {
+  return Boolean(pkg.featuredComboCard || pkg.attributionProductId || /combo/i.test(pkg.name));
+}
+
 function componentListSummary(
   components: PublicPackageComponent[],
   products: PublicProduct[],
@@ -484,13 +488,9 @@ function componentFreeGiftItems(
 }
 
 function packageIsComboLike(pkg: PublicPackage) {
-  const components = (pkg.packageComponents ?? []).filter((component) => component.productId || component.product_id);
-  const paidComponentCount = components.filter((component) => !Boolean(component.isFreeGift ?? component.is_free_gift)).length;
   return Boolean(
     pkg.featuredComboCard ||
-      pkg.requiresStateStock ||
-      (pkg.stateFilterMode && pkg.stateFilterMode !== "all") ||
-      paidComponentCount > 1 ||
+      pkg.attributionProductId ||
       /combo/i.test(pkg.name)
   );
 }
@@ -4332,10 +4332,11 @@ export default function PublicOrderFormPage() {
                       [item.id]: (nextIndex + imageUrls.length) % imageUrls.length
                     }));
                   };
-                  const componentSummary = packageComponentSummary(item, products);
+                  const showCustomerComponentBreakdown = packageShowsCustomerComponentBreakdown(item);
+                  const componentSummary = showCustomerComponentBreakdown ? packageComponentSummary(item, products) : "";
                   const packageDescriptionText = item.description.trim();
                   const packageDetailText = packageDescriptionText || componentSummary || `${item.quantity} ${item.quantity === 1 ? "unit" : "units"}`;
-                  const freeGiftItems = packageFreeGiftItems(item, products);
+                  const freeGiftItems = showCustomerComponentBreakdown ? packageFreeGiftItems(item, products) : [];
                   const freeGiftQuantity = freeGiftItems.reduce((sum, gift) => sum + gift.quantity, 0);
                   const freeGiftBadge = `${freeGiftQuantity} FREE GIFT${freeGiftQuantity === 1 ? "" : "S"}`;
                   const isFeatured = item.featuredComboCard || (isComboPackage && hasCarousel);
