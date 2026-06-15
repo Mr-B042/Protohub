@@ -1791,18 +1791,53 @@ export default function PublicOrderFormPage() {
 
   useEffect(() => {
     if (!params) return;
+    const measureHeight = () => {
+      const content = document.querySelector<HTMLElement>(".public-order-page");
+      if (content) {
+        const rect = content.getBoundingClientRect();
+        return Math.ceil(rect.top + rect.height + 16);
+      }
+      const body = document.body;
+      const html = document.documentElement;
+      return Math.ceil(Math.max(
+        body?.scrollHeight ?? 0,
+        body?.offsetHeight ?? 0,
+        html.scrollHeight,
+        html.offsetHeight
+      ));
+    };
     const send = () => {
-      const height = document.documentElement.scrollHeight;
+      const height = measureHeight();
       try {
         window.parent.postMessage({ type: "ordo-resize", height }, "*");
       } catch {
         // Ignore parent-window messaging errors.
       }
     };
-    send();
+    const schedule = () => {
+      send();
+      window.requestAnimationFrame(send);
+    };
+    const timers = [80, 180, 350, 700, 1200, 2000, 3500, 5000].map((delay) => window.setTimeout(send, delay));
     const ro = new ResizeObserver(send);
+    const requestResize = (event: MessageEvent) => {
+      if (event.data?.type === "ordo-request-resize") schedule();
+    };
     ro.observe(document.documentElement);
-    return () => ro.disconnect();
+    if (document.body) ro.observe(document.body);
+    window.addEventListener("load", schedule);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("orientationchange", schedule);
+    window.addEventListener("message", requestResize);
+    schedule();
+    return () => {
+      ro.disconnect();
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener("load", schedule);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("orientationchange", schedule);
+      window.removeEventListener("message", requestResize);
+    };
   }, [params, publicOrderSubmitted, publicUpsellOffer, loading, orderFormCrossSells.length, orderFormPackageId, orderFormState]);
 
   useEffect(() => {

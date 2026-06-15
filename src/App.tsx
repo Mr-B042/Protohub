@@ -10667,6 +10667,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // this landing page to the configured thank-you URL after a successful order.
     var sentMetaEvents = {};
     var lastPurchaseEventId = "";
+    function requestResize() {
+      try {
+        iframe.contentWindow && iframe.contentWindow.postMessage({ type: "ordo-request-resize" }, "*");
+      } catch (_) {}
+    }
+    iframe.addEventListener("load", function() {
+      requestResize();
+      setTimeout(requestResize, 250);
+      setTimeout(requestResize, 800);
+      setTimeout(requestResize, 1800);
+    });
     function redirectWithEventId(url) {
       try {
         var target = new URL(url, window.location.href);
@@ -10680,7 +10691,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     window.addEventListener("message", function(e) {
       if (e.data && e.data.type === "ordo-resize") {
-        iframe.style.height = (e.data.height + 20) + "px";
+        var nextHeight = Math.max(800, Number(e.data.height || 0) + 40);
+        if (nextHeight) {
+          iframe.setAttribute("height", String(nextHeight));
+          iframe.style.height = nextHeight + "px";
+          iframe.style.minHeight = nextHeight + "px";
+        }
       }
       if (e.data && e.data.type === "ordo-meta-event" && e.data.eventName && e.data.eventId) {
         var metaKey = e.data.eventName + ":" + e.data.eventId;
@@ -10716,6 +10732,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         redirectWithEventId(e.data.url);
       }
     });
+    setTimeout(requestResize, 400);
+    setTimeout(requestResize, 1200);
+    setTimeout(requestResize, 2500);
   })();
 </script>`;
   };
@@ -20770,14 +20789,49 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // When running as an iframe embed, send our scroll-height to the parent page so it can resize the iframe.
   useEffect(() => {
     if (!publicEmbedParams) return;
+    const measureHeight = () => {
+      const content = document.querySelector<HTMLElement>(".public-order-page");
+      if (content) {
+        const rect = content.getBoundingClientRect();
+        return Math.ceil(rect.top + rect.height + 16);
+      }
+      const body = document.body;
+      const html = document.documentElement;
+      return Math.ceil(Math.max(
+        body?.scrollHeight ?? 0,
+        body?.offsetHeight ?? 0,
+        html.scrollHeight,
+        html.offsetHeight
+      ));
+    };
     const send = () => {
-      const h = document.documentElement.scrollHeight;
+      const h = measureHeight();
       try { window.parent.postMessage({ type: "ordo-resize", height: h }, "*"); } catch (_) { /* cross-origin parent, ignore */ }
     };
-    send();
+    const schedule = () => {
+      send();
+      window.requestAnimationFrame(send);
+    };
+    const timers = [80, 180, 350, 700, 1200, 2000, 3500, 5000].map((delay) => window.setTimeout(send, delay));
     const ro = new ResizeObserver(send);
     ro.observe(document.documentElement);
-    return () => ro.disconnect();
+    if (document.body) ro.observe(document.body);
+    const requestResize = (event: MessageEvent) => {
+      if (event.data?.type === "ordo-request-resize") schedule();
+    };
+    window.addEventListener("load", schedule);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("orientationchange", schedule);
+    window.addEventListener("message", requestResize);
+    schedule();
+    return () => {
+      ro.disconnect();
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener("load", schedule);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("orientationchange", schedule);
+      window.removeEventListener("message", requestResize);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [Boolean(publicEmbedParams)]);
 
