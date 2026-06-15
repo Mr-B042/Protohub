@@ -450,6 +450,16 @@ export const agentsApi = {
   reconcile: (id: string, body: unknown) => post<any>(`/api/agents/${id}/reconcile`, body)
 };
 
+export const deliveryDistanceAuditsApi = {
+  list: (params?: { orderIds?: string[] }) => {
+    const qs = params?.orderIds?.length ? `?${new URLSearchParams({ orderIds: params.orderIds.join(",") }).toString()}` : "";
+    return get<any[]>(`/api/delivery-distance-audits${qs}`);
+  },
+  calculate: (orderId: string, body?: unknown) => post<any>(`/api/delivery-distance-audits/orders/${orderId}/calculate`, body ?? {}),
+  updateOrderCoordinates: (orderId: string, body: unknown) => patch<any>(`/api/delivery-distance-audits/orders/${orderId}/coordinates`, body),
+  updateAgentLocationCoordinates: (locationId: string, body: unknown) => patch<any>(`/api/delivery-distance-audits/agent-locations/${locationId}/coordinates`, body)
+};
+
 export const weekendStockSummaryApi = {
   weekly: (params?: Record<string, string>) => {
     const qs = params ? `?${new URLSearchParams(params).toString()}` : "";

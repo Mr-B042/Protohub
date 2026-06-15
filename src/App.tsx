@@ -110,7 +110,7 @@ import {
   sendTestPush
 } from "./lib/push-client";
 import {
-  productsApi, ordersApi, publicOrdersApi, agentsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
+  productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
 } from "./lib/api";
@@ -780,6 +780,10 @@ type TrackedOrder = {
   address?: string;
   city?: string;
   state?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  geoAccuracy?: string | null;
+  geoSource?: string | null;
   productName: string;
   packageName: string;
   quantity?: number;
@@ -1002,6 +1006,8 @@ type DeliveryAgentLocation = {
   name: string;
   state: string;
   city?: string;
+  latitude?: number | null;
+  longitude?: number | null;
   active: boolean;
   isPrimary: boolean;
   address?: string;
@@ -1022,6 +1028,29 @@ type DeliveryAgentRecord = {
   active: boolean;
   created: string;
   stockCapacity?: number;
+};
+type DeliveryDistanceAuditRecord = {
+  id: string;
+  orderId: string;
+  agentId?: string | null;
+  agentLocationId?: string | null;
+  originLatitude: number;
+  originLongitude: number;
+  destinationLatitude: number;
+  destinationLongitude: number;
+  distanceMeters: number;
+  durationSeconds?: number | null;
+  straightLineMeters?: number | null;
+  provider: "estimate" | "google_directions" | string;
+  mapUrl?: string | null;
+  embedMapUrl?: string | null;
+  expectedFee?: number | null;
+  chargedFee?: number | null;
+  varianceAmount?: number | null;
+  variancePercent?: number | null;
+  risk: "fair" | "watch" | "suspicious" | "missing" | string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 type AgentStockRecord = {
   agentId: string;
@@ -2077,6 +2106,8 @@ const agentLocationRows = (agent?: Pick<DeliveryAgentRecord, "locations" | "prim
           name: (location.name ?? "").trim(),
           state: normalizeAgentState(location.state),
           city: normalizeAgentCity(location.city),
+          latitude: typeof (location as any).latitude === "number" ? (location as any).latitude : null,
+          longitude: typeof (location as any).longitude === "number" ? (location as any).longitude : null,
           active: location.active !== false,
           isPrimary: location.isPrimary === true,
           stock: Array.isArray(location.stock)
@@ -5193,11 +5224,59 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     agentLocationStateSnapshot: value?.agentLocationStateSnapshot ?? value?.agent_location_state_snapshot ?? null,
     agentLocationCitySnapshot: value?.agentLocationCitySnapshot ?? value?.agent_location_city_snapshot ?? null,
     agentCoverageStateSnapshot: value?.agentCoverageStateSnapshot ?? value?.agent_coverage_state_snapshot ?? null,
+    latitude: typeof (value?.latitude ?? value?.lat) === "number" ? (value?.latitude ?? value?.lat) : value?.latitude === null ? null : undefined,
+    longitude: typeof (value?.longitude ?? value?.lng) === "number" ? (value?.longitude ?? value?.lng) : value?.longitude === null ? null : undefined,
+    geoAccuracy: value?.geoAccuracy ?? value?.geo_accuracy ?? null,
+    geoSource: value?.geoSource ?? value?.geo_source ?? null,
     updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
     scheduledAt,
     scheduledDate,
     notes: orderNotesFor(value)
   };
+};
+
+const normalizeDeliveryDistanceAudit = (value: any): DeliveryDistanceAuditRecord => ({
+  id: value?.id ?? "",
+  orderId: value?.orderId ?? value?.order_id ?? "",
+  agentId: value?.agentId ?? value?.agent_id ?? null,
+  agentLocationId: value?.agentLocationId ?? value?.agent_location_id ?? null,
+  originLatitude: Number(value?.originLatitude ?? value?.origin_latitude ?? 0),
+  originLongitude: Number(value?.originLongitude ?? value?.origin_longitude ?? 0),
+  destinationLatitude: Number(value?.destinationLatitude ?? value?.destination_latitude ?? 0),
+  destinationLongitude: Number(value?.destinationLongitude ?? value?.destination_longitude ?? 0),
+  distanceMeters: Number(value?.distanceMeters ?? value?.distance_meters ?? 0),
+  durationSeconds: value?.durationSeconds ?? value?.duration_seconds ?? null,
+  straightLineMeters: value?.straightLineMeters ?? value?.straight_line_meters ?? null,
+  provider: value?.provider ?? "estimate",
+  mapUrl: value?.mapUrl ?? value?.map_url ?? null,
+  embedMapUrl: value?.embedMapUrl ?? value?.embed_map_url ?? null,
+  expectedFee: value?.expectedFee !== undefined ? Number(value.expectedFee) : value?.expected_fee !== undefined ? Number(value.expected_fee) : null,
+  chargedFee: value?.chargedFee !== undefined ? Number(value.chargedFee) : value?.charged_fee !== undefined ? Number(value.charged_fee) : null,
+  varianceAmount: value?.varianceAmount !== undefined ? Number(value.varianceAmount) : value?.variance_amount !== undefined ? Number(value.variance_amount) : null,
+  variancePercent: value?.variancePercent !== undefined ? Number(value.variancePercent) : value?.variance_percent !== undefined ? Number(value.variance_percent) : null,
+  risk: value?.risk ?? "fair",
+  createdAt: value?.createdAt ?? value?.created_at ?? undefined,
+  updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined
+});
+
+const parseCoordinatePairDraft = (latitudeDraft: string, longitudeDraft: string) => {
+  const latitude = Number(latitudeDraft.trim());
+  const longitude = Number(longitudeDraft.trim());
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return { latitude, longitude };
+};
+
+const coordinateLabel = (latitude?: number | null, longitude?: number | null) =>
+  typeof latitude === "number" && typeof longitude === "number"
+    ? `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`
+    : "GPS missing";
+
+const distanceLabel = (meters?: number | null) => {
+  const value = Number(meters ?? 0);
+  if (!Number.isFinite(value) || value <= 0) return "—";
+  if (value < 1000) return `${Math.round(value)} m`;
+  return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} km`;
 };
 
 const normalizeFollowUpTask = (value: any): FollowUpTask => ({
@@ -6898,6 +6977,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // delivery state. Operator can flip this on for cross-state deliveries.
   const [sendToAgentShowAllStates, setSendToAgentShowAllStates] = useState(false);
   const [agents, setAgents] = useState<DeliveryAgentRecord[]>([]);
+  const [deliveryDistanceAudits, setDeliveryDistanceAudits] = useState<DeliveryDistanceAuditRecord[]>([]);
+  const [deliveryDistanceLoadingOrderId, setDeliveryDistanceLoadingOrderId] = useState<string | null>(null);
+  const [deliveryDistanceSavingKey, setDeliveryDistanceSavingKey] = useState<string | null>(null);
+  const [deliveryDistanceCoordDrafts, setDeliveryDistanceCoordDrafts] = useState<Record<string, { latitude: string; longitude: string }>>({});
+  const [deliveryDistanceMapPreviewOrderId, setDeliveryDistanceMapPreviewOrderId] = useState<string | null>(null);
   const [agentStock, setAgentStock] = useState<AgentStockRecord[]>([]);
   const [waybillRecords, setWaybillRecords] = useState<WaybillRecord[]>([]);
   const [agentBalanceWeekStart, setAgentBalanceWeekStart] = useState<string>(() => sundayKeyFromDate());
@@ -9092,6 +9176,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repExtraExpenses, setRepExtraExpenses] = useState<{ type: ExpenseType; amount: string; description: string }[]>([]);
   const [financeProductFilter, setFinanceProductFilter] = useState<string[]>([]);
   const financeProductFilterKey = financeProductFilter.join(",");
+  const deliveryDistanceAuditByOrderId = useMemo(() => {
+    const map = new Map<string, DeliveryDistanceAuditRecord>();
+    deliveryDistanceAudits.forEach((audit) => {
+      if (audit.orderId) map.set(audit.orderId, audit);
+    });
+    return map;
+  }, [deliveryDistanceAudits]);
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (activePage !== "Finance & Accounting") return;
@@ -9109,6 +9200,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (activePage !== "Finance & Accounting") return;
     void loadFinanceRemittanceData({ quiet: financeRemittanceTransactions.length > 0 });
   }, [activePage, financePeriod, financeDateRange.start, financeDateRange.end, financeProductFilterKey, authUser?.id]);
+  useEffect(() => {
+    if (!auth.getAccessToken()) return;
+    if (activePage !== "Finance & Accounting" || financeTab !== "Delivery Fee Audit") return;
+    if (!["Owner", "Admin", "Manager", "Inventory Manager"].includes(currentRole)) return;
+    let cancelled = false;
+    deliveryDistanceAuditsApi.list()
+      .then((rows) => {
+        if (!cancelled && Array.isArray(rows)) setDeliveryDistanceAudits(rows.map((row) => normalizeDeliveryDistanceAudit(row)));
+      })
+      .catch((err: any) => {
+        if (!cancelled) showToast(`Failed to load distance audits: ${err?.message ?? "please retry"}.`);
+      });
+    return () => { cancelled = true; };
+  }, [activePage, financeTab, authUser?.id, currentRole]);
   const [bonusSettingsProductId, setBonusSettingsProductId] = useState<string | null>(null);
   const [stateAvailabilityProductId, setStateAvailabilityProductId] = useState<string | null>(null);
   const [crossSellTargetOrderId, setCrossSellTargetOrderId] = useState<string | null>(null);
@@ -15351,7 +15456,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       boundaryLabel: string;
       confidence: "Confirmed area" | "Needs cleaner address";
       currency: ProductCurrencyCode;
-      orders: { id: string; customer: string; fee: number; amount: number; address: string; date: string; status: string }[];
+      orders: { id: string; customer: string; fee: number; amount: number; address: string; date: string; status: string; record: TrackedOrder }[];
     }>();
     deliveryFeeAuditedOrders.forEach((row) => {
       const ranked = row.candidates
@@ -15381,7 +15486,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         amount: row.order.amount,
         address: row.order.address || row.order.location || "No address captured",
         date: orderDeliveredKey(row.order) || orderCreatedKey(row.order),
-        status: row.order.status ?? "New"
+        status: row.order.status ?? "New",
+        record: row.order
       });
       groups.set(groupKey, current);
     });
@@ -15415,6 +15521,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const deliveryFeePossibleLeak = deliveryFeeConfirmedRows.reduce((sum, row) => sum + row.possibleOvercharge, 0);
   const deliveryFeeHighestSpread = deliveryFeeConfirmedRows.reduce((max, row) => Math.max(max, row.spread), 0);
+  const deliveryDistanceHubForOrder = (order: TrackedOrder) => {
+    const agent = order.agentId ? agents.find((row) => row.id === order.agentId) : null;
+    if (!agent) return null;
+    return findAgentLocation(agent, order.agentLocationId) ?? primaryAgentLocation(agent);
+  };
+  const hasGpsPair = (value?: { latitude?: number | null; longitude?: number | null } | null) =>
+    typeof value?.latitude === "number" && typeof value?.longitude === "number";
+  const deliveryDistanceEligibleOrders = financeDeliveredRows.filter((order) => (order.logisticsCost ?? 0) > 0 && order.agentId);
+  const deliveryDistanceReadyOrders = deliveryDistanceEligibleOrders.filter((order) => hasGpsPair(order) && hasGpsPair(deliveryDistanceHubForOrder(order)));
+  const deliveryDistanceAuditsInPeriod = deliveryDistanceEligibleOrders
+    .map((order) => deliveryDistanceAuditByOrderId.get(order.id))
+    .filter((audit): audit is DeliveryDistanceAuditRecord => Boolean(audit));
+  const deliveryDistanceSuspiciousCount = deliveryDistanceAuditsInPeriod.filter((audit) => audit.risk === "suspicious").length;
+  const deliveryDistanceWatchCount = deliveryDistanceAuditsInPeriod.filter((audit) => audit.risk === "watch").length;
+  const deliveryDistanceEstimatedCount = deliveryDistanceAuditsInPeriod.filter((audit) => audit.provider === "estimate").length;
+  const deliveryDistanceHubRows = agents.flatMap((agent) => agentLocationRows(agent).filter((location) => Boolean(location.id)));
+  const deliveryDistanceHubGpsReadyCount = deliveryDistanceHubRows.filter((location) => hasGpsPair(location)).length;
 
   // ===== Remittance (Pay-on-Delivery cash reconciliation) =====
   const orderLogisticsCost = (order: TrackedOrder) => order.logisticsCost ?? 0;
@@ -24740,6 +24863,84 @@ ${waybillLineItems(w).length > 1
     const normalized = normalizeTrackedOrder(raw);
     setTrackedOrders((value) => value.map((order) => order.id === normalized.id ? { ...order, ...normalized } : order));
     return normalized;
+  };
+
+  const deliveryDistanceDraftFor = (key: string, latitude?: number | null, longitude?: number | null) =>
+    deliveryDistanceCoordDrafts[key] ?? {
+      latitude: typeof latitude === "number" ? String(latitude) : "",
+      longitude: typeof longitude === "number" ? String(longitude) : ""
+    };
+
+  const setDeliveryDistanceDraft = (key: string, patch: Partial<{ latitude: string; longitude: string }>) => {
+    setDeliveryDistanceCoordDrafts((value) => {
+      const current = value[key] ?? { latitude: "", longitude: "" };
+      return { ...value, [key]: { ...current, ...patch } };
+    });
+  };
+
+  const saveOrderDistanceCoordinates = async (order: TrackedOrder) => {
+    const key = `order:${order.id}`;
+    const draft = deliveryDistanceDraftFor(key, order.latitude, order.longitude);
+    const parsed = parseCoordinatePairDraft(draft.latitude, draft.longitude);
+    if (!parsed) {
+      showToast("Enter a valid customer latitude and longitude.");
+      return;
+    }
+    setDeliveryDistanceSavingKey(key);
+    try {
+      const updated = normalizeTrackedOrder(await deliveryDistanceAuditsApi.updateOrderCoordinates(order.id, { ...parsed, geoSource: "manual" }));
+      setTrackedOrders((value) => value.map((row) => row.id === updated.id ? { ...row, ...updated } : row));
+      setDeliveryDistanceCoordDrafts((value) => ({ ...value, [key]: { latitude: String(parsed.latitude), longitude: String(parsed.longitude) } }));
+      showToast(`Customer GPS saved for order ${order.id}.`);
+    } catch (err: any) {
+      showToast(`Failed to save customer GPS: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setDeliveryDistanceSavingKey(null);
+    }
+  };
+
+  const saveAgentLocationDistanceCoordinates = async (agent: DeliveryAgentRecord, location: DeliveryAgentLocation) => {
+    if (!location.id) {
+      showToast("This hub has not synced to the server yet.");
+      return;
+    }
+    const key = `hub:${location.id}`;
+    const draft = deliveryDistanceDraftFor(key, location.latitude, location.longitude);
+    const parsed = parseCoordinatePairDraft(draft.latitude, draft.longitude);
+    if (!parsed) {
+      showToast("Enter a valid hub latitude and longitude.");
+      return;
+    }
+    setDeliveryDistanceSavingKey(key);
+    try {
+      const saved: any = await deliveryDistanceAuditsApi.updateAgentLocationCoordinates(location.id, parsed);
+      const latitude = typeof saved?.latitude === "number" ? saved.latitude : parsed.latitude;
+      const longitude = typeof saved?.longitude === "number" ? saved.longitude : parsed.longitude;
+      setAgents((value) => value.map((row) => row.id === agent.id ? {
+        ...row,
+        locations: agentLocationRows(row).map((item) => item.id === location.id ? { ...item, latitude, longitude } : item)
+      } : row));
+      setDeliveryDistanceCoordDrafts((value) => ({ ...value, [key]: { latitude: String(latitude), longitude: String(longitude) } }));
+      showToast(`Hub GPS saved for ${agentLocationLabel(location)}.`);
+    } catch (err: any) {
+      showToast(`Failed to save hub GPS: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setDeliveryDistanceSavingKey(null);
+    }
+  };
+
+  const calculateDeliveryDistanceAudit = async (order: TrackedOrder) => {
+    setDeliveryDistanceLoadingOrderId(order.id);
+    try {
+      const audit = normalizeDeliveryDistanceAudit(await deliveryDistanceAuditsApi.calculate(order.id));
+      setDeliveryDistanceAudits((value) => [audit, ...value.filter((row) => row.orderId !== audit.orderId)]);
+      const riskLabel = audit.risk === "suspicious" ? "suspicious" : audit.risk === "watch" ? "watch" : audit.risk === "missing" ? "needs fee" : "fair";
+      showToast(`Distance audit ready for ${order.id}: ${distanceLabel(audit.distanceMeters)} · ${riskLabel}.`);
+    } catch (err: any) {
+      showToast(err?.message ?? "Add hub/customer GPS before calculating distance.");
+    } finally {
+      setDeliveryDistanceLoadingOrderId(null);
+    }
   };
 
   const refreshFollowUpRecordsForOrder = async (orderId: string) => {
@@ -42642,14 +42843,14 @@ ${waybillLineItems(w).length > 1
                       <div className="max-w-3xl">
                         <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-orange-200 bg-white px-3 py-1 text-[11px] font-black uppercase tracking-wider text-orange-700">
                           <MapPin className="h-3.5 w-3.5" />
-                          Address-area intelligence
+                          Address + distance intelligence
                         </div>
                         <h2 className="m-0 text-xl font-black text-gray-950">Catch inconsistent delivery charges before they quietly become normal.</h2>
                         <p className="m-0 mt-2 text-sm leading-relaxed text-gray-600">
-                          Protohub compares the same logistics partner against the same repeated area phrase inside the delivery address. City and state are only used as a safety boundary — they are not treated as the real area.
+                          Protohub compares repeated address areas and, when GPS is saved, checks the customer route from the agent hub against the delivery fee charged.
                         </p>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs sm:min-w-[320px]">
+                      <div className="grid grid-cols-1 gap-2 text-xs sm:min-w-[360px] sm:grid-cols-3">
                         <div className="rounded-xl border border-orange-100 bg-white/80 p-3">
                           <p className="m-0 font-black uppercase tracking-wider text-orange-700">Confirmed rule</p>
                           <p className="m-0 mt-1 text-gray-600">Same agent + same address-area + different fee.</p>
@@ -42658,23 +42859,29 @@ ${waybillLineItems(w).length > 1
                           <p className="m-0 font-black uppercase tracking-wider text-slate-600">Weak rule</p>
                           <p className="m-0 mt-1 text-gray-600">Only city/state matched, so review the address first.</p>
                         </div>
+                        <div className="rounded-xl border border-blue-100 bg-white/80 p-3">
+                          <p className="m-0 font-black uppercase tracking-wider text-blue-700">Route rule</p>
+                          <p className="m-0 mt-1 text-gray-600">Hub GPS + customer GPS → fair-fee check.</p>
+                        </div>
                       </div>
                     </div>
                   </section>
 
-                  <section className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Delivery fee audit summary">
+                  <section className="grid grid-cols-2 gap-3 lg:grid-cols-6" aria-label="Delivery fee audit summary">
                     {[
                       { title: "Confirmed Area Mismatches", value: String(deliveryFeeConfirmedRows.length), helper: "Repeated address-area phrases with different fees", tone: "rose", icon: AlertTriangle },
                       { title: "Possible Fee Leakage", value: formatMoney(deliveryFeePossibleLeak), helper: "Amount above the most common fee in confirmed areas", tone: "orange", icon: CircleDollarSign },
                       { title: "Highest Spread", value: formatMoney(deliveryFeeHighestSpread), helper: "Largest gap between lowest and highest fee", tone: "blue", icon: Scale },
-                      { title: "Needs Cleaner Address", value: String(deliveryFeeWeakRows.length), helper: "Broad city/state matches that need human review", tone: "slate", icon: ClipboardCheck },
+                      { title: "Route Ready", value: `${deliveryDistanceReadyOrders.length}/${deliveryDistanceEligibleOrders.length}`, helper: "Delivered orders with hub + customer GPS", tone: "green", icon: MapPin },
+                      { title: "Distance Flags", value: String(deliveryDistanceSuspiciousCount + deliveryDistanceWatchCount), helper: "Calculated routes marked watch or suspicious", tone: "rose", icon: AlertTriangle },
+                      { title: "Hub GPS", value: `${deliveryDistanceHubGpsReadyCount}/${deliveryDistanceHubRows.length}`, helper: deliveryDistanceEstimatedCount > 0 ? `${deliveryDistanceEstimatedCount} audit${deliveryDistanceEstimatedCount === 1 ? "" : "s"} using estimate` : "Agent hubs with saved coordinates", tone: "slate", icon: ClipboardCheck },
                     ].map(({ title, value, helper, tone, icon: Icon }) => (
                       <article key={title} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-                        <span className={`mb-3 flex h-9 w-9 items-center justify-center rounded-full ${tone === "rose" ? "bg-rose-50 text-rose-600" : tone === "orange" ? "bg-orange-50 text-orange-600" : tone === "blue" ? "bg-blue-50 text-blue-600" : "bg-slate-50 text-slate-500"}`}>
+                        <span className={`mb-3 flex h-9 w-9 items-center justify-center rounded-full ${tone === "rose" ? "bg-rose-50 text-rose-600" : tone === "orange" ? "bg-orange-50 text-orange-600" : tone === "blue" ? "bg-blue-50 text-blue-600" : tone === "green" ? "bg-emerald-50 text-emerald-600" : "bg-slate-50 text-slate-500"}`}>
                           <Icon className="h-4 w-4" />
                         </span>
                         <h3 className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-500">{title}</h3>
-                        <strong className={`mt-1 block text-xl font-black ${tone === "rose" ? "text-rose-700" : tone === "orange" ? "text-orange-700" : "text-gray-950"}`}>{value}</strong>
+                        <strong className={`mt-1 block text-xl font-black ${tone === "rose" ? "text-rose-700" : tone === "orange" ? "text-orange-700" : tone === "green" ? "text-emerald-700" : "text-gray-950"}`}>{value}</strong>
                         <p className="m-0 mt-1 text-[11px] leading-snug text-gray-500">{helper}</p>
                       </article>
                     ))}
@@ -42777,27 +42984,179 @@ ${waybillLineItems(w).length > 1
 
                                 <div className="space-y-2">
                                   <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Evidence orders · {row.orders.length}</p>
-                                  {orderedEvidence.slice(0, 10).map((order) => (
-                                    <button
-                                      key={order.id}
-                                      type="button"
-                                      onClick={() => { setSelectedOrderId(order.id); setModal("orderDetails"); }}
-                                      className="!min-h-0 flex w-full flex-col gap-2 rounded-xl border border-gray-200 bg-white px-3 py-3 text-left transition-colors hover:border-[#1F8FE0] hover:bg-blue-50/40 sm:flex-row sm:items-center sm:justify-between"
-                                    >
-                                      <div className="min-w-0">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <span className="font-black text-[#1F8FE0]">#{order.id}</span>
-                                          <span className="font-bold text-gray-900">{order.customer}</span>
-                                          {order.date && <span className="text-[11px] font-semibold text-gray-400">{displayDateFromKey(order.date)}</span>}
+                                  {orderedEvidence.slice(0, 10).map((order) => {
+                                    const fullOrder = order.record;
+                                    const audit = deliveryDistanceAuditByOrderId.get(order.id);
+                                    const hub = deliveryDistanceHubForOrder(fullOrder);
+                                    const hubAgent = fullOrder.agentId ? agents.find((agent) => agent.id === fullOrder.agentId) ?? null : null;
+                                    const orderCoordKey = `order:${order.id}`;
+                                    const hubCoordKey = hub?.id ? `hub:${hub.id}` : "";
+                                    const orderDraft = deliveryDistanceDraftFor(orderCoordKey, fullOrder.latitude, fullOrder.longitude);
+                                    const hubDraft = hub ? deliveryDistanceDraftFor(hubCoordKey, hub.latitude, hub.longitude) : { latitude: "", longitude: "" };
+                                    const orderGpsReady = hasGpsPair(fullOrder);
+                                    const hubGpsReady = hasGpsPair(hub);
+                                    const canCalculateDistance = orderGpsReady && hubGpsReady;
+                                    const riskClass = audit?.risk === "suspicious"
+                                      ? "bg-rose-50 text-rose-700 border-rose-200"
+                                      : audit?.risk === "watch"
+                                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                                        : audit?.risk === "missing"
+                                          ? "bg-slate-50 text-slate-600 border-slate-200"
+                                          : "bg-emerald-50 text-emerald-700 border-emerald-200";
+                                    return (
+                                      <article key={order.id} className="rounded-xl border border-gray-200 bg-white px-3 py-3">
+                                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                          <div className="min-w-0">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <span className="font-black text-[#1F8FE0]">#{order.id}</span>
+                                              <span className="font-bold text-gray-900">{order.customer}</span>
+                                              {order.date && <span className="text-[11px] font-semibold text-gray-400">{displayDateFromKey(order.date)}</span>}
+                                            </div>
+                                            <p className="m-0 mt-1 line-clamp-2 text-xs leading-relaxed text-gray-500">{order.address}</p>
+                                          </div>
+                                          <div className="flex shrink-0 items-center justify-between gap-2 sm:flex-col sm:items-end">
+                                            <span className={`text-base font-black ${order.fee === row.commonFee ? "text-emerald-700" : "text-rose-700"}`}>{formatProductMoney(order.fee, row.currency)}</span>
+                                            <button
+                                              type="button"
+                                              onClick={() => { setSelectedOrderId(order.id); setModal("orderDetails"); }}
+                                              className="!min-h-0 inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-500 hover:bg-gray-50"
+                                            >
+                                              <Eye className="h-3 w-3" /> Details
+                                            </button>
+                                          </div>
                                         </div>
-                                        <p className="m-0 mt-1 line-clamp-2 text-xs leading-relaxed text-gray-500">{order.address}</p>
-                                      </div>
-                                      <div className="flex shrink-0 items-center justify-between gap-2 sm:flex-col sm:items-end">
-                                        <span className={`text-base font-black ${order.fee === row.commonFee ? "text-emerald-700" : "text-rose-700"}`}>{formatProductMoney(order.fee, row.currency)}</span>
-                                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-400"><Eye className="h-3 w-3" /> Details</span>
-                                      </div>
-                                    </button>
-                                  ))}
+
+                                        <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_260px]">
+                                          <div className="grid gap-2 sm:grid-cols-2">
+                                            <div className={`rounded-lg border p-2 ${orderGpsReady ? "border-emerald-100 bg-emerald-50/40" : "border-amber-100 bg-amber-50/40"}`}>
+                                              <div className="mb-1 flex items-center justify-between gap-2">
+                                                <span className="text-[10px] font-black uppercase tracking-wider text-gray-500">Customer GPS</span>
+                                                <span className={`text-[10px] font-black ${orderGpsReady ? "text-emerald-700" : "text-amber-700"}`}>{coordinateLabel(fullOrder.latitude, fullOrder.longitude)}</span>
+                                              </div>
+                                              <div className="grid grid-cols-2 gap-1.5">
+                                                <input
+                                                  inputMode="decimal"
+                                                  className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
+                                                  placeholder="Lat"
+                                                  value={orderDraft.latitude}
+                                                  onChange={(event) => setDeliveryDistanceDraft(orderCoordKey, { latitude: event.target.value })}
+                                                />
+                                                <input
+                                                  inputMode="decimal"
+                                                  className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
+                                                  placeholder="Lng"
+                                                  value={orderDraft.longitude}
+                                                  onChange={(event) => setDeliveryDistanceDraft(orderCoordKey, { longitude: event.target.value })}
+                                                />
+                                              </div>
+                                              <button
+                                                type="button"
+                                                disabled={deliveryDistanceSavingKey === orderCoordKey}
+                                                onClick={() => saveOrderDistanceCoordinates(fullOrder)}
+                                                className="!min-h-0 mt-2 inline-flex w-full items-center justify-center rounded-md bg-white px-2 py-1.5 text-[11px] font-black text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-50"
+                                              >
+                                                {deliveryDistanceSavingKey === orderCoordKey ? "Saving..." : "Save customer GPS"}
+                                              </button>
+                                            </div>
+
+                                            <div className={`rounded-lg border p-2 ${hubGpsReady ? "border-emerald-100 bg-emerald-50/40" : "border-amber-100 bg-amber-50/40"}`}>
+                                              <div className="mb-1 flex items-center justify-between gap-2">
+                                                <span className="text-[10px] font-black uppercase tracking-wider text-gray-500">Hub GPS</span>
+                                                <span className={`text-[10px] font-black ${hubGpsReady ? "text-emerald-700" : "text-amber-700"}`}>{hub ? coordinateLabel(hub.latitude, hub.longitude) : "No hub"}</span>
+                                              </div>
+                                              <p className="m-0 mb-1 truncate text-[11px] font-semibold text-gray-500">{hub ? agentLocationLabel(hub) : "Assign this order to an agent hub"}</p>
+                                              <div className="grid grid-cols-2 gap-1.5">
+                                                <input
+                                                  inputMode="decimal"
+                                                  className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
+                                                  placeholder="Lat"
+                                                  value={hubDraft.latitude}
+                                                  disabled={!hub}
+                                                  onChange={(event) => hubCoordKey && setDeliveryDistanceDraft(hubCoordKey, { latitude: event.target.value })}
+                                                />
+                                                <input
+                                                  inputMode="decimal"
+                                                  className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
+                                                  placeholder="Lng"
+                                                  value={hubDraft.longitude}
+                                                  disabled={!hub}
+                                                  onChange={(event) => hubCoordKey && setDeliveryDistanceDraft(hubCoordKey, { longitude: event.target.value })}
+                                                />
+                                              </div>
+                                              <button
+                                                type="button"
+                                                disabled={!hub || !hubAgent || deliveryDistanceSavingKey === hubCoordKey}
+                                                onClick={() => hub && hubAgent && saveAgentLocationDistanceCoordinates(hubAgent, hub)}
+                                                className="!min-h-0 mt-2 inline-flex w-full items-center justify-center rounded-md bg-white px-2 py-1.5 text-[11px] font-black text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-50"
+                                              >
+                                                {deliveryDistanceSavingKey === hubCoordKey ? "Saving..." : "Save hub GPS"}
+                                              </button>
+                                            </div>
+                                          </div>
+
+                                          <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-3">
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${audit ? riskClass : "border-gray-200 bg-white text-gray-500"}`}>
+                                                {audit ? audit.risk : "Not calculated"}
+                                              </span>
+                                              {audit && <span className="text-xs font-black text-blue-900">{distanceLabel(audit.distanceMeters)}</span>}
+                                            </div>
+                                            {audit ? (
+                                              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                                                <div><span className="block font-bold uppercase text-blue-500">Expected</span><strong>{formatProductMoney(Number(audit.expectedFee ?? 0), row.currency)}</strong></div>
+                                                <div><span className="block font-bold uppercase text-blue-500">Variance</span><strong className={Number(audit.varianceAmount ?? 0) > 0 ? "text-rose-700" : "text-emerald-700"}>{formatProductMoney(Number(audit.varianceAmount ?? 0), row.currency)}</strong></div>
+                                              </div>
+                                            ) : (
+                                              <p className="m-0 mt-2 text-[11px] font-semibold leading-5 text-blue-800">
+                                                {canCalculateDistance ? "Ready to calculate route distance." : "Save both hub and customer GPS to calculate route distance."}
+                                              </p>
+                                            )}
+                                            <div className="mt-3 flex flex-wrap gap-1.5">
+                                              <button
+                                                type="button"
+                                                disabled={!canCalculateDistance || deliveryDistanceLoadingOrderId === order.id}
+                                                onClick={() => calculateDeliveryDistanceAudit(fullOrder)}
+                                                className="!min-h-0 inline-flex flex-1 items-center justify-center rounded-md bg-[#1F8FE0] px-2 py-1.5 text-[11px] font-black text-white hover:bg-blue-700 disabled:opacity-50"
+                                              >
+                                                {deliveryDistanceLoadingOrderId === order.id ? "Calculating..." : audit ? "Recalculate" : "Calculate"}
+                                              </button>
+                                              {audit?.mapUrl && (
+                                                <a
+                                                  className="inline-flex items-center justify-center gap-1 rounded-md border border-blue-200 bg-white px-2 py-1.5 text-[11px] font-black text-blue-700 hover:bg-blue-50"
+                                                  href={audit.mapUrl}
+                                                  target="_blank"
+                                                  rel="noreferrer"
+                                                >
+                                                  <ExternalLink className="h-3 w-3" /> Route
+                                                </a>
+                                              )}
+                                              {audit?.embedMapUrl && (
+                                                <button
+                                                  type="button"
+                                                  className="!min-h-0 inline-flex items-center justify-center rounded-md border border-blue-200 bg-white px-2 py-1.5 text-[11px] font-black text-blue-700 hover:bg-blue-50"
+                                                  onClick={() => setDeliveryDistanceMapPreviewOrderId((current) => current === order.id ? null : order.id)}
+                                                >
+                                                  {deliveryDistanceMapPreviewOrderId === order.id ? "Hide map" : "Preview map"}
+                                                </button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {audit?.embedMapUrl && deliveryDistanceMapPreviewOrderId === order.id && (
+                                          <div className="mt-3 overflow-hidden rounded-xl border border-gray-200">
+                                            <iframe
+                                              title={`Route map for order ${order.id}`}
+                                              src={audit.embedMapUrl}
+                                              className="h-56 w-full border-0"
+                                              loading="lazy"
+                                              referrerPolicy="no-referrer-when-downgrade"
+                                            />
+                                          </div>
+                                        )}
+                                      </article>
+                                    );
+                                  })}
                                   {orderedEvidence.length > 10 && (
                                     <p className="m-0 text-xs font-semibold text-gray-400">+ {orderedEvidence.length - 10} more orders in this area group.</p>
                                   )}
@@ -57094,6 +57453,43 @@ ${waybillLineItems(w).length > 1
                               </span>
                             ))}
                           </div>
+                          {location.id && (() => {
+                            const hubCoordKey = `hub:${location.id}`;
+                            const hubDraft = deliveryDistanceDraftFor(hubCoordKey, location.latitude, location.longitude);
+                            const hubGpsReady = hasGpsPair(location);
+                            return (
+                              <div className="mt-3 rounded-lg border border-gray-100 bg-gray-50 p-2">
+                                <div className="mb-1 flex items-center justify-between gap-2">
+                                  <span className="text-[10px] font-black uppercase tracking-wider text-gray-500">Distance audit GPS</span>
+                                  <span className={`text-[10px] font-black ${hubGpsReady ? "text-emerald-700" : "text-amber-700"}`}>{coordinateLabel(location.latitude, location.longitude)}</span>
+                                </div>
+                                <div className="grid grid-cols-[1fr_1fr_auto] gap-1.5">
+                                  <input
+                                    inputMode="decimal"
+                                    className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
+                                    placeholder="Latitude"
+                                    value={hubDraft.latitude}
+                                    onChange={(event) => setDeliveryDistanceDraft(hubCoordKey, { latitude: event.target.value })}
+                                  />
+                                  <input
+                                    inputMode="decimal"
+                                    className="min-w-0 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-[#1F8FE0]"
+                                    placeholder="Longitude"
+                                    value={hubDraft.longitude}
+                                    onChange={(event) => setDeliveryDistanceDraft(hubCoordKey, { longitude: event.target.value })}
+                                  />
+                                  <button
+                                    type="button"
+                                    disabled={deliveryDistanceSavingKey === hubCoordKey}
+                                    onClick={() => saveAgentLocationDistanceCoordinates(selectedAgent, location)}
+                                    className="!min-h-0 rounded-md bg-white px-2 py-1.5 text-[11px] font-black text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-50"
+                                  >
+                                    {deliveryDistanceSavingKey === hubCoordKey ? "Saving" : "Save"}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))}
 	                  </div>
