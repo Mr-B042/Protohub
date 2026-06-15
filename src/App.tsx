@@ -29846,6 +29846,37 @@ ${waybillLineItems(w).length > 1
     syncHashRoute(`#/dashboard/admin/inventory/packages/${productId}/new`);
   };
 
+  const openInventoryAddComboPackageRoute = (
+    product: Product,
+    options: { stateOnly?: boolean; stockGated?: boolean } = {}
+  ) => {
+    const stateOnly = options.stateOnly === true;
+    const stockGated = options.stockGated === true;
+    const bundleQualifier = stateOnly && stockGated
+      ? " state-stock"
+      : stateOnly
+        ? " state-only"
+        : stockGated
+          ? " stock-gated"
+          : "";
+    resetPackageForm();
+    setSelectedProductId(product.id);
+    setPackageName(`${product.name}${bundleQualifier} bundle`);
+    setPackageDescription(`Bundle offer for ${product.name}`);
+    setPackageFeaturedComboCard(true);
+    setPackageStateFilterMode(stateOnly ? "allow" : "all");
+    setPackageStateRestrictions(stateOnly ? [...(product.availableStates ?? [])] : []);
+    setPackageRequiresStateStock(stockGated);
+    setPackageComponents([
+      normalisePackageComponent({ productId: product.id, quantity: 1, isFreeGift: false })
+    ]);
+    setPackagePageTab("Packages");
+    openInventoryAddPackageRoute(product.id);
+    if (stateOnly && (product.availableStates?.length ?? 0) === 0) {
+      showToast("Pick the allowed states before saving this state-only bundle.");
+    }
+  };
+
   const openInventoryEditPackageRoute = (productId: string, packageId: string) => {
     setActivePage("Inventory");
     setSelectedProductId(productId);
@@ -59102,6 +59133,17 @@ ${waybillLineItems(w).length > 1
                             const discounted = on && typeof override === "number" && override < standardPrice;
                             const stateRestriction = product.crossSellStateRestrictions?.[cp.id] ?? [];
                             const limitedStates = stateRestriction.length > 0;
+                            const bundlePackages = (cp.packages ?? []).filter((pkg) => (pkg.packageComponents?.length ?? 0) > 0 || pkg.featuredComboCard);
+                            const bundlePackageSummary = bundlePackages
+                              .slice(0, 2)
+                              .map((pkg) => {
+                                const badges = [
+                                  pkg.stateFilterMode && pkg.stateFilterMode !== "all" ? "State-only" : null,
+                                  pkg.requiresStateStock ? "Stock-gated" : null
+                                ].filter(Boolean).join(", ");
+                                return `${pkg.name}${badges ? ` (${badges})` : ""}: ${summarizePackageComponents(pkg.packageComponents, products) || `${pkg.quantity} ${packageUnitFor(pkg, pkg.quantity)}`}`;
+                              })
+                              .join(" · ");
                             return (
                               <div key={cp.id} className={`flex flex-col gap-2 px-2.5 py-2 text-xs rounded-lg border ${on ? "bg-amber-50 border-amber-300" : "bg-white border-gray-200 hover:bg-gray-50"}`}>
                                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
@@ -59125,37 +59167,88 @@ ${waybillLineItems(w).length > 1
                                   )}
                                 </div>
                                 {on && (
-                                  <details className="text-[11px]">
-                                    <summary className="cursor-pointer select-none flex items-center gap-1.5 text-gray-700 hover:text-gray-900">
-                                      <span className="font-semibold">States this add-on is available in:</span>
-                                      <span className={`px-1.5 py-0.5 rounded ${limitedStates ? "bg-amber-200 text-amber-900" : "bg-gray-100 text-gray-600"}`}>{limitedStates ? `${stateRestriction.length} state${stateRestriction.length !== 1 ? "s" : ""}` : "All states"}</span>
-                                      <span className="text-gray-400 ml-auto">{limitedStates ? "click to edit" : "click to limit"}</span>
-                                    </summary>
-                                    <div className="mt-2 p-2 border border-amber-200 rounded-lg bg-white">
-                                      <div className="flex items-center gap-1.5 mb-2">
-                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductCrossSellStates(product.id, cp.id, undefined)}>All states</button>
-                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductCrossSellStates(product.id, cp.id, [...nigeriaStates])}>Select all</button>
-                                        <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductCrossSellStates(product.id, cp.id, [])}>Clear</button>
+                                  <>
+                                    <div className="rounded-lg border border-violet-100 bg-white px-3 py-2">
+                                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                        <div className="min-w-0">
+                                          <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-violet-700">Bundle / combo contents</p>
+                                          <p className="m-0 mt-1 text-[11px] leading-5 text-gray-600">
+                                            {bundlePackages.length > 0
+                                              ? bundlePackageSummary
+                                              : "No real bundle package saved yet. Create one to define items like 2pcs of this + 4pcs of another product + free gift."}
+                                          </p>
+                                        </div>
+                                        <div className="flex shrink-0 flex-wrap gap-1.5 sm:justify-end">
+                                          <button
+                                            type="button"
+                                            className="!min-h-0 rounded-md border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-bold text-violet-700 hover:bg-violet-50"
+                                            onClick={() => openInventoryPackagesRoute(cp.id)}
+                                          >
+                                            Manage bundles
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="!min-h-0 rounded-md bg-violet-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-violet-700"
+                                            onClick={() => openInventoryAddComboPackageRoute(cp)}
+                                          >
+                                            Create combo
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="!min-h-0 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-800 hover:bg-amber-100"
+                                            onClick={() => openInventoryAddComboPackageRoute(cp, { stateOnly: true })}
+                                          >
+                                            State-only
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="!min-h-0 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100"
+                                            onClick={() => openInventoryAddComboPackageRoute(cp, { stockGated: true })}
+                                          >
+                                            Stock-gated
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="!min-h-0 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-bold text-sky-800 hover:bg-sky-100"
+                                            onClick={() => openInventoryAddComboPackageRoute(cp, { stateOnly: true, stockGated: true })}
+                                          >
+                                            State + stock
+                                          </button>
+                                        </div>
                                       </div>
-                                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1 max-h-44 overflow-y-auto">
-                                        {nigeriaStates.map((state) => {
-                                          const isOn = !limitedStates || stateRestriction.includes(state);
-                                          return (
-                                            <label key={state} className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] cursor-pointer border ${isOn ? "bg-amber-50 border-amber-200" : "bg-white border-gray-200 hover:bg-gray-50"}`}>
-                                              <input type="checkbox" checked={isOn} onChange={() => toggleProductCrossSellState(product.id, cp.id, state)} />
-                                              <span>{state}</span>
-                                            </label>
-                                          );
-                                        })}
-                                      </div>
-                                      <p className="text-[10px] text-gray-500 italic mt-2">When the customer picks a state outside this list, this add-on is hidden — but the main product is still sold.</p>
                                     </div>
-                                  </details>
+                                    <details className="text-[11px]">
+                                      <summary className="cursor-pointer select-none flex items-center gap-1.5 text-gray-700 hover:text-gray-900">
+                                        <span className="font-semibold">States this add-on is available in:</span>
+                                        <span className={`px-1.5 py-0.5 rounded ${limitedStates ? "bg-amber-200 text-amber-900" : "bg-gray-100 text-gray-600"}`}>{limitedStates ? `${stateRestriction.length} state${stateRestriction.length !== 1 ? "s" : ""}` : "All states"}</span>
+                                        <span className="text-gray-400 ml-auto">{limitedStates ? "click to edit" : "click to limit"}</span>
+                                      </summary>
+                                      <div className="mt-2 p-2 border border-amber-200 rounded-lg bg-white">
+                                        <div className="flex items-center gap-1.5 mb-2">
+                                          <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductCrossSellStates(product.id, cp.id, undefined)}>All states</button>
+                                          <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductCrossSellStates(product.id, cp.id, [...nigeriaStates])}>Select all</button>
+                                          <button className="!min-h-0 px-2 py-0.5 rounded border border-gray-200 text-[10px] hover:bg-gray-50" onClick={() => setProductCrossSellStates(product.id, cp.id, [])}>Clear</button>
+                                        </div>
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1 max-h-44 overflow-y-auto">
+                                          {nigeriaStates.map((state) => {
+                                            const isOn = !limitedStates || stateRestriction.includes(state);
+                                            return (
+                                              <label key={state} className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] cursor-pointer border ${isOn ? "bg-amber-50 border-amber-200" : "bg-white border-gray-200 hover:bg-gray-50"}`}>
+                                                <input type="checkbox" checked={isOn} onChange={() => toggleProductCrossSellState(product.id, cp.id, state)} />
+                                                <span>{state}</span>
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
+                                        <p className="text-[10px] text-gray-500 italic mt-2">When the customer picks a state outside this list, this add-on is hidden — but the main product is still sold.</p>
+                                      </div>
+                                    </details>
+                                  </>
                                 )}
                               </div>
                             );
                           })}
-                          <p className="text-[10px] text-gray-500 italic">Leave bundle price empty to use the standalone price. Set state restrictions per add-on so each can be limited independently.</p>
+                          <p className="text-[10px] text-gray-500 italic">Leave bundle price empty to use the standalone price. For real mixes like 2pcs + 4pcs + free gift, use Create combo bundle on the add-on row.</p>
                         </div>
                       );
                     })()}
