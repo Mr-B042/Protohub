@@ -4466,6 +4466,18 @@ const summarizePackageComponents = (
     })
     .join(" + ");
 };
+const companionOverviewComponents = (
+  companion: Pick<PackageCompanion, "bundleComponents">,
+  targetPackage?: Pick<ProductPackage, "packageComponents"> | null
+) => {
+  const inlineComponents = (companion.bundleComponents ?? []).map(normalisePackageComponent).filter((component) => component.productId);
+  if (inlineComponents.length > 0) return inlineComponents;
+  return (targetPackage?.packageComponents ?? []).map(normalisePackageComponent).filter((component) => component.productId);
+};
+const isComboAddOnCompanion = (
+  companion: Pick<PackageCompanion, "bundleComponents">,
+  targetPackage?: Pick<ProductPackage, "packageComponents"> | null
+) => companionOverviewComponents(companion, targetPackage).length > 0;
 const packageDescriptionSuggestion = (
   components: PackageComponent[] | undefined,
   products: Pick<Product, "id" | "name">[],
@@ -51273,22 +51285,41 @@ ${waybillLineItems(w).length > 1
                                         const offerProduct = products.find((p) => p.id === companion.productId);
                                         const offerPackage = offerProduct?.packages.find((pkg) => pkg.id === companion.packageId);
                                         const offerActive = companionIsActive(companion);
+                                        const offerComponents = companionOverviewComponents(companion, offerPackage);
+                                        const comboOffer = isComboAddOnCompanion(companion, offerPackage);
+                                        const offerSummary = comboOffer ? summarizePackageComponents(offerComponents, products) : "";
+                                        const offerTitle = (companion.headline || "").trim();
                                         const offerLabel = offerPackage
                                           ? `${offerProduct?.name ?? "Offer"} · ${offerPackage.name}`
                                           : offerProduct?.name ?? "Saved add-on";
+                                        const visibleOfferLabel = offerTitle || offerLabel;
+                                        const placementLabel = (companion.placement ?? "inline") === "upsell" ? "After submit" : "Inside form";
                                         return (
                                           <div key={companion.companionId || `${item.id}-${companionIdx}`} className={`flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${offerActive ? "border-blue-100 bg-blue-50/50" : "border-amber-200 bg-amber-50/70"}`}>
                                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${offerActive ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
                                               {offerActive ? "Visible" : "Hidden"}
                                             </span>
+                                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${comboOffer ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600"}`}>
+                                              {comboOffer ? "Combo add-on" : "Single add-on"}
+                                            </span>
+                                            <span className="inline-flex rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+                                              {placementLabel}
+                                            </span>
                                             <span className="min-w-0 flex-1 text-gray-700 font-semibold leading-snug">
-                                              {offerLabel} · {companion.quantity} pc{companion.quantity === 1 ? "" : "s"}
+                                              <span className="block truncate">
+                                                {visibleOfferLabel}{comboOffer ? "" : ` · ${companion.quantity} pc${companion.quantity === 1 ? "" : "s"}`}
+                                              </span>
+                                              {comboOffer && (
+                                                <span className="mt-0.5 block text-[11px] font-semibold leading-snug text-slate-500">
+                                                  {offerSummary || `${offerComponents.length} stock line${offerComponents.length === 1 ? "" : "s"} inside this combo tier`}
+                                                </span>
+                                              )}
                                             </span>
                                             <button
                                               type="button"
                                               className={`!min-h-0 inline-flex items-center justify-center rounded-md border px-2.5 py-1 text-[11px] font-bold transition-colors ${offerActive ? "border-amber-200 bg-white text-amber-700 hover:bg-amber-50" : "border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50"}`}
                                               onClick={() => togglePackageCompanionActive(item, companionIdx)}
-                                              title={offerActive ? "Hide this add-on from the customer form" : "Show this add-on on the customer form"}
+                                              title={offerActive ? `Hide this ${comboOffer ? "combo add-on tier" : "add-on"} from the customer form` : `Show this ${comboOffer ? "combo add-on tier" : "add-on"} on the customer form`}
                                             >
                                               {offerActive ? "Hide" : "Show"}
                                             </button>
