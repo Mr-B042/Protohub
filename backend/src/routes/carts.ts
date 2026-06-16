@@ -961,6 +961,90 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     lastConversionAt: null as string | null,
     lastRedirectAt: null as string | null
   };
+  const recountPulseMetricEvents = () => {
+    const countedEventIds = new Set<string>();
+    summary.viewedToday = 0;
+    summary.interactedToday = 0;
+    summary.submitAttemptsToday = 0;
+    summary.conversionsToday = 0;
+    summary.redirectsToday = 0;
+    summary.lastViewedAt = null;
+    summary.lastInteractionAt = null;
+    summary.lastSubmitAttemptAt = null;
+    summary.lastConversionAt = null;
+    summary.lastRedirectAt = null;
+    sourceStats.clear();
+    embedStats.clear();
+
+    for (const event of [...(rangeEvents ?? []), ...(rangeFeedEvents ?? []), ...(liveWindowEvents ?? [])]) {
+      const eventType = String(event?.event_type ?? "");
+      const createdAt = typeof event?.created_at === "string" ? event.created_at : null;
+      if (!createdAt || createdAt < selectedRange.startIso || createdAt >= selectedRange.endExclusiveIso) continue;
+      if (
+        eventType !== "form_opened"
+        && eventType !== "first_interaction"
+        && eventType !== "submit_attempted"
+        && eventType !== "order_submitted"
+        && eventType !== "redirect_triggered"
+      ) {
+        continue;
+      }
+
+      const cartId = typeof event?.cart_id === "string" ? event.cart_id.trim() : "";
+      const eventId = typeof event?.id === "string" ? event.id : "";
+      const dedupeKey = eventId || `${cartId}:${eventType}:${createdAt}`;
+      if (countedEventIds.has(dedupeKey)) continue;
+      countedEventIds.add(dedupeKey);
+
+      const metadata = event?.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+      const cartRow = cartId ? cartById.get(cartId) : undefined;
+      const source = normalizePulseSource(metadata.source ?? cartRow?.source);
+      const embedLabel = resolvePulseEmbedLabel(
+        metadata.embedLabel ?? cartRow?.embed_label,
+        metadata.productName ?? cartRow?.product_name
+      );
+      if (embedLabels.length > 0 && !embedLabels.includes(embedLabel)) continue;
+
+      const sourceBucket = sourceStats.get(source) ?? { source, viewed: 0, interacted: 0, submitted: 0, lastSeenAt: null };
+      const embedBucket = embedStats.get(embedLabel) ?? { embedLabel, viewed: 0, interacted: 0, submitted: 0, lastSeenAt: null };
+      if (!sourceBucket.lastSeenAt || createdAt > sourceBucket.lastSeenAt) {
+        sourceBucket.lastSeenAt = createdAt;
+      }
+      if (!embedBucket.lastSeenAt || createdAt > embedBucket.lastSeenAt) {
+        embedBucket.lastSeenAt = createdAt;
+      }
+
+      if (eventType === "form_opened") {
+        summary.viewedToday += 1;
+        sourceBucket.viewed += 1;
+        embedBucket.viewed += 1;
+        summary.lastViewedAt = !summary.lastViewedAt || createdAt > summary.lastViewedAt ? createdAt : summary.lastViewedAt;
+      }
+      if (eventType === "first_interaction") {
+        summary.interactedToday += 1;
+        sourceBucket.interacted += 1;
+        embedBucket.interacted += 1;
+        summary.lastInteractionAt = !summary.lastInteractionAt || createdAt > summary.lastInteractionAt ? createdAt : summary.lastInteractionAt;
+      }
+      if (eventType === "submit_attempted") {
+        summary.submitAttemptsToday += 1;
+        summary.lastSubmitAttemptAt = !summary.lastSubmitAttemptAt || createdAt > summary.lastSubmitAttemptAt ? createdAt : summary.lastSubmitAttemptAt;
+      }
+      if (eventType === "order_submitted") {
+        summary.conversionsToday += 1;
+        sourceBucket.submitted += 1;
+        embedBucket.submitted += 1;
+        summary.lastConversionAt = !summary.lastConversionAt || createdAt > summary.lastConversionAt ? createdAt : summary.lastConversionAt;
+      }
+      if (eventType === "redirect_triggered") {
+        summary.redirectsToday += 1;
+        summary.lastRedirectAt = !summary.lastRedirectAt || createdAt > summary.lastRedirectAt ? createdAt : summary.lastRedirectAt;
+      }
+
+      sourceStats.set(source, sourceBucket);
+      embedStats.set(embedLabel, embedBucket);
+    }
+  };
 
   for (const [cartId, events] of rangeByCart.entries()) {
     const cartRow = cartById.get(cartId);
@@ -1082,6 +1166,11 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
       }
     }
   }
+
+  // The live pulse is a traffic meter, so visible counts must reflect actual
+  // journey events. The cart-group pass above is kept for active-cart context,
+  // but it undercounts repeat page opens on the same cart.
+  recountPulseMetricEvents();
 
   summary.interactionRate = summary.viewedToday > 0 ? Math.round((summary.interactedToday / summary.viewedToday) * 100) : 0;
   summary.submitRate = summary.interactedToday > 0 ? Math.round((summary.submitAttemptsToday / summary.interactedToday) * 100) : 0;
