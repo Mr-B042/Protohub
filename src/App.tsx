@@ -56914,9 +56914,9 @@ ${waybillLineItems(w).length > 1
                                         onChange={(event) => update({ hideSiblingSingleAddOns: event.target.checked })}
                                       />
                                       <span>
-                                        <span className="block text-xs font-black uppercase tracking-wide text-violet-800">Show combo tiers only for this product</span>
+                                        <span className="block text-xs font-black uppercase tracking-wide text-violet-800">Hide loose single rows for this product</span>
                                         <span className="block text-[11px] leading-5 text-violet-700">
-                                          Hide any single add-on rows for this same display product on this package. The combo stock lines still deduct normally.
+                                          Hide simple duplicate single add-ons for this display product. Saved package add-on tiers can still show separately.
                                         </span>
                                       </span>
                                     </label>
