@@ -24317,6 +24317,9 @@ ${waybillLineItems(w).length > 1
       showToast("Offer not found. Refresh and try again.");
       return;
     }
+    const targetProduct = products.find((p) => p.id === target.productId);
+    const targetPackage = targetProduct?.packages.find((pkg) => pkg.id === target.packageId);
+    const isComboOffer = isComboAddOnCompanion(target, targetPackage);
     const nextActive = !companionIsActive(target);
     const previousCompanions = currentCompanions.map((companion) => normalisePackageCompanion(companion));
     const nextCompanions = currentCompanions.map((companion, idx) =>
@@ -24328,14 +24331,14 @@ ${waybillLineItems(w).length > 1
         ? { ...p, packages: p.packages.map((pkg) => pkg.id === item.id ? { ...pkg, companionProducts: nextCompanions } : pkg) }
         : p)
     );
-    showToast(`${nextActive ? "Showing" : "Hiding"} this add-on on the customer form.`);
+    showToast(`${nextActive ? "Showing" : "Hiding"} this ${isComboOffer ? "combo add-on" : "add-on"} on the customer form.`);
     productsApi.updatePackage(_offerProdId, item.id, { companionProducts: nextCompanions }).catch((err: any) => {
       setProducts((value) =>
         value.map((p) => p.id === _offerProdId
           ? { ...p, packages: p.packages.map((pkg) => pkg.id === item.id ? { ...pkg, companionProducts: previousCompanions } : pkg) }
           : p)
       );
-      showToast(`Failed to ${nextActive ? "show" : "hide"} add-on: ${err?.message ?? "please retry"}.`);
+      showToast(`Failed to ${nextActive ? "show" : "hide"} ${isComboOffer ? "combo add-on" : "add-on"}: ${err?.message ?? "please retry"}.`);
     });
   };
 
@@ -51301,7 +51304,9 @@ ${waybillLineItems(w).length > 1
                                         return (
                                           <div key={companion.companionId || `${item.id}-${companionIdx}`} className={`flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${offerActive ? "border-blue-100 bg-blue-50/50" : "border-amber-200 bg-amber-50/70"}`}>
                                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${offerActive ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
-                                              {offerActive ? "Visible" : "Hidden"}
+                                              {comboOffer
+                                                ? offerActive ? "Combo visible" : "Combo hidden"
+                                                : offerActive ? "Visible" : "Hidden"}
                                             </span>
                                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${comboOffer ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600"}`}>
                                               {comboOffer ? "Combo add-on" : "Single add-on"}
@@ -51330,7 +51335,9 @@ ${waybillLineItems(w).length > 1
                                               onClick={() => togglePackageCompanionActive(item, companionIdx)}
                                               title={offerActive ? `Hide this ${comboOffer ? "combo add-on tier" : "add-on"} from the customer form` : `Show this ${comboOffer ? "combo add-on tier" : "add-on"} on the customer form`}
                                             >
-                                              {offerActive ? "Hide" : "Show"}
+                                              {comboOffer
+                                                ? offerActive ? "Hide combo" : "Show combo"
+                                                : offerActive ? "Hide" : "Show"}
                                             </button>
                                           </div>
                                         );
@@ -56580,11 +56587,24 @@ ${waybillLineItems(w).length > 1
                               <div>
                                 <div className="flex flex-wrap items-center gap-2">
                                   <p className="m-0 text-[11px] font-bold uppercase tracking-wider text-gray-500">Offer {idx + 1}</p>
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${inlineBundleEnabled ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600"}`}>
+                                    {inlineBundleEnabled ? "Combo add-on" : "Single add-on"}
+                                  </span>
                                   <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${activeOffer ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
-                                    {activeOffer ? "Showing on form" : "Hidden for now"}
+                                    {activeOffer
+                                      ? inlineBundleEnabled ? "Combo visible" : "Showing on form"
+                                      : inlineBundleEnabled ? "Combo hidden" : "Hidden for now"}
                                   </span>
                                 </div>
-                                <p className="m-0 text-xs text-gray-500">{activeOffer ? "What is the offer, who should see it, and how should it look?" : "Saved, but customers cannot see or choose this add-on until you turn it back on."}</p>
+                                <p className="m-0 text-xs text-gray-500">
+                                  {activeOffer
+                                    ? inlineBundleEnabled
+                                      ? "This combo add-on is live. Customers can choose this tier when it qualifies."
+                                      : "What is the offer, who should see it, and how should it look?"
+                                    : inlineBundleEnabled
+                                      ? "Saved, but customers cannot see or choose this combo add-on until you turn it back on."
+                                      : "Saved, but customers cannot see or choose this add-on until you turn it back on."}
+                                </p>
                               </div>
                               <div className="flex flex-wrap items-center justify-end gap-2">
                                 <button
@@ -56600,7 +56620,9 @@ ${waybillLineItems(w).length > 1
                                   className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2.5 py-1 text-xs font-bold rounded border transition-colors ${activeOffer ? "border-amber-200 bg-white text-amber-700 hover:bg-amber-50" : "border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50"}`}
                                   onClick={() => update({ active: !activeOffer })}
                                 >
-                                  {activeOffer ? "Turn off" : "Turn on"}
+                                  {inlineBundleEnabled
+                                    ? activeOffer ? "Turn off combo" : "Turn on combo"
+                                    : activeOffer ? "Turn off" : "Turn on"}
                                 </button>
                                 <button
                                   type="button"
