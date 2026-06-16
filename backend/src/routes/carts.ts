@@ -857,23 +857,27 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
 
   let cartRows: any[] = [];
   if (combinedCartIds.length > 0) {
-    let cartRes: any = await supabase
-      .from("abandoned_carts")
-      .select("id, source, customer, product_name, package_name, last_activity, embed_label")
-      .eq("org_id", req.user!.orgId)
-      .in("id", combinedCartIds);
-    if (cartRes.error && (cartRes.error.code === "42703" || /embed_label/i.test(cartRes.error.message ?? ""))) {
-      cartRes = await supabase
+    const cartLookupBatchSize = 100;
+    for (let index = 0; index < combinedCartIds.length; index += cartLookupBatchSize) {
+      const cartIdBatch = combinedCartIds.slice(index, index + cartLookupBatchSize);
+      let cartRes: any = await supabase
         .from("abandoned_carts")
-        .select("id, source, customer, product_name, package_name, last_activity")
+        .select("id, source, product_name, package_name, last_activity, embed_label")
         .eq("org_id", req.user!.orgId)
-        .in("id", combinedCartIds);
+        .in("id", cartIdBatch);
+      if (cartRes.error && (cartRes.error.code === "42703" || /embed_label/i.test(cartRes.error.message ?? ""))) {
+        cartRes = await supabase
+          .from("abandoned_carts")
+          .select("id, source, product_name, package_name, last_activity")
+          .eq("org_id", req.user!.orgId)
+          .in("id", cartIdBatch);
+      }
+      if (cartRes.error) {
+        res.status(500).json({ error: cartRes.error.message });
+        return;
+      }
+      cartRows.push(...(cartRes.data ?? []));
     }
-    if (cartRes.error) {
-      res.status(500).json({ error: cartRes.error.message });
-      return;
-    }
-    cartRows = cartRes.data ?? [];
   }
 
   const cartById = new Map(cartRows.map((row) => [row.id, row]));
