@@ -561,6 +561,10 @@ function companionBundleComponents(companion: PublicCompanion) {
   return Array.isArray(companion.bundleComponents) ? companion.bundleComponents : [];
 }
 
+function companionHasOwnBundle(companion: PublicCompanion) {
+  return companionBundleComponents(companion).some((component) => component.productId || component.product_id);
+}
+
 function customerVisibleComponents(components: PublicPackageComponent[]) {
   return components
     .filter((component) => component.productId || component.product_id)
@@ -580,9 +584,12 @@ function componentsDescribeComboOffer(components: PublicPackageComponent[]) {
 }
 
 function companionIsComboOffer(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
-  const components = targetPackage?.packageComponents?.length
+  const ownBundleComponents = companionBundleComponents(companion);
+  const components = ownBundleComponents.length
+    ? ownBundleComponents
+    : targetPackage?.packageComponents?.length
     ? targetPackage.packageComponents
-    : companionBundleComponents(companion);
+    : ownBundleComponents;
   return componentsDescribeComboOffer(components);
 }
 
@@ -619,12 +626,18 @@ function companionInlineBundleUnitCount(companion: PublicCompanion) {
 }
 
 function companionComponentSummary(companion: PublicCompanion, products: PublicProduct[], targetPackage?: PublicPackage | null) {
+  if (companionHasOwnBundle(companion)) {
+    return componentListSummary(companionBundleComponents(companion), products, null);
+  }
   return targetPackage
     ? packageComponentSummary(targetPackage, products)
     : componentListSummary(companionBundleComponents(companion), products, null);
 }
 
 function companionFreeGiftItems(companion: PublicCompanion, products: PublicProduct[], targetPackage?: PublicPackage | null) {
+  if (companionHasOwnBundle(companion)) {
+    return componentFreeGiftItems(companionBundleComponents(companion), products, null);
+  }
   return targetPackage
     ? packageFreeGiftItems(targetPackage, products)
     : componentFreeGiftItems(companionBundleComponents(companion), products, null);
@@ -636,7 +649,6 @@ function companionStandardTotal(
   products: PublicProduct[],
   targetPackage?: PublicPackage | null
 ) {
-  if (targetPackage) return Number(targetPackage.price ?? 0) * Math.max(1, Number(companion.quantity) || 1);
   const bundleComponents = companionBundleComponents(companion).filter((component) => component.productId || component.product_id);
   if (bundleComponents.length > 0) {
     const bundleCount = Math.max(1, Number(companion.quantity) || 1);
@@ -647,6 +659,7 @@ function companionStandardTotal(
       return sum + unit * Math.max(1, Number(component.quantity) || 1) * bundleCount;
     }, 0);
   }
+  if (targetPackage) return Number(targetPackage.price ?? 0) * Math.max(1, Number(companion.quantity) || 1);
   return (primaryPricing(product)?.sellingPrice ?? 0) * Math.max(1, Number(companion.quantity) || 1);
 }
 
@@ -697,20 +710,20 @@ function companionGroupDisplayName(companions: PublicCompanion[], product: Publi
 }
 
 function companionDisplayDetail(companion: PublicCompanion, targetPackage?: PublicPackage | null, products: PublicProduct[] = []) {
+  const bundleSummary = products.length > 0 ? componentListSummary(companionBundleComponents(companion), products, null) : "";
+  if (bundleSummary) return bundleSummary;
   if (targetPackage) {
     if (targetPackage.description.trim()) {
       return targetPackage.description.trim();
     }
     return `${companion.quantity} ${companion.quantity === 1 ? "bundle" : "bundles"} · ${targetPackage.quantity} ${targetPackage.quantity === 1 ? "pc" : "pcs"} in this add-on`;
   }
-  const bundleSummary = products.length > 0 ? componentListSummary(companionBundleComponents(companion), products, null) : "";
-  if (bundleSummary) return bundleSummary;
   return `${companion.quantity} ${companion.quantity === 1 ? "pc" : "pcs"} in this add-on`;
 }
 
 function companionOfferUnitCount(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
-  const inlineBundleQty = targetPackage ? 0 : companionInlineBundleUnitCount(companion);
-  const quantitySource = targetPackage?.quantity ?? (inlineBundleQty || companion.quantity);
+  const inlineBundleQty = companionInlineBundleUnitCount(companion);
+  const quantitySource = inlineBundleQty || targetPackage?.quantity || companion.quantity;
   return Math.max(1, Number(quantitySource) || 1);
 }
 
@@ -908,16 +921,21 @@ function companionEmbedDocument(embedHtml: string) {
 
 function companionImageSource(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
   const packageImage = targetPackage?.imageUrls?.find((url) => typeof url === "string" && url.trim()) || targetPackage?.imageUrl || "";
+  if (companionHasOwnBundle(companion)) {
+    return companion.imageUrl || packageImage || "";
+  }
   return companion.displayMode === "showcase"
     ? (packageImage || companion.imageUrl || "")
     : (companion.imageUrl || packageImage || "");
 }
 
 function companionShowcaseImageList(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
-  return Array.from(new Set([
-    ...(targetPackage ? packageImageList(targetPackage) : []),
-    companion.imageUrl ?? ""
-  ].map((url) => url.trim()).filter(Boolean))).slice(0, 15);
+  const packageImages = targetPackage ? packageImageList(targetPackage) : [];
+  const companionImage = companion.imageUrl ?? "";
+  const images = companionHasOwnBundle(companion)
+    ? [companionImage, ...packageImages]
+    : [...packageImages, companionImage];
+  return Array.from(new Set(images.map((url) => url.trim()).filter(Boolean))).slice(0, 15);
 }
 
 function renderCompanionMedia(companion: PublicCompanion, productName: string, targetPackage?: PublicPackage | null) {

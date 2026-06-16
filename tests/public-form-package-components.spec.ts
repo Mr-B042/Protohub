@@ -439,8 +439,9 @@ test.describe("public order form package component display", () => {
     await page.getByText("Choose your bundle").click();
 
     await expect(page.getByText("Choose bundle", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: /3 pcs of Edge Brusher Max .*₦8,500/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: /6 pcs of Edge Brusher Max .*₦18,500/ })).toBeVisible();
+    await expect(page.getByText("5pcs for ₦8,500").first()).toBeVisible();
+    await expect(page.getByText("9pcs for ₦18,500").first()).toBeVisible();
+    await expect(page.getByText("15pcs for ₦8,500", { exact: true })).toHaveCount(0);
     await expect(page.getByText("3 pcs of Edge Brusher Max + 1 pc of Multiple Hanger + FREE 1 pc of Absorbent Hand Towel")).toBeVisible();
   });
 });
