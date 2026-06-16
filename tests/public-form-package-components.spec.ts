@@ -418,6 +418,25 @@ test.describe("public order form package component display", () => {
                     bundleComponents: []
                   },
                   {
+                    companionId: "addon-edge-single-package-visible",
+                    productId: "prod-edge-tiered",
+                    packageId: "pkg-edge-best-value",
+                    active: true,
+                    quantity: 1,
+                    pricingMode: "fixed",
+                    fixedPrice: 38500,
+                    stateFilterMode: "all",
+                    stateRestrictions: [],
+                    autoInclude: false,
+                    placement: "inline",
+                    displayMode: "card",
+                    pitch: "Saved single add-on tier that should stay visible beside combo-only offers.",
+                    badgeText: "Best Value",
+                    headline: "Edge Brusher Max · 💎 BEST VALUE PACK",
+                    imageUrl: addonPreviewImage,
+                    bundleComponents: []
+                  },
+                  {
                     companionId: "addon-edge-combo-small",
                     productId: "prod-edge-tiered",
                     packageId: null,
@@ -478,7 +497,28 @@ test.describe("public order form package component display", () => {
               active: true,
               availableStates: [],
               pricings: [{ currency: "NGN", sellingPrice: 8500, isPrimary: true }],
-              packages: []
+              packages: [
+                {
+                  id: "pkg-edge-best-value",
+                  name: "💎 BEST VALUE PACK",
+                  description: "15 pcs Of the Edge Brusher - 💎 BEST VALUE PACK",
+                  quantity: 15,
+                  price: 38500,
+                  currency: "NGN",
+                  displayOrder: 1,
+                  active: true,
+                  packageSet: "Default",
+                  stateFilterMode: "all",
+                  stateRestrictions: [],
+                  requiresStateStock: false,
+                  featuredComboCard: false,
+                  imageUrl: addonPreviewImage,
+                  imageUrls: [],
+                  unitSingular: "pc",
+                  unitPlural: "pcs",
+                  packageComponents: []
+                }
+              ]
             },
             {
               id: "prod-towel-tiered",
@@ -522,11 +562,13 @@ test.describe("public order form package component display", () => {
     await expect(page.getByText("2 bundle choices inside")).toBeVisible();
     await expect(page.getByText("Single Edge Brusher")).toHaveCount(0);
     await expect(page.getByText("3 pcs in this add-on")).toHaveCount(0);
+    await expect(page.getByText("Edge Brusher Max · 💎 BEST VALUE PACK").first()).toBeVisible();
+    await expect(page.getByText("15pcs for ₦38,500").first()).toBeVisible();
     await expect(page.locator(".public-package-option--featured")).toHaveCount(0);
-    await expect(page.locator(".public-card-companion-teaser__title")).toHaveCSS("font-size", "18px");
+    await expect(page.locator(".public-card-companion-teaser__title").first()).toHaveCSS("font-size", "18px");
     const teaserVisual = page.locator(".public-card-companion-teaser__visual");
-    await expect(teaserVisual).toHaveCount(1);
-    const teaserVisualBox = await teaserVisual.boundingBox();
+    expect(await teaserVisual.count()).toBeGreaterThanOrEqual(2);
+    const teaserVisualBox = await teaserVisual.first().boundingBox();
     expect(teaserVisualBox?.width).toBeGreaterThanOrEqual(300);
 
     await page.getByText("Choose your bundle").click();

@@ -600,6 +600,8 @@ function companionHiddenByComboOnly(
 ) {
   if (companion.autoInclude) return false;
   const targetPackage = targetPackageForCompanion(companion, products);
+  // Combo-only hides loose duplicate single rows, not deliberate saved package add-on tiers.
+  if (targetPackage) return false;
   if (companionIsComboOffer(companion, targetPackage)) return false;
   const placement = companion.placement ?? "inline";
   return siblings.some((candidate) => {
