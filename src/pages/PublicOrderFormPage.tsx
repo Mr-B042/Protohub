@@ -695,6 +695,12 @@ function companionSelectionKey(companion: { companionId?: string; productId: str
   return companion.companionId?.trim() || `${companion.productId}:${companion.packageId ?? ""}`;
 }
 
+function companionCardGroupKey(companion: PublicCompanion, products: PublicProduct[]) {
+  const targetPackage = targetPackageForCompanion(companion, products);
+  const offerKind = companionIsComboOffer(companion, targetPackage) ? "combo" : "single";
+  return `${companion.productId}:${offerKind}`;
+}
+
 function companionDisplayName(companion: PublicCompanion, product: PublicProduct, targetPackage?: PublicPackage | null) {
   const headline = companion.headline?.trim();
   const baseName = headline || (targetPackage ? `${product.name} · ${targetPackage.name}` : product.name);
@@ -1254,7 +1260,7 @@ export default function PublicOrderFormPage() {
   const [orderFormState, setOrderFormState] = useState("");
   const [orderFormPackageId, setOrderFormPackageId] = useState("");
   const [orderFormCrossSells, setOrderFormCrossSells] = useState<CrossSellSelection[]>([]);
-  const [expandedCardCompanionProductId, setExpandedCardCompanionProductId] = useState<string | null>(null);
+  const [expandedCardCompanionGroupKey, setExpandedCardCompanionGroupKey] = useState<string | null>(null);
   const [lastAdditionalItemActionKey, setLastAdditionalItemActionKey] = useState("");
   const [publicHoneypot, setPublicHoneypot] = useState("");
   const [orderFormConfirmed, setOrderFormConfirmed] = useState(false);
@@ -1279,7 +1285,7 @@ export default function PublicOrderFormPage() {
   const previousCrossSellKeysRef = useRef<string[]>([]);
   const lastTrackedPackageIdRef = useRef("");
   const lastTrackedStateRef = useRef("");
-  const lastExpandedCardProductIdRef = useRef<string | null>(null);
+  const lastExpandedCardGroupKeyRef = useRef<string | null>(null);
   const firstInteractionTrackedRef = useRef(false);
   const exitTrackedRef = useRef(false);
   // Next-level journey tracking refs.
@@ -2054,7 +2060,7 @@ export default function PublicOrderFormPage() {
     lastTrackedPackageIdRef.current = "";
     lastSyncedPackageIdRef.current = "";
     lastTrackedStateRef.current = "";
-    lastExpandedCardProductIdRef.current = null;
+    lastExpandedCardGroupKeyRef.current = null;
     exitTrackedRef.current = false;
 
     (async () => {
@@ -2287,7 +2293,7 @@ export default function PublicOrderFormPage() {
     const meaningfulInteraction = Boolean(
       formTouched ||
       orderFormCrossSells.length > 0 ||
-      expandedCardCompanionProductId ||
+      expandedCardCompanionGroupKey ||
       (chosenPackage?.id && primaryPackageId && chosenPackage.id !== primaryPackageId)
     );
 
@@ -2305,7 +2311,7 @@ export default function PublicOrderFormPage() {
   }, [
     chosenPackage?.id,
     chosenPackage?.name,
-    expandedCardCompanionProductId,
+    expandedCardCompanionGroupKey,
     orderFormAddress,
     orderFormCity,
     orderFormCrossSells.length,
@@ -2339,7 +2345,7 @@ export default function PublicOrderFormPage() {
     const meaningfulInteraction = Boolean(
       formTouched ||
       orderFormCrossSells.length > 0 ||
-      expandedCardCompanionProductId ||
+      expandedCardCompanionGroupKey ||
       (chosenPackage?.id && primaryPackageId && chosenPackage.id !== primaryPackageId)
     );
 
@@ -2428,7 +2434,7 @@ export default function PublicOrderFormPage() {
     orderFormPhone,
     orderFormState,
     orderFormWhatsapp,
-    expandedCardCompanionProductId,
+    expandedCardCompanionGroupKey,
     publicEmbedIsPreview,
     publicPackages,
     publicProduct,
@@ -2706,7 +2712,7 @@ export default function PublicOrderFormPage() {
     lastTrackedPackageIdRef.current = "";
     lastSyncedPackageIdRef.current = "";
     lastTrackedStateRef.current = "";
-    lastExpandedCardProductIdRef.current = null;
+    lastExpandedCardGroupKeyRef.current = null;
     firstInteractionTrackedRef.current = false;
     exitTrackedRef.current = false;
     if (orderablePublicPackages[0]) setOrderFormPackageId(orderablePublicPackages[0].id);
@@ -3299,13 +3305,15 @@ export default function PublicOrderFormPage() {
           if (mode !== "showcase") return false;
           return companionOptions.filter((candidate) => {
             const candidateMode = candidate.displayMode ?? "compact";
-            return candidate.productId === companion.productId && (candidateMode === "card" || candidateMode === "showcase");
+            return companionCardGroupKey(candidate, products) === companionCardGroupKey(companion, products)
+              && (candidateMode === "card" || candidateMode === "showcase");
           }).length > 1;
         })
-        .reduce<Record<string, { product: PublicProduct | undefined; companions: PublicCompanion[]; priority: number }>>((acc, companion) => {
-          const key = companion.productId;
+        .reduce<Record<string, { key: string; product: PublicProduct | undefined; companions: PublicCompanion[]; priority: number }>>((acc, companion) => {
+          const key = companionCardGroupKey(companion, products);
           if (!acc[key]) {
             acc[key] = {
+              key,
               product: products.find((item) => item.id === companion.productId),
               companions: [],
               priority: companion.priority ?? 0
@@ -3353,13 +3361,13 @@ export default function PublicOrderFormPage() {
   );
 
   useEffect(() => {
-    if (!expandedCardCompanionProductId) {
-      lastExpandedCardProductIdRef.current = null;
+    if (!expandedCardCompanionGroupKey) {
+      lastExpandedCardGroupKeyRef.current = null;
       return;
     }
-    if (lastExpandedCardProductIdRef.current === expandedCardCompanionProductId) return;
-    lastExpandedCardProductIdRef.current = expandedCardCompanionProductId;
-    const group = cardCompanionGroups.find((entry) => entry.product?.id === expandedCardCompanionProductId);
+    if (lastExpandedCardGroupKeyRef.current === expandedCardCompanionGroupKey) return;
+    lastExpandedCardGroupKeyRef.current = expandedCardCompanionGroupKey;
+    const group = cardCompanionGroups.find((entry) => entry.key === expandedCardCompanionGroupKey);
     if (!group?.product) return;
     const previewCompanion = group.companions[0];
     trackCartJourney("additional_item_preview_opened", {
@@ -3370,7 +3378,7 @@ export default function PublicOrderFormPage() {
         variants: group.companions.length
       }
     });
-  }, [cardCompanionGroups, expandedCardCompanionProductId]);
+  }, [cardCompanionGroups, expandedCardCompanionGroupKey]);
 
   useEffect(() => {
     const nextKeys = orderFormCrossSells.map((line) => companionSelectionKey(line)).sort();
@@ -3423,12 +3431,12 @@ export default function PublicOrderFormPage() {
 
   useEffect(() => {
     if (cardCompanionGroups.length === 0) {
-      setExpandedCardCompanionProductId(null);
+      setExpandedCardCompanionGroupKey(null);
       return;
     }
-    setExpandedCardCompanionProductId((prev) => {
+    setExpandedCardCompanionGroupKey((prev) => {
       if (!prev) return null;
-      if (cardCompanionGroups.some((group) => group.product?.id === prev)) return prev;
+      if (cardCompanionGroups.some((group) => group.key === prev)) return prev;
       return null;
     });
   }, [cardCompanionGroups]);
@@ -5090,7 +5098,7 @@ export default function PublicOrderFormPage() {
                         const previewTargetPackage = targetPackageForCompanion(previewCompanion, products);
                         const currency = primaryPricing(product)?.currency ?? "NGN";
                         const teaserTotal = companionLineTotal(previewCompanion, product, previewTargetPackage);
-                        const isExpanded = expandedCardCompanionProductId === product.id;
+                        const isExpanded = expandedCardCompanionGroupKey === group.key;
                         const displayCompanion = selectedVariant ?? group.companions[0];
                         const displayTargetPackage = targetPackageForCompanion(displayCompanion, products);
                         const total = companionLineTotal(displayCompanion, product, displayTargetPackage);
@@ -5122,10 +5130,10 @@ export default function PublicOrderFormPage() {
                           ? `Add ${companionOfferUnits(displayCompanion, displayTargetPackage)} FREE`
                           : `Add ${displayOfferLabel}`;
                         return (
-                          <div key={`${product.id}-${index}`} style={{ display: "grid", gap: 10 }}>
+                          <div key={`${group.key}-${index}`} style={{ display: "grid", gap: 10 }}>
                             <button
                               type="button"
-                              onClick={() => setExpandedCardCompanionProductId((current) => current === product.id ? null : product.id)}
+                              onClick={() => setExpandedCardCompanionGroupKey((current) => current === group.key ? null : group.key)}
                               style={{
                                 width: "100%",
                                 border: isExpanded ? "2px solid #1F8FE0" : "1px solid #dbe4ef",
