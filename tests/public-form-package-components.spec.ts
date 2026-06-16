@@ -311,6 +311,25 @@ test.describe("public order form package component display", () => {
                 packageComponents: [],
                 companionProducts: [
                   {
+                    companionId: "addon-edge-single-hidden-by-combo",
+                    productId: "prod-edge-tiered",
+                    packageId: null,
+                    active: true,
+                    quantity: 3,
+                    pricingMode: "fixed",
+                    fixedPrice: 6500,
+                    stateFilterMode: "all",
+                    stateRestrictions: [],
+                    autoInclude: false,
+                    placement: "inline",
+                    displayMode: "card",
+                    pitch: "Single add-on that should be hidden by combo-only mode",
+                    badgeText: "Single",
+                    headline: "Single Edge Brusher",
+                    imageUrl: addonPreviewImage,
+                    bundleComponents: []
+                  },
+                  {
                     companionId: "addon-edge-combo-small",
                     productId: "prod-edge-tiered",
                     packageId: null,
@@ -327,6 +346,7 @@ test.describe("public order form package component display", () => {
                     badgeText: "Flash Sale",
                     headline: "Edge Brusher Max",
                     imageUrl: addonPreviewImage,
+                    hideSiblingSingleAddOns: true,
                     bundleComponents: [
                       { componentId: "edge-small", productId: "prod-edge-tiered", quantity: 3, isFreeGift: false },
                       { componentId: "hanger-small", productId: "prod-addon-tiered", quantity: 1, isFreeGift: false },
@@ -350,6 +370,7 @@ test.describe("public order form package component display", () => {
                     badgeText: "Flash Sale",
                     headline: "Edge Brusher Max",
                     imageUrl: addonPreviewImage,
+                    hideSiblingSingleAddOns: true,
                     bundleComponents: [
                       { componentId: "edge-large", productId: "prod-edge-tiered", quantity: 6, isFreeGift: false },
                       { componentId: "hanger-large", productId: "prod-addon-tiered", quantity: 2, isFreeGift: false },
@@ -411,6 +432,8 @@ test.describe("public order form package component display", () => {
 
     await expect(page.getByText("Edge Brusher Max Combo").first()).toBeVisible();
     await expect(page.getByText("2 bundle choices inside")).toBeVisible();
+    await expect(page.getByText("Single Edge Brusher")).toHaveCount(0);
+    await expect(page.getByText("3 pcs in this add-on")).toHaveCount(0);
     await expect(page.locator(".public-package-option--featured")).toHaveCount(0);
 
     await page.getByText("Choose your bundle").click();

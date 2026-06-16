@@ -23,6 +23,7 @@ type DbCompanion = {
   companionId?: string;
   productId: string; packageId?: string; quantity: number; pricingMode: string;
   bundleComponents?: DbPackageComponent[] | null;
+  hideSiblingSingleAddOns?: boolean;
   active?: boolean;
   fixedPrice?: number; stateFilterMode?: "all" | "allow" | "block"; stateRestrictions?: string[]; autoInclude?: boolean;
   placement?: "inline" | "upsell";
@@ -150,6 +151,7 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
       productId:         c.productId,
       packageId:         c.packageId ?? null,
       bundleComponents:  sanitisePackageComponents(c.bundleComponents),
+      hideSiblingSingleAddOns: c.hideSiblingSingleAddOns === true,
       active:            true,
       quantity:          c.quantity,
       pricingMode:       c.pricingMode,

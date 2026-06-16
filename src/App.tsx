@@ -570,6 +570,7 @@ type PackageCompanion = {
   productId: string;
   packageId?: string;
   bundleComponents?: PackageComponent[];
+  hideSiblingSingleAddOns?: boolean;
   active?: boolean;
   quantity: number;
   pricingMode: "free" | "fixed" | "use_product_price";
@@ -4336,6 +4337,7 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
   productId: companion.productId || "",
   packageId: companion.packageId || undefined,
   bundleComponents: Array.isArray(companion.bundleComponents) ? companion.bundleComponents.map(normalisePackageComponent) : [],
+  hideSiblingSingleAddOns: Boolean(companion.hideSiblingSingleAddOns),
   active: companion.active !== false,
   quantity: Math.max(1, Number(companion.quantity) || 1),
   pricingMode: companion.pricingMode === "fixed" || companion.pricingMode === "use_product_price" ? companion.pricingMode : "free",
@@ -4370,7 +4372,8 @@ const packageCompanionForSave = (companion: Partial<PackageCompanion>): PackageC
   return {
     ...normalised,
     packageId: bundleComponents.length > 0 ? undefined : isUuidValue(normalised.packageId) ? normalised.packageId : undefined,
-    bundleComponents
+    bundleComponents,
+    hideSiblingSingleAddOns: bundleComponents.length > 0 && normalised.hideSiblingSingleAddOns === true
   };
 };
 const companionIsActive = (companion: Pick<PackageCompanion, "active"> | null | undefined) => companion?.active !== false;
@@ -23590,6 +23593,7 @@ ${waybillLineItems(w).length > 1
       companion.pricingMode,
       companion.fixedPrice ?? "",
       companion.quantity,
+      companion.hideSiblingSingleAddOns ? "combo-only" : "",
       (companion.bundleComponents ?? [])
         .map(normalisePackageComponent)
         .filter((component) => component.productId)
@@ -51302,6 +51306,11 @@ ${waybillLineItems(w).length > 1
                                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${comboOffer ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600"}`}>
                                               {comboOffer ? "Combo add-on" : "Single add-on"}
                                             </span>
+                                            {comboOffer && companion.hideSiblingSingleAddOns && (
+                                              <span className="inline-flex rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-violet-700">
+                                                Combo only
+                                              </span>
+                                            )}
                                             <span className="inline-flex rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">
                                               {placementLabel}
                                             </span>
@@ -56439,7 +56448,7 @@ ${waybillLineItems(w).length > 1
 	                        };
 	                        const setInlineBundleEnabled = (enabled: boolean) => {
 	                          if (!enabled) {
-	                            update({ bundleComponents: [] });
+	                            update({ bundleComponents: [], hideSiblingSingleAddOns: false });
 	                            return;
 	                          }
 	                          const currentQuantity = Math.max(1, Number(c.quantity) || 1);
@@ -56875,6 +56884,20 @@ ${waybillLineItems(w).length > 1
 	                                  <div className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-semibold leading-5 text-blue-800">
 	                                    Combo mode is on: the single product above will not be added as a separate item. Only the stock lines below are added to the order.
 	                                  </div>
+                                    <label className="flex items-start gap-3 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2">
+                                      <input
+                                        type="checkbox"
+                                        className="mt-1 h-4 w-4 accent-violet-600"
+                                        checked={Boolean(c.hideSiblingSingleAddOns)}
+                                        onChange={(event) => update({ hideSiblingSingleAddOns: event.target.checked })}
+                                      />
+                                      <span>
+                                        <span className="block text-xs font-black uppercase tracking-wide text-violet-800">Show combo tiers only for this product</span>
+                                        <span className="block text-[11px] leading-5 text-violet-700">
+                                          Hide any single add-on rows for this same display product on this package. The combo stock lines still deduct normally.
+                                        </span>
+                                      </span>
+                                    </label>
 	                                  {bundleComponents.length === 0 ? (
 	                                    <p className="m-0 rounded-lg border border-dashed border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-700">
 	                                      Add at least one stock item inside this combo.

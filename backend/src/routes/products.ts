@@ -344,6 +344,7 @@ const CompanionSchema = z.object({
   productId:         z.string().uuid(),
   packageId:         z.string().uuid().optional(),
   bundleComponents:  z.array(PackageComponentSchema).default([]),
+  hideSiblingSingleAddOns: z.boolean().optional(),
   active:            z.boolean().default(true),
   quantity:          z.number().int().min(1).default(1),
   pricingMode:       z.enum(["free", "fixed", "use_product_price"]).default("free"),

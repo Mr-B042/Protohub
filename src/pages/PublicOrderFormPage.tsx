@@ -23,6 +23,7 @@ type PublicCompanion = {
   productId: string;
   packageId?: string | null;
   bundleComponents?: PublicPackageComponent[];
+  hideSiblingSingleAddOns?: boolean;
   active?: boolean;
   quantity: number;
   pricingMode: "free" | "fixed" | "use_product_price" | "standard";
@@ -583,6 +584,25 @@ function companionIsComboOffer(companion: PublicCompanion, targetPackage?: Publi
     ? targetPackage.packageComponents
     : companionBundleComponents(companion);
   return componentsDescribeComboOffer(components);
+}
+
+function companionHiddenByComboOnly(
+  companion: PublicCompanion,
+  siblings: PublicCompanion[],
+  products: PublicProduct[]
+) {
+  if (companion.autoInclude) return false;
+  const targetPackage = targetPackageForCompanion(companion, products);
+  if (companionIsComboOffer(companion, targetPackage)) return false;
+  const placement = companion.placement ?? "inline";
+  return siblings.some((candidate) => {
+    if (candidate === companion) return false;
+    if (!companionIsActive(candidate) || candidate.autoInclude) return false;
+    if (candidate.productId !== companion.productId) return false;
+    if ((candidate.placement ?? "inline") !== placement) return false;
+    if (candidate.hideSiblingSingleAddOns !== true) return false;
+    return companionIsComboOffer(candidate, targetPackageForCompanion(candidate, products));
+  });
 }
 
 function comboOfferDisplayName(baseName: string) {
@@ -1772,12 +1792,15 @@ export default function PublicOrderFormPage() {
     });
   };
 
-  const companionForSelection = (selection: CrossSellSelection) =>
-    chosenPackage?.companionProducts?.find((companion) =>
+  const companionForSelection = (selection: CrossSellSelection) => {
+    const siblings = chosenPackage?.companionProducts ?? [];
+    return siblings.find((companion) =>
       companionIsActive(companion)
       && companionSelectionKey(companion) === companionSelectionKey(selection)
       && companionVisibleInState(companion, orderFormState)
+      && !companionHiddenByComboOnly(companion, siblings, products)
     );
+  };
 
   const selectedCrossSellLines = orderFormCrossSells
     .map((line) => {
@@ -2097,15 +2120,17 @@ export default function PublicOrderFormPage() {
   }, [orderFormPackageId, orderablePublicPackages]);
 
   useEffect(() => {
+    const siblings = chosenPackage?.companionProducts ?? [];
     const companionKeys = new Set(
-      (chosenPackage?.companionProducts ?? [])
+      siblings
         .filter(companionIsActive)
         .filter((companion) => !companion.autoInclude)
         .filter((companion) => companionVisibleInState(companion, orderFormState))
+        .filter((companion) => !companionHiddenByComboOnly(companion, siblings, products))
         .map((companion) => companionSelectionKey(companion))
     );
     setOrderFormCrossSells((prev) => prev.filter((line) => companionKeys.has(companionSelectionKey(line))));
-  }, [chosenPackage, orderFormState]);
+  }, [chosenPackage, orderFormState, products]);
 
   // Field-level touch + hesitation tracking. Watches all customer-typed
   // fields and (a) records the most recently touched one (for form_exited's
@@ -3021,11 +3046,13 @@ export default function PublicOrderFormPage() {
       const created = await publicOrdersApi.create(submissionBody);
       const upsellProductId = created.upsellOffer?.productId;
       const upsellPackageId = created.upsellOffer?.packageId;
+      const upsellSiblings = chosenPackage.companionProducts ?? [];
       const upsellCompanion = upsellProductId
-        ? (chosenPackage.companionProducts ?? [])
+        ? upsellSiblings
             .filter(companionIsActive)
             .filter((companion) => (companion.placement ?? "inline") === "upsell")
             .filter((companion) => companionVisibleInState(companion, submittedState))
+            .filter((companion) => !companionHiddenByComboOnly(companion, upsellSiblings, products))
             .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
             .find((companion) =>
               created.upsellOffer?.companionId
@@ -3233,7 +3260,8 @@ export default function PublicOrderFormPage() {
       : NIGERIA_STATES;
   }, [publicProduct]);
 
-  const companionOptions = (chosenPackage?.companionProducts ?? [])
+  const companionSiblings = chosenPackage?.companionProducts ?? [];
+  const companionOptions = companionSiblings
     .filter(companionIsActive)
     .filter((companion) => !companion.autoInclude)
     .filter((companion) => (companion.placement ?? "inline") === "inline")
@@ -3241,7 +3269,8 @@ export default function PublicOrderFormPage() {
       companion.stateRestrictions.length === 0
         ? true
         : Boolean(normalizedSelectedState) && companionVisibleInState(companion, normalizedSelectedState)
-    );
+    )
+    .filter((companion) => !companionHiddenByComboOnly(companion, companionSiblings, products));
 
   const cardCompanionGroups = useMemo(
     () => Object.values(
