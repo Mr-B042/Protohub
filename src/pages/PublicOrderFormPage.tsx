@@ -4670,11 +4670,6 @@ export default function PublicOrderFormPage() {
                                   objectFit: "contain"
                                 }}
                               />
-                              {selected && (
-                                <span className="public-package-option__selected-ribbon">
-                                  Added to order
-                                </span>
-                              )}
                               {hasCarousel && (
                                 <>
                                   <button
@@ -4802,7 +4797,7 @@ export default function PublicOrderFormPage() {
                               </div>
                             )}
                           </div>
-                          <div style={{ display: "grid", justifyItems: "end", gap: 4, minWidth: 86 }}>
+                          <div className="public-package-option__price-stack" style={{ display: "grid", justifyItems: "end", gap: 4, minWidth: 86 }}>
                             <strong className="public-package-option__price" style={{ fontSize: 18, color: "#111827", whiteSpace: "nowrap", lineHeight: 1.2 }}>
                               {companion.pricingMode === "free" ? "FREE" : formatProductMoney(total, currency)}
                             </strong>

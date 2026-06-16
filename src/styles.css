@@ -8674,9 +8674,36 @@ article.public-order-card.public-form-clean .public-package-option__media {
   flex: none !important;
   isolation: isolate;
 }
+article.public-order-card.public-form-clean .public-package-option,
+article.public-order-card.public-form-clean .public-package-option * {
+  min-width: 0;
+}
 article.public-order-card.public-form-clean .public-package-option__image {
   width: 100% !important;
   min-width: 100% !important;
+}
+article.public-order-card.public-form-clean .public-package-option input[type="radio"] {
+  width: 20px !important;
+  min-width: 20px !important;
+  max-width: 20px !important;
+  height: 20px !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 4px 0 0 !important;
+  border: 2px solid #94a3b8 !important;
+  border-radius: 50% !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  box-sizing: border-box !important;
+  flex: 0 0 20px !important;
+  appearance: auto !important;
+  -webkit-appearance: radio !important;
+  -moz-appearance: radio !important;
+  accent-color: #1F8FE0;
+}
+article.public-order-card.public-form-clean .public-package-option input[type="radio"]:focus {
+  outline: 2px solid rgba(31, 143, 224, 0.28);
+  outline-offset: 3px;
 }
 article.public-order-card.public-form-clean .public-package-option__selected-ribbon {
   position: absolute;
@@ -8741,6 +8768,13 @@ article.public-order-card.public-form-clean .public-package-option__free-gifts s
   font-size: 11px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+article.public-order-card.public-form-clean .public-package-option__title,
+article.public-order-card.public-form-clean .public-package-option__description,
+article.public-order-card.public-form-clean .public-package-option__components,
+article.public-order-card.public-form-clean .public-package-option__free-gifts,
+article.public-order-card.public-form-clean .public-package-option__free-gifts span {
+  overflow-wrap: anywhere;
 }
 article.public-order-card.public-form-clean .public-package-option__side-nav {
   position: absolute;
@@ -8906,6 +8940,26 @@ article.public-order-card.public-form-clean .public-package-option__meta {
   }
   article.public-order-card.public-form-clean .public-package-option__copy {
     grid-column: 1 / -1;
+  }
+  article.public-order-card.public-form-clean .public-package-option__price-stack {
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+    display: grid !important;
+    justify-items: start !important;
+    gap: 6px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    margin-top: 2px !important;
+  }
+  article.public-order-card.public-form-clean .public-package-option__price-stack .public-package-option__price {
+    grid-column: auto;
+    grid-row: auto;
+    justify-self: start;
+    font-size: 22px !important;
+  }
+  article.public-order-card.public-form-clean .public-package-option__price-stack span {
+    white-space: normal !important;
+    overflow-wrap: anywhere;
   }
   article.public-order-card.public-form-clean .public-package-option__badges {
     gap: 6px !important;
