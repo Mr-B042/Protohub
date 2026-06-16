@@ -166,6 +166,18 @@ type CrossSellSelection = {
   quantity: number;
 };
 
+type PublicOrderSummaryLine = {
+  selectionKey: string;
+  productId: string;
+  packageId?: string;
+  packageName?: string;
+  name: string;
+  label: string;
+  detail?: string;
+  qty: number;
+  total: number;
+};
+
 type PublicCartJourneyEventType =
   | "form_opened"
   | "first_interaction"
@@ -548,6 +560,36 @@ function companionBundleComponents(companion: PublicCompanion) {
   return Array.isArray(companion.bundleComponents) ? companion.bundleComponents : [];
 }
 
+function customerVisibleComponents(components: PublicPackageComponent[]) {
+  return components
+    .filter((component) => component.productId || component.product_id)
+    .filter((component) => !(component.hiddenFromCustomer ?? component.hidden_from_customer));
+}
+
+function componentsDescribeComboOffer(components: PublicPackageComponent[]) {
+  const visible = customerVisibleComponents(components);
+  const sellableProductIds = new Set(
+    visible
+      .filter((component) => !Boolean(component.isFreeGift ?? component.is_free_gift))
+      .map((component) => component.productId || component.product_id || "")
+      .filter(Boolean)
+  );
+  const hasFreeGift = visible.some((component) => Boolean(component.isFreeGift ?? component.is_free_gift));
+  return sellableProductIds.size > 1 || (sellableProductIds.size > 0 && hasFreeGift);
+}
+
+function companionIsComboOffer(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
+  const components = targetPackage?.packageComponents?.length
+    ? targetPackage.packageComponents
+    : companionBundleComponents(companion);
+  return componentsDescribeComboOffer(components);
+}
+
+function comboOfferDisplayName(baseName: string) {
+  const trimmed = baseName.trim() || "Combo add-on";
+  return /\b(combo|bundle|pack|set)\b/i.test(trimmed) ? trimmed : `${trimmed} Combo`;
+}
+
 function companionInlineBundleUnitCount(companion: PublicCompanion) {
   const bundleCount = Math.max(1, Number(companion.quantity) || 1);
   return companionBundleComponents(companion)
@@ -622,8 +664,16 @@ function companionSelectionKey(companion: { companionId?: string; productId: str
 
 function companionDisplayName(companion: PublicCompanion, product: PublicProduct, targetPackage?: PublicPackage | null) {
   const headline = companion.headline?.trim();
-  if (headline) return headline;
-  return targetPackage ? `${product.name} · ${targetPackage.name}` : product.name;
+  const baseName = headline || (targetPackage ? `${product.name} · ${targetPackage.name}` : product.name);
+  return companionIsComboOffer(companion, targetPackage) ? comboOfferDisplayName(baseName) : baseName;
+}
+
+function companionGroupDisplayName(companions: PublicCompanion[], product: PublicProduct, products: PublicProduct[]) {
+  const firstCompanion = companions[0];
+  const firstHeadline = firstCompanion?.headline?.trim();
+  const baseName = firstHeadline || product.name;
+  const groupHasCombo = companions.some((companion) => companionIsComboOffer(companion, targetPackageForCompanion(companion, products)));
+  return groupHasCombo ? comboOfferDisplayName(baseName) : baseName;
 }
 
 function companionDisplayDetail(companion: PublicCompanion, targetPackage?: PublicPackage | null, products: PublicProduct[] = []) {
@@ -638,10 +688,14 @@ function companionDisplayDetail(companion: PublicCompanion, targetPackage?: Publ
   return `${companion.quantity} ${companion.quantity === 1 ? "pc" : "pcs"} in this add-on`;
 }
 
-function companionOfferUnits(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
+function companionOfferUnitCount(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
   const inlineBundleQty = targetPackage ? 0 : companionInlineBundleUnitCount(companion);
   const quantitySource = targetPackage?.quantity ?? (inlineBundleQty || companion.quantity);
-  const qty = Math.max(1, Number(quantitySource) || 1);
+  return Math.max(1, Number(quantitySource) || 1);
+}
+
+function companionOfferUnits(companion: PublicCompanion, targetPackage?: PublicPackage | null) {
+  const qty = companionOfferUnitCount(companion, targetPackage);
   return `${qty}${qty === 1 ? "pc" : "pcs"}`;
 }
 
@@ -1730,13 +1784,17 @@ export default function PublicOrderFormPage() {
       const product = products.find((item) => item.id === line.productId);
       if (!product || !chosenPackage || !publicProduct) return null;
       const companion = companionForSelection(line);
+      const selectionKey = companionSelectionKey(line);
       if (companion) {
         const targetPackage = targetPackageForCompanion(companion, products);
+        const isComboOffer = companionIsComboOffer(companion, targetPackage);
         return {
+          selectionKey,
           productId: product.id,
           packageId: targetPackage?.id ?? companion.packageId ?? undefined,
           packageName: targetPackage?.name ?? undefined,
           name: companionDisplayName(companion, product, targetPackage),
+          label: isComboOffer ? "Combo add-on" : "Additional item",
           detail: companionDisplayDetail(companion, targetPackage, products),
           qty: companion.quantity,
           total: companionLineTotal(companion, product, targetPackage)
@@ -1744,16 +1802,18 @@ export default function PublicOrderFormPage() {
       }
       const unit = crossSellPriceFor(publicProduct, product);
       return {
+        selectionKey,
         productId: product.id,
         packageId: line.packageId ?? undefined,
         packageName: undefined,
         name: product.name,
+        label: "Additional item",
         detail: `${line.quantity} ${line.quantity === 1 ? "pc" : "pcs"} in this additional item`,
         qty: line.quantity,
         total: unit * line.quantity
       };
     })
-    .filter(Boolean) as { name: string; detail?: string; qty: number; total: number }[];
+    .filter(Boolean) as PublicOrderSummaryLine[];
 
   const autoCompanionLines = (chosenPackage?.companionProducts ?? [])
     .filter(companionIsActive)
@@ -2576,6 +2636,11 @@ export default function PublicOrderFormPage() {
     return orderFormCrossSells.some((line) => companionSelectionKey(line) === key);
   }
 
+  function removeOrderFormCrossSellByKey(selectionKey: string) {
+    setLastAdditionalItemActionKey((current) => (current === selectionKey ? "" : current));
+    setOrderFormCrossSells((prev) => prev.filter((line) => companionSelectionKey(line) !== selectionKey));
+  }
+
   function resetOrderForm() {
     setOrderFormName("");
     setOrderFormPhone("");
@@ -3181,7 +3246,15 @@ export default function PublicOrderFormPage() {
   const cardCompanionGroups = useMemo(
     () => Object.values(
       companionOptions
-        .filter((companion) => (companion.displayMode ?? "compact") === "card")
+        .filter((companion) => {
+          const mode = companion.displayMode ?? "compact";
+          if (mode === "card") return true;
+          if (mode !== "showcase") return false;
+          return companionOptions.filter((candidate) => {
+            const candidateMode = candidate.displayMode ?? "compact";
+            return candidate.productId === companion.productId && (candidateMode === "card" || candidateMode === "showcase");
+          }).length > 1;
+        })
         .reduce<Record<string, { product: PublicProduct | undefined; companions: PublicCompanion[]; priority: number }>>((acc, companion) => {
           const key = companion.productId;
           if (!acc[key]) {
@@ -3199,7 +3272,9 @@ export default function PublicOrderFormPage() {
       .map((group) => ({
         ...group,
         companions: [...group.companions].sort((a, b) => {
-          if (a.quantity !== b.quantity) return a.quantity - b.quantity;
+          const aUnits = companionOfferUnitCount(a, targetPackageForCompanion(a, products));
+          const bUnits = companionOfferUnitCount(b, targetPackageForCompanion(b, products));
+          if (aUnits !== bUnits) return aUnits - bUnits;
           return (b.priority ?? 0) - (a.priority ?? 0);
         })
       }))
@@ -3207,11 +3282,19 @@ export default function PublicOrderFormPage() {
     [companionOptions, products]
   );
 
+  const groupedCardCompanionKeys = useMemo(
+    () => new Set(
+      cardCompanionGroups.flatMap((group) => group.companions.map((companion) => companionSelectionKey(companion)))
+    ),
+    [cardCompanionGroups]
+  );
+
   const showcaseCompanionOptions = useMemo(
     () => companionOptions
       .filter((companion) => (companion.displayMode ?? "compact") === "showcase")
+      .filter((companion) => !groupedCardCompanionKeys.has(companionSelectionKey(companion)))
       .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0)),
-    [companionOptions]
+    [companionOptions, groupedCardCompanionKeys]
   );
 
   const compactCompanionOptions = useMemo(
@@ -3391,7 +3474,7 @@ export default function PublicOrderFormPage() {
 
       {selectedCrossSellLines.map((line, index) => (
         <div
-          key={`inline-xs-${index}`}
+          key={`inline-xs-${line.selectionKey || index}`}
           style={{
             display: "flex",
             alignItems: "flex-start",
@@ -3402,8 +3485,27 @@ export default function PublicOrderFormPage() {
           }}
         >
           <div style={{ display: "grid", gap: 2 }}>
-            <strong style={{ fontSize: 13, color: "#92400e" }}>Additional item · {line.name}</strong>
+            <strong style={{ fontSize: 13, color: "#92400e" }}>{line.label} · {line.name}</strong>
             {line.detail ? <span style={{ fontSize: 12, color: "#64748b" }}>{line.detail}</span> : null}
+            <button
+              type="button"
+              onClick={() => removeOrderFormCrossSellByKey(line.selectionKey)}
+              aria-label={`Remove ${line.name} from order`}
+              style={{
+                justifySelf: "start",
+                marginTop: 6,
+                padding: "7px 10px",
+                borderRadius: 999,
+                border: "1px solid #fecaca",
+                background: "#fff1f2",
+                color: "#b91c1c",
+                fontSize: 12,
+                fontWeight: 900,
+                cursor: "pointer"
+              }}
+            >
+              Remove add-on
+            </button>
           </div>
           <strong style={{ fontSize: 13, color: "#92400e" }}>{formatProductMoney(line.total, chosenPackageCurrency)}</strong>
         </div>
@@ -3457,10 +3559,29 @@ export default function PublicOrderFormPage() {
         ) : null}
       </div>
       {selectedCrossSellLines.map((line, index) => (
-        <div key={`xs-${index}`} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "4px 0", color: "#92400e" }}>
+        <div key={`xs-${line.selectionKey || index}`} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12, padding: "4px 0", color: "#92400e" }}>
           <div style={{ display: "grid", gap: 2 }}>
-            <span>↳ Additional item · {line.name}</span>
+            <span>↳ {line.label} · {line.name}</span>
             {line.detail ? <span style={{ color: "#94a3b8", fontSize: 11 }}>{line.detail}</span> : null}
+            <button
+              type="button"
+              onClick={() => removeOrderFormCrossSellByKey(line.selectionKey)}
+              aria-label={`Remove ${line.name} from order`}
+              style={{
+                justifySelf: "start",
+                marginTop: 4,
+                padding: "5px 9px",
+                borderRadius: 999,
+                border: "1px solid #fecaca",
+                background: "#fff1f2",
+                color: "#b91c1c",
+                fontSize: 11,
+                fontWeight: 900,
+                cursor: "pointer"
+              }}
+            >
+              Remove add-on
+            </button>
           </div>
           <span>{formatProductMoney(line.total, chosenPackageCurrency)}</span>
         </div>
@@ -3561,10 +3682,29 @@ export default function PublicOrderFormPage() {
           <strong style={{ fontSize: 14, color: "#0f172a" }}>{formatProductMoney(chosenPackagePrice, chosenPackageCurrency)}</strong>
         </div>
         {selectedCrossSellLines.map((line, index) => (
-          <div key={`guided-xs-${index}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div key={`guided-xs-${line.selectionKey || index}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
             <div style={{ display: "grid", gap: 2 }}>
-              <strong style={{ fontSize: 13, color: "#92400e" }}>Additional item · {line.name}</strong>
+              <strong style={{ fontSize: 13, color: "#92400e" }}>{line.label} · {line.name}</strong>
               {line.detail ? <span style={{ fontSize: 12, color: "#64748b" }}>{line.detail}</span> : null}
+              <button
+                type="button"
+                onClick={() => removeOrderFormCrossSellByKey(line.selectionKey)}
+                aria-label={`Remove ${line.name} from order`}
+                style={{
+                  justifySelf: "start",
+                  marginTop: 6,
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: "1px solid #fecaca",
+                  background: "#fff1f2",
+                  color: "#b91c1c",
+                  fontSize: 11,
+                  fontWeight: 900,
+                  cursor: "pointer"
+                }}
+              >
+                Remove add-on
+              </button>
             </div>
             <strong style={{ fontSize: 13, color: "#92400e" }}>{formatProductMoney(line.total, chosenPackageCurrency)}</strong>
           </div>
@@ -4852,6 +4992,31 @@ export default function PublicOrderFormPage() {
                           <span style={{ fontSize: 16, fontWeight: 800, color: "#111827" }}>
                             {companion.pricingMode === "free" ? "FREE" : formatProductMoney(total, currency)}
                           </span>
+                          {selected && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setOrderFormCrossSellSelection(companion, false);
+                              }}
+                              aria-label={`Remove ${companionDisplayName(companion, product, targetPackage)} from order`}
+                              style={{
+                                justifySelf: "start",
+                                marginTop: 2,
+                                padding: "6px 10px",
+                                borderRadius: 999,
+                                border: "1px solid #fecaca",
+                                background: "#fff1f2",
+                                color: "#b91c1c",
+                                fontSize: 12,
+                                fontWeight: 900,
+                                cursor: "pointer"
+                              }}
+                            >
+                              Remove add-on
+                            </button>
+                          )}
                         </span>
                         <input
                           type="checkbox"
@@ -4888,7 +5053,7 @@ export default function PublicOrderFormPage() {
                         const teaserOfferLabel = companionOfferPriceLabel(previewCompanion, teaserTotal, currency, previewTargetPackage);
                         const displayOfferLabel = companionOfferPriceLabel(displayCompanion, total, currency, displayTargetPackage);
                         const groupTitle = hasVariantChoices
-                          ? product.name
+                          ? companionGroupDisplayName(group.companions, product, products)
                           : companionDisplayName(previewCompanion, product, previewTargetPackage);
                         const media = renderCompanionMedia(displayCompanion, groupTitle, displayTargetPackage);
                         const socialProofUi = companionSocialProofUi(displayCompanion);
@@ -5439,7 +5604,7 @@ export default function PublicOrderFormPage() {
                                           animation: "publicRemovePulse 1.6s ease-in-out infinite"
                                         }}
                                       >
-                                        Tap here to remove this product from your order
+                                        Remove add-on from order
                                       </button>
                                     </div>
                                   ) : !hasVariantChoices ? (
