@@ -808,7 +808,10 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
 
   const loadMetricEvents = async () => {
     const allEvents: any[] = [];
-    const pageSize = 5000;
+    // Supabase/PostgREST can enforce a 1,000-row max per request even when
+    // the client asks for a larger range. Keep the page size at that ceiling
+    // so busy days continue past the first 1,000 metric events.
+    const pageSize = 1000;
     const maxRows = 50000;
     for (let from = 0; from < maxRows; from += pageSize) {
       let metricQuery = supabase
@@ -1144,6 +1147,11 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     embedStats.set(latestEmbedLabel, embedBucket);
   }
 
+  // The live pulse is a traffic meter, so visible counts must reflect actual
+  // journey events. The cart-group pass above is kept for active-cart context,
+  // but it undercounts repeat page opens on the same cart.
+  recountPulseMetricEvents();
+
   for (const [, events] of liveByCart.entries()) {
     const lastEvent = events[events.length - 1];
     const latestCreatedAt = typeof lastEvent?.created_at === "string" ? lastEvent.created_at : null;
@@ -1193,11 +1201,6 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
       }
     }
   }
-
-  // The live pulse is a traffic meter, so visible counts must reflect actual
-  // journey events. The cart-group pass above is kept for active-cart context,
-  // but it undercounts repeat page opens on the same cart.
-  recountPulseMetricEvents();
 
   summary.interactionRate = summary.viewedToday > 0 ? Math.round((summary.interactedToday / summary.viewedToday) * 100) : 0;
   summary.submitRate = summary.interactedToday > 0 ? Math.round((summary.submitAttemptsToday / summary.interactedToday) * 100) : 0;
