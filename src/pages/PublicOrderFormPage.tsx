@@ -1020,7 +1020,7 @@ function renderCompanionMedia(companion: PublicCompanion, productName: string, t
 function renderCompanionTeaserVisual(companion: PublicCompanion, productName: string, targetPackage?: PublicPackage | null) {
   const src = companionImageSource(companion, targetPackage).trim() || fallbackCompanionImageSrc(productName);
   return (
-    <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1", borderRadius: 22, overflow: "hidden", background: "#ffffff", border: "1px solid rgba(148, 163, 184, 0.18)" }}>
+    <div className="public-companion-teaser-visual" style={{ position: "relative", width: "100%", aspectRatio: "1 / 1", borderRadius: 22, overflow: "hidden", background: "#ffffff", border: "1px solid rgba(148, 163, 184, 0.18)" }}>
       <img
         src={src}
         alt={productName}
@@ -1030,7 +1030,7 @@ function renderCompanionTeaserVisual(companion: PublicCompanion, productName: st
           target.dataset.fallbackApplied = "true";
           target.src = fallbackCompanionImageSrc(productName);
         }}
-        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
       />
     </div>
   );
@@ -5087,7 +5087,7 @@ export default function PublicOrderFormPage() {
 
               {cardCompanionGroups.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
-                  <div style={{ border: "2px solid #cbd5e1", borderRadius: 22, background: "#f8fafc", padding: 14, display: "grid", gap: 14 }}>
+                  <div className="public-card-companion-panel" style={{ border: "2px solid #cbd5e1", borderRadius: 22, background: "#f8fafc", padding: 14, display: "grid", gap: 14 }}>
                     <div style={{ display: "grid", gap: 12 }}>
                       {cardCompanionGroups.map((group, index) => {
                         const product = group.product;
@@ -5133,6 +5133,7 @@ export default function PublicOrderFormPage() {
                           <div key={`${group.key}-${index}`} style={{ display: "grid", gap: 10 }}>
                             <button
                               type="button"
+                              className="public-card-companion-teaser"
                               onClick={() => setExpandedCardCompanionGroupKey((current) => current === group.key ? null : group.key)}
                               style={{
                                 width: "100%",
@@ -5148,6 +5149,7 @@ export default function PublicOrderFormPage() {
                               }}
                             >
                               <div
+                                className="public-card-companion-teaser__layout"
                                 style={
                                   isCompactUpsellViewport
                                     ? { display: "grid", gap: 14 }
@@ -5156,11 +5158,12 @@ export default function PublicOrderFormPage() {
                               >
                                 {isCompactUpsellViewport ? (
                                   <>
-                                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                                      <strong style={{ fontSize: 22, lineHeight: 1.08, color: "#111827", flex: 1, minWidth: 0 }}>
+                                    <div className="public-card-companion-teaser__header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                                      <strong className="public-card-companion-teaser__title" style={{ fontSize: 18, lineHeight: 1.12, color: "#111827", flex: 1, minWidth: 0 }}>
                                         {groupTitle}
                                       </strong>
                                       <span
+                                        className="public-card-companion-teaser__badge"
                                         style={{
                                           flexShrink: 0,
                                           padding: "7px 11px",
@@ -5176,10 +5179,10 @@ export default function PublicOrderFormPage() {
                                         {(previewCompanion.badgeText?.trim() || "Promo").slice(0, 24)}
                                       </span>
                                     </div>
-                                    <span style={{ fontSize: 15, color: "#64748b", lineHeight: 1.55 }}>
+                                    <span className="public-card-companion-teaser__pitch" style={{ fontSize: 13, color: "#64748b", lineHeight: 1.42 }}>
                                       {previewCompanion.pitch?.trim() || "Quick extra additional item that fits this order."}
                                     </span>
-                                    <div style={{ width: "100%", maxWidth: 240, justifySelf: "center" }}>
+                                    <div className="public-card-companion-teaser__visual" style={{ width: "100%", maxWidth: "min(100%, 390px)", justifySelf: "center" }}>
                                       {renderCompanionTeaserVisual(previewCompanion, groupTitle, previewTargetPackage)}
                                     </div>
                                     {(socialProofUi.badgeText || socialProofUi.stats.length > 0) && (
@@ -5218,8 +5221,8 @@ export default function PublicOrderFormPage() {
                                         )}
                                       </div>
                                     )}
-                                    <div style={{ display: "grid", gap: 6 }}>
-                                      <strong style={{ fontSize: 19, color: "#111827", lineHeight: 1.2 }}>
+                                    <div className="public-card-companion-teaser__offer" style={{ display: "grid", gap: 6 }}>
+                                      <strong className="public-card-companion-teaser__price" style={{ fontSize: 18, color: "#111827", lineHeight: 1.2 }}>
                                         {teaserOfferLabel}
                                       </strong>
                                       {savings > 0 && (
@@ -5232,13 +5235,13 @@ export default function PublicOrderFormPage() {
                                           </span>
                                         </div>
                                       )}
-                                      <span style={{ fontSize: 12, fontWeight: 700, color: "#b45309", lineHeight: 1.5 }}>
+                                      <span className="public-card-companion-teaser__urgency" style={{ fontSize: 12, fontWeight: 700, color: "#b45309", lineHeight: 1.5 }}>
                                         {(displayCompanion.urgencyMode ?? "standard") === "price_loss" && savings > 0
                                           ? `If you skip this, it'll cost you ${formatProductMoney(standardTotal, currency)} later. This ${formatProductMoney(teaserTotal, currency)} price disappears the moment you submit.`
                                           : "Special price only when added with the main offer"}
                                       </span>
                                       {group.companions.length > 1 && (
-                                        <span style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                        <span className="public-card-companion-teaser__choice-count" style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                                           {group.companions.length} bundle choices inside
                                         </span>
                                       )}

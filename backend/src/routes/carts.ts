@@ -876,6 +876,32 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
 
   const sourceStats = new Map<string, { source: string; viewed: number; interacted: number; submitted: number; lastSeenAt: string | null }>();
   const embedStats = new Map<string, { embedLabel: string; viewed: number; interacted: number; submitted: number; lastSeenAt: string | null }>();
+  const touchSourceAndEmbedLastSeen = (event: any) => {
+    const createdAt = typeof event?.created_at === "string" ? event.created_at : null;
+    if (!createdAt || createdAt < selectedRange.startIso || createdAt >= selectedRange.endExclusiveIso) return;
+
+    const cartId = typeof event?.cart_id === "string" ? event.cart_id.trim() : "";
+    const metadata = event?.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+    const cartRow = cartId ? cartById.get(cartId) : undefined;
+    const source = normalizePulseSource(metadata.source ?? cartRow?.source);
+    const embedLabel = resolvePulseEmbedLabel(
+      metadata.embedLabel ?? cartRow?.embed_label,
+      metadata.productName ?? cartRow?.product_name
+    );
+    if (embedLabels.length > 0 && !embedLabels.includes(embedLabel)) return;
+
+    const sourceBucket = sourceStats.get(source) ?? { source, viewed: 0, interacted: 0, submitted: 0, lastSeenAt: null };
+    if (!sourceBucket.lastSeenAt || createdAt > sourceBucket.lastSeenAt) {
+      sourceBucket.lastSeenAt = createdAt;
+      sourceStats.set(source, sourceBucket);
+    }
+
+    const embedBucket = embedStats.get(embedLabel) ?? { embedLabel, viewed: 0, interacted: 0, submitted: 0, lastSeenAt: null };
+    if (!embedBucket.lastSeenAt || createdAt > embedBucket.lastSeenAt) {
+      embedBucket.lastSeenAt = createdAt;
+      embedStats.set(embedLabel, embedBucket);
+    }
+  };
   const pulseFeed = [...(rangeFeedEvents ?? [])]
     .filter((event) => PULSE_FEED_EVENT_TYPES.has(String(event.event_type ?? "")))
     .filter((event) => {
@@ -1038,6 +1064,7 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
       const createdAt = typeof event.created_at === "string" ? event.created_at : null;
       if (!createdAt) continue;
       if (createdAt < selectedRange.startIso || createdAt >= selectedRange.endExclusiveIso) continue;
+      touchSourceAndEmbedLastSeen(event);
       if (eventType === "form_opened" && (!summary.lastViewedAt || createdAt > summary.lastViewedAt)) {
         summary.lastViewedAt = createdAt;
       }

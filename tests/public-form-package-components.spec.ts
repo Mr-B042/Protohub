@@ -437,6 +437,11 @@ test.describe("public order form package component display", () => {
     await expect(page.getByText("Single Edge Brusher")).toHaveCount(0);
     await expect(page.getByText("3 pcs in this add-on")).toHaveCount(0);
     await expect(page.locator(".public-package-option--featured")).toHaveCount(0);
+    await expect(page.locator(".public-card-companion-teaser__title")).toHaveCSS("font-size", "18px");
+    const teaserVisual = page.locator(".public-card-companion-teaser__visual");
+    await expect(teaserVisual).toHaveCount(1);
+    const teaserVisualBox = await teaserVisual.boundingBox();
+    expect(teaserVisualBox?.width).toBeGreaterThanOrEqual(300);
 
     await page.getByText("Choose your bundle").click();
 
