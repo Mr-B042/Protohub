@@ -1278,6 +1278,8 @@ export default function PublicOrderFormPage() {
   const publicOrderSubmittingRef = useRef(false);
   const abandonedDraftCartIdRef = useRef("");
   const formOpenedAtRef = useRef(Date.now());
+  const pageViewTrackedRef = useRef(false);
+  const pageViewTrackedKeyRef = useRef("");
   const journeyDedupRef = useRef<Set<string>>(new Set());
   const metaEventIdsRef = useRef<Record<string, string>>({});
   const metaBrowserEventsSentRef = useRef<Set<string>>(new Set());
@@ -1724,7 +1726,7 @@ export default function PublicOrderFormPage() {
     const nextId = makeCartId();
     abandonedDraftCartIdRef.current = nextId;
     setAbandonedDraftCartId(nextId);
-    if (publicProduct && chosenPackage) {
+    if (publicProduct && chosenPackage && !pageViewTrackedRef.current) {
       const dedupeKey = `form_opened:${nextId}`;
       journeyDedupRef.current.add(dedupeKey);
       cartsApi.trackPublicJourney(
@@ -1897,6 +1899,8 @@ export default function PublicOrderFormPage() {
       setAbandonedDraftCartId("");
       abandonedDraftCartIdRef.current = "";
       firstInteractionTrackedRef.current = false;
+      pageViewTrackedRef.current = false;
+      pageViewTrackedKeyRef.current = "";
     }
   }, [publicEmbedIsPreview, publicProductId]);
 
@@ -2450,7 +2454,37 @@ export default function PublicOrderFormPage() {
   ]);
 
   useEffect(() => {
+    if (publicEmbedIsPreview || !publicProduct || !chosenPackage) return;
+    const viewKey = `${publicProduct.id}:${publicEmbedLabel || "default"}`;
+    if (pageViewTrackedKeyRef.current === viewKey) return;
+    pageViewTrackedKeyRef.current = viewKey;
+    pageViewTrackedRef.current = true;
+
+    const visitCartId = `VIEW-${Date.now().toString(36)}-${Math.floor(100000 + Math.random() * 900000)}`;
+    cartsApi.trackPublicJourney(
+      visitCartId,
+      {
+        productId: publicProduct.id,
+        packageId: chosenPackage.id,
+        state: orderFormState.trim() || undefined,
+        eventType: "form_opened",
+        metadata: {
+          productName: publicProduct.name,
+          packageName: chosenPackage.name,
+          ...publicJourneyAttributionMetadata,
+          visitId: visitCartId,
+          viewKind: "page_load",
+          secondsSinceOpen: 0
+        }
+      }
+    ).catch(() => {
+      // Page-view tracking is best-effort only.
+    });
+  }, [chosenPackage, orderFormState, publicEmbedIsPreview, publicEmbedLabel, publicJourneyAttributionMetadata, publicProduct]);
+
+  useEffect(() => {
     if (!abandonedDraftCartId || publicEmbedIsPreview || !publicProduct || !chosenPackage) return;
+    if (pageViewTrackedRef.current) return;
     trackCartJourney("form_opened", {
       dedupeKey: `form_opened:${abandonedDraftCartId}`,
       packageId: chosenPackage.id,

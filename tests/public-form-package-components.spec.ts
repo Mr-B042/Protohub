@@ -8,10 +8,96 @@ const tieredAddonFormUrl =
   "http://127.0.0.1:5174/#/order-form/embed?product=prod-addon-tiered&currency=NGN&preview=1";
 const separateAddonFormUrl =
   "http://127.0.0.1:5174/#/order-form/embed?product=prod-addon-separate&currency=NGN&preview=1";
+const trackingFormUrl =
+  "http://127.0.0.1:5174/#/order-form/embed?product=prod-view-tracking&currency=NGN&embed_label=Main+Tracking";
 const addonPreviewImage =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 600'%3E%3Crect width='600' height='600' fill='%23f8fafc'/%3E%3Ccircle cx='210' cy='180' r='120' fill='%23dbeafe' stroke='%2394a3b8' stroke-width='8'/%3E%3Ccircle cx='400' cy='185' r='120' fill='%23e0f2fe' stroke='%2394a3b8' stroke-width='8'/%3E%3Ccircle cx='220' cy='410' r='120' fill='%23f1f5f9' stroke='%2394a3b8' stroke-width='8'/%3E%3Ccircle cx='410' cy='410' r='120' fill='%23ecfeff' stroke='%2394a3b8' stroke-width='8'/%3E%3Ctext x='300' y='310' text-anchor='middle' font-size='34' font-family='Arial' font-weight='700' fill='%230f172a'%3EEdge Brusher%3C/text%3E%3C/svg%3E";
 
 test.describe("public order form package component display", () => {
+  test("sends a unique page-open view event on real public form load", async ({ page }) => {
+    const trackedEvents: { url: string; body: any }[] = [];
+    await page.route("**/api/public/products/prod-view-tracking", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          product: {
+            id: "prod-view-tracking",
+            orgId: "org-local-test",
+            name: "View Tracking Product",
+            description: "Local tracking regression product",
+            packageDescription: "",
+            active: true,
+            availableStates: [],
+            freeGiftProductIds: [],
+            freeGiftStateRestrictions: {},
+            crossSellPriceOverrides: {},
+            formCustomText: "",
+            pricings: [{ currency: "NGN", sellingPrice: 19500, isPrimary: true }],
+            packages: [
+              {
+                id: "pkg-view-tracking",
+                name: "Starter Pack",
+                description: "1 pack for testing",
+                quantity: 1,
+                price: 19500,
+                currency: "NGN",
+                displayOrder: 1,
+                active: true,
+                packageSet: "Default",
+                stateFilterMode: "all",
+                stateRestrictions: [],
+                requiresStateStock: false,
+                featuredComboCard: false,
+                imageUrl: "",
+                imageUrls: [],
+                unitSingular: "pc",
+                unitPlural: "pcs",
+                attributionProductId: null,
+                packageComponents: [],
+                companionProducts: []
+              }
+            ]
+          },
+          related: []
+        })
+      });
+    });
+
+    await page.route("**/api/public/embed-settings/org-local-test", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          showPackageName: true,
+          publicFormMode: "classic",
+          freeDeliverySlotsEnabled: false
+        })
+      });
+    });
+
+    await page.route("**/api/public/carts/*/events", async (route) => {
+      trackedEvents.push({
+        url: route.request().url(),
+        body: JSON.parse(route.request().postData() || "{}")
+      });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true })
+      });
+    });
+
+    await page.goto(trackingFormUrl, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("SELECT YOUR PACKAGE *")).toBeVisible();
+
+    await expect.poll(() => trackedEvents.filter((event) => event.body.eventType === "form_opened").length).toBe(1);
+    const viewEvent = trackedEvents.find((event) => event.body.eventType === "form_opened");
+    expect(new URL(viewEvent!.url).pathname).toMatch(/\/api\/public\/carts\/VIEW-[^/]+\/events$/);
+    expect(viewEvent!.body.metadata.viewKind).toBe("page_load");
+    expect(viewEvent!.body.metadata.embedLabel).toBe("Main Tracking");
+  });
+
   test("keeps internal stock components out of the main package picker copy", async ({ page }) => {
     await page.route("**/api/public/products/prod-main-components", async (route) => {
       await route.fulfill({
