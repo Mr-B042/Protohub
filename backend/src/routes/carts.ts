@@ -333,6 +333,14 @@ const PULSE_FEED_EVENT_TYPES = new Set([
   "order_submitted",
   "redirect_triggered"
 ]);
+const PULSE_METRIC_EVENT_TYPES = [
+  "form_opened",
+  "first_interaction",
+  "submit_attempted",
+  "order_submitted",
+  "redirect_triggered"
+] as const;
+const PULSE_METRIC_EVENT_TYPE_SET = new Set<string>(PULSE_METRIC_EVENT_TYPES);
 
 const LAGOS_OFFSET_MS = 60 * 60 * 1000;
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -798,20 +806,47 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     liveWindowQuery = liveWindowQuery.in("product_id", productIds);
   }
 
+  const loadMetricEvents = async () => {
+    const allEvents: any[] = [];
+    const pageSize = 5000;
+    const maxRows = 50000;
+    for (let from = 0; from < maxRows; from += pageSize) {
+      let metricQuery = supabase
+        .from("cart_journey_events")
+        .select("id, cart_id, product_id, package_id, event_type, metadata, created_at")
+        .eq("org_id", req.user!.orgId)
+        .gte("created_at", selectedRange.startIso)
+        .lt("created_at", selectedRange.endExclusiveIso)
+        .in("event_type", [...PULSE_METRIC_EVENT_TYPES])
+        .order("created_at", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (productIds.length > 0) {
+        metricQuery = metricQuery.in("product_id", productIds);
+      }
+      const { data, error } = await metricQuery;
+      if (error) return { data: allEvents, error };
+      const page = data ?? [];
+      allEvents.push(...page);
+      if (page.length < pageSize) return { data: allEvents, error: null };
+    }
+    return { data: allEvents, error: null };
+  };
+
   const [
     { data: rangeEvents, error: rangeError },
     { data: rangeFeedEvents, error: rangeFeedError },
-    { data: liveWindowEvents, error: liveWindowError }
-  ] = await Promise.all([rangeQuery, rangeFeedQuery, liveWindowQuery]);
+    { data: liveWindowEvents, error: liveWindowError },
+    { data: metricEvents, error: metricError }
+  ] = await Promise.all([rangeQuery, rangeFeedQuery, liveWindowQuery, loadMetricEvents()]);
 
-  if (rangeError || rangeFeedError || liveWindowError) {
-    res.status(500).json({ error: rangeError?.message ?? rangeFeedError?.message ?? liveWindowError?.message ?? "Could not load live pulse." });
+  if (rangeError || rangeFeedError || liveWindowError || metricError) {
+    res.status(500).json({ error: rangeError?.message ?? rangeFeedError?.message ?? liveWindowError?.message ?? metricError?.message ?? "Could not load live pulse." });
     return;
   }
 
   const combinedCartIds = Array.from(
     new Set(
-      [...(rangeEvents ?? []), ...(rangeFeedEvents ?? []), ...(liveWindowEvents ?? [])]
+      [...(rangeEvents ?? []), ...(rangeFeedEvents ?? []), ...(liveWindowEvents ?? []), ...(metricEvents ?? [])]
         .map((event) => (typeof event.cart_id === "string" ? event.cart_id.trim() : ""))
         .filter(Boolean)
     )
@@ -976,19 +1011,11 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     sourceStats.clear();
     embedStats.clear();
 
-    for (const event of [...(rangeEvents ?? []), ...(rangeFeedEvents ?? []), ...(liveWindowEvents ?? [])]) {
+    for (const event of metricEvents ?? []) {
       const eventType = String(event?.event_type ?? "");
       const createdAt = typeof event?.created_at === "string" ? event.created_at : null;
       if (!createdAt || createdAt < selectedRange.startIso || createdAt >= selectedRange.endExclusiveIso) continue;
-      if (
-        eventType !== "form_opened"
-        && eventType !== "first_interaction"
-        && eventType !== "submit_attempted"
-        && eventType !== "order_submitted"
-        && eventType !== "redirect_triggered"
-      ) {
-        continue;
-      }
+      if (!PULSE_METRIC_EVENT_TYPE_SET.has(eventType)) continue;
 
       const cartId = typeof event?.cart_id === "string" ? event.cart_id.trim() : "";
       const eventId = typeof event?.id === "string" ? event.id : "";
