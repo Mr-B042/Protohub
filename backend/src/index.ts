@@ -194,7 +194,7 @@ const authRateLimit = rateLimit({
 });
 
 // ── Body parsing ──────────────────────────────────────────
-// Package carousel images can be uploaded as data URLs. 5 MB files expand
+// Package carousel images can be uploaded as data URLs. 10 MB files expand
 // after encoding, and admins may save several images at once.
 app.use(express.json({ limit: "90mb" }));
 

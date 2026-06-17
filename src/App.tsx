@@ -4406,7 +4406,8 @@ const replacePackageFreeGiftComponents = (
 ];
 const normalisePackageStateFilterMode = (mode: ProductPackage["stateFilterMode"]): "all" | "allow" | "block" =>
   mode === "allow" || mode === "block" ? mode : "all";
-const PACKAGE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const PACKAGE_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const PACKAGE_IMAGE_MAX_LABEL = "10 MB";
 const SHOWCASE_GALLERY_RECOMMENDED_IMAGES = 10;
 const normalisePackageImageUrls = (urls: (string | null | undefined)[] | undefined) =>
   Array.from(new Set((urls ?? []).map((url) => (url ?? "").trim()).filter(Boolean))).slice(0, 15);
@@ -56231,7 +56232,7 @@ ${waybillLineItems(w).length > 1
                             if (files.length === 0) return;
                             const oversized = files.find((file) => file.size > PACKAGE_IMAGE_MAX_BYTES);
                             if (oversized) {
-                              showToast("Each package image must be under 5 MB.");
+                              showToast(`Each package image must be under ${PACKAGE_IMAGE_MAX_LABEL}.`);
                               event.target.value = "";
                               return;
                             }
@@ -56549,7 +56550,7 @@ ${waybillLineItems(w).length > 1
                           if (files.length === 0) return;
                           const oversized = files.find((file) => file.size > PACKAGE_IMAGE_MAX_BYTES);
                           if (oversized) {
-                            showToast("Each gallery image must be under 5 MB.");
+                            showToast(`Each gallery image must be under ${PACKAGE_IMAGE_MAX_LABEL}.`);
                             return;
                           }
                           const uploadToken = companionGalleryUploadTokenRef.current;
@@ -57288,7 +57289,7 @@ ${waybillLineItems(w).length > 1
                                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
                                       <p className="m-0 text-sm font-semibold text-gray-900">Upload image from desktop</p>
-                                      <p className="m-0 text-[11px] text-gray-500">Best for quick setup. Keep it under 600 KB for faster form loading.</p>
+                                      <p className="m-0 text-[11px] text-gray-500">Best for quick setup. Keep it under {PACKAGE_IMAGE_MAX_LABEL} for faster form loading.</p>
                                     </div>
                                     <div className="flex flex-wrap items-center gap-2">
                                       <label className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors cursor-pointer">
@@ -57301,17 +57302,23 @@ ${waybillLineItems(w).length > 1
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
                                             if (!file) return;
-                                            if (file.size > 600_000) {
-                                              showToast("Offer image must be under 600 KB.");
+                                            if (file.size > PACKAGE_IMAGE_MAX_BYTES) {
+                                              showToast(`Offer image must be under ${PACKAGE_IMAGE_MAX_LABEL}.`);
                                               e.target.value = "";
                                               return;
                                             }
                                             const reader = new FileReader();
-                                            reader.onload = (ev) => {
+                                            reader.onload = async (ev) => {
                                               const dataUrl = String(ev.target?.result ?? "");
                                               if (dataUrl) {
-                                                update({ imageUrl: dataUrl });
-                                                showToast("Offer image added.");
+                                                try {
+                                                  showToast("Uploading offer image...");
+                                                  const { url } = await productsApi.uploadPackageImage(dataUrl, file.name);
+                                                  update({ imageUrl: url });
+                                                  showToast("Offer image uploaded.");
+                                                } catch (err: any) {
+                                                  showToast(`Could not upload image: ${err?.message ?? "try again"}.`);
+                                                }
                                               }
                                             };
                                             reader.readAsDataURL(file);

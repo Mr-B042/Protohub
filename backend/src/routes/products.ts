@@ -7,17 +7,23 @@ import { logger } from "../lib/logger.js";
 
 const router = Router();
 router.use(requireAuth);
-router.use((req, _res, next) => { logger.info("products route hit", { method: req.method, path: req.path, body: req.method === "POST" ? req.body : undefined }); next(); });
+router.use((req, _res, next) => {
+  const logBody = req.method === "POST" && !req.path.includes("/package-images/upload");
+  logger.info("products route hit", { method: req.method, path: req.path, body: logBody ? req.body : undefined });
+  next();
+});
 
+const IMAGE_DATA_URL_MAX_LENGTH = 14_200_000;
 const mediaImageSchema = z.union([
   z.string().url().max(2048),
-  z.string().regex(/^data:image\//).max(800000),
+  // A 10 MB uploaded file expands when encoded as a data URL.
+  z.string().regex(/^data:image\//).max(IMAGE_DATA_URL_MAX_LENGTH),
   z.literal("")
 ]).optional();
 const packageMediaImageSchema = z.union([
   z.string().url().max(2048),
-  // A 5 MB uploaded file expands when encoded as a data URL.
-  z.string().regex(/^data:image\//).max(7_100_000),
+  // A 10 MB uploaded file expands when encoded as a data URL.
+  z.string().regex(/^data:image\//).max(IMAGE_DATA_URL_MAX_LENGTH),
   z.literal("")
 ]).optional();
 
