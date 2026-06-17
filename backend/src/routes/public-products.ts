@@ -36,6 +36,7 @@ type DbCompanion = {
   pitch?: string;
   badgeText?: string;
   headline?: string;
+  summaryOverride?: string;
   ctaText?: string;
   declineText?: string;
   imageUrl?: string;
@@ -170,6 +171,7 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
       pitch:             c.pitch ?? "",
       badgeText:         c.badgeText ?? "",
       headline:          c.headline ?? "",
+      summaryOverride:   c.summaryOverride ?? "",
       ctaText:           c.ctaText ?? "",
       declineText:       c.declineText ?? "",
       imageUrl:          c.imageUrl ?? "",
@@ -566,6 +568,12 @@ router.get("/:id", readRateLimit, async (req, res) => {
       .flatMap((pkg) => (pkg.active ? (pkg.companion_products ?? []) : []))
       .filter(companionIsActive)
       .map((companion) => companion.productId)
+      .filter(Boolean)),
+    ...((product.packages ?? [])
+      .flatMap((pkg) => (pkg.active ? (pkg.companion_products ?? []) : []))
+      .filter(companionIsActive)
+      .flatMap((companion) => Array.isArray(companion.bundleComponents) ? companion.bundleComponents : [])
+      .map((component) => component.productId ?? component.product_id)
       .filter(Boolean)),
     ...((product.packages ?? [])
       .flatMap((pkg) => (pkg.active ? (pkg.package_components ?? []) : []))

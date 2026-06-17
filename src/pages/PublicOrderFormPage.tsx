@@ -36,6 +36,7 @@ type PublicCompanion = {
   pitch?: string;
   badgeText?: string;
   headline?: string;
+  summaryOverride?: string;
   ctaText?: string;
   declineText?: string;
   imageUrl?: string;
@@ -640,6 +641,8 @@ function companionInlineBundleUnitCount(companion: PublicCompanion) {
 }
 
 function companionComponentSummary(companion: PublicCompanion, products: PublicProduct[], targetPackage?: PublicPackage | null) {
+  const override = companion.summaryOverride?.trim();
+  if (override) return override;
   if (companionHasOwnBundle(companion)) {
     return componentListSummary(companionBundleComponents(companion), products, null);
   }
@@ -730,6 +733,8 @@ function companionGroupDisplayName(companions: PublicCompanion[], product: Publi
 }
 
 function companionDisplayDetail(companion: PublicCompanion, targetPackage?: PublicPackage | null, products: PublicProduct[] = []) {
+  const override = companion.summaryOverride?.trim();
+  if (override) return override;
   const bundleSummary = products.length > 0 ? componentListSummary(companionBundleComponents(companion), products, null) : "";
   if (bundleSummary) return bundleSummary;
   if (targetPackage) {

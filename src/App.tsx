@@ -584,6 +584,7 @@ type PackageCompanion = {
   pitch?: string;          // 1-line benefit copy, max ~80 chars
   badgeText?: string;      // pill header above the card, default "🎁 Add to your order?"
   headline?: string;       // post-submit upsell headline
+  summaryOverride?: string; // customer-facing combo contents line
   ctaText?: string;        // post-submit or inline CTA label
   declineText?: string;    // softer "no thanks" text
   imageUrl?: string;       // optional companion image
@@ -4357,6 +4358,7 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
   pitch: companion.pitch ?? "",
   badgeText: companion.badgeText ?? "",
   headline: companion.headline ?? "",
+  summaryOverride: companion.summaryOverride ?? "",
   ctaText: companion.ctaText ?? "",
   declineText: companion.declineText ?? "",
   imageUrl: companion.imageUrl ?? "",
@@ -23622,6 +23624,7 @@ ${waybillLineItems(w).length > 1
       companion.packageId ?? "",
       companion.placement ?? "inline",
       companion.headline?.trim() ?? "",
+      companion.summaryOverride?.trim() ?? "",
       companion.pricingMode,
       companion.fixedPrice ?? "",
       companion.quantity,
@@ -51336,7 +51339,7 @@ ${waybillLineItems(w).length > 1
                                         const offerActive = companionIsActive(companion);
                                         const offerComponents = companionOverviewComponents(companion, offerPackage);
                                         const comboOffer = isComboAddOnCompanion(companion, offerPackage);
-                                        const offerSummary = comboOffer ? summarizePackageComponents(offerComponents, products) : "";
+                                        const offerSummary = comboOffer ? (companion.summaryOverride?.trim() || summarizePackageComponents(offerComponents, products)) : "";
                                         const offerTitle = (companion.headline || "").trim();
                                         const offerLabel = offerPackage
                                           ? `${offerProduct?.name ?? "Offer"} · ${offerPackage.name}`
@@ -56486,6 +56489,7 @@ ${waybillLineItems(w).length > 1
 	                        const targetPackage = targetProduct?.packages?.find((pkg) => pkg.id === c.packageId);
 	                        const bundleComponents = Array.isArray(c.bundleComponents) ? c.bundleComponents.map(normalisePackageComponent) : [];
 	                        const inlineBundleEnabled = bundleComponents.length > 0;
+	                        const comboAddOnEnabled = isComboAddOnCompanion(c, targetPackage);
 	                        const updateBundleComponent = (componentIndex: number, patch: Partial<PackageComponent>) => {
 	                          const nextComponents = bundleComponents.map((component, componentIdx) =>
 	                            componentIdx === componentIndex ? normalisePackageComponent({ ...component, ...patch }) : component
@@ -57197,6 +57201,24 @@ ${waybillLineItems(w).length > 1
 	                                      Leave blank to use the selected product name. For tiered combo prices, name each row like Starter Pack, Home Pack, or Family Pack.
 	                                    </span>
 	                                  </label>
+	                                  {comboAddOnEnabled && (
+	                                    <label className="flex flex-col gap-1 sm:col-span-2">
+	                                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center justify-between">
+	                                        Customer bundle wording <span className="text-gray-400 font-normal normal-case">{(c.summaryOverride ?? "").length}/220</span>
+	                                      </span>
+	                                      <textarea
+	                                        maxLength={220}
+	                                        rows={2}
+	                                        className="border border-blue-100 rounded-md px-2 py-1.5 text-sm bg-blue-50/40"
+	                                        placeholder="e.g. 2pcs of 2-in-1 Window Groove Cleaning Tool + 1pcs Of Mini Mop + One Free Gift Of Absorbent Towel Combo"
+	                                        value={c.summaryOverride ?? ""}
+	                                        onChange={(e) => update({ summaryOverride: e.target.value })}
+	                                      />
+	                                      <span className="text-[10px] text-blue-600">
+	                                        Optional. Leave blank to auto-use the stock item names from the combo lines.
+	                                      </span>
+	                                    </label>
+	                                  )}
 	                                  {c.displayMode === "card" || c.displayMode === "showcase" ? (
 	                                    <label className="flex flex-col gap-1">
 	                                      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center justify-between">

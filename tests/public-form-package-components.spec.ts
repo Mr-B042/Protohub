@@ -1,15 +1,16 @@
 import { expect, test } from "@playwright/test";
 
+const publicFormBase = process.env.PUBLIC_FORM_TEST_BASE_URL?.replace(/\/+$/, "") || "http://127.0.0.1:5174";
 const localFormUrl =
-  "http://127.0.0.1:5174/#/order-form/embed?product=prod-main-components&currency=NGN&preview=1";
+  `${publicFormBase}/#/order-form/embed?product=prod-main-components&currency=NGN&preview=1`;
 const addonLayoutFormUrl =
-  "http://127.0.0.1:5174/#/order-form/embed?product=prod-addon-layout&currency=NGN&preview=1";
+  `${publicFormBase}/#/order-form/embed?product=prod-addon-layout&currency=NGN&preview=1`;
 const tieredAddonFormUrl =
-  "http://127.0.0.1:5174/#/order-form/embed?product=prod-addon-tiered&currency=NGN&preview=1";
+  `${publicFormBase}/#/order-form/embed?product=prod-addon-tiered&currency=NGN&preview=1`;
 const separateAddonFormUrl =
-  "http://127.0.0.1:5174/#/order-form/embed?product=prod-addon-separate&currency=NGN&preview=1";
+  `${publicFormBase}/#/order-form/embed?product=prod-addon-separate&currency=NGN&preview=1`;
 const trackingFormUrl =
-  "http://127.0.0.1:5174/#/order-form/embed?product=prod-view-tracking&currency=NGN&embed_label=Main+Tracking";
+  `${publicFormBase}/#/order-form/embed?product=prod-view-tracking&currency=NGN&embed_label=Main+Tracking`;
 const addonPreviewImage =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 600'%3E%3Crect width='600' height='600' fill='%23f8fafc'/%3E%3Ccircle cx='210' cy='180' r='120' fill='%23dbeafe' stroke='%2394a3b8' stroke-width='8'/%3E%3Ccircle cx='400' cy='185' r='120' fill='%23e0f2fe' stroke='%2394a3b8' stroke-width='8'/%3E%3Ccircle cx='220' cy='410' r='120' fill='%23f1f5f9' stroke='%2394a3b8' stroke-width='8'/%3E%3Ccircle cx='410' cy='410' r='120' fill='%23ecfeff' stroke='%2394a3b8' stroke-width='8'/%3E%3Ctext x='300' y='310' text-anchor='middle' font-size='34' font-family='Arial' font-weight='700' fill='%230f172a'%3EEdge Brusher%3C/text%3E%3C/svg%3E";
 
@@ -452,6 +453,7 @@ test.describe("public order form package component display", () => {
                     pitch: "Clean Edge And Corners areas where Normal Brush Cant reach",
                     badgeText: "Flash Sale",
                     headline: "Edge Brusher Max",
+                    summaryOverride: "2pcs of 2-in-1 Window Groove Cleaning Tool + 1pcs Of Mini Mop + One Free Gift Of Absorbent Towel Combo",
                     imageUrl: addonPreviewImage,
                     hideSiblingSingleAddOns: true,
                     bundleComponents: [
@@ -565,7 +567,7 @@ test.describe("public order form package component display", () => {
     await expect(page.getByText("Edge Brusher Max · 💎 BEST VALUE PACK").first()).toBeVisible();
     await expect(page.getByText("15pcs for ₦38,500").first()).toBeVisible();
     await expect(page.locator(".public-package-option--featured")).toHaveCount(0);
-    await expect(page.locator(".public-card-companion-teaser__title").first()).toHaveCSS("font-size", "18px");
+    await expect(page.locator(".public-card-companion-teaser__title").first()).toHaveCSS("font-size", "17px");
     const teaserVisual = page.locator(".public-card-companion-teaser__visual");
     expect(await teaserVisual.count()).toBeGreaterThanOrEqual(2);
     const teaserVisualBox = await teaserVisual.first().boundingBox();
@@ -577,7 +579,8 @@ test.describe("public order form package component display", () => {
     await expect(page.getByText("5pcs for ₦8,500").first()).toBeVisible();
     await expect(page.getByText("9pcs for ₦18,500").first()).toBeVisible();
     await expect(page.getByText("15pcs for ₦8,500", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("3 pcs of Edge Brusher Max + 1 pc of Multiple Hanger + FREE 1 pc of Absorbent Hand Towel")).toBeVisible();
+    await expect(page.getByText("2pcs of 2-in-1 Window Groove Cleaning Tool + 1pcs Of Mini Mop + One Free Gift Of Absorbent Towel Combo")).toBeVisible();
+    await expect(page.getByText("3 pcs of Edge Brusher Max + 1 pc of Multiple Hanger + FREE 1 pc of Absorbent Hand Towel")).toHaveCount(0);
   });
 
   test("keeps single and combo add-ons separate when both are visible", async ({ page }) => {

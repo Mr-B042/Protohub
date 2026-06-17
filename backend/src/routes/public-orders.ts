@@ -141,6 +141,7 @@ type CompanionOverride = {
   pitch?: string;
   badgeText?: string;
   headline?: string;
+  summaryOverride?: string;
   ctaText?: string;
   declineText?: string;
   embedHtml?: string;

@@ -8992,8 +8992,9 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
     border-radius: 999px !important;
   }
   article.public-order-card.public-form-clean .public-package-option__title {
-    font-size: 22px !important;
-    line-height: 1.08 !important;
+    font-size: 19px !important;
+    line-height: 1.12 !important;
+    overflow-wrap: anywhere;
   }
   article.public-order-card.public-form-clean .public-package-option__description,
   article.public-order-card.public-form-clean .public-package-option__components {
@@ -9012,7 +9013,7 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
     gap: 8px !important;
   }
   article.public-order-card.public-form-clean .public-card-companion-teaser__title {
-    font-size: 18px !important;
+    font-size: 17px !important;
     line-height: 1.12 !important;
     letter-spacing: 0 !important;
   }

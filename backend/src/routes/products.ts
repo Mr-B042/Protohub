@@ -364,6 +364,7 @@ const CompanionSchema = z.object({
   pitch:             z.string().max(160).optional(),
   badgeText:         z.string().max(60).optional(),
   headline:          z.string().max(120).optional(),
+  summaryOverride:   z.string().max(220).optional(),
   ctaText:           z.string().max(50).optional(),
   declineText:       z.string().max(80).optional(),
   imageUrl:          mediaImageSchema,

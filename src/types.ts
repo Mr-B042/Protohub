@@ -148,6 +148,7 @@ export type PackageCompanion = {
   pitch?: string;
   badgeText?: string;
   headline?: string;
+  summaryOverride?: string;
   ctaText?: string;
   declineText?: string;
   imageUrl?: string;
