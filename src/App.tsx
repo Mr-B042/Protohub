@@ -577,6 +577,7 @@ type PackageCompanion = {
   fixedPrice?: number;
   stateFilterMode?: "all" | "allow" | "block";
   stateRestrictions: string[];
+  requiresStateStock?: boolean;
   autoInclude: boolean;
   placement?: "inline" | "upsell";
   // Cross-sell card extras (all optional — when omitted, render in compact mode)
@@ -4350,6 +4351,7 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
         ? "all"
         : "all",
   stateRestrictions: Array.isArray(companion.stateRestrictions) ? companion.stateRestrictions : [],
+  requiresStateStock: Boolean(companion.requiresStateStock),
   autoInclude: Boolean(companion.autoInclude),
   placement: companion.placement === "upsell" ? "upsell" : "inline",
   pitch: companion.pitch ?? "",
@@ -10598,7 +10600,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     currencyOverride?: ProductCurrencyCode,
     redirectOverride?: string,
     previewMode = false,
-    variant?: MarketingLinkVariant | null
+    variant?: MarketingLinkVariant | null,
+    packageSetOverride?: string | null,
+    embedLabelOverride?: string | null
   ) => {
     if (!product) {
       return "";
@@ -10608,7 +10612,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       product: product.id,
       currency: currencyOverride ?? productEmbedCurrency(product)
     });
-    const selectedPackageSet = cleanPackageSetLabel(variant?.packageSet ?? productEmbedPackageSet(product));
+    const selectedPackageSet = cleanPackageSetLabel(packageSetOverride ?? variant?.packageSet ?? productEmbedPackageSet(product));
     if (selectedPackageSet) params.set("package_set", selectedPackageSet);
     const variantTag = variant?.marketerTag?.trim() || primaryMarketerEmbedTag;
     if (isMarketerEmbedMode && variantTag) {
@@ -10627,7 +10631,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       params.set("landing_page", variant.label);
       if (variant.landingPageUrl) params.set("landing_page_url", variant.landingPageUrl);
     }
-    const embedLabel = (variant?.label?.trim() || product.name || "Order form").slice(0, 120);
+    const embedLabel = (embedLabelOverride?.trim() || variant?.label?.trim() || product.name || "Order form").slice(0, 120);
     params.set("embed_label", embedLabel);
     const redirect = (redirectOverride ?? productEmbedRedirect(product)).trim();
     if (redirect) {
@@ -23171,6 +23175,33 @@ ${waybillLineItems(w).length > 1
     showToast(`Previewing ${product.name} order form. Scroll to the right panel.`);
   };
 
+  const openPackageSetTestPreview = (product: Product, setLabel: string) => {
+    if (isTemporaryProductId(product.id)) {
+      showToast("This product is still syncing. Try again in a moment.");
+      return;
+    }
+    if (!product.active) {
+      showToast("Activate this product before opening the public test preview.");
+      return;
+    }
+    const liveSetPackages = product.packages.filter((pkg) => pkg.active && packageSetKey(pkg.packageSet) === packageSetKey(setLabel));
+    if (liveSetPackages.length === 0) {
+      showToast("This package set has no live packages yet. Use Go live set first, then preview.");
+      return;
+    }
+    const previewUrl = buildEmbedUrl(
+      product,
+      productEmbedCurrency(product),
+      productEmbedRedirect(product),
+      true,
+      null,
+      setLabel,
+      `Preview · ${product.name} · ${setLabel}`
+    );
+    window.open(previewUrl, "_blank", "noopener,noreferrer");
+    showToast(`Opened ${setLabel} in test preview. Submitting there will not create an order.`);
+  };
+
   const crossSellPriceFor = (mainProduct: Product, crossSellProduct: Product) => {
     const override = mainProduct.crossSellPriceOverrides?.[crossSellProduct.id];
     if (typeof override === "number" && override >= 0) return override;
@@ -23593,6 +23624,7 @@ ${waybillLineItems(w).length > 1
       companion.pricingMode,
       companion.fixedPrice ?? "",
       companion.quantity,
+      companion.requiresStateStock ? "stock-gated" : "",
       companion.hideSiblingSingleAddOns ? "combo-only" : "",
       (companion.bundleComponents ?? [])
         .map(normalisePackageComponent)
@@ -51176,6 +51208,15 @@ ${waybillLineItems(w).length > 1
                                         </button>
                                         <button
                                           type="button"
+                                          className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-sky-100 bg-white px-3 py-1.5 text-xs font-black text-sky-700 transition-colors hover:bg-sky-50"
+                                          onClick={() => openPackageSetTestPreview(selectedProduct, setLabel)}
+                                          title="Open this package set in test preview mode. Test submits can redirect but will not create real orders."
+                                        >
+                                          <Eye className="h-3.5 w-3.5" />
+                                          Test preview
+                                        </button>
+                                        <button
+                                          type="button"
                                           className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-indigo-100 bg-white px-3 py-1.5 text-xs font-black text-indigo-700 transition-colors hover:bg-indigo-50"
                                           onClick={() => openDuplicatePackageSet(setLabel, setPackages)}
                                           title="Duplicate every package inside this set as a new draft set"
@@ -51314,6 +51355,11 @@ ${waybillLineItems(w).length > 1
                                             {comboOffer && companion.hideSiblingSingleAddOns && (
                                               <span className="inline-flex rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-violet-700">
                                                 Combo only
+                                              </span>
+                                            )}
+                                            {companion.requiresStateStock && (
+                                              <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-emerald-700">
+                                                Stock-gated
                                               </span>
                                             )}
                                             <span className="inline-flex rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">
@@ -57042,6 +57088,20 @@ ${waybillLineItems(w).length > 1
                                   </p>
                                 </div>
                               </div>
+                              <label className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 ${c.requiresStateStock ? "border-emerald-200 bg-emerald-50" : "border-gray-100 bg-white"}`}>
+                                <input
+                                  type="checkbox"
+                                  className="mt-1 h-4 w-4 accent-emerald-600"
+                                  checked={Boolean(c.requiresStateStock)}
+                                  onChange={(event) => update({ requiresStateStock: event.target.checked })}
+                                />
+                                <span>
+                                  <span className="block text-xs font-black uppercase tracking-wide text-emerald-800">Stock-gated add-on</span>
+                                  <span className="block text-[11px] leading-5 text-gray-600">
+                                    Only show this offer when the selected customer state has enough active agent stock for the add-on items.
+                                  </span>
+                                </span>
+                              </label>
                               {stateRuleMode !== "all" && (
                                 <>
                                   <div className="flex flex-wrap items-center gap-2">

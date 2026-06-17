@@ -30,6 +30,7 @@ type PublicCompanion = {
   fixedPrice?: number | null;
   stateFilterMode?: "all" | "allow" | "block";
   stateRestrictions: string[];
+  requiresStateStock?: boolean;
   autoInclude: boolean;
   placement?: "inline" | "upsell";
   pitch?: string;
@@ -96,6 +97,17 @@ type PublicPackageComponent = {
 
 type PublicPackageAvailability = {
   packageId: string;
+  stateAllowed: boolean;
+  stockReady: boolean;
+  visible: boolean;
+  requiresStateStock: boolean;
+};
+
+type PublicCompanionAvailability = {
+  packageId: string;
+  companionId?: string;
+  productId: string;
+  targetPackageId?: string | null;
   stateAllowed: boolean;
   stockReady: boolean;
   visible: boolean;
@@ -1240,6 +1252,7 @@ export default function PublicOrderFormPage() {
   const [publicUpsellSubmitting, setPublicUpsellSubmitting] = useState(false);
   const [publicUpsellOffer, setPublicUpsellOffer] = useState<PendingUpsellOffer | null>(null);
   const [packageAvailabilityById, setPackageAvailabilityById] = useState<Record<string, PublicPackageAvailability>>({});
+  const [companionAvailabilityByKey, setCompanionAvailabilityByKey] = useState<Record<string, PublicCompanionAvailability>>({});
   const [packageAvailabilityLoading, setPackageAvailabilityLoading] = useState(false);
   const [freeDeliverySlotStatus, setFreeDeliverySlotStatus] = useState<PublicFreeDeliverySlotStatus | null>(null);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
@@ -1415,9 +1428,24 @@ export default function PublicOrderFormPage() {
     [publicPackageSet, publicProduct]
   );
   const normalizedSelectedState = normalizeStateName(orderFormState);
-  const packagesNeedAvailability = publicPackages.some((pkg) =>
+  const mainPackagesNeedAvailability = publicPackages.some((pkg) =>
     (pkg.stateFilterMode ?? "all") !== "all" || pkg.requiresStateStock
   );
+  const companionStockProductIds = useMemo(() => Array.from(new Set(
+    publicPackages.flatMap((pkg) =>
+      (pkg.companionProducts ?? [])
+        .filter(companionIsActive)
+        .filter((companion) => companion.requiresStateStock === true)
+        .map((companion) => companion.productId)
+    )
+  )).sort(), [publicPackages]);
+  const companionStockProductIdKey = companionStockProductIds.join("|");
+  const packagesNeedAvailability = mainPackagesNeedAvailability || companionStockProductIds.length > 0;
+  const companionHasRequiredStateStock = useCallback((companion: PublicCompanion) => {
+    if (companion.requiresStateStock !== true) return true;
+    if (!normalizedSelectedState) return false;
+    return companionAvailabilityByKey[companionSelectionKey(companion)]?.visible === true;
+  }, [companionAvailabilityByKey, normalizedSelectedState]);
   const orderablePublicPackages = useMemo(
     () => publicPackages.filter((pkg) => {
       if (!packageVisibleInState(pkg, normalizedSelectedState)) return false;
@@ -1488,19 +1516,38 @@ export default function PublicOrderFormPage() {
   useEffect(() => {
     if (!publicProductId || !packagesNeedAvailability || !normalizedSelectedState) {
       setPackageAvailabilityById({});
+      setCompanionAvailabilityByKey({});
       setPackageAvailabilityLoading(false);
       return;
     }
     let cancelled = false;
     setPackageAvailabilityLoading(true);
-    productsApi.publicPackageAvailability(publicProductId, normalizedSelectedState, publicPackageSet)
+    productsApi.publicPackageAvailability(
+      publicProductId,
+      normalizedSelectedState,
+      publicPackageSet,
+      companionStockProductIds.length > 0
+    )
       .then((response) => {
         if (cancelled) return;
-        setPackageAvailabilityById(Object.fromEntries((response.packages ?? []).map((row) => [row.packageId, row])));
+        const packageRows = response.packages ?? [];
+        const companionRows = response.companions ?? [];
+        setPackageAvailabilityById(Object.fromEntries(packageRows.map((row) => [row.packageId, row])));
+        setCompanionAvailabilityByKey(Object.fromEntries(
+          companionRows.map((row) => [
+            companionSelectionKey({
+              companionId: row.companionId || undefined,
+              productId: row.productId,
+              packageId: row.targetPackageId ?? undefined
+            }),
+            row
+          ])
+        ));
       })
       .catch(() => {
         if (cancelled) return;
         setPackageAvailabilityById({});
+        setCompanionAvailabilityByKey({});
       })
       .finally(() => {
         if (!cancelled) setPackageAvailabilityLoading(false);
@@ -1508,7 +1555,7 @@ export default function PublicOrderFormPage() {
     return () => {
       cancelled = true;
     };
-  }, [normalizedSelectedState, packagesNeedAvailability, publicPackageSet, publicProductId]);
+  }, [companionStockProductIdKey, companionStockProductIds.length, normalizedSelectedState, packagesNeedAvailability, publicPackageSet, publicProductId]);
 
   useEffect(() => {
     if (!publicProductId || !settings.freeDeliverySlotsEnabled) {
@@ -1826,6 +1873,7 @@ export default function PublicOrderFormPage() {
       companionIsActive(companion)
       && companionSelectionKey(companion) === companionSelectionKey(selection)
       && companionVisibleInState(companion, orderFormState)
+      && companionHasRequiredStateStock(companion)
       && !companionHiddenByComboOnly(companion, siblings, products)
     );
   };
@@ -1870,6 +1918,7 @@ export default function PublicOrderFormPage() {
     .filter(companionIsActive)
     .filter((companion) => companion.autoInclude)
     .filter((companion) => companionVisibleInState(companion, orderFormState))
+    .filter(companionHasRequiredStateStock)
     .map((companion) => {
       const product = products.find((item) => item.id === companion.productId);
       if (!product) return null;
@@ -2156,11 +2205,12 @@ export default function PublicOrderFormPage() {
         .filter(companionIsActive)
         .filter((companion) => !companion.autoInclude)
         .filter((companion) => companionVisibleInState(companion, orderFormState))
+        .filter(companionHasRequiredStateStock)
         .filter((companion) => !companionHiddenByComboOnly(companion, siblings, products))
         .map((companion) => companionSelectionKey(companion))
     );
     setOrderFormCrossSells((prev) => prev.filter((line) => companionKeys.has(companionSelectionKey(line))));
-  }, [chosenPackage, orderFormState, products]);
+  }, [chosenPackage, companionHasRequiredStateStock, orderFormState, products]);
 
   // Field-level touch + hesitation tracking. Watches all customer-typed
   // fields and (a) records the most recently touched one (for form_exited's
@@ -3112,6 +3162,7 @@ export default function PublicOrderFormPage() {
             .filter(companionIsActive)
             .filter((companion) => (companion.placement ?? "inline") === "upsell")
             .filter((companion) => companionVisibleInState(companion, submittedState))
+            .filter(companionHasRequiredStateStock)
             .filter((companion) => !companionHiddenByComboOnly(companion, upsellSiblings, products))
             .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
             .find((companion) =>
@@ -3330,6 +3381,7 @@ export default function PublicOrderFormPage() {
         ? true
         : Boolean(normalizedSelectedState) && companionVisibleInState(companion, normalizedSelectedState)
     )
+    .filter(companionHasRequiredStateStock)
     .filter((companion) => !companionHiddenByComboOnly(companion, companionSiblings, products));
 
   const cardCompanionGroups = useMemo(
@@ -4993,7 +5045,7 @@ export default function PublicOrderFormPage() {
                                   FEATURED COMBO
                                 </span>
                               ) : null}
-                              {targetPackage?.requiresStateStock && (
+                              {(companion.requiresStateStock || targetPackage?.requiresStateStock) && (
                                 <span style={{ display: "inline-flex", width: "fit-content", borderRadius: 999, padding: "3px 8px", background: "#dcfce7", color: "#166534", fontSize: 11, fontWeight: 900, letterSpacing: "0.04em" }}>
                                   STATE STOCK CHECKED
                                 </span>

@@ -317,9 +317,10 @@ export const productsApi = {
     }
     return snakeToCamel<{ product: any; related: any[] }>(await res.json());
   },
-  publicPackageAvailability: async (id: string, state: string, packageSet?: string) => {
+  publicPackageAvailability: async (id: string, state: string, packageSet?: string, forceStockCheck = false) => {
     const qs = new URLSearchParams({ state });
     if (packageSet?.trim()) qs.set("packageSet", packageSet.trim());
+    if (forceStockCheck) qs.set("forceStockCheck", "1");
     const res = await fetchWithApiFailover(`/api/public/products/${encodeURIComponent(id)}/package-availability?${qs.toString()}`, {
       cache: "no-store"
     });
@@ -330,6 +331,16 @@ export const productsApi = {
     return snakeToCamel<{
       packages: Array<{
         packageId: string;
+        stateAllowed: boolean;
+        stockReady: boolean;
+        visible: boolean;
+        requiresStateStock: boolean;
+      }>;
+      companions?: Array<{
+        packageId: string;
+        companionId: string;
+        productId: string;
+        targetPackageId: string | null;
         stateAllowed: boolean;
         stockReady: boolean;
         visible: boolean;

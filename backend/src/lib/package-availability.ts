@@ -122,9 +122,10 @@ export async function packageHasAgentStateStock(
   orgId: string,
   productId: string,
   pkg: PackageAvailabilityPackage,
-  state: string | null | undefined
+  state: string | null | undefined,
+  forceCheck = false
 ) {
-  if (!pkg.requires_state_stock) return true;
+  if (!forceCheck && !pkg.requires_state_stock) return true;
   const normalizedState = normalizeStateName(state);
   if (!normalizedState) return false;
 
@@ -152,13 +153,14 @@ export async function packageAvailabilityForState(
   orgId: string,
   productId: string,
   packages: PackageAvailabilityPackage[],
-  state: string | null | undefined
+  state: string | null | undefined,
+  options: { forceStockCheck?: boolean } = {}
 ) {
   const rows = [];
   for (const pkg of packages) {
     const stateAllowed = packageAllowsState(pkg, state);
     const stockReady = stateAllowed
-      ? await packageHasAgentStateStock(orgId, productId, pkg, state)
+      ? await packageHasAgentStateStock(orgId, productId, pkg, state, options.forceStockCheck)
       : false;
     rows.push({
       packageId: pkg.id,

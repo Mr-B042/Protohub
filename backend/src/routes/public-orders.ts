@@ -135,6 +135,7 @@ type CompanionOverride = {
   fixedPrice?: number;
   stateFilterMode?: "all" | "allow" | "block";
   stateRestrictions?: string[];
+  requiresStateStock?: boolean;
   autoInclude?: boolean;
   placement?: "inline" | "upsell";
   pitch?: string;
@@ -312,6 +313,40 @@ type ResolvedPackageRow = {
   quantity: number;
   package_components: unknown;
   active: boolean;
+};
+
+const companionStockPackageFor = (
+  companion: CompanionOverride,
+  targetPackage: ResolvedPackageRow | undefined | null
+) => {
+  const bundleComponents = Array.isArray(companion.bundleComponents) ? companion.bundleComponents : [];
+  return {
+    id: targetPackage?.id ?? companion.companionId ?? `${companion.productId}:${companion.packageId ?? "single"}`,
+    product_id: targetPackage?.product_id ?? companion.productId,
+    active: targetPackage?.active ?? companion.active ?? true,
+    quantity: targetPackage?.quantity ?? companion.quantity,
+    requires_state_stock: true,
+    package_components: bundleComponents.length > 0 ? bundleComponents : targetPackage?.package_components ?? []
+  };
+};
+
+const companionHasAgentStateStock = async (
+  orgId: string,
+  companion: CompanionOverride,
+  targetPackage: ResolvedPackageRow | undefined | null,
+  state: string | undefined
+) => {
+  if (companion.requiresStateStock !== true) return true;
+  if (targetPackage && (targetPackage.active === false || targetPackage.product_id !== companion.productId)) {
+    return false;
+  }
+  return packageHasAgentStateStock(
+    orgId,
+    companion.productId,
+    companionStockPackageFor(companion, targetPackage),
+    state,
+    true
+  );
 };
 
 const publicUpsellSecret = () =>
@@ -621,6 +656,7 @@ router.post("/", submitRateLimit, async (req, res) => {
       (line.companionId
         ? c.companionId === line.companionId
         : c.productId === line.productId)
+      && (!line.packageId || !c.packageId || c.packageId === line.packageId)
       && stateAllowsCompanion(c, d.state)
     );
     // If the client submitted a package companion id, it must still be an
@@ -633,6 +669,22 @@ router.post("/", submitRateLimit, async (req, res) => {
       : undefined;
     if (targetPackage && (!targetPackage.active || targetPackage.product_id !== line.productId)) {
       continue;
+    }
+    if (companion) {
+      try {
+        const stockReady = await companionHasAgentStateStock(product.org_id, companion, targetPackage, d.state);
+        if (!stockReady) continue;
+      } catch (availabilityError: any) {
+        logger.warn("public-orders: companion stock gate failed", {
+          packageId: pkg.id,
+          companionId: companion.companionId,
+          productId: companion.productId,
+          state: d.state,
+          error: availabilityError?.message
+        });
+        res.status(500).json({ error: "Could not confirm add-on availability. Please try again." });
+        return;
+      }
     }
     let unitPrice = 0;
     if (companion) {
@@ -709,6 +761,20 @@ router.post("/", submitRateLimit, async (req, res) => {
       ? (targetPackages.find((entry) => entry.id === c.packageId) as ResolvedPackageRow | undefined)
       : undefined;
     if (targetPackage && (!targetPackage.active || targetPackage.product_id !== c.productId)) continue;
+    try {
+      const stockReady = await companionHasAgentStateStock(product.org_id, c, targetPackage, d.state);
+      if (!stockReady) continue;
+    } catch (availabilityError: any) {
+      logger.warn("public-orders: auto companion stock gate failed", {
+        packageId: pkg.id,
+        companionId: c.companionId,
+        productId: c.productId,
+        state: d.state,
+        error: availabilityError?.message
+      });
+      res.status(500).json({ error: "Could not confirm add-on availability. Please try again." });
+      return;
+    }
     let unitPrice = 0;
     if (c.pricingMode === "free")        unitPrice = 0;
     else if (c.pricingMode === "fixed")  unitPrice = Number(c.fixedPrice ?? 0);
@@ -785,18 +851,31 @@ router.post("/", submitRateLimit, async (req, res) => {
       if (standard < 0) {
         upsellOffer = null;
       } else {
-        const unitPrice = companionUnitPrice(upsellCompanion, Number(standard));
-        const total = companionLineAmount(upsellCompanion, Number(standard), upsellCompanion.quantity);
-        upsellOffer = {
-          companionId: upsellCompanion.companionId,
-          productId: upsellCompanion.productId,
-          packageId: targetPackage?.id,
-          packageName: targetPackage?.name,
-          packageQuantity: targetPackage?.quantity,
-          quantity: upsellCompanion.quantity,
-          unitPrice,
-          amount: total
-        };
+        try {
+          const stockReady = await companionHasAgentStateStock(product.org_id, upsellCompanion, targetPackage, d.state);
+          if (stockReady) {
+            const unitPrice = companionUnitPrice(upsellCompanion, Number(standard));
+            const total = companionLineAmount(upsellCompanion, Number(standard), upsellCompanion.quantity);
+            upsellOffer = {
+              companionId: upsellCompanion.companionId,
+              productId: upsellCompanion.productId,
+              packageId: targetPackage?.id,
+              packageName: targetPackage?.name,
+              packageQuantity: targetPackage?.quantity,
+              quantity: upsellCompanion.quantity,
+              unitPrice,
+              amount: total
+            };
+          }
+        } catch (availabilityError: any) {
+          logger.warn("public-orders: upsell stock gate failed", {
+            packageId: pkg.id,
+            companionId: upsellCompanion.companionId,
+            productId: upsellCompanion.productId,
+            state: d.state,
+            error: availabilityError?.message
+          });
+        }
       }
     }
   }
@@ -1183,6 +1262,28 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
     : null;
   if (targetPackage && (!targetPackage.active || targetPackage.product_id !== tokenPayload.productId)) {
     res.status(400).json({ error: "This upsell bundle is no longer available." });
+    return;
+  }
+  try {
+    const stockReady = await companionHasAgentStateStock(
+      order.org_id,
+      companion,
+      targetPackage,
+      order.state ?? undefined
+    );
+    if (!stockReady) {
+      res.status(409).json({ error: "This upsell is no longer available in this state." });
+      return;
+    }
+  } catch (availabilityError: any) {
+    logger.warn("public-orders: upsell accept stock gate failed", {
+      orderId,
+      companionId: companion.companionId,
+      productId: companion.productId,
+      state: order.state,
+      error: availabilityError?.message
+    });
+    res.status(500).json({ error: "Could not confirm upsell availability. Please try again." });
     return;
   }
   const acceptedQuantity = Math.max(1, Number(tokenPayload.quantity) || companion.quantity || 1);

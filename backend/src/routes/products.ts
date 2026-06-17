@@ -351,6 +351,7 @@ const CompanionSchema = z.object({
   fixedPrice:        z.number().min(0).optional(),
   stateFilterMode:   z.enum(["all", "allow", "block"]).default("all"),
   stateRestrictions: z.array(z.string()).default([]),
+  requiresStateStock: z.boolean().default(false),
   autoInclude:       z.boolean().default(false),
   placement:         z.enum(["inline", "upsell"]).default("inline"),
   // Cross-sell display extras (optional — for big card-mode bumps before submit)

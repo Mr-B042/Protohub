@@ -1,7 +1,12 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { supabase } from "../lib/supabase.js";
-import { packageAvailabilityForState } from "../lib/package-availability.js";
+import {
+  packageAllowsState,
+  packageAvailabilityForState,
+  packageHasAgentStateStock,
+  type PackageAvailabilityPackage
+} from "../lib/package-availability.js";
 import { readSettings } from "./embed-settings.js";
 
 const router = Router();
@@ -26,6 +31,7 @@ type DbCompanion = {
   hideSiblingSingleAddOns?: boolean;
   active?: boolean;
   fixedPrice?: number; stateFilterMode?: "all" | "allow" | "block"; stateRestrictions?: string[]; autoInclude?: boolean;
+  requiresStateStock?: boolean;
   placement?: "inline" | "upsell";
   pitch?: string;
   badgeText?: string;
@@ -158,6 +164,7 @@ const sanitisePackage = (p: DbPackage, companionSocialProofByProductId?: Record<
       fixedPrice:        c.fixedPrice ?? null,
       stateFilterMode,
       stateRestrictions: restrictions,
+      requiresStateStock: c.requiresStateStock === true,
       autoInclude:       c.autoInclude ?? false,
       placement:         c.placement ?? "inline",
       pitch:             c.pitch ?? "",
@@ -328,6 +335,96 @@ const cleanPackageSetLabel = (value: unknown) =>
 const packageMatchesSet = (pkg: DbPackage, selectedSet: string) =>
   !selectedSet || ((pkg.package_set ?? "Default").trim().toLowerCase() === selectedSet.toLowerCase());
 
+type CompanionAvailabilityTargetPackage = PackageAvailabilityPackage & {
+  product_id?: string | null;
+};
+
+const companionAllowsState = (companion: DbCompanion, state: string | null | undefined) =>
+  packageAllowsState({
+    id: companion.companionId ?? `${companion.productId}:${companion.packageId ?? ""}`,
+    active: companion.active,
+    state_filter_mode: companion.stateFilterMode,
+    state_restrictions: companion.stateRestrictions ?? []
+  }, state);
+
+const companionStockPackageFor = (
+  companion: DbCompanion,
+  targetPackage: CompanionAvailabilityTargetPackage | null | undefined
+): PackageAvailabilityPackage => {
+  const bundleComponents = Array.isArray(companion.bundleComponents) ? companion.bundleComponents : [];
+  return {
+    id: targetPackage?.id ?? companion.companionId ?? `${companion.productId}:${companion.packageId ?? "single"}`,
+    product_id: targetPackage?.product_id ?? companion.productId,
+    active: targetPackage?.active ?? companion.active ?? true,
+    quantity: targetPackage?.quantity ?? companion.quantity,
+    requires_state_stock: true,
+    package_components: bundleComponents.length > 0 ? bundleComponents : targetPackage?.package_components ?? []
+  };
+};
+
+const companionAvailabilityForPackages = async (
+  orgId: string,
+  packages: DbPackage[],
+  state: string | null | undefined
+) => {
+  const entries = packages.flatMap((pkg) =>
+    (pkg.companion_products ?? [])
+      .filter(companionIsActive)
+      .map((companion) => ({ packageId: pkg.id, companion }))
+  );
+  if (entries.length === 0) return [];
+
+  const targetPackageIds = Array.from(new Set(
+    entries
+      .map((entry) => entry.companion.packageId)
+      .filter(Boolean)
+  )) as string[];
+  const { data: targetPackages } = targetPackageIds.length
+    ? await supabase
+        .from("product_packages")
+        .select("id, product_id, active, quantity, package_components")
+        .in("id", targetPackageIds)
+    : { data: [] as CompanionAvailabilityTargetPackage[] };
+  const targetById = new Map(
+    ((targetPackages ?? []) as CompanionAvailabilityTargetPackage[]).map((pkg) => [pkg.id, pkg])
+  );
+
+  const rows = [];
+  for (const { packageId, companion } of entries) {
+    const stateAllowed = companionAllowsState(companion, state);
+    const targetPackage = companion.packageId ? targetById.get(companion.packageId) ?? null : null;
+    let stockReady = true;
+
+    if (!stateAllowed) {
+      stockReady = false;
+    } else if (companion.requiresStateStock === true) {
+      if (targetPackage && (targetPackage.active === false || targetPackage.product_id !== companion.productId)) {
+        stockReady = false;
+      } else {
+        stockReady = await packageHasAgentStateStock(
+          orgId,
+          companion.productId,
+          companionStockPackageFor(companion, targetPackage),
+          state,
+          true
+        );
+      }
+    }
+
+    rows.push({
+      packageId,
+      companionId: companion.companionId ?? "",
+      productId: companion.productId,
+      targetPackageId: companion.packageId ?? null,
+      stateAllowed,
+      stockReady,
+      visible: companion.active !== false && stateAllowed && (companion.requiresStateStock !== true || stockReady),
+      requiresStateStock: companion.requiresStateStock === true
+    });
+  }
+  return rows;
+};
+
 router.get("/:id/package-availability", readRateLimit, async (req, res) => {
   const { id } = req.params;
   const state = typeof req.query.state === "string" ? req.query.state : "";
@@ -338,6 +435,10 @@ router.get("/:id/package-availability", readRateLimit, async (req, res) => {
         ? req.query.package_set
         : ""
   );
+  const forceStockCheck =
+    req.query.forceStockCheck === "1" ||
+    req.query.forceStockCheck === "true" ||
+    req.query.stock === "all";
   const { data: rawProduct, error } = await supabase
     .from("products")
     .select(PUBLIC_PRODUCT_SELECT)
@@ -353,8 +454,9 @@ router.get("/:id/package-availability", readRateLimit, async (req, res) => {
   try {
     const product = rawProduct as unknown as DbProduct;
     const packages = (product.packages ?? []).filter((pkg) => pkg.active && packageMatchesSet(pkg, selectedPackageSet));
-    const availability = await packageAvailabilityForState(product.org_id, product.id, packages, state);
-    res.json({ packages: availability });
+    const availability = await packageAvailabilityForState(product.org_id, product.id, packages, state, { forceStockCheck });
+    const companionAvailability = await companionAvailabilityForPackages(product.org_id, packages, state);
+    res.json({ packages: availability, companions: companionAvailability });
   } catch (availabilityError: any) {
     res.status(500).json({ error: availabilityError?.message ?? "Could not check package availability." });
   }
