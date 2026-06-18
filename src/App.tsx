@@ -13985,15 +13985,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const teamRecoveryByPersonRows = Array.from(teamRecoveryByPersonMap.values())
     .sort((a, b) => b.total - a.total || b.delivered - a.delivered || b.revenue - a.revenue);
-  // Journey analytics use pfCarts (period + product only) rather than
-  // filteredAbandonedCarts (which also applies status / search / conversion
-  // filters). Using filteredAbandonedCarts meant the funnel would show zeros
-  // whenever a status or search filter was active, even if there are carts in
-  // the period — making the date filter appear not to work.
-  const abandonedJourneyCartIds = useMemo(
-    () => Array.from(new Set(pfCarts.map((cart) => cart.id).filter(Boolean))),
-    [pfCarts]
-  );
+  // Journey analytics use period+product only (not status/search/conversion) so
+  // changing the date filter always reloads journey events for all carts in the
+  // period. Using filteredAbandonedCarts caused zeros when any other filter was
+  // set, making the date filter appear broken for Funnel/Blocks/Item Interest.
+  // pfCarts is declared below; compute the same thing inline here.
+  const abandonedJourneyCartIds = useMemo(() => {
+    const pCarts = abandonedCarts.filter((c) => isInPeriod(c.createdAt, cartsPeriod, cartsDateRange));
+    const scoped = cartProductIds.size === 0 ? pCarts : pCarts.filter((c) => matchesProductFilter(c.productId, c.productName, cartProductIds));
+    return Array.from(new Set(scoped.map((c) => c.id).filter(Boolean)));
+  }, [abandonedCarts, cartsPeriod, cartsDateRange, cartProductIds]);
   const abandonedJourneyCartIdsKey = abandonedJourneyCartIds.join("|");
   const CARTS_PAGE_SIZE = 25;
   const cartsTotalPages = Math.max(1, Math.ceil(filteredAbandonedCarts.length / CARTS_PAGE_SIZE));
