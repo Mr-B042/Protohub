@@ -7531,11 +7531,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const el = mainScrollRef.current;
     if (!el) return;
     const key = `protohub.scroll.${window.location.hash || "#/"}`;
-    const saved = sessionStorage.getItem(key);
-    if (saved) {
-      const pos = Number(saved);
+    const savedPos = sessionStorage.getItem(key);
+    let restoreTimer: number | undefined;
+    if (savedPos) {
+      const pos = Number(savedPos);
       if (pos > 0) {
+        // Two attempts: immediate (fast pages) + 350ms (pages that load data async
+        // and expand the content after first paint, e.g. Orders, Finance).
         requestAnimationFrame(() => { el.scrollTop = pos; });
+        restoreTimer = window.setTimeout(() => { el.scrollTop = pos; }, 350);
       }
     }
     let saveTimer: number | undefined;
@@ -7546,7 +7550,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }, 120);
     };
     el.addEventListener("scroll", onScroll, { passive: true });
-    return () => { el.removeEventListener("scroll", onScroll); if (saveTimer) clearTimeout(saveTimer); };
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (saveTimer) clearTimeout(saveTimer);
+      if (restoreTimer) clearTimeout(restoreTimer);
+    };
   }, [hashRoute]);
   useEffect(() => {
     if (!revPerfStatusOpen) return;
