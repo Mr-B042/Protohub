@@ -6936,6 +6936,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [scheduleWeekStart, setScheduleWeekStart] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return formatDateKey(d); });
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
   const schedulePickerRef = useRef<HTMLDivElement | null>(null);
+  const mainScrollRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!showSchedulePicker) return;
     const onDocClick = (e: MouseEvent) => {
@@ -7521,6 +7522,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const revPerfStatusRef = useRef<HTMLDivElement | null>(null);
   const cartSyncTimerRef = useRef<number | null>(null);
   useEffect(() => () => { if (cartSyncTimerRef.current) window.clearTimeout(cartSyncTimerRef.current); }, []);
+
+  // Scroll-position restoration — save on every scroll, restore when the hash
+  // route matches the saved key. On refresh the hash is the same so the stored
+  // position is applied once the page has rendered (after a brief rAF so the
+  // layout is complete). Keyed by hash so different pages get independent saves.
+  useEffect(() => {
+    const el = mainScrollRef.current;
+    if (!el) return;
+    const key = `protohub.scroll.${window.location.hash || "#/"}`;
+    const saved = sessionStorage.getItem(key);
+    if (saved) {
+      const pos = Number(saved);
+      if (pos > 0) {
+        requestAnimationFrame(() => { el.scrollTop = pos; });
+      }
+    }
+    let saveTimer: number | undefined;
+    const onScroll = () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(() => {
+        sessionStorage.setItem(key, String(el.scrollTop));
+      }, 120);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => { el.removeEventListener("scroll", onScroll); if (saveTimer) clearTimeout(saveTimer); };
+  }, [hashRoute]);
   useEffect(() => {
     if (!revPerfStatusOpen) return;
     const onDocClick = (e: MouseEvent) => {
@@ -33863,7 +33890,7 @@ ${waybillLineItems(w).length > 1
         )}
 
         {/* Page Content Scrollable Area */}
-        <main className={`flex-1 min-h-0 overflow-y-auto px-4 pt-16 pb-2 sm:pb-3 lg:p-8 ${isSpying ? "!pt-[6.25rem] lg:!pt-8" : ""}`}>
+        <main ref={mainScrollRef} className={`flex-1 min-h-0 overflow-y-auto px-4 pt-16 pb-2 sm:pb-3 lg:p-8 ${isSpying ? "!pt-[6.25rem] lg:!pt-8" : ""}`}>
           <div className="flex flex-col gap-4 sm:gap-6 pb-4 sm:pb-6 lg:pb-8">
           {activePage === "Dashboard" ? (
             <>
