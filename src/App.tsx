@@ -31862,41 +31862,77 @@ ${waybillLineItems(w).length > 1
                     })();
                     const prevThreshold = prevTier ? Number(prevTier.threshold) : 0;
                     const prevAmount = prevTier ? Number(prevTier.amount) : 0;
-                    // Only show 100% / "all tiers unlocked" when tiers actually exist
-                    // AND all have been surpassed. With 0 delivered & no next tier,
-                    // it means no performance bonus is configured — show an empty bar.
                     const hasTiers = (structure?.bonusTiers?.length ?? 0) > 0;
                     const allUnlocked = hasTiers && !nextTarget && delivered > 0;
-                    const pct = nextTarget
-                      ? Math.max(2, Math.min(98, ((delivered - prevThreshold) / (nextTarget - prevThreshold)) * 100))
-                      : allUnlocked ? 100 : 0;
+
+                    // When no performance tiers exist, fall back to delivery rate
+                    // progress so the bar is always meaningful. Show:
+                    //   • orders progress to the minimum threshold (e.g. 50 needed)
+                    //   • once past minimum, delivery rate vs next rate-bonus target
+                    const rateTarget = snap.nextDeliveryRateTarget;
+                    const rateNeeded = snap.deliveriesNeededForRateTarget ?? 0;
+                    const currentRate = snap.deliveryRate;
+                    // Find the minimum orders threshold across relevant products
+                    // (we don't have it in snapshot, but from rateNeeded + delivered we can infer)
+                    // Use the Bonus Coach motivator for rate target if it exists
+                    const rateMotivator = repBonusCoach.motivators.find(m => m.type === "delivery_rate_unlock");
+
+                    // Decide which mode the bar is in
+                    const barMode: "tier" | "rate" | "all_done" | "none" =
+                      nextTarget ? "tier"
+                      : allUnlocked ? "all_done"
+                      : rateTarget ? "rate"
+                      : "none";
+
+                    const pct =
+                      barMode === "tier" ? Math.max(2, Math.min(98, ((delivered - prevThreshold) / (nextTarget! - prevThreshold)) * 100))
+                      : barMode === "all_done" ? 100
+                      : barMode === "rate" ? Math.max(2, Math.min(98, (currentRate / rateTarget!) * 100))
+                      : 0;
+
                     const gapOrders = snap.ordersNeededForNextTier ?? 0;
-                    const micro = nextTarget && nextAmount && gapOrders > 0
-                      ? `${gapOrders} more deliver${gapOrders === 1 ? "y" : "ies"} unlocks +${formatProductMoney(nextAmount - prevAmount, "NGN")} bonus`
+                    const micro =
+                      barMode === "tier" && nextAmount && gapOrders > 0
+                        ? `${gapOrders} more deliver${gapOrders === 1 ? "y" : "ies"} unlocks +${formatProductMoney(nextAmount - prevAmount, "NGN")} bonus`
+                      : barMode === "rate" && rateNeeded > 0
+                        ? `${rateNeeded} more deliver${rateNeeded === 1 ? "y" : "ies"} to hit ${rateTarget}%`
                       : null;
+
+                    const barColor =
+                      barMode === "rate"
+                        ? "bg-gradient-to-r from-amber-400 via-orange-400 to-amber-500"
+                        : "bg-gradient-to-r from-violet-500 via-blue-500 to-emerald-400";
+
                     return (
                       <div className="rounded-2xl border border-gray-100 bg-gradient-to-br from-gray-50 to-white px-4 py-3.5 shadow-sm">
                         <div className="flex items-center justify-between gap-4 mb-2.5">
                           <div className="flex items-baseline gap-2">
                             <span className="text-base font-black text-gray-900">{delivered} delivered</span>
-                            {nextTarget && <span className="text-sm font-semibold text-gray-400">of {nextTarget} for next tier</span>}
-                            {!nextTarget && allUnlocked && <span className="text-sm font-semibold text-emerald-600">— all tiers unlocked 🎉</span>}
-                            {!nextTarget && !allUnlocked && <span className="text-sm font-semibold text-gray-400">— no bonus tiers configured yet</span>}
+                            {barMode === "tier" && <span className="text-sm font-semibold text-gray-400">of {nextTarget} for next tier</span>}
+                            {barMode === "all_done" && <span className="text-sm font-semibold text-emerald-600">— all tiers unlocked 🎉</span>}
+                            {barMode === "rate" && <span className="text-sm font-semibold text-amber-700">· {currentRate}% → {rateTarget}% rate target</span>}
+                            {barMode === "none" && <span className="text-sm font-semibold text-gray-400">— keep delivering</span>}
                           </div>
                           {micro && (
-                            <span className="shrink-0 text-[11px] font-black text-violet-700 bg-violet-50 border border-violet-100 rounded-full px-2.5 py-0.5">{micro}</span>
+                            <span className={`shrink-0 text-[11px] font-black rounded-full px-2.5 py-0.5 ${barMode === "rate" ? "text-amber-800 bg-amber-50 border border-amber-200" : "text-violet-700 bg-violet-50 border border-violet-100"}`}>{micro}</span>
                           )}
                         </div>
                         <div className="h-3 rounded-full bg-gray-100 overflow-hidden">
                           <div
-                            className="h-full rounded-full bg-gradient-to-r from-violet-500 via-blue-500 to-emerald-400 transition-all duration-700"
+                            className={`h-full rounded-full transition-all duration-700 ${barColor}`}
                             style={{ width: `${pct}%` }}
                           />
                         </div>
-                        {nextTarget && (
+                        {barMode === "tier" && (
                           <div className="mt-1.5 flex justify-between text-[10px] font-semibold text-gray-400">
                             <span>{prevThreshold > 0 ? `Tier ${prevThreshold} (${formatProductMoney(prevAmount, "NGN")})` : "Start"}</span>
                             <span>Tier {nextTarget} (+{formatProductMoney(nextAmount ?? 0, "NGN")})</span>
+                          </div>
+                        )}
+                        {barMode === "rate" && rateTarget && (
+                          <div className="mt-1.5 flex justify-between text-[10px] font-semibold text-gray-400">
+                            <span>Now {currentRate}%</span>
+                            <span>Target {rateTarget}% → {rateMotivator?.amount ? `+${formatProductMoney(rateMotivator.amount, "NGN")}` : "rate bonus"}</span>
                           </div>
                         )}
                       </div>
