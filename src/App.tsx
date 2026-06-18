@@ -31828,15 +31828,26 @@ ${waybillLineItems(w).length > 1
                     const delivered = snap.deliveredCount;
                     const nextTarget = snap.nextTierTarget;
                     const nextAmount = repBonusCoach.motivators.find(m => m.type === "next_delivered_unlock")?.amount;
+                    // Look up the rep's pay structure (works for both spied-rep and own view).
+                    const structure = payStructures.find(s =>
+                      s.userId === (selectedRepUser?.id ?? "") ||
+                      s.userId === (repBonusCoach as any).repId
+                    );
                     const prevTier = (() => {
-                      const structure = payStructures.find(s => s.userId === (selectedRepUser?.id ?? ""));
                       if (!structure?.bonusTiers?.length) return null;
                       const passed = structure.bonusTiers.filter(t => Number(t.threshold) <= delivered).sort((a,b) => Number(b.threshold)-Number(a.threshold));
                       return passed[0] ?? null;
                     })();
                     const prevThreshold = prevTier ? Number(prevTier.threshold) : 0;
                     const prevAmount = prevTier ? Number(prevTier.amount) : 0;
-                    const pct = nextTarget ? Math.max(2, Math.min(100, ((delivered - prevThreshold) / (nextTarget - prevThreshold)) * 100)) : 100;
+                    // Only show 100% / "all tiers unlocked" when tiers actually exist
+                    // AND all have been surpassed. With 0 delivered & no next tier,
+                    // it means no performance bonus is configured — show an empty bar.
+                    const hasTiers = (structure?.bonusTiers?.length ?? 0) > 0;
+                    const allUnlocked = hasTiers && !nextTarget && delivered > 0;
+                    const pct = nextTarget
+                      ? Math.max(2, Math.min(98, ((delivered - prevThreshold) / (nextTarget - prevThreshold)) * 100))
+                      : allUnlocked ? 100 : 0;
                     const gapOrders = snap.ordersNeededForNextTier ?? 0;
                     const micro = nextTarget && nextAmount && gapOrders > 0
                       ? `${gapOrders} more deliver${gapOrders === 1 ? "y" : "ies"} unlocks +${formatProductMoney(nextAmount - prevAmount, "NGN")} bonus`
@@ -31847,7 +31858,8 @@ ${waybillLineItems(w).length > 1
                           <div className="flex items-baseline gap-2">
                             <span className="text-base font-black text-gray-900">{delivered} delivered</span>
                             {nextTarget && <span className="text-sm font-semibold text-gray-400">of {nextTarget} for next tier</span>}
-                            {!nextTarget && <span className="text-sm font-semibold text-emerald-600">— all tiers unlocked 🎉</span>}
+                            {!nextTarget && allUnlocked && <span className="text-sm font-semibold text-emerald-600">— all tiers unlocked 🎉</span>}
+                            {!nextTarget && !allUnlocked && <span className="text-sm font-semibold text-gray-400">— no bonus tiers configured yet</span>}
                           </div>
                           {micro && (
                             <span className="shrink-0 text-[11px] font-black text-violet-700 bg-violet-50 border border-violet-100 rounded-full px-2.5 py-0.5">{micro}</span>
