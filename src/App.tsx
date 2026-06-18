@@ -19181,8 +19181,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ];
 
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
-    document.scrollingElement?.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    // Scroll the main content area to top on page navigation — but only if there
+    // is no saved scroll position for this route (i.e. it's a fresh navigation,
+    // not a refresh/back where we want to restore position).
+    const savedPos = sessionStorage.getItem(`protohub.scroll.${hashRoute || "#/"}`);
+    if (!savedPos || Number(savedPos) <= 0) {
+      mainScrollRef.current?.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    }
     setNotificationsRead(false);
 
     window.requestAnimationFrame(() => {
@@ -19190,7 +19195,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         .querySelector<HTMLButtonElement>(".nav-list .nav-item.active")
         ?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
     });
-  }, [activePage]);
+  }, [activePage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     document.body.classList.toggle("mobile-menu-lock", mobileMenuOpen);
