@@ -56902,14 +56902,14 @@ ${waybillLineItems(w).length > 1
                                 <div className="relative">
                                   <button
                                     type="button"
-                                    className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2.5 py-1 text-xs font-bold rounded border border-violet-200 bg-white text-violet-700 hover:bg-violet-50 transition-colors"
+                                    className="!min-h-0 inline-flex items-center justify-center gap-1 px-2.5 py-1 text-xs font-bold rounded border border-violet-200 bg-white text-violet-700 hover:bg-violet-50 transition-colors whitespace-nowrap"
                                     onClick={() => {
                                       setCopyOfferPickerIdx(copyOfferPickerIdx === idx ? null : idx);
                                       setCopyOfferTargetPkgIds(new Set());
                                     }}
                                     title="Copy this offer to another package without rebuilding it from scratch"
                                   >
-                                    <Copy className="w-3 h-3" /> Copy to package…
+                                    <Copy className="w-3 h-3" /> Copy to…
                                   </button>
                                   {copyOfferPickerIdx === idx && (() => {
                                     const allPkgs = products.flatMap((pr) =>
