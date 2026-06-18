@@ -1005,6 +1005,7 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
   };
   const recountPulseMetricEvents = () => {
     const countedEventIds = new Set<string>();
+    const convertedOrderKeys = new Set<string>();
     summary.viewedToday = 0;
     summary.interactedToday = 0;
     summary.submitAttemptsToday = 0;
@@ -1065,9 +1066,24 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
         summary.lastSubmitAttemptAt = !summary.lastSubmitAttemptAt || createdAt > summary.lastSubmitAttemptAt ? createdAt : summary.lastSubmitAttemptAt;
       }
       if (eventType === "order_submitted") {
-        summary.conversionsToday += 1;
-        sourceBucket.submitted += 1;
-        embedBucket.submitted += 1;
+        // Count DISTINCT orders, not raw order_submitted events. The form can log
+        // order_submitted more than once for the SAME order (network retry,
+        // outage re-send, upsell accept), which previously inflated "Orders"
+        // above the submit-tries / redirects counts (an impossible funnel).
+        // Dedupe on the order id (then cart id) so one order = one conversion.
+        const orderKey = String(
+          (metadata as Record<string, unknown>).orderId
+            ?? (metadata as Record<string, unknown>).order_id
+            ?? cartId
+            ?? eventId
+            ?? ""
+        ).trim();
+        if (orderKey && !convertedOrderKeys.has(orderKey)) {
+          convertedOrderKeys.add(orderKey);
+          summary.conversionsToday += 1;
+          sourceBucket.submitted += 1;
+          embedBucket.submitted += 1;
+        }
         summary.lastConversionAt = !summary.lastConversionAt || createdAt > summary.lastConversionAt ? createdAt : summary.lastConversionAt;
       }
       if (eventType === "redirect_triggered") {
