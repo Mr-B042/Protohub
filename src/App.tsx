@@ -51580,7 +51580,8 @@ ${waybillLineItems(w).length > 1
                                         const visibleOfferLabel = offerTitle || offerLabel;
                                         const placementLabel = (companion.placement ?? "inline") === "upsell" ? "After submit" : "Inside form";
                                         return (
-                                          <div key={companion.companionId || `${item.id}-${companionIdx}`} className={`flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${offerActive ? "border-blue-100 bg-blue-50/50" : "border-amber-200 bg-amber-50/70"}`}>
+                                          <div key={companion.companionId || `${item.id}-${companionIdx}`} className={`flex flex-col gap-2 rounded-lg border px-2.5 py-2 text-xs ${offerActive ? "border-blue-100 bg-blue-50/50" : "border-amber-200 bg-amber-50/70"}`}>
+                                          <div className="flex flex-wrap items-center gap-2">
                                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${offerActive ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
                                               {comboOffer
                                                 ? offerActive ? "Combo visible" : "Combo hidden"
@@ -51612,7 +51613,8 @@ ${waybillLineItems(w).length > 1
                                                 </span>
                                               )}
                                             </span>
-                                            <div className="ml-auto flex items-center gap-1 flex-wrap">
+                                            </div>{/* end badges+label row */}
+                                            <div className="flex items-center gap-1 flex-wrap">
                                               {/* Show / Hide */}
                                               <button
                                                 type="button"
