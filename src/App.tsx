@@ -7058,6 +7058,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageFreeGiftSyncToTiers, setPackageFreeGiftSyncToTiers] = useState(false);
   const [packageCompanionSyncToPackages, setPackageCompanionSyncToPackages] = useState(false);
   const [packageCompanionSyncScope, setPackageCompanionSyncScope] = useState<PackageCompanionSyncScope>("current_product");
+  // "Copy offer to…" picker: which offer card has its picker open + selected target packages
+  const [copyOfferPickerIdx, setCopyOfferPickerIdx] = useState<number | null>(null);
+  const [copyOfferTargetPkgIds, setCopyOfferTargetPkgIds] = useState<Set<string>>(new Set());
   const packageImageUploadTokenRef = useRef(0);
   const companionGalleryUploadTokenRef = useRef(0);
   const packageFormHydrationKeyRef = useRef("");
@@ -23941,6 +23944,43 @@ ${waybillLineItems(w).length > 1
       reader.onerror = () => reject(new Error("Could not read image file."));
       reader.readAsDataURL(file);
     });
+
+  // Copy a single offer (PackageCompanion) to one or more other packages directly,
+  // without opening each target package for editing. Each target package gets the
+  // offer appended (hidden so you can tweak it before going live). A fresh
+  // companionId is assigned so there's no collision with the source.
+  const copyOfferToPackages = async (
+    offer: PackageCompanion,
+    targetPkgIds: Set<string>
+  ) => {
+    if (targetPkgIds.size === 0) return;
+    const clone = normalisePackageCompanion({ ...offer, companionId: makeCompanionId(), active: false });
+    const results: string[] = [];
+    for (const product of products) {
+      for (const pkg of product.packages ?? []) {
+        if (!targetPkgIds.has(pkg.id)) continue;
+        const existingCompanions = (pkg.companionProducts ?? []).map(normalisePackageCompanion);
+        const nextCompanions = [...existingCompanions, { ...clone, companionId: makeCompanionId() }];
+        try {
+          const saved = await productsApi.updatePackage(product.id, pkg.id, { companionProducts: nextCompanions });
+          setProducts((prev) => prev.map((pr) =>
+            pr.id !== product.id ? pr :
+            { ...pr, packages: pr.packages.map((p) =>
+              p.id !== pkg.id ? p : { ...p, companionProducts: (saved as any).companionProducts ?? nextCompanions }
+            )}
+          ));
+          results.push(`${pkg.name} (${product.name})`);
+        } catch (err: any) {
+          showToast(`Could not copy to ${pkg.name}: ${err?.message ?? "please retry"}.`);
+        }
+      }
+    }
+    if (results.length > 0) {
+      showToast(`Offer copied to ${results.length} package${results.length === 1 ? "" : "s"}: ${results.join(", ")}. Each copy starts hidden — turn on when ready.`);
+    }
+    setCopyOfferPickerIdx(null);
+    setCopyOfferTargetPkgIds(new Set());
+  };
 
   const savePackage = async () => {
     if (packageSaving) return;
@@ -56848,6 +56888,84 @@ ${waybillLineItems(w).length > 1
                                 >
                                   <Copy className="w-3 h-3" /> Duplicate
                                 </button>
+                                <div className="relative">
+                                  <button
+                                    type="button"
+                                    className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2.5 py-1 text-xs font-bold rounded border border-violet-200 bg-white text-violet-700 hover:bg-violet-50 transition-colors"
+                                    onClick={() => {
+                                      setCopyOfferPickerIdx(copyOfferPickerIdx === idx ? null : idx);
+                                      setCopyOfferTargetPkgIds(new Set());
+                                    }}
+                                    title="Copy this offer to another package without rebuilding it from scratch"
+                                  >
+                                    <Copy className="w-3 h-3" /> Copy to package…
+                                  </button>
+                                  {copyOfferPickerIdx === idx && (() => {
+                                    const allPkgs = products.flatMap((pr) =>
+                                      pr.packages
+                                        .filter((p) => p.id !== selectedPackage?.id)
+                                        .map((p) => ({ product: pr, pkg: p }))
+                                    );
+                                    if (allPkgs.length === 0) return (
+                                      <div className="absolute left-0 top-full mt-1 z-50 w-64 rounded-xl border border-violet-200 bg-white shadow-xl p-3 text-xs text-gray-500">
+                                        No other packages available yet.
+                                      </div>
+                                    );
+                                    const byProduct = new Map<string, typeof allPkgs>();
+                                    for (const entry of allPkgs) {
+                                      const key = entry.product.id;
+                                      if (!byProduct.has(key)) byProduct.set(key, []);
+                                      byProduct.get(key)!.push(entry);
+                                    }
+                                    return (
+                                      <div className="absolute left-0 top-full mt-1 z-50 w-72 rounded-xl border border-violet-200 bg-white shadow-xl p-3 flex flex-col gap-2 max-h-72 overflow-y-auto">
+                                        <p className="text-[11px] font-bold text-violet-700 m-0 uppercase tracking-wide">Copy to package(s)</p>
+                                        <p className="text-[10px] text-gray-500 m-0">Copied offers start hidden — turn on each one when ready.</p>
+                                        {Array.from(byProduct.entries()).map(([, entries]) => {
+                                          const pr = entries[0].product;
+                                          return (
+                                            <div key={pr.id}>
+                                              <p className="text-[10px] font-black uppercase tracking-wider text-gray-400 m-0 mb-1">{pr.name}</p>
+                                              {entries.map(({ pkg }) => (
+                                                <label key={pkg.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-violet-50 cursor-pointer">
+                                                  <input
+                                                    type="checkbox"
+                                                    className="rounded border-gray-300"
+                                                    checked={copyOfferTargetPkgIds.has(pkg.id)}
+                                                    onChange={(e) => {
+                                                      setCopyOfferTargetPkgIds((prev) => {
+                                                        const next = new Set(prev);
+                                                        e.target.checked ? next.add(pkg.id) : next.delete(pkg.id);
+                                                        return next;
+                                                      });
+                                                    }}
+                                                  />
+                                                  <span className="text-xs text-gray-800">{pkg.name}</span>
+                                                  {pkg.packageSet && <span className="text-[10px] text-gray-400">{pkg.packageSet}</span>}
+                                                </label>
+                                              ))}
+                                            </div>
+                                          );
+                                        })}
+                                        <div className="flex gap-2 pt-1 border-t border-gray-100 mt-1">
+                                          <button
+                                            type="button"
+                                            disabled={copyOfferTargetPkgIds.size === 0}
+                                            className="!min-h-0 flex-1 px-3 py-1.5 text-xs font-bold bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-40"
+                                            onClick={() => copyOfferToPackages(c, copyOfferTargetPkgIds)}
+                                          >
+                                            Copy to {copyOfferTargetPkgIds.size > 0 ? `${copyOfferTargetPkgIds.size} ` : ""}package{copyOfferTargetPkgIds.size !== 1 ? "s" : ""}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="!min-h-0 px-3 py-1.5 text-xs font-semibold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                                            onClick={() => { setCopyOfferPickerIdx(null); setCopyOfferTargetPkgIds(new Set()); }}
+                                          >Cancel</button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
                                 <button
                                   type="button"
                                   className={`!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1 px-2.5 py-1 text-xs font-bold rounded border transition-colors ${activeOffer ? "border-amber-200 bg-white text-amber-700 hover:bg-amber-50" : "border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50"}`}
