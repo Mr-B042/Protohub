@@ -31822,6 +31822,54 @@ ${waybillLineItems(w).length > 1
                     </article>
                   </div>
 
+                  {/* ── Live tier progress bar ─────────────────────────────── */}
+                  {(() => {
+                    const snap = repBonusCoach.snapshot;
+                    const delivered = snap.deliveredCount;
+                    const nextTarget = snap.nextTierTarget;
+                    const nextAmount = repBonusCoach.motivators.find(m => m.type === "next_delivered_unlock")?.amount;
+                    const prevTier = (() => {
+                      const structure = payStructures.find(s => s.userId === (selectedRepUser?.id ?? ""));
+                      if (!structure?.bonusTiers?.length) return null;
+                      const passed = structure.bonusTiers.filter(t => Number(t.threshold) <= delivered).sort((a,b) => Number(b.threshold)-Number(a.threshold));
+                      return passed[0] ?? null;
+                    })();
+                    const prevThreshold = prevTier ? Number(prevTier.threshold) : 0;
+                    const prevAmount = prevTier ? Number(prevTier.amount) : 0;
+                    const pct = nextTarget ? Math.max(2, Math.min(100, ((delivered - prevThreshold) / (nextTarget - prevThreshold)) * 100)) : 100;
+                    const gapOrders = snap.ordersNeededForNextTier ?? 0;
+                    const micro = nextTarget && nextAmount && gapOrders > 0
+                      ? `${gapOrders} more deliver${gapOrders === 1 ? "y" : "ies"} unlocks +${formatProductMoney(nextAmount - prevAmount, "NGN")} bonus`
+                      : null;
+                    return (
+                      <div className="rounded-2xl border border-gray-100 bg-gradient-to-br from-gray-50 to-white px-4 py-3.5 shadow-sm">
+                        <div className="flex items-center justify-between gap-4 mb-2.5">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-base font-black text-gray-900">{delivered} delivered</span>
+                            {nextTarget && <span className="text-sm font-semibold text-gray-400">of {nextTarget} for next tier</span>}
+                            {!nextTarget && <span className="text-sm font-semibold text-emerald-600">— all tiers unlocked 🎉</span>}
+                          </div>
+                          {micro && (
+                            <span className="shrink-0 text-[11px] font-black text-violet-700 bg-violet-50 border border-violet-100 rounded-full px-2.5 py-0.5">{micro}</span>
+                          )}
+                        </div>
+                        <div className="h-3 rounded-full bg-gray-100 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-violet-500 via-blue-500 to-emerald-400 transition-all duration-700"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        {nextTarget && (
+                          <div className="mt-1.5 flex justify-between text-[10px] font-semibold text-gray-400">
+                            <span>{prevThreshold > 0 ? `Tier ${prevThreshold} (${formatProductMoney(prevAmount, "NGN")})` : "Start"}</span>
+                            <span>Tier {nextTarget} (+{formatProductMoney(nextAmount ?? 0, "NGN")})</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* ── Best actions ───────────────────────────────────────── */}
                   <div className="space-y-3">
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                       <div>
@@ -31891,6 +31939,61 @@ ${waybillLineItems(w).length > 1
                       </div>
                     )}
                   </div>
+
+                  {/* ── Cart journey coaching tips ─────────────────────────── */}
+                  {(() => {
+                    type CoachTip = { icon: string; label: string; cartId: string; customer: string; detail: string; urgency: "hot" | "warm" | "info" };
+                    const tips: CoachTip[] = [];
+                    for (const cart of repAssignedCarts.slice(0, 50)) {
+                      if (tips.length >= 3) break;
+                      const events = repCartJourneyMap[cart.id] ?? [];
+                      if (!events.length) continue;
+                      const hasAdded = events.some(e => e.eventType === "additional_item_added");
+                      const hasRemoved = events.some(e => e.eventType === "additional_item_removed");
+                      const wasBlocked = events.some(e => (e.eventType as string).startsWith("submit_blocked"));
+                      const hasPreviewed = events.some(e => e.eventType === "additional_item_preview_opened");
+                      const name = cart.customer || "This customer";
+                      if (hasAdded && hasRemoved && !tips.find(t => t.label === "removed_addon")) {
+                        tips.push({ icon: "💡", label: "removed_addon", cartId: cart.id, customer: name, urgency: "hot",
+                          detail: `${name} added an extra item during checkout then removed it. Bring it up — "I noticed you were interested in the add-on" often closes it.` });
+                      } else if (wasBlocked && !tips.find(t => t.label === "blocked")) {
+                        const blockEvent = events.find(e => (e.eventType as string).startsWith("submit_blocked"));
+                        const reason = blockEvent?.eventType === "submit_blocked_missing_phone" ? "no phone" : blockEvent?.eventType === "submit_blocked_missing_name" ? "no name" : "a missing field";
+                        tips.push({ icon: "🔴", label: "blocked", cartId: cart.id, customer: name, urgency: "hot",
+                          detail: `${name} tried to submit but got stuck on ${reason}. Call them directly — they intended to order.` });
+                      } else if (hasPreviewed && !hasAdded && !tips.find(t => t.label === "previewed")) {
+                        tips.push({ icon: "🟡", label: "previewed", cartId: cart.id, customer: name, urgency: "warm",
+                          detail: `${name} opened the add-on preview during checkout but didn't add it. Mention it on your call — the interest is already there.` });
+                      }
+                    }
+                    if (!tips.length) return null;
+                    return (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-bold text-gray-900">Coaching tips from cart activity</h3>
+                          <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 border border-blue-100 rounded-full px-2 py-0.5">Live signals</span>
+                        </div>
+                        <p className="text-xs text-gray-500">Your customers' recent form behaviour — use these on your next call.</p>
+                        <div className="grid grid-cols-1 gap-2">
+                          {tips.map((tip) => (
+                            <div
+                              key={tip.cartId}
+                              className={`flex items-start gap-3 rounded-xl border px-3.5 py-3 cursor-pointer hover:brightness-95 transition-all ${
+                                tip.urgency === "hot" ? "border-rose-100 bg-rose-50" : tip.urgency === "warm" ? "border-amber-100 bg-amber-50" : "border-blue-100 bg-blue-50"
+                              }`}
+                              onClick={() => {
+                                const cart = repAssignedCarts.find(c => c.id === tip.cartId);
+                                if (cart) { setSelectedCartId(cart.id); setModal("cartDetails"); }
+                              }}
+                            >
+                              <span className="text-base shrink-0 mt-0.5">{tip.icon}</span>
+                              <p className="text-xs text-gray-800 leading-relaxed m-0">{tip.detail}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               ) : null}
             </section>
