@@ -19037,9 +19037,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
 
+    // When an Owner/Admin is spying as a Sales Rep, currentRole = "Sales Rep" so
+    // ownerLikeViewer is false — but the auth token is still the Owner's. Calling
+    // /me would compute the Owner's bonus (0 delivered). Detect spy mode and use
+    // /rep/{spiedId} so the Bonus Coach shows the correct rep's data.
+    const spyTargetId = isSpying && spiedUser?.id ? spiedUser.id : null;
     const load = ownerLikeViewer && selectedRepUser
       ? () => bonusCoachApi.rep(selectedRepUser.id, repBonusWeekStart)
-      : () => bonusCoachApi.me(repBonusWeekStart);
+      : spyTargetId
+        ? () => bonusCoachApi.rep(spyTargetId, repBonusWeekStart)
+        : () => bonusCoachApi.me(repBonusWeekStart);
 
     let cancelled = false;
     setRepBonusCoachLoading(true);
