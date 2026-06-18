@@ -35719,7 +35719,10 @@ ${waybillLineItems(w).length > 1
 
               <section className="grid grid-cols-2 lg:grid-cols-6 gap-4" aria-label="Abandoned carts summary">
                 {(() => {
-                  const scoped = filteredAbandonedCarts;
+                  // Always use pfCarts (period + product only) for the summary stat cards
+                  // so changing the date filter always shows the full picture. The
+                  // search/status/conversion filters only affect the cart LIST below.
+                  const scoped = pfCarts;
                   const active = scoped.filter((cart) => ["Open abandoned", "Abandoned", "In progress"].includes(cart.status)).length;
                   const assigned = scoped.filter((cart) => cart.assignedRepId && cart.status !== "Converted").length;
                   const contacted = scoped.filter((cart) => ["Contacted", "Converted", "No response", "Not interested"].includes(cart.status)).length;
@@ -35727,7 +35730,7 @@ ${waybillLineItems(w).length > 1
                   const lost = scoped.filter((cart) => ["No response", "Not interested"].includes(cart.status)).length;
                   const rate = scoped.length === 0 ? 0 : Math.round((converted / scoped.length) * 100);
                   return [
-                    { label: "Captured", value: scoped.length, sub: "in current filters", icon: ShoppingCart },
+                    { label: "Captured", value: scoped.length, sub: "in this period", icon: ShoppingCart },
                     { label: "Active", value: active, sub: "open / abandoned / in progress", icon: Clock },
                     { label: "Assigned", value: assigned, sub: "with a rep, not converted", icon: UserRound },
                     { label: "Contacted", value: contacted, sub: "any outcome recorded", icon: BadgeCheck },
