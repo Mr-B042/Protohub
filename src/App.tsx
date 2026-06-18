@@ -7072,6 +7072,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // "Copy offer to…" picker: which offer card has its picker open + selected target packages
   const [copyOfferPickerIdx, setCopyOfferPickerIdx] = useState<number | null>(null);
   const [copyOfferTargetPkgIds, setCopyOfferTargetPkgIds] = useState<Set<string>>(new Set());
+  const [isCopyingOffer, setIsCopyingOffer] = useState(false);
   // Quick-copy picker in the package list view (no edit modal needed)
   const [quickCopyOffer, setQuickCopyOffer] = useState<{ packageItem: ProductPackage; companionIdx: number } | null>(null);
   const [quickCopyTargetPkgIds, setQuickCopyTargetPkgIds] = useState<Set<string>>(new Set());
@@ -23968,6 +23969,7 @@ ${waybillLineItems(w).length > 1
     targetPkgIds: Set<string>
   ) => {
     if (targetPkgIds.size === 0) return;
+    setIsCopyingOffer(true);
     const clone = normalisePackageCompanion({ ...offer, companionId: makeCompanionId(), active: false });
     const results: string[] = [];
     for (const product of products) {
@@ -23983,17 +23985,21 @@ ${waybillLineItems(w).length > 1
               p.id !== pkg.id ? p : { ...p, companionProducts: (saved as any).companionProducts ?? nextCompanions }
             )}
           ));
-          results.push(`${pkg.name} (${product.name})`);
+          const setLabel = pkg.packageSet ? ` · ${pkg.packageSet}` : "";
+          results.push(`${pkg.name}${setLabel}`);
         } catch (err: any) {
           showToast(`Could not copy to ${pkg.name}: ${err?.message ?? "please retry"}.`);
         }
       }
     }
+    setIsCopyingOffer(false);
     if (results.length > 0) {
       showToast(`Offer copied to ${results.length} package${results.length === 1 ? "" : "s"}: ${results.join(", ")}. Each copy starts hidden — turn on when ready.`);
     }
     setCopyOfferPickerIdx(null);
     setCopyOfferTargetPkgIds(new Set());
+    setQuickCopyOffer(null);
+    setQuickCopyTargetPkgIds(new Set());
   };
 
   const savePackage = async () => {
@@ -51580,8 +51586,8 @@ ${waybillLineItems(w).length > 1
                                         const visibleOfferLabel = offerTitle || offerLabel;
                                         const placementLabel = (companion.placement ?? "inline") === "upsell" ? "After submit" : "Inside form";
                                         return (
-                                          <div key={companion.companionId || `${item.id}-${companionIdx}`} className={`flex flex-col gap-2 rounded-lg border px-2.5 py-2 text-xs ${offerActive ? "border-blue-100 bg-blue-50/50" : "border-amber-200 bg-amber-50/70"}`}>
-                                          <div className="flex flex-wrap items-center gap-2">
+                                          <div key={companion.companionId || `${item.id}-${companionIdx}`} className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 text-xs ${offerActive ? "border-blue-100 bg-blue-50/50" : "border-amber-200 bg-amber-50/70"}`}>
+                                          <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${offerActive ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
                                               {comboOffer
                                                 ? offerActive ? "Combo visible" : "Combo hidden"
@@ -51613,8 +51619,8 @@ ${waybillLineItems(w).length > 1
                                                 </span>
                                               )}
                                             </span>
-                                            </div>{/* end badges+label row */}
-                                            <div className="flex items-center gap-1 flex-wrap">
+                                            </div>{/* end left badges+label */}
+                                            <div className="flex items-center gap-1 shrink-0">
                                               {/* Show / Hide */}
                                               <button
                                                 type="button"
@@ -51666,14 +51672,24 @@ ${waybillLineItems(w).length > 1
                                                             {entries.map(({ pkg }) => (
                                                               <label key={pkg.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-violet-50 cursor-pointer">
                                                                 <input type="checkbox" className="rounded border-gray-300" checked={quickCopyTargetPkgIds.has(pkg.id)} onChange={(e) => setQuickCopyTargetPkgIds((prev) => { const n = new Set(prev); e.target.checked ? n.add(pkg.id) : n.delete(pkg.id); return n; })} />
-                                                                <span className="text-xs text-gray-800">{pkg.name}</span>
+                                                                <span className="text-xs text-gray-800">{pkg.name}{pkg.packageSet ? <span className="ml-1 text-[10px] text-gray-400">· {pkg.packageSet}</span> : null}</span>
                                                               </label>
                                                             ))}
                                                           </div>
                                                         );
                                                       })}
+                                                      {isCopyingOffer && (
+                                                        <div className="space-y-1">
+                                                          <p className="text-[11px] text-violet-700 font-semibold m-0">Copying…</p>
+                                                          <div className="h-1.5 w-full rounded-full bg-violet-100 overflow-hidden">
+                                                            <div className="h-full rounded-full bg-violet-500 animate-pulse" style={{ width: "60%" }} />
+                                                          </div>
+                                                        </div>
+                                                      )}
                                                       <div className="flex gap-2 pt-1 border-t border-gray-100 mt-1">
-                                                        <button type="button" disabled={quickCopyTargetPkgIds.size === 0} className="!min-h-0 flex-1 px-3 py-1.5 text-xs font-bold bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-40" onClick={async () => { if (!selectedProduct) return; await copyOfferToPackages(src, quickCopyTargetPkgIds); setQuickCopyOffer(null); setQuickCopyTargetPkgIds(new Set()); }}>Copy{quickCopyTargetPkgIds.size > 0 ? ` to ${quickCopyTargetPkgIds.size}` : ""}</button>
+                                                        <button type="button" disabled={quickCopyTargetPkgIds.size === 0 || isCopyingOffer} className="!min-h-0 flex-1 px-3 py-1.5 text-xs font-bold bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-40" onClick={async () => { await copyOfferToPackages(src, quickCopyTargetPkgIds); }}>
+                                                          {isCopyingOffer ? "Copying…" : `Copy${quickCopyTargetPkgIds.size > 0 ? ` to ${quickCopyTargetPkgIds.size}` : ""}`}
+                                                        </button>
                                                         <button type="button" className="!min-h-0 px-2 py-1.5 text-xs font-semibold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50" onClick={() => { setQuickCopyOffer(null); setQuickCopyTargetPkgIds(new Set()); }}>✕</button>
                                                       </div>
                                                     </div>
@@ -57043,21 +57059,28 @@ ${waybillLineItems(w).length > 1
                                                       });
                                                     }}
                                                   />
-                                                  <span className="text-xs text-gray-800">{pkg.name}</span>
-                                                  {pkg.packageSet && <span className="text-[10px] text-gray-400">{pkg.packageSet}</span>}
+                                                  <span className="text-xs text-gray-800">{pkg.name}{pkg.packageSet ? <span className="ml-1 text-[10px] text-gray-400">· {pkg.packageSet}</span> : null}</span>
                                                 </label>
                                               ))}
                                             </div>
                                           );
                                         })}
+                                        {isCopyingOffer && (
+                                          <div className="space-y-1">
+                                            <p className="text-[11px] text-violet-700 font-semibold m-0">Copying…</p>
+                                            <div className="h-1.5 w-full rounded-full bg-violet-100 overflow-hidden">
+                                              <div className="h-full rounded-full bg-violet-500 animate-pulse" style={{ width: "60%" }} />
+                                            </div>
+                                          </div>
+                                        )}
                                         <div className="flex gap-2 pt-1 border-t border-gray-100 mt-1">
                                           <button
                                             type="button"
-                                            disabled={copyOfferTargetPkgIds.size === 0}
+                                            disabled={copyOfferTargetPkgIds.size === 0 || isCopyingOffer}
                                             className="!min-h-0 flex-1 px-3 py-1.5 text-xs font-bold bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-40"
                                             onClick={() => copyOfferToPackages(c, copyOfferTargetPkgIds)}
                                           >
-                                            Copy to {copyOfferTargetPkgIds.size > 0 ? `${copyOfferTargetPkgIds.size} ` : ""}package{copyOfferTargetPkgIds.size !== 1 ? "s" : ""}
+                                            {isCopyingOffer ? "Copying…" : `Copy to ${copyOfferTargetPkgIds.size > 0 ? `${copyOfferTargetPkgIds.size} ` : ""}package${copyOfferTargetPkgIds.size !== 1 ? "s" : ""}`}
                                           </button>
                                           <button
                                             type="button"
