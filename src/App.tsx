@@ -13985,9 +13985,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const teamRecoveryByPersonRows = Array.from(teamRecoveryByPersonMap.values())
     .sort((a, b) => b.total - a.total || b.delivered - a.delivered || b.revenue - a.revenue);
+  // Journey analytics use pfCarts (period + product only) rather than
+  // filteredAbandonedCarts (which also applies status / search / conversion
+  // filters). Using filteredAbandonedCarts meant the funnel would show zeros
+  // whenever a status or search filter was active, even if there are carts in
+  // the period — making the date filter appear not to work.
   const abandonedJourneyCartIds = useMemo(
-    () => Array.from(new Set(filteredAbandonedCarts.map((cart) => cart.id).filter(Boolean))),
-    [filteredAbandonedCarts]
+    () => Array.from(new Set(pfCarts.map((cart) => cart.id).filter(Boolean))),
+    [pfCarts]
   );
   const abandonedJourneyCartIdsKey = abandonedJourneyCartIds.join("|");
   const CARTS_PAGE_SIZE = 25;
