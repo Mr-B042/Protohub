@@ -10120,10 +10120,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (modal !== "reassignOrder" || !selectedOrder) {
       return;
     }
-    const fallbackRepId = users.find((user) => user.active && user.role === "Sales Rep")?.id ?? "";
+    // Only initialise the selection when the modal first opens (or the order
+    // changes). Removing `users` from deps prevents a realtime user-list refresh
+    // from silently resetting the dropdown back to the current owner while the
+    // user has already picked someone new — which was causing Reassign to send
+    // the original rep's ID instead of the chosen one.
+    const fallbackRepId = users.find((u) => u.active && u.role === "Sales Rep")?.id ?? "";
     setReassignRepId(selectedOrder.assignedRepId ?? fallbackRepId);
     setHandoverReason("");
-  }, [modal, selectedOrder, users]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal, selectedOrder]);
   useEffect(() => {
     if (modal !== "sendToAgent" || !selectedOrder) {
       return;
