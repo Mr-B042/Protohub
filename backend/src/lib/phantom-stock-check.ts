@@ -58,6 +58,16 @@ async function scanOrgForPhantomStock(orgId: string): Promise<number> {
   const phantoms = orderIds.filter((id) => !fulfilled.has(id));
   if (phantoms.length === 0) return 0;
 
+  // Reset stock_deducted=false so a "Re-save the delivery" actually retriggers
+  // the deduction. Without this, the isDeliveredDateCorrection guard in the
+  // status handler silently skips deduction on every re-save attempt.
+  for (let i = 0; i < phantoms.length; i += 200) {
+    await supabase.from("orders")
+      .update({ stock_deducted: false })
+      .eq("org_id", orgId)
+      .in("id", phantoms.slice(i, i + 200));
+  }
+
   // Recipients = active Owners/Admins
   const { data: recipientsRaw } = await supabase
     .from("users").select("id").eq("org_id", orgId).eq("active", true)

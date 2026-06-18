@@ -742,7 +742,14 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     return;
   }
 
-  const isDeliveredDateCorrection = existing.status === "Delivered" && status === "Delivered";
+  // A re-save on an already-Delivered order is normally a date correction (no
+  // stock deduction). BUT if stock_deducted=false (the phantom case — the prior
+  // delivery write succeeded but the deduction failed and couldn't flip the flag
+  // back), it is a deduction RETRY, not a date correction. Without this guard,
+  // the deduction block is always skipped on re-saves, making "Re-save to retry"
+  // the advice in the phantom-stock notification completely ineffective.
+  const isDeliveredDateCorrection = existing.status === "Delivered" && status === "Delivered"
+    && existing.stock_deducted !== false;
   const inventoryLines = orderInventoryLinesFromRow(existing);
   const inventoryProductId = primaryInventoryProductId(inventoryLines, existing.product_id);
 
