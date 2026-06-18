@@ -43958,6 +43958,11 @@ ${waybillLineItems(w).length > 1
                                 </div>
                                 {(() => {
                                   const locked = orderRemittanceStatus(order) === "Paid" && !order.remittanceEditOpen;
+                                  // Failed / Cancelled orders: no cash was collected — no remittance to record.
+                                  // Show a muted note instead so the column isn't just empty.
+                                  if (order.status === "Failed" || order.status === "Cancelled") {
+                                    return <span className="inline-flex w-full items-center justify-center px-2.5 py-2 text-[11px] font-medium text-gray-400">No remittance — delivery failed</span>;
+                                  }
                                   // Non-Owners see NO correction UI on a settled order until the Owner opens it — just a muted, non-actionable note (Status column already shows "Paid").
                                   if (locked && currentRole !== "Owner") return <span className="inline-flex w-full items-center justify-center px-2.5 py-2.5 text-xs font-medium text-gray-300">Settled</span>;
                                   return (
@@ -53907,7 +53912,11 @@ ${waybillLineItems(w).length > 1
 	                        cost is tracked and auto-booked to the Expense board. */}
 	                    {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Sales Rep") && (
 	                      <div className="col-span-2">
-	                        <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Delivery fee</p>
+	                        {(selectedOrder.status === "Failed" || selectedOrder.status === "Cancelled") ? (
+	                          <p className="text-xs font-bold uppercase tracking-wide m-0 text-rose-600 dark:text-rose-400">Failed delivery charge</p>
+	                        ) : (
+	                          <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Delivery fee</p>
+	                        )}
 	                        <div className="flex items-center gap-2 mt-1 flex-wrap">
 	                          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-lg ${orderSecondaryButtonClass}`}>
 	                            <span className={`text-xs font-bold ${orderMutedTextClass}`}>{selectedOrder.currency || "₦"}</span>
@@ -53941,14 +53950,18 @@ ${waybillLineItems(w).length > 1
 	                                  : "bg-blue-100 text-blue-800"
 	                            }`}>
 	                              {selectedOrder.status === "Failed" || selectedOrder.status === "Cancelled"
-	                                ? "Booked as Failed Delivery expense"
+	                                ? "✓ Booked as Failed Delivery expense"
 	                                : selectedOrder.status === "Delivered"
-	                                  ? "Booked as Delivery expense"
+	                                  ? "✓ Booked as Delivery expense"
 	                                  : "Pending — books on status change"}
 	                            </span>
 	                          )}
 	                        </div>
-	                        <p className={`text-[11px] mt-1 ${orderFaintTextClass}`}>Auto-books to the Expense board. Booked as <strong>Failed Delivery</strong> if the order ends Failed or Cancelled.</p>
+	                        <p className={`text-[11px] mt-1 ${orderFaintTextClass}`}>
+	                          {(selectedOrder.status === "Failed" || selectedOrder.status === "Cancelled")
+	                            ? <>Enter what your logistics partner charged for this failed trip — it books straight to the <strong>Expense board as Failed Delivery</strong>. No remittance needed since no cash was collected.</>
+	                            : <>Auto-books to the Expense board. Booked as <strong>Failed Delivery</strong> if the order ends Failed or Cancelled.</>}
+	                        </p>
 	                      </div>
 	                    )}
 	                  </div>
