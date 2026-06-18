@@ -131,6 +131,7 @@ router.patch("/:id",
                      "units_sold",
                      "bonus_config", "available_states", "role",
                      "catalog_type",
+                     "public_order_assignment_mode",
                      "can_be_cross_sell", "can_be_free_gift",
                      "cross_sell_product_ids", "cross_sell_price_overrides",
                      "cross_sell_state_restrictions",
@@ -140,6 +141,13 @@ router.patch("/:id",
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
+    }
+    if (
+      updates.public_order_assignment_mode !== undefined
+      && !["inherit", "auto_assign", "manual_review"].includes(String(updates.public_order_assignment_mode))
+    ) {
+      res.status(400).json({ error: "Invalid public order assignment mode." });
+      return;
     }
 
     const { data, error } = await supabase

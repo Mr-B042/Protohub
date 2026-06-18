@@ -5,6 +5,7 @@ export type PackageComponent = {
   productId: string;
   quantity: number;
   isFreeGift?: boolean;
+  hiddenFromCustomer?: boolean;
   note?: string;
 };
 
@@ -14,6 +15,7 @@ export type OrderInventoryLine = {
   productName: string;
   quantity: number;
   isFreeGift?: boolean;
+  hiddenFromCustomer?: boolean;
   note?: string;
   sourceType: "base_product" | "package_component" | "cross_sell" | "free_gift";
 };
@@ -53,6 +55,7 @@ export const normalizePackageComponents = (value: unknown): PackageComponent[] =
       productId,
       quantity,
       isFreeGift: Boolean(record.isFreeGift ?? record.is_free_gift),
+      hiddenFromCustomer: Boolean(record.hiddenFromCustomer ?? record.hidden_from_customer),
       note: typeof record.note === "string" ? record.note.trim() || undefined : undefined
     });
   }
@@ -84,6 +87,7 @@ const normalizeSnapshotLines = (value: unknown): OrderInventoryLine[] => {
       productName,
       quantity,
       isFreeGift: Boolean(record.isFreeGift ?? record.is_free_gift),
+      hiddenFromCustomer: Boolean(record.hiddenFromCustomer ?? record.hidden_from_customer),
       note: typeof record.note === "string" ? record.note.trim() || undefined : undefined,
       sourceType
     });
@@ -166,6 +170,7 @@ export async function buildPackageComponentSnapshot(orgId: string, value: unknow
     productName: names.get(entry.productId) ?? entry.productId,
     quantity: entry.quantity,
     isFreeGift: entry.isFreeGift ?? false,
+    hiddenFromCustomer: entry.hiddenFromCustomer ?? false,
     note: entry.note,
     sourceType: "package_component"
   })) satisfies OrderInventoryLine[];
@@ -178,6 +183,7 @@ export const collapseOrderInventoryLines = (lines: OrderInventoryLine[]) => {
     if (existing) {
       existing.quantity += line.quantity;
       existing.isFreeGift = Boolean(existing.isFreeGift || line.isFreeGift);
+      existing.hiddenFromCustomer = Boolean(existing.hiddenFromCustomer || line.hiddenFromCustomer);
       if (!existing.note && line.note) existing.note = line.note;
       if (existing.sourceType !== line.sourceType) existing.sourceType = "package_component";
     } else {

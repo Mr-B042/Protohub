@@ -241,6 +241,7 @@ export type ProductBonusConfig = {
 
 export type ProductRole = "Main" | "Cross-sell" | "Free Gift";
 export type ProductCatalogType = "standard" | "combo_only";
+export type ProductPublicOrderAssignmentMode = "inherit" | "auto_assign" | "manual_review";
 
 export type Product = {
   id: string;
@@ -260,6 +261,7 @@ export type Product = {
   bonusConfig?: ProductBonusConfig;
   role?: ProductRole;
   catalogType?: ProductCatalogType;
+  publicOrderAssignmentMode?: ProductPublicOrderAssignmentMode;
   canBeCrossSell?: boolean;
   canBeFreeGift?: boolean;
   crossSellProductIds?: string[];
@@ -272,12 +274,15 @@ export type Product = {
 
 export type CrossSellLine = {
   id: string;
+  companionId?: string;
   productId?: string;
   packageId?: string;
   packageName?: string;
   packageQuantity?: number;
   packageComponentsSnapshot?: PackageComponentSnapshotLine[];
   productName: string;
+  displayName?: string;
+  displayDescription?: string;
   quantity: number;
   amount: number;
   selectionSource?: "public_form" | "public_upsell" | "manual_rep" | "auto_include";
@@ -293,6 +298,7 @@ export type PackageComponentSnapshotLine = {
   productName: string;
   quantity: number;
   isFreeGift?: boolean;
+  hiddenFromCustomer?: boolean;
   note?: string;
   sourceType?: "base_product" | "package_component" | "cross_sell" | "free_gift";
 };
@@ -310,6 +316,7 @@ export type OrderInventoryComponentSnapshot = {
   productName: string;
   quantity: number;
   isFreeGift?: boolean;
+  hiddenFromCustomer?: boolean;
   note?: string;
   sourceType?: "base_product" | "package_component" | "cross_sell" | "free_gift";
 };

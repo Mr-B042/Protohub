@@ -12,7 +12,7 @@
 
 import { Router, type Request } from "express";
 import rateLimit from "express-rate-limit";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
@@ -152,8 +152,12 @@ type CompanionOverride = {
 const companionIsActive = (companion: Pick<CompanionOverride, "active"> | null | undefined) => companion?.active !== false;
 
 type ResolvedLine = {
+  id?: string;
+  companionId?: string;
   productId: string;
   productName: string;
+  displayName?: string;
+  displayDescription?: string;
   quantity: number;
   amount: number;
   packageId?: string;
@@ -240,6 +244,8 @@ const companionLineAmount = (
 
 const packageOfferKey = (productId: string, packageId?: string | null) =>
   `${productId}:${packageId ?? ""}`;
+const companionOfferKey = (productId: string, packageId?: string | null, companionId?: string | null) =>
+  companionId ? `companion:${companionId}` : packageOfferKey(productId, packageId);
 
 const buildResolvedPackageSnapshot = async (
   orgId: string,
@@ -292,6 +298,77 @@ const buildResolvedCompanionSnapshot = async (
     quantity: line.quantity * normalizedBundleCount,
     sourceType: "cross_sell" as const
   }));
+};
+
+type ResolvedComponentSnapshot = Awaited<ReturnType<typeof buildPackageComponentSnapshot>>;
+
+const orderComponentQtyLabel = (quantity: number, compact = false) => {
+  const qty = Math.max(1, Math.round(Number(quantity) || 1));
+  return compact ? `${qty}${qty === 1 ? "pc" : "pcs"}` : `${qty} ${qty === 1 ? "pc" : "pcs"}`;
+};
+
+const visibleOrderComponents = (snapshot: ResolvedComponentSnapshot | undefined) =>
+  (snapshot ?? []).filter((line) => line.productName && !line.hiddenFromCustomer);
+
+const componentsDescribeCombo = (snapshot: ResolvedComponentSnapshot | undefined) => {
+  const visible = visibleOrderComponents(snapshot);
+  const paidProductIds = new Set(
+    visible
+      .filter((line) => !line.isFreeGift)
+      .map((line) => line.productId)
+      .filter(Boolean)
+  );
+  return paidProductIds.size > 1 || visible.some((line) => line.isFreeGift);
+};
+
+const componentSummaryLine = (snapshot: ResolvedComponentSnapshot | undefined) =>
+  visibleOrderComponents(snapshot)
+    .map((line) => {
+      const qtyLabel = orderComponentQtyLabel(line.quantity);
+      return line.isFreeGift
+        ? `FREE ${qtyLabel} of ${line.productName}`
+        : `${qtyLabel} of ${line.productName}`;
+    })
+    .join(" + ");
+
+const componentTitleLine = (snapshot: ResolvedComponentSnapshot | undefined) => {
+  const visible = visibleOrderComponents(snapshot);
+  if (visible.length === 0) return "";
+  const paid = visible
+    .filter((line) => !line.isFreeGift)
+    .map((line) => `${orderComponentQtyLabel(line.quantity, true)} of ${line.productName}`);
+  const gifts = visible
+    .filter((line) => line.isFreeGift)
+    .map((line) => {
+      const qty = Math.max(1, Math.round(Number(line.quantity) || 1));
+      const prefix = qty === 1 ? "One Free Gift Of" : `${qty} Free Gifts Of`;
+      return `${prefix} ${line.productName}`;
+    });
+  return [...paid, ...gifts].join(" + ");
+};
+
+const displayNameForResolvedLine = (
+  companion: CompanionOverride | undefined,
+  snapshot: ResolvedComponentSnapshot | undefined,
+  productName: string,
+  targetPackage?: ResolvedPackageRow | null
+) => {
+  const headline = companion?.headline?.trim();
+  if (headline) return headline;
+  if (componentsDescribeCombo(snapshot)) {
+    const title = componentTitleLine(snapshot);
+    if (title) return /\b(combo|bundle|pack|set)\b/i.test(title) ? title : `${title} Combo`;
+  }
+  return targetPackage ? `${productName} · ${targetPackage.name}` : productName;
+};
+
+const displayDescriptionForResolvedLine = (
+  companion: CompanionOverride | undefined,
+  snapshot: ResolvedComponentSnapshot | undefined
+) => {
+  const override = companion?.summaryOverride?.trim();
+  if (override) return override;
+  return componentSummaryLine(snapshot);
 };
 
 type PublicUpsellTokenPayload = {
@@ -452,6 +529,13 @@ const notifyAfterSubmitUpsellAccepted = async (
 const isMissingPublicOrderOptionalColumnsError = (error: { code?: string; message?: string } | null | undefined) =>
   error?.code === "42703" || /confirmation_checked|preferred_delivery|referrer|embed_label|form_context|assigned_by_user_id|assigned_by_name_snapshot|review_hold|review_reason/i.test(error?.message ?? "");
 
+type PublicOrderAssignmentMode = "auto_assign" | "manual_review";
+const normalizePublicOrderAssignmentMode = (value: unknown): PublicOrderAssignmentMode | null =>
+  value === "auto_assign" || value === "manual_review" ? value : null;
+
+const isMissingProductAssignmentModeColumnError = (error: { code?: string; message?: string } | null | undefined) =>
+  error?.code === "42703" || /public_order_assignment_mode/i.test(error?.message ?? "");
+
 const PUBLIC_ORDER_OPTIONAL_INSERT_COLUMNS = [
   "confirmation_checked",
   "preferred_delivery",
@@ -496,11 +580,20 @@ router.post("/", submitRateLimit, async (req, res) => {
     return;
   }
 
-  const { data: product, error: productErr } = await supabase
+  const productSelectBase = "id, org_id, name, active, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions";
+  let productResult = await supabase
     .from("products")
-    .select("id, org_id, name, active, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions")
+    .select(`id, org_id, name, active, public_order_assignment_mode, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions`)
     .eq("id", pkg.product_id)
     .maybeSingle();
+  if (productResult.error && isMissingProductAssignmentModeColumnError(productResult.error)) {
+    productResult = await supabase
+      .from("products")
+      .select(productSelectBase)
+      .eq("id", pkg.product_id)
+      .maybeSingle();
+  }
+  const { data: product, error: productErr } = productResult;
   if (productErr || !product || !product.active) {
     res.status(404).json({ error: "Product not available." });
     return;
@@ -604,10 +697,14 @@ router.post("/", submitRateLimit, async (req, res) => {
   }
 
   const embedSettings = await readSettings(product.org_id);
-  const publicOrderAssignmentMode =
+  const globalPublicOrderAssignmentMode: PublicOrderAssignmentMode =
     embedSettings.public_order_assignment_mode === "manual_review"
       ? "manual_review"
       : "auto_assign";
+  const productPublicOrderAssignmentMode = normalizePublicOrderAssignmentMode(
+    (product as { public_order_assignment_mode?: unknown }).public_order_assignment_mode
+  );
+  const publicOrderAssignmentMode = productPublicOrderAssignmentMode ?? globalPublicOrderAssignmentMode;
 
   // 2. Recompute amount server-side. Never trust client amount.
   let amount = Number(pkg.price ?? 0);
@@ -726,10 +823,16 @@ router.post("/", submitRateLimit, async (req, res) => {
       xsProduct.name,
       line.quantity
     );
+    const displayName = displayNameForResolvedLine(companion, packageComponentsSnapshot, xsProduct.name, targetPackage);
+    const displayDescription = displayDescriptionForResolvedLine(companion, packageComponentsSnapshot);
     amount += lineTotal;
     resolved.push({
+      id: `XS-${randomUUID()}`,
+      companionId: companion?.companionId ?? line.companionId,
       productId:   line.productId,
       productName: targetPackage ? `${xsProduct.name} · ${targetPackage.name}` : xsProduct.name,
+      displayName,
+      displayDescription,
       quantity:    line.quantity,
       amount:      lineTotal,
       packageId:   targetPackage?.id,
@@ -744,7 +847,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   // Batch-fetch all auto-include companion products + pricings up front to avoid N+1.
   const autoCompanions = companions.filter(
     (c) => c.autoInclude
-      && !resolved.some((r) => r.productId === c.productId)
+      && !resolved.some((r) => companionOfferKey(r.productId, r.packageId, r.companionId) === companionOfferKey(c.productId, c.packageId, c.companionId))
       && stateAllowsCompanion(c, d.state)
   );
   const autoIds = Array.from(new Set(autoCompanions.map((c) => c.productId)));
@@ -794,10 +897,16 @@ router.post("/", submitRateLimit, async (req, res) => {
       autoProduct.name,
       c.quantity
     );
+    const displayName = displayNameForResolvedLine(c, packageComponentsSnapshot, autoProduct.name, targetPackage);
+    const displayDescription = displayDescriptionForResolvedLine(c, packageComponentsSnapshot);
     amount += lineTotal;
     resolved.push({
+      id: `XS-${randomUUID()}`,
+      companionId: c.companionId,
       productId: c.productId,
       productName: targetPackage ? `${autoProduct.name} · ${targetPackage.name}` : autoProduct.name,
+      displayName,
+      displayDescription,
       quantity: c.quantity,
       amount: lineTotal,
       packageId: targetPackage?.id,
@@ -809,13 +918,13 @@ router.post("/", submitRateLimit, async (req, res) => {
   }
 
   const selectedOfferKeys = new Set(
-    resolved.map((line) => packageOfferKey(line.productId, line.packageId))
+    resolved.map((line) => companionOfferKey(line.productId, line.packageId, line.companionId))
   );
   const upsellCompanion = [...companions]
     .filter((companion) =>
       !companion.autoInclude
       && (companion.placement ?? "inline") === "upsell"
-      && !selectedOfferKeys.has(packageOfferKey(companion.productId, companion.packageId))
+      && !selectedOfferKeys.has(companionOfferKey(companion.productId, companion.packageId, companion.companionId))
       && stateAllowsCompanion(companion, d.state)
     )
     .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
@@ -1234,7 +1343,8 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
     ? (order.cross_sell_lines as ResolvedLine[])
     : [];
   if (existingLines.some((line) =>
-    packageOfferKey(line.productId, line.packageId) === packageOfferKey(tokenPayload.productId, tokenPayload.companionPackageId)
+    companionOfferKey(line.productId, line.packageId, line.companionId)
+      === companionOfferKey(tokenPayload.productId, tokenPayload.companionPackageId, tokenPayload.companionId)
   )) {
     res.json({
       id: order.id,
@@ -1298,11 +1408,17 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
     upsellProduct.name,
     acceptedQuantity
   );
+  const displayName = displayNameForResolvedLine(companion, packageComponentsSnapshot, upsellProduct.name, targetPackage);
+  const displayDescription = displayDescriptionForResolvedLine(companion, packageComponentsSnapshot);
   const nextLines = [
     ...existingLines,
     {
+      id: `XS-${randomUUID()}`,
+      companionId: companion.companionId ?? tokenPayload.companionId,
       productId: tokenPayload.productId,
       productName: lineProductName,
+      displayName,
+      displayDescription,
       quantity: acceptedQuantity,
       amount: lineAmount,
       packageId: targetPackage?.id,

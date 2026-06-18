@@ -665,6 +665,7 @@ type ProductBonusConfig = {
 };
 type ProductRole = "Main" | "Cross-sell" | "Free Gift";
 type ProductCatalogType = "standard" | "combo_only";
+type ProductPublicOrderAssignmentMode = "inherit" | "auto_assign" | "manual_review";
 type Product = {
   id: string;
   name: string;
@@ -683,6 +684,7 @@ type Product = {
   bonusConfig?: ProductBonusConfig;
   role?: ProductRole;
   catalogType?: ProductCatalogType;
+  publicOrderAssignmentMode?: ProductPublicOrderAssignmentMode;
   canBeCrossSell?: boolean;
   canBeFreeGift?: boolean;
   crossSellProductIds?: string[];
@@ -694,12 +696,15 @@ type Product = {
 };
 type CrossSellLine = {
   id: string;
+  companionId?: string;
   productId?: string;
   packageId?: string;
   packageName?: string;
   packageQuantity?: number;
   packageComponentsSnapshot?: OrderInventoryComponentSnapshot[];
   productName: string;
+  displayName?: string;
+  displayDescription?: string;
   quantity: number;
   amount: number;
   selectionSource?: "public_form" | "public_upsell" | "manual_rep" | "auto_include";
@@ -707,6 +712,12 @@ type CrossSellLine = {
   addedByName?: string;
   addedByRole?: string;
   addedAt?: string;
+};
+type OrderFormCrossSellSelection = {
+  companionId?: string;
+  productId: string;
+  packageId?: string;
+  quantity: number;
 };
 type FreeGiftLine = {
   id: string;
@@ -725,6 +736,7 @@ type OrderInventoryComponentSnapshot = {
   productName: string;
   quantity: number;
   isFreeGift?: boolean;
+  hiddenFromCustomer?: boolean;
   note?: string;
   sourceType?: "base_product" | "package_component" | "cross_sell" | "free_gift";
 };
@@ -4145,12 +4157,91 @@ const selectedCartAddOnLinesFromJourney = (events: CartJourneyEvent[]) => {
     .filter((entry) => entry.selected)
     .map(({ selected, ...line }) => line);
 };
+const orderLineQtyLabel = (quantity: number, compact = false) => {
+  const qty = Math.max(1, Math.round(Number(quantity) || 1));
+  return compact ? `${qty}${qty === 1 ? "pc" : "pcs"}` : `${qty} ${qty === 1 ? "pc" : "pcs"}`;
+};
+const visibleOrderLineComponents = (components?: OrderInventoryComponentSnapshot[] | null) =>
+  (components ?? []).filter((line) => line.productName && !line.hiddenFromCustomer);
+const orderLineComponentsDescribeCombo = (components?: OrderInventoryComponentSnapshot[] | null) => {
+  const visible = visibleOrderLineComponents(components);
+  const paidProductIds = new Set(
+    visible
+      .filter((line) => !line.isFreeGift)
+      .map((line) => line.productId)
+      .filter(Boolean)
+  );
+  return paidProductIds.size > 1 || visible.some((line) => line.isFreeGift);
+};
+const orderLineComponentDetail = (components?: OrderInventoryComponentSnapshot[] | null) =>
+  visibleOrderLineComponents(components)
+    .map((line) => line.isFreeGift
+      ? `FREE ${orderLineQtyLabel(line.quantity)} of ${line.productName}`
+      : `${orderLineQtyLabel(line.quantity)} of ${line.productName}`)
+    .join(" + ");
+const orderLineComponentTitle = (components?: OrderInventoryComponentSnapshot[] | null) => {
+  const visible = visibleOrderLineComponents(components);
+  const paid = visible
+    .filter((line) => !line.isFreeGift)
+    .map((line) => `${orderLineQtyLabel(line.quantity, true)} of ${line.productName}`);
+  const gifts = visible
+    .filter((line) => line.isFreeGift)
+    .map((line) => {
+      const qty = Math.max(1, Math.round(Number(line.quantity) || 1));
+      return `${qty === 1 ? "One Free Gift Of" : `${qty} Free Gifts Of`} ${line.productName}`;
+    });
+  const title = [...paid, ...gifts].join(" + ");
+  return title && !/\b(combo|bundle|pack|set)\b/i.test(title) ? `${title} Combo` : title;
+};
+const crossSellLineDisplayName = (line: CrossSellLine) => {
+  const saved = line.displayName?.trim();
+  if (saved) return saved;
+  if (orderLineComponentsDescribeCombo(line.packageComponentsSnapshot)) {
+    const title = orderLineComponentTitle(line.packageComponentsSnapshot);
+    if (title) return title;
+  }
+  return line.packageName && line.packageName.trim()
+    ? `${line.productName} · ${line.packageName}`
+    : line.productName;
+};
+const crossSellLineDisplayDetail = (line: CrossSellLine) => {
+  const saved = line.displayDescription?.trim();
+  if (saved) return saved;
+  const componentDetail = orderLineComponentDetail(line.packageComponentsSnapshot);
+  if (componentDetail) return componentDetail;
+  const qty = Math.max(1, Number(line.quantity) || 1);
+  return [
+    line.packageName,
+    line.packageQuantity ? `${line.packageQuantity} unit${line.packageQuantity === 1 ? "" : "s"} package` : null,
+    `${qty} ${qty === 1 ? "pc" : "pcs"}`
+  ].filter(Boolean).join(" · ");
+};
+const crossSellLineDisplayQuantity = (line: CrossSellLine) => {
+  const visibleTotal = visibleOrderLineComponents(line.packageComponentsSnapshot)
+    .reduce((sum, component) => sum + Math.max(0, Number(component.quantity) || 0), 0);
+  return visibleTotal > 0 ? visibleTotal : Math.max(1, Number(line.quantity) || 1);
+};
+const crossSellLineInventoryComponents = (line: CrossSellLine): OrderInventoryComponentSnapshot[] => {
+  if (line.packageComponentsSnapshot?.length) return line.packageComponentsSnapshot;
+  if (!line.productId || !line.productName) return [];
+  return [{
+    productId: line.productId,
+    productName: line.productName,
+    quantity: Math.max(1, Number(line.quantity) || 1),
+    isFreeGift: false,
+    sourceType: "cross_sell"
+  }];
+};
+const crossSellLineRenderKey = (line: CrossSellLine, index: number) =>
+  line.id
+  || line.companionId
+  || `${line.productId ?? crossSellLineDisplayName(line)}:${line.packageId ?? ""}:${index}`;
 const selectedCartAddOnLinesFromOrder = (order: TrackedOrder | undefined) =>
   (order?.crossSellLines ?? []).map((line, index) => ({
-    key: `order:${line.id ?? line.productId ?? line.productName}:${index}`,
-    name: line.productName,
-    detail: line.packageName,
-    qty: Math.max(1, Number(line.quantity) || 1),
+    key: `order:${crossSellLineRenderKey(line, index)}`,
+    name: crossSellLineDisplayName(line),
+    detail: crossSellLineDisplayDetail(line),
+    qty: crossSellLineDisplayQuantity(line),
     total: Math.max(0, Number(line.amount) || 0),
     productId: line.productId,
     packageId: line.packageId,
@@ -4482,6 +4573,8 @@ const companionOverviewComponents = (
   if (inlineComponents.length > 0) return inlineComponents;
   return (targetPackage?.packageComponents ?? []).map(normalisePackageComponent).filter((component) => component.productId);
 };
+const companionSelectionKey = (item: { companionId?: string; productId: string; packageId?: string | null }) =>
+  item.companionId?.trim() || `${item.productId}:${item.packageId ?? ""}`;
 const isComboAddOnCompanion = (
   companion: Pick<PackageCompanion, "bundleComponents">,
   targetPackage?: Pick<ProductPackage, "packageComponents"> | null
@@ -6117,8 +6210,10 @@ const selectedPackagesSummaryForOrder = (order: TrackedOrder) => {
     `${order.packageName} (${quantity} unit${quantity === 1 ? "" : "s"}, ${formatProductMoney(mainOfferTotal, order.currency)})`
   ];
   (order.crossSellLines ?? []).forEach((line, index) => {
-    const detail = line.packageName ? `${line.productName} · ${line.packageName}` : line.productName;
-    lines.push(`Additional Package ${index + 1}: ${detail} (${line.quantity} pc${line.quantity === 1 ? "" : "s"}, ${formatProductMoney(line.amount, order.currency)})`);
+    const detail = crossSellLineDisplayName(line);
+    const contents = crossSellLineDisplayDetail(line);
+    const qty = crossSellLineDisplayQuantity(line);
+    lines.push(`Additional Package ${index + 1}: ${detail}${contents ? ` (${contents})` : ""} (${qty} pc${qty === 1 ? "" : "s"}, ${formatProductMoney(line.amount, order.currency)})`);
   });
   (order.freeGiftLines ?? []).forEach((line, index) => {
     lines.push(`Free Gift ${index + 1}: ${line.productName} (${line.quantity} unit${line.quantity === 1 ? "" : "s"})`);
@@ -6868,6 +6963,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [productDescription, setProductDescription] = useState("");
   const [productSku, setProductSku] = useState("");
   const [productCatalogType, setProductCatalogType] = useState<ProductCatalogType>("standard");
+  const [productPublicOrderAssignmentMode, setProductPublicOrderAssignmentMode] = useState<ProductPublicOrderAssignmentMode>("inherit");
   const [skuManuallyEdited, setSkuManuallyEdited] = useState(false);
   const [skuSuffix, setSkuSuffix] = useState(() => String(Math.floor(100 + Math.random() * 900)));
 
@@ -8644,9 +8740,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderFormCity, setOrderFormCity] = useState("");
   const [orderFormState, setOrderFormState] = useState("");
   const [orderFormPackageId, setOrderFormPackageId] = useState("");
-  const [orderFormCrossSells, setOrderFormCrossSells] = useState<{ productId: string; quantity: number }[]>([]);
+  const [orderFormCrossSells, setOrderFormCrossSells] = useState<OrderFormCrossSellSelection[]>([]);
   const [orderFormAddOnGalleryIndex, setOrderFormAddOnGalleryIndex] = useState<Record<string, number>>({});
-  const toggleOrderFormCrossSell = (productId: string) => setOrderFormCrossSells((prev) => prev.some((c) => c.productId === productId) ? prev.filter((c) => c.productId !== productId) : [...prev, { productId, quantity: 1 }]);
+  const toggleOrderFormCrossSell = (selection: Omit<OrderFormCrossSellSelection, "quantity"> & { quantity?: number }) => {
+    const key = companionSelectionKey(selection);
+    setOrderFormCrossSells((prev) => prev.some((c) => companionSelectionKey(c) === key)
+      ? prev.filter((c) => companionSelectionKey(c) !== key)
+      : [...prev, { ...selection, quantity: Math.max(1, Number(selection.quantity) || 1) }]);
+  };
   const hydrateCallOutcomeDraft = (outcome?: string | null) => {
     const normalized = (outcome ?? "").trim();
     if (!normalized) {
@@ -11217,7 +11318,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       total += quantityForOrder(order) * unitCostForProductInCurrency(order.productId, order.currency);
     }
     for (const line of order.crossSellLines ?? []) {
-      total += Math.max(0, Number(line.quantity) || 0) * unitCostForProductInCurrency(line.productId, order.currency);
+      for (const component of crossSellLineInventoryComponents(line)) {
+        total += Math.max(0, Number(component.quantity) || 0) * unitCostForProductInCurrency(component.productId, order.currency);
+      }
     }
     for (const line of order.freeGiftLines ?? []) {
       total += Math.max(0, Number(line.quantity) || 0) * unitCostForProductInCurrency(line.productId, order.currency);
@@ -11248,7 +11351,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } else {
       addLine(order.productId, quantityForOrder(order));
     }
-    order.crossSellLines?.forEach((line) => addLine(line.productId, line.quantity));
+    order.crossSellLines?.forEach((line) => {
+      crossSellLineInventoryComponents(line).forEach((component) => addLine(component.productId, component.quantity));
+    });
     order.freeGiftLines?.forEach((line) => addLine(line.productId, line.quantity));
     return Array.from(lines, ([productId, quantity]) => ({ productId, quantity }));
   };
@@ -16763,12 +16868,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   };
 
-  const removeCrossSell = (orderId: string, lineId: string) => {
+  const removeCrossSell = (orderId: string, lineKey: string, lineIndex?: number) => {
     const orderSnapshot = trackedOrders.find((order) => order.id === orderId);
     if (!orderSnapshot) return;
-    const removed = (orderSnapshot.crossSellLines ?? []).find((line) => line.id === lineId);
+    const lineMatches = (line: CrossSellLine, index: number) =>
+      line.id ? line.id === lineKey : index === lineIndex && crossSellLineRenderKey(line, index) === lineKey;
+    const removed = (orderSnapshot.crossSellLines ?? []).find((line, index) => lineMatches(line, index));
     const refund = removed?.amount ?? 0;
-    const nextCrossSellLines = (orderSnapshot.crossSellLines ?? []).filter((line) => line.id !== lineId);
+    const nextCrossSellLines = (orderSnapshot.crossSellLines ?? []).filter((line, index) => !lineMatches(line, index));
     const nextAmount = Math.max(0, orderSnapshot.amount - refund);
     setTrackedOrders((prev) => prev.map((o) => {
       if (o.id !== orderId) return o;
@@ -17011,26 +17118,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               total={formatProductMoney(mainTotal, order.currency)}
             />
             {(order.crossSellLines ?? []).map((line, index) => {
+              const lineKey = crossSellLineRenderKey(line, index);
               const isPublicAddOn = line.selectionSource === "public_form" || line.selectionSource === "public_upsell";
-              const qty = Math.max(1, Number(line.quantity) || 1);
+              const hasComponentSnapshot = (line.packageComponentsSnapshot ?? []).length > 0;
+              const qty = hasComponentSnapshot ? crossSellLineDisplayQuantity(line) : Math.max(1, Number(line.quantity) || 1);
               const amount = Math.max(0, Number(line.amount) || 0);
               const label = isPublicAddOn ? `Add-on ${index + 1}` : `Cross-sell ${index + 1}`;
-              const detail = [
-                line.packageName,
-                line.packageQuantity ? `${line.packageQuantity} unit${line.packageQuantity === 1 ? "" : "s"} package` : null,
-                `${qty} ${qty === 1 ? "pc" : "pcs"}`
-              ].filter(Boolean).join(" · ");
+              const detail = crossSellLineDisplayDetail(line);
               return (
                 <LineCard
-                  key={line.id}
+                  key={lineKey}
                   kind="addOn"
                   label={label}
-                  name={line.productName}
+                  name={crossSellLineDisplayName(line)}
                   detail={detail}
-                  quantity={qty}
-                  unit={formatProductMoney(Math.round(amount / qty), order.currency)}
+                  quantity={hasComponentSnapshot ? `${qty} pcs` : qty}
+                  unit={hasComponentSnapshot ? "Bundle" : formatProductMoney(Math.round(amount / qty), order.currency)}
                   total={formatProductMoney(amount, order.currency)}
-                  onRemove={() => removeCrossSell(order.id, line.id)}
+                  onRemove={() => removeCrossSell(order.id, lineKey, index)}
                 />
               );
             })}
@@ -20908,10 +21013,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setOrderFormCrossSells((prev) => prev.filter((c) => {
       const cp = products.find((p) => p.id === c.productId);
       if (!cp) return false;
+      const chosen = (publicProduct ? publicPackages : previewPackages).find((item) => item.id === orderFormPackageId);
+      const companion = chosen?.companionProducts?.find((item) =>
+        companionIsActive(item)
+        && companionSelectionKey(item) === companionSelectionKey(c)
+      );
+      if (companion) return companionMatchesState(companion, orderFormState.trim());
       return crossSellVisibleInState(main, cp, orderFormState);
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderFormState, publicProduct, previewProduct]);
+  }, [orderFormState, publicProduct, previewProduct, orderFormPackageId, publicPackages, previewPackages, products]);
 
   useEffect(() => {
     if (publicProduct && publicPackages.length > 0 && !publicPackages.some((item) => item.id === orderFormPackageId)) {
@@ -20943,10 +21054,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (!addOnProduct) return null;
         const companion = chosenPackage.companionProducts?.find((item) =>
           companionIsActive(item)
-          && item.productId === selection.productId
+          && companionSelectionKey(item) === companionSelectionKey(selection)
           && companionMatchesState(item, orderFormState.trim())
         );
         if (companion) {
+          const targetPackage = companion.packageId ? addOnProduct.packages.find((pkg) => pkg.id === companion.packageId) : undefined;
+          const components = companionOverviewComponents(companion, targetPackage);
+          const componentSummary = summarizePackageComponents(components, products);
           const standard = primaryPricing(addOnProduct)?.sellingPrice ?? 0;
           const unit = companion.pricingMode === "free" ? 0
             : companion.pricingMode === "fixed" ? (companion.fixedPrice ?? 0)
@@ -20954,8 +21068,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           return {
             productId: addOnProduct.id,
             packageId: companion.packageId ?? undefined,
-            name: addOnProduct.name,
-            detail: `${companion.quantity} ${companion.quantity === 1 ? "pc" : "pcs"} selected`,
+            name: companion.headline?.trim() || (targetPackage ? `${addOnProduct.name} · ${targetPackage.name}` : addOnProduct.name),
+            detail: companion.summaryOverride?.trim() || componentSummary || `${companion.quantity} ${companion.quantity === 1 ? "pc" : "pcs"} selected`,
             qty: companion.quantity,
             total: unit * companion.quantity
           };
@@ -21166,16 +21280,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         : `Preferred Package: ${mainPackageDispatch} = ${formatProductMoney(mainOfferTotal, order.currency)}`
     ];
     extraPricedPackages.forEach((line, index) => {
+      const displayName = crossSellLineDisplayName(line);
+      const displayDetail = crossSellLineDisplayDetail(line);
       lines.push(
-        `Preferred Package ${index + 2}: ${buildPreferredPackageLine(
-          line.productName,
-          line.packageName,
-          // Use the ordered quantity (what the breakdown card shows + what
-          // line.amount is priced on). Multiplying by packageQuantity here
-          // double-counted — e.g. 3 Starter Packs showed as "12pcs … =
-          // ₦10,500", implying ₦875/pc when the unit is actually ₦3,500.
-          Math.max(1, Number(line.quantity ?? 1) || 1)
-        )} = ${formatProductMoney(line.amount, order.currency)}`
+        `Preferred Package ${index + 2}: ${displayName}${displayDetail ? `\nItems: ${displayDetail}` : ""} = ${formatProductMoney(line.amount, order.currency)}`
       );
     });
     (order.freeGiftLines ?? []).forEach((line, index) => {
@@ -23129,7 +23237,8 @@ ${waybillLineItems(w).length > 1
         ...productSalesSettingsPayload(clone),
         available_states: clone.availableStates ?? [],
         form_custom_text: clone.formCustomText ?? "",
-        package_description: clone.packageDescription ?? ""
+        package_description: clone.packageDescription ?? "",
+        public_order_assignment_mode: clone.publicOrderAssignmentMode ?? "inherit"
       };
       const results = await Promise.allSettled([
         ...pricingTasks,
@@ -23243,6 +23352,7 @@ ${waybillLineItems(w).length > 1
     setSkuManuallyEdited(true);
     setProductActive(product.active);
     setReorderPoint(String(product.reorderPoint));
+    setProductPublicOrderAssignmentMode(product.publicOrderAssignmentMode ?? "inherit");
     openInventoryEditProductRoute(product.id);
   };
 
@@ -23261,11 +23371,12 @@ ${waybillLineItems(w).length > 1
       description: productDescription.trim(),
       sku: productSku.trim() || p.sku,
       active: productActive,
-      reorderPoint: Number(reorderPoint) || 0
+      reorderPoint: Number(reorderPoint) || 0,
+      publicOrderAssignmentMode: productPublicOrderAssignmentMode
     } : p));
     closeModal();
     showToast(`${productName.trim()} saved.`);
-    productsApi.update(_epId, { name: productName.trim(), description: productDescription.trim(), sku: productSku.trim() || selectedProduct.sku, active: productActive, reorder_point: Number(reorderPoint) || 0 }).catch((err: any) => {
+    productsApi.update(_epId, { name: productName.trim(), description: productDescription.trim(), sku: productSku.trim() || selectedProduct.sku, active: productActive, reorder_point: Number(reorderPoint) || 0, public_order_assignment_mode: productPublicOrderAssignmentMode }).catch((err: any) => {
       setProducts((prev) => prev.map((p) => p.id === _epId ? productSnapshot : p));
       showToast(`Failed to save ${productSnapshot.name}: ${err?.message ?? "please retry"}.`);
     });
@@ -24481,6 +24592,7 @@ ${waybillLineItems(w).length > 1
     };
     const matchLineToCompanion = (line: CrossSellLine, companion: PackageCompanion, companionPackage?: ProductPackage) => {
       if (!isCustomerSelectedCrossSell(line)) return false;
+      if (line.companionId && companion.companionId) return line.companionId === companion.companionId;
       if (line.productId !== companion.productId) return false;
       if (companion.packageId) {
         return line.packageId === companion.packageId || (!line.packageId && Boolean(companionPackage?.name && line.packageName === companionPackage.name));
@@ -24541,15 +24653,18 @@ ${waybillLineItems(w).length > 1
           if (!delivered && !failed) pendingValue += orderAcceptedValue;
           if (failed) failedValue += orderAcceptedValue;
           for (const line of matchedLines) {
-            const lineQty = Math.max(0, Number(line.quantity) || 0);
+            const lineQty = crossSellLineDisplayQuantity(line);
             const lineAmount = Math.max(0, Number(line.amount) || 0);
             units += lineQty;
             placedRevenue += lineAmount;
             if (delivered) {
               deliveredRevenue += lineAmount;
-              const unitCost = unitCostForProductInCurrency(line.productId, order.currency);
-              if (lineQty > 0 && unitCost <= 0) costMissing = true;
-              estimatedCogs += lineQty * unitCost;
+              for (const component of crossSellLineInventoryComponents(line)) {
+                const componentQty = Math.max(0, Number(component.quantity) || 0);
+                const unitCost = unitCostForProductInCurrency(component.productId, order.currency);
+                if (componentQty > 0 && unitCost <= 0) costMissing = true;
+                estimatedCogs += componentQty * unitCost;
+              }
             }
           }
         }
@@ -24953,7 +25068,17 @@ ${waybillLineItems(w).length > 1
         const unit = c.pricingMode === "free" ? 0
                    : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
                    : standardPrice;
-        return { id: makeCrossSellLineId(), productId: c.productId, productName: (product?.name ?? "Companion") + " (bundled)", quantity: c.quantity, amount: unit * c.quantity };
+        return {
+          id: makeCrossSellLineId(),
+          companionId: c.companionId,
+          productId: c.productId,
+          packageId: c.packageId,
+          productName: (product?.name ?? "Companion") + " (bundled)",
+          displayName: c.headline?.trim() || undefined,
+          displayDescription: c.summaryOverride?.trim() || undefined,
+          quantity: c.quantity,
+          amount: unit * c.quantity
+        };
       });
   };
 
@@ -26775,7 +26900,7 @@ ${waybillLineItems(w).length > 1
       // Companion of the chosen package (if any) overrides the standard cross-sell price.
       const companion = chosenPackage.companionProducts?.find((cmp) =>
         companionIsActive(cmp)
-        && cmp.productId === c.productId
+        && companionSelectionKey(cmp) === companionSelectionKey(c)
         && companionMatchesState(cmp, orderFormState.trim())
       );
       let qty = c.quantity;
@@ -26783,14 +26908,24 @@ ${waybillLineItems(w).length > 1
       if (companion && p) {
         const standard = primaryPricing(p)?.sellingPrice ?? 0;
         const unit = companion.pricingMode === "free" ? 0
-                    : companion.pricingMode === "fixed" ? (companion.fixedPrice ?? 0)
-                    : standard;
+          : companion.pricingMode === "fixed" ? (companion.fixedPrice ?? 0)
+            : standard;
         qty = companion.quantity;
-        amount = unit * qty;
+        amount = companion.pricingMode === "fixed" ? unit : unit * qty;
       } else if (p) {
         amount = crossSellPriceFor(publicProduct, p) * c.quantity;
       }
-      return { id: makeCrossSellLineId(), productId: c.productId, productName: p?.name ?? "Add-on", quantity: qty, amount };
+      return {
+        id: makeCrossSellLineId(),
+        companionId: companion?.companionId ?? c.companionId,
+        productId: c.productId,
+        packageId: companion?.packageId ?? c.packageId,
+        productName: p?.name ?? "Add-on",
+        displayName: companion?.headline?.trim() || undefined,
+        displayDescription: companion?.summaryOverride?.trim() || undefined,
+        quantity: qty,
+        amount
+      };
     });
     // Auto-include companions ride along silently — append to xsLines so they
     // count toward total and appear as line items on the order.
@@ -26906,7 +27041,12 @@ ${waybillLineItems(w).length > 1
           packageSet: publicPackageSet || undefined,
           crossSellLines: orderFormCrossSells
             .filter((c) => c.productId && c.quantity > 0)
-            .map((c) => ({ productId: c.productId, quantity: c.quantity })),
+            .map((c) => ({
+              companionId: c.companionId?.trim() || undefined,
+              productId: c.productId,
+              packageId: c.packageId?.trim() || undefined,
+              quantity: c.quantity
+            })),
           utmSource: publicUtmSource || undefined,
           utmCampaign: publicUtmCampaign || undefined,
           utmMedium: publicUtmMedium || undefined,
@@ -32526,26 +32666,29 @@ ${waybillLineItems(w).length > 1
             const chosenPkg = publicPackages.find((it) => it.id === orderFormPackageId) ?? publicPackages[0];
             // Helper: when a chosen cross-sell is a *companion* of the chosen package, use the
             // package's pricing rules + quantity. Otherwise fall back to product-level cross-sell pricing.
-            const companionForProductId = (productId: string) =>
+            const companionForSelection = (selection: OrderFormCrossSellSelection) =>
               chosenPkg?.companionProducts?.find((c) =>
                 companionIsActive(c)
-                && c.productId === productId
+                && companionSelectionKey(c) === companionSelectionKey(selection)
                 && companionMatchesState(c, orderFormState)
               );
             const summaryXsLines = chosenPkg ? orderFormCrossSells.map((c) => {
               const cp = products.find((pp) => pp.id === c.productId);
               if (!cp) return null;
-              const companion = companionForProductId(c.productId);
+              const companion = companionForSelection(c);
               if (companion) {
+                const targetPackage = companion.packageId ? cp.packages.find((pkg) => pkg.id === companion.packageId) : undefined;
+                const components = companionOverviewComponents(companion, targetPackage);
+                const componentSummary = summarizePackageComponents(components, products);
                 const standard = primaryPricing(cp)?.sellingPrice ?? 0;
                 const unit = companion.pricingMode === "free" ? 0
-                           : companion.pricingMode === "fixed" ? (companion.fixedPrice ?? 0)
-                           : standard;
-                return { name: cp.name, qty: companion.quantity, total: unit * companion.quantity };
+                  : companion.pricingMode === "fixed" ? (companion.fixedPrice ?? 0)
+                    : standard;
+                return { name: companion.headline?.trim() || cp.name, detail: companion.summaryOverride?.trim() || componentSummary || undefined, qty: companion.quantity, total: unit * companion.quantity };
               }
               const unit = crossSellPriceFor(publicProduct, cp);
               return { name: cp.name, qty: c.quantity, total: unit * c.quantity };
-            }).filter(Boolean) as { name: string; qty: number; total: number }[] : [];
+            }).filter(Boolean) as { name: string; detail?: string; qty: number; total: number }[] : [];
             // Append silently-bundled (auto-include) companions for the chosen package + state.
             const summaryAutoCompanionLines = (chosenPkg?.companionProducts ?? [])
               .filter(companionIsActive)
@@ -32575,7 +32718,7 @@ ${waybillLineItems(w).length > 1
                 </div>
                 {summaryXsLines.map((l, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "2px 0", color: "#92400e" }}>
-                    <span>↳ {l.name} × {l.qty}</span>
+                    <span>↳ {l.name} × {l.qty}{l.detail ? <small style={{ display: "block", color: "#6b7280", lineHeight: 1.35 }}>{l.detail}</small> : null}</span>
                     <span>{formatProductMoney(l.total, chosenPkg.currency)}</span>
                   </div>
                 ))}
@@ -32877,16 +33020,17 @@ ${waybillLineItems(w).length > 1
                               const productPrice = primaryPricing(cp)?.sellingPrice ?? 0;
                               const currency     = primaryPricing(cp)?.currency ?? "NGN";
                               const unit = c.pricingMode === "free" ? 0
-                                         : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
-                                         : productPrice;
+                                : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
+                                  : productPrice;
                               const total = unit * c.quantity;
-                              const sel = orderFormCrossSells.find((s) => s.productId === c.productId);
+                              const selection = { companionId: c.companionId, productId: c.productId, packageId: c.packageId ?? undefined };
+                              const sel = orderFormCrossSells.find((s) => companionSelectionKey(s) === companionSelectionKey(selection));
                               return (
                                 <label key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 13 }}>
                                   <input
                                     type="checkbox"
                                     checked={Boolean(sel)}
-                                    onChange={() => toggleOrderFormCrossSell(c.productId)}
+                                    onChange={() => toggleOrderFormCrossSell(selection)}
                                   />
                                   <span style={{ flex: 1 }}>
                                     <strong>{cp.name}</strong> × {c.quantity} · {c.pricingMode === "free" ? <em style={{ color: "#047857" }}>FREE</em> : formatProductMoney(total, currency)}
@@ -32997,12 +33141,13 @@ ${waybillLineItems(w).length > 1
                           const standard = primaryPricing(cp)?.sellingPrice ?? 0;
                           const currency = primaryPricing(cp)?.currency ?? "NGN";
                           const unit = c.pricingMode === "free" ? 0
-                                     : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
-                                     : standard;
-                          const total    = unit * c.quantity;
-                          const savings  = Math.max(0, standard * c.quantity - total);
-                          const sel      = Boolean(orderFormCrossSells.find((s) => s.productId === c.productId));
-                          const badge    = (c.badgeText && c.badgeText.trim()) || "🎁 Add to your order?";
+                            : c.pricingMode === "fixed" ? (c.fixedPrice ?? 0)
+                              : standard;
+                          const total = unit * c.quantity;
+                          const savings = Math.max(0, standard * c.quantity - total);
+                          const selection = { companionId: c.companionId, productId: c.productId, packageId: c.packageId ?? undefined };
+                          const sel = Boolean(orderFormCrossSells.find((s) => companionSelectionKey(s) === companionSelectionKey(selection)));
+                          const badge = (c.badgeText && c.badgeText.trim()) || "🎁 Add to your order?";
                           const title = addOnPackage?.name || cp.name;
                           const detail = c.packageId && addOnPackage
                             ? `${addOnPackage.quantity} pc${addOnPackage.quantity === 1 ? "" : "s"} package`
@@ -33131,7 +33276,7 @@ ${waybillLineItems(w).length > 1
                                       <span>✓ This add-on is included in your order</span>
                                       <button
                                         type="button"
-                                        onClick={() => toggleOrderFormCrossSell(c.productId)}
+                                        onClick={() => toggleOrderFormCrossSell(selection)}
                                         style={{ background: "#fff", color: "#065f46", border: "1px solid #a7f3d0", borderRadius: 999, fontSize: 12, fontWeight: 900, padding: "7px 11px", cursor: "pointer", minHeight: 0 }}
                                       >Remove</button>
                                     </div>
@@ -33139,7 +33284,7 @@ ${waybillLineItems(w).length > 1
                                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                                       <button
                                         type="button"
-                                        onClick={() => toggleOrderFormCrossSell(c.productId)}
+                                        onClick={() => toggleOrderFormCrossSell(selection)}
                                         style={{ padding: "12px 14px", background: "#111827", color: "white", borderRadius: 14, fontWeight: 900, fontSize: 14, border: "none", cursor: "pointer", minHeight: 0 }}
                                       >{yesText}</button>
                                       <button
@@ -33185,7 +33330,7 @@ ${waybillLineItems(w).length > 1
                                     <span>✓ Added to your order</span>
                                     <button
                                       type="button"
-                                      onClick={() => toggleOrderFormCrossSell(c.productId)}
+                                      onClick={() => toggleOrderFormCrossSell(selection)}
                                       style={{ background: "transparent", color: "#166534", textDecoration: "underline", fontSize: 13, fontWeight: 600, padding: 0, border: "none", cursor: "pointer", minHeight: 0 }}
                                     >Undo</button>
                                   </div>
@@ -33193,7 +33338,7 @@ ${waybillLineItems(w).length > 1
                                   <div style={{ display: "flex", gap: 8 }}>
                                     <button
                                       type="button"
-                                      onClick={() => toggleOrderFormCrossSell(c.productId)}
+                                      onClick={() => toggleOrderFormCrossSell(selection)}
                                       style={{ flex: 1, padding: "10px 14px", background: "#1F8FE0", color: "white", borderRadius: 8, fontWeight: 700, fontSize: 14, border: "none", cursor: "pointer", minHeight: 0 }}
                                     >✓ {yesText}</button>
                                     <button
@@ -53814,41 +53959,59 @@ ${waybillLineItems(w).length > 1
 		                {/* Section 4: Order Items */}
 		                {renderOrderItemsReceipt(selectedOrder)}
 
-	                {(selectedOrder.packageComponentsSnapshot ?? []).length > 0 && (
-	                  <section>
-	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Fulfilment Stock Breakdown</h3>
-	                    <div className="rounded-lg border border-gray-200 overflow-hidden">
-	                      <table className="w-full text-sm">
-	                        <thead>
-	                          <tr className="border-b border-gray-100 bg-gray-50/60">
-	                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-400">Stock item</th>
-	                            <th className="px-4 py-2 text-center text-xs font-medium text-gray-400">Qty</th>
-	                            <th className="px-4 py-2 text-right text-xs font-medium text-gray-400">Type</th>
-	                          </tr>
-	                        </thead>
-	                        <tbody>
-	                          {(selectedOrder.packageComponentsSnapshot ?? []).map((line, idx) => (
-	                            <tr key={`${line.productId ?? line.productName}-${idx}`} className="border-b border-gray-100 last:border-b-0">
-	                              <td className="px-4 py-2.5 text-gray-800">
-	                                <div className="flex flex-col gap-0.5">
-	                                  <span className="font-semibold">{line.productName}</span>
-	                                  {line.note ? <span className="text-xs text-gray-500">{line.note}</span> : null}
-	                                </div>
-	                              </td>
-	                              <td className="px-4 py-2.5 text-center text-gray-700">{line.quantity}</td>
-	                              <td className="px-4 py-2.5 text-right">
-	                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${line.isFreeGift ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-	                                  {line.isFreeGift ? "Free gift" : "Combo item"}
-	                                </span>
-	                              </td>
-	                            </tr>
-	                          ))}
-	                        </tbody>
-	                      </table>
-	                    </div>
-	                    <p className="text-[11px] text-gray-500 mt-2">These are the real stock items Protohub will deduct when this order is delivered.</p>
-	                  </section>
-	                )}
+                {(() => {
+                  const fulfilmentLines: Array<OrderInventoryComponentSnapshot & { groupLabel: string }> = [
+                    ...(selectedOrder.packageComponentsSnapshot ?? []).map((line) => ({ ...line, groupLabel: "Main offer" })),
+                    ...(selectedOrder.crossSellLines ?? []).flatMap((line, index) =>
+                      crossSellLineInventoryComponents(line).map((component) => ({ ...component, groupLabel: `Add-on ${index + 1}` }))
+                    ),
+                    ...(selectedOrder.freeGiftLines ?? []).map((line, index) => ({
+                      productId: line.productId,
+                      productName: line.productName,
+                      quantity: line.quantity,
+                      isFreeGift: true,
+                      sourceType: "free_gift" as const,
+                      groupLabel: `Free gift ${index + 1}`
+                    }))
+                  ];
+                  if (fulfilmentLines.length === 0) return null;
+                  return (
+                    <section>
+                      <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Fulfilment Stock Breakdown</h3>
+                      <div className="rounded-lg border border-gray-200 overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-gray-100 bg-gray-50/60">
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-400">Stock item</th>
+                              <th className="px-4 py-2 text-center text-xs font-medium text-gray-400">Qty</th>
+                              <th className="px-4 py-2 text-right text-xs font-medium text-gray-400">Type</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {fulfilmentLines.map((line, idx) => (
+                              <tr key={`${line.groupLabel}-${line.productId ?? line.productName}-${idx}`} className="border-b border-gray-100 last:border-b-0">
+                                <td className="px-4 py-2.5 text-gray-800">
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-semibold">{line.productName}</span>
+                                    <span className="text-[11px] font-bold uppercase tracking-wide text-gray-400">{line.groupLabel}</span>
+                                    {line.note ? <span className="text-xs text-gray-500">{line.note}</span> : null}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-2.5 text-center text-gray-700">{line.quantity}</td>
+                                <td className="px-4 py-2.5 text-right">
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${line.isFreeGift ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                                    {line.isFreeGift ? "Free gift" : "Stock item"}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="text-[11px] text-gray-500 mt-2">These are the real stock items Protohub will deduct when this order is delivered.</p>
+                    </section>
+                  );
+                })()}
 
 	                {/* Section 4b: Upsell tracking + Bonus */}
 	                <section>
@@ -59943,6 +60106,22 @@ ${waybillLineItems(w).length > 1
                     <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${productActive ? "left-5" : "left-0.5"}`} />
                   </button>
                 </div>
+                <label>
+                  <span>Public order assignment</span>
+                  <select
+                    value={productPublicOrderAssignmentMode}
+                    onChange={(e) => setProductPublicOrderAssignmentMode(e.target.value as ProductPublicOrderAssignmentMode)}
+                  >
+                    <option value="inherit">
+                      Use global setting ({publicOrderAssignmentMode === "manual_review" ? "Owner/Admin review first" : "Auto-assign"})
+                    </option>
+                    <option value="auto_assign">Always auto-assign this product</option>
+                    <option value="manual_review">Owner/Admin review this product first</option>
+                  </select>
+                </label>
+                <p className="text-[11px] text-gray-500 -mt-1">
+                  Use this when only this product should arrive unassigned for manual review. Other products keep the global order assignment setting.
+                </p>
                 <p className="text-[11px] text-gray-500">Pricing, packages, bonus settings, and state availability are managed in their own sections from the product details page.</p>
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
