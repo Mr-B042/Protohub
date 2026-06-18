@@ -7523,25 +7523,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const cartSyncTimerRef = useRef<number | null>(null);
   useEffect(() => () => { if (cartSyncTimerRef.current) window.clearTimeout(cartSyncTimerRef.current); }, []);
 
-  // Scroll-position restoration — save on every scroll, restore when the hash
-  // route matches the saved key. On refresh the hash is the same so the stored
-  // position is applied once the page has rendered (after a brief rAF so the
-  // layout is complete). Keyed by hash so different pages get independent saves.
+  // Scroll-position restoration.
+  // Problem: on hard refresh the page is empty when the first rAF fires, so
+  // setting scrollTop is clamped to 0. Data loads async (sometimes after 500ms+)
+  // and makes the page tall enough — but by then nobody is retrying.
+  // Fix: poll every 200ms until scrollTop actually sticks, up to ~2s.
   useEffect(() => {
     const el = mainScrollRef.current;
     if (!el) return;
     const key = `protohub.scroll.${window.location.hash || "#/"}`;
     const savedPos = sessionStorage.getItem(key);
-    let restoreTimer: number | undefined;
+    const timers: number[] = [];
+
     if (savedPos) {
       const pos = Number(savedPos);
       if (pos > 0) {
-        // Two attempts: immediate (fast pages) + 350ms (pages that load data async
-        // and expand the content after first paint, e.g. Orders, Finance).
-        requestAnimationFrame(() => { el.scrollTop = pos; });
-        restoreTimer = window.setTimeout(() => { el.scrollTop = pos; }, 350);
+        let stuck = false;
+        const tryRestore = () => {
+          if (stuck) return;
+          el.scrollTop = pos;
+          // If it took hold (within 5px), stop retrying
+          if (Math.abs(el.scrollTop - pos) <= 5) { stuck = true; return; }
+          // Otherwise retry after 200ms (content still loading)
+          timers.push(window.setTimeout(tryRestore, 200));
+        };
+        // Schedule first attempt then 9 more retries (max ~2s)
+        [0, 200, 400, 600, 800, 1000, 1250, 1500, 1750, 2000].forEach((delay) => {
+          timers.push(window.setTimeout(() => { if (!stuck) tryRestore(); }, delay));
+        });
       }
     }
+
     let saveTimer: number | undefined;
     const onScroll = () => {
       if (saveTimer) clearTimeout(saveTimer);
@@ -7553,7 +7565,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => {
       el.removeEventListener("scroll", onScroll);
       if (saveTimer) clearTimeout(saveTimer);
-      if (restoreTimer) clearTimeout(restoreTimer);
+      timers.forEach(clearTimeout);
     };
   }, [hashRoute]);
   useEffect(() => {
