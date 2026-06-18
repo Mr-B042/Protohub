@@ -18849,7 +18849,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return matchedOrderId ? repOrderIds.has(decodeURIComponent(matchedOrderId)) : false;
   });
   const repBonusOpportunityByOrderId = new Map((repBonusCoach?.orderOpportunities ?? []).map((opportunity) => [opportunity.orderId, opportunity]));
-  const repBonusPrimaryOrder = repBonusCoach?.motivators.find((motivator) => motivator.orderId)?.orderId ?? "";
+  // Compute best order LIVE from current trackedOrders so it updates as orders
+  // are delivered — not from the stale API snapshot (which was causing the same
+  // order to open every time regardless of what the rep had already worked on).
+  const repBonusPrimaryOrder = (() => {
+    const repId = selectedRepUser?.id ?? currentManagedUser?.id ?? authUser?.id ?? "";
+    if (!repId) return repBonusCoach?.motivators.find((m) => m.orderId)?.orderId ?? "";
+    const liveOpen = trackedOrders.filter((o) =>
+      o.assignedRepId === repId &&
+      ["New", "Confirmed", "In Process", "Dispatched", "Postponed"].includes(o.status ?? "New")
+    );
+    const best = liveOpen
+      .map((o) => ({ id: o.id, bonus: Math.max(0, projectedOrderBonus(o).total ?? 0) }))
+      .filter((x) => x.bonus > 0)
+      .sort((a, b) => b.bonus - a.bonus)[0];
+    return best?.id ?? repBonusCoach?.motivators.find((m) => m.orderId)?.orderId ?? "";
+  })();
   const repBonusProjectedExtra = repBonusCoach
     ? Math.max(0, repBonusCoach.snapshot.projectedBonusOpenPipeline - repBonusCoach.snapshot.currentBonusEarned)
     : 0;
