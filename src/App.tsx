@@ -16011,7 +16011,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!isDateValue(remittanceReceivedDate)) { showToast("Choose a valid remittance received date."); return; }
     const newLogistics = remittanceLogisticsCost.trim() === "" ? (order.logisticsCost ?? 0) : Math.max(0, Number(remittanceLogisticsCost) || 0);
     const newRemitted = remittanceAmount.trim() === "" ? (order.amountRemitted ?? 0) : Math.max(0, Number(remittanceAmount) || 0);
-    const expected = Math.max(0, order.amount - newLogistics);
+    // Failed / Cancelled orders: no cash was collected (delivery didn't happen),
+    // so the expected remittance is ₦0 — not order.amount − logistics. Without
+    // this, entering any logistics cost on a Failed order created a phantom
+    // "short cash" variance equal to the full order amount, which blocked Sales
+    // Reps entirely and forced Owner/Admin to justify something that isn't wrong.
+    const isFailed = order.status === "Failed" || order.status === "Cancelled";
+    const expected = isFailed ? 0 : Math.max(0, order.amount - newLogistics);
     const variance = roundCash(newRemitted - expected);
     const hasVariance = variance !== 0;
     const isOwnerVariance = hasVariance && realRole === "Owner"; // Owner = approved at source; Admin = pending
@@ -59230,7 +59236,9 @@ ${waybillLineItems(w).length > 1
             {modal === "recordRemittance" && remittanceTargetOrder && (() => {
               const logisticsValue = remittanceLogisticsCost.trim() === "" ? (remittanceTargetOrder.logisticsCost ?? 0) : Math.max(0, Number(remittanceLogisticsCost) || 0);
               const receivedValue = remittanceAmount.trim() === "" ? (remittanceTargetOrder.amountRemitted ?? 0) : Math.max(0, Number(remittanceAmount) || 0);
-              const expectedValue = Math.max(0, remittanceTargetOrder.amount - logisticsValue);
+              const isFailedOrder = remittanceTargetOrder.status === "Failed" || remittanceTargetOrder.status === "Cancelled";
+              // Failed/Cancelled: no cash expected (delivery didn't happen) — expected = ₦0.
+              const expectedValue = isFailedOrder ? 0 : Math.max(0, remittanceTargetOrder.amount - logisticsValue);
               const variance = roundCash(receivedValue - expectedValue);
               const isShort = variance < 0;
               const isExcess = variance > 0;

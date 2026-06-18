@@ -1639,7 +1639,13 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep"), asyn
     const nextOrderAmount = numericAmount(hasOwn(updates, "amount") ? updates.amount : current.amount);
     const nextLogisticsCost = numericAmount(hasOwn(updates, "logistics_cost") ? updates.logistics_cost : current.logistics_cost);
     const nextAmountRemitted = numericAmount(hasOwn(updates, "amount_remitted") ? updates.amount_remitted : current.amount_remitted);
-    const expectedRemittance = Math.max(0, roundMoney(nextOrderAmount - nextLogisticsCost));
+    const nextStatus = typeof updates.status === "string" ? updates.status : current.status;
+    // Failed / Cancelled orders: delivery never happened so no cash was collected
+    // — expected remittance is ₦0. Without this guard, recording any logistics cost
+    // on a Failed order created a phantom "short cash" variance equal to the full
+    // order amount, blocking Sales Reps and requiring Owner/Admin justification.
+    const isFailedOrCancelled = nextStatus === "Failed" || nextStatus === "Cancelled";
+    const expectedRemittance = isFailedOrCancelled ? 0 : Math.max(0, roundMoney(nextOrderAmount - nextLogisticsCost));
     const remittanceVariance = roundMoney(nextAmountRemitted - expectedRemittance);
     const role = req.user!.role;
     if (remittanceVariance !== 0) {
