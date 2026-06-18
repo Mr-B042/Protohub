@@ -7072,6 +7072,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // "Copy offer to…" picker: which offer card has its picker open + selected target packages
   const [copyOfferPickerIdx, setCopyOfferPickerIdx] = useState<number | null>(null);
   const [copyOfferTargetPkgIds, setCopyOfferTargetPkgIds] = useState<Set<string>>(new Set());
+  // Quick-copy picker in the package list view (no edit modal needed)
+  const [quickCopyOffer, setQuickCopyOffer] = useState<{ packageItem: ProductPackage; companionIdx: number } | null>(null);
+  const [quickCopyTargetPkgIds, setQuickCopyTargetPkgIds] = useState<Set<string>>(new Set());
   const packageImageUploadTokenRef = useRef(0);
   const companionGalleryUploadTokenRef = useRef(0);
   const packageFormHydrationKeyRef = useRef("");
@@ -24506,6 +24509,29 @@ ${waybillLineItems(w).length > 1
           : p)
       );
       showToast(`Failed to ${next ? "publish" : "draft"} package: ${err?.message ?? "please retry"}.`);
+    });
+  };
+
+  // Delete a single offer from a package directly from the package list (without
+  // opening the full edit modal). Optimistic + rollback on error.
+  const deletePackageCompanion = (item: ProductPackage, companionIndex: number) => {
+    if (!selectedProduct) return;
+    if (isTemporaryPackageId(item.id)) { showToast("Package is still syncing. Try again."); return; }
+    const currentCompanions = item.companionProducts ?? [];
+    const target = currentCompanions[companionIndex];
+    if (!target) { showToast("Offer not found. Refresh and try again."); return; }
+    const previousCompanions = currentCompanions.map(normalisePackageCompanion);
+    const nextCompanions = currentCompanions.filter((_, i) => i !== companionIndex).map(normalisePackageCompanion);
+    const _prodId = selectedProduct.id;
+    setProducts((prev) => prev.map((p) => p.id !== _prodId ? p :
+      { ...p, packages: p.packages.map((pkg) => pkg.id !== item.id ? pkg : { ...pkg, companionProducts: nextCompanions }) }
+    ));
+    showToast("Offer removed.");
+    productsApi.updatePackage(_prodId, item.id, { companionProducts: nextCompanions }).catch((err: any) => {
+      setProducts((prev) => prev.map((p) => p.id !== _prodId ? p :
+        { ...p, packages: p.packages.map((pkg) => pkg.id !== item.id ? pkg : { ...pkg, companionProducts: previousCompanions }) }
+      ));
+      showToast(`Failed to remove offer: ${err?.message ?? "please retry"}.`);
     });
   };
 
@@ -51586,16 +51612,80 @@ ${waybillLineItems(w).length > 1
                                                 </span>
                                               )}
                                             </span>
-                                            <button
-                                              type="button"
-                                              className={`!min-h-0 inline-flex items-center justify-center rounded-md border px-2.5 py-1 text-[11px] font-bold transition-colors ${offerActive ? "border-amber-200 bg-white text-amber-700 hover:bg-amber-50" : "border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50"}`}
-                                              onClick={() => togglePackageCompanionActive(item, companionIdx)}
-                                              title={offerActive ? `Hide this ${comboOffer ? "combo add-on tier" : "add-on"} from the customer form` : `Show this ${comboOffer ? "combo add-on tier" : "add-on"} on the customer form`}
-                                            >
-                                              {comboOffer
-                                                ? offerActive ? "Hide combo" : "Show combo"
-                                                : offerActive ? "Hide" : "Show"}
-                                            </button>
+                                            <div className="ml-auto flex items-center gap-1 flex-wrap">
+                                              {/* Show / Hide */}
+                                              <button
+                                                type="button"
+                                                className={`!min-h-0 inline-flex items-center justify-center rounded-md border px-2 py-1 text-[11px] font-bold transition-colors whitespace-nowrap ${offerActive ? "border-amber-200 bg-white text-amber-700 hover:bg-amber-50" : "border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50"}`}
+                                                onClick={() => togglePackageCompanionActive(item, companionIdx)}
+                                                title={offerActive ? "Hide from customer form" : "Show on customer form"}
+                                              >
+                                                {comboOffer
+                                                  ? offerActive ? "Hide combo" : "Show combo"
+                                                  : offerActive ? "Hide" : "Show"}
+                                              </button>
+                                              {/* Edit — opens the package editor */}
+                                              <button
+                                                type="button"
+                                                className="!min-h-0 inline-flex items-center justify-center rounded-md border border-blue-100 bg-white px-2 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-50 transition-colors"
+                                                onClick={() => openEditPackage(item)}
+                                                title="Edit this offer in the full package editor"
+                                              ><Pencil className="w-3 h-3" /></button>
+                                              {/* Copy to another package */}
+                                              <div className="relative">
+                                                <button
+                                                  type="button"
+                                                  className="!min-h-0 inline-flex items-center justify-center rounded-md border border-violet-200 bg-white px-2 py-1 text-[11px] font-bold text-violet-700 hover:bg-violet-50 transition-colors"
+                                                  title="Copy this offer to another package"
+                                                  onClick={() => {
+                                                    setQuickCopyOffer({ packageItem: item, companionIdx });
+                                                    setQuickCopyTargetPkgIds(new Set());
+                                                  }}
+                                                ><Copy className="w-3 h-3" /></button>
+                                                {quickCopyOffer?.packageItem.id === item.id && quickCopyOffer.companionIdx === companionIdx && (() => {
+                                                  const src = (item.companionProducts ?? [])[companionIdx];
+                                                  if (!src) return null;
+                                                  const allPkgs = products.flatMap((pr) =>
+                                                    (pr.packages ?? []).filter((p) => p.id !== item.id).map((p) => ({ product: pr, pkg: p }))
+                                                  );
+                                                  if (allPkgs.length === 0) return (
+                                                    <div className="absolute right-0 top-full mt-1 z-50 w-52 rounded-xl border border-violet-200 bg-white shadow-xl p-3 text-xs text-gray-500">No other packages yet.</div>
+                                                  );
+                                                  const byProduct = new Map<string, typeof allPkgs>();
+                                                  for (const e of allPkgs) { const k = e.product.id; if (!byProduct.has(k)) byProduct.set(k, []); byProduct.get(k)!.push(e); }
+                                                  return (
+                                                    <div className="absolute right-0 top-full mt-1 z-50 w-64 rounded-xl border border-violet-200 bg-white shadow-xl p-3 flex flex-col gap-2 max-h-64 overflow-y-auto">
+                                                      <p className="text-[11px] font-bold text-violet-700 m-0 uppercase tracking-wide">Copy to package(s)</p>
+                                                      {Array.from(byProduct.entries()).map(([, entries]) => {
+                                                        const pr = entries[0].product;
+                                                        return (
+                                                          <div key={pr.id}>
+                                                            <p className="text-[10px] font-black uppercase tracking-wider text-gray-400 m-0 mb-1">{pr.name}</p>
+                                                            {entries.map(({ pkg }) => (
+                                                              <label key={pkg.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-violet-50 cursor-pointer">
+                                                                <input type="checkbox" className="rounded border-gray-300" checked={quickCopyTargetPkgIds.has(pkg.id)} onChange={(e) => setQuickCopyTargetPkgIds((prev) => { const n = new Set(prev); e.target.checked ? n.add(pkg.id) : n.delete(pkg.id); return n; })} />
+                                                                <span className="text-xs text-gray-800">{pkg.name}</span>
+                                                              </label>
+                                                            ))}
+                                                          </div>
+                                                        );
+                                                      })}
+                                                      <div className="flex gap-2 pt-1 border-t border-gray-100 mt-1">
+                                                        <button type="button" disabled={quickCopyTargetPkgIds.size === 0} className="!min-h-0 flex-1 px-3 py-1.5 text-xs font-bold bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-40" onClick={async () => { if (!selectedProduct) return; await copyOfferToPackages(src, quickCopyTargetPkgIds); setQuickCopyOffer(null); setQuickCopyTargetPkgIds(new Set()); }}>Copy{quickCopyTargetPkgIds.size > 0 ? ` to ${quickCopyTargetPkgIds.size}` : ""}</button>
+                                                        <button type="button" className="!min-h-0 px-2 py-1.5 text-xs font-semibold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50" onClick={() => { setQuickCopyOffer(null); setQuickCopyTargetPkgIds(new Set()); }}>✕</button>
+                                                      </div>
+                                                    </div>
+                                                  );
+                                                })()}
+                                              </div>
+                                              {/* Delete */}
+                                              <button
+                                                type="button"
+                                                className="!min-h-0 inline-flex items-center justify-center rounded-md border border-red-100 bg-white px-2 py-1 text-[11px] font-bold text-red-500 hover:bg-red-50 transition-colors"
+                                                onClick={() => { if (window.confirm(`Remove this offer from ${item.name}?`)) deletePackageCompanion(item, companionIdx); }}
+                                                title="Remove this offer from this package"
+                                              ><Trash2 className="w-3 h-3" /></button>
+                                            </div>
                                           </div>
                                         );
                                       })}
