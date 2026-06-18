@@ -4460,12 +4460,23 @@ const normalisePackageCompanion = (companion: Partial<PackageCompanion>): Packag
 });
 const packageCompanionForSave = (companion: Partial<PackageCompanion>): PackageCompanion | null => {
   const normalised = normalisePackageCompanion(companion);
-  if (!isUuidValue(normalised.productId)) return null;
   const bundleComponents = (normalised.bundleComponents ?? [])
     .map(normalisePackageComponent)
     .filter((component) => isUuidValue(component.productId));
+  // For inline-bundle (combo) add-ons the companion productId may be empty when
+  // the user went straight to adding bundle components without picking a base
+  // product first. Fall back to the first bundle component's productId so the
+  // offer is not silently dropped from the save / sync — it IS a valid offer,
+  // it just has no single-product target.
+  const effectiveProductId = isUuidValue(normalised.productId)
+    ? normalised.productId
+    : bundleComponents.length > 0 && isUuidValue(bundleComponents[0]?.productId)
+      ? bundleComponents[0].productId
+      : normalised.productId;
+  if (!isUuidValue(effectiveProductId)) return null;
   return {
     ...normalised,
+    productId: effectiveProductId,
     packageId: bundleComponents.length > 0 ? undefined : isUuidValue(normalised.packageId) ? normalised.packageId : undefined,
     bundleComponents,
     hideSiblingSingleAddOns: bundleComponents.length > 0 && normalised.hideSiblingSingleAddOns === true
