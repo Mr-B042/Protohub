@@ -15814,11 +15814,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         const minFee = Math.min(...fees);
         const maxFee = Math.max(...fees);
         const spread = maxFee - minFee;
+        // City-level groups ("Needs cleaner address") with 3+ orders and fee variation
+        // are promoted to "Confirmed area" — the city IS the confirmed location boundary
+        // even without a repeated neighbourhood phrase in the address text.
+        const effectiveConfidence: "Confirmed area" | "Needs cleaner address" =
+          row.confidence === "Confirmed area" ? "Confirmed area"
+          : row.orders.length >= 3 && spread > 0 ? "Confirmed area"
+          : "Needs cleaner address";
         const possibleOvercharge = row.orders.reduce((sum, order) => sum + Math.max(0, order.fee - commonFee), 0);
         const sortedDates = row.orders.map((order) => order.date).filter(Boolean).sort();
         const latestDate = sortedDates[sortedDates.length - 1] ?? "";
-        const severity = row.confidence === "Confirmed area" && (spread >= 2000 || maxFee >= commonFee * 1.5) ? "High" : row.confidence === "Confirmed area" ? "Watch" : "Review";
-        return { ...row, minFee, maxFee, commonFee, spread, possibleOvercharge, latestDate, severity, distinctFees: Array.from(feeCounts.keys()).sort((a, b) => a - b) };
+        const severity = effectiveConfidence === "Confirmed area" && (spread >= 2000 || maxFee >= commonFee * 1.5) ? "High" : effectiveConfidence === "Confirmed area" ? "Watch" : "Review";
+        return { ...row, confidence: effectiveConfidence, minFee, maxFee, commonFee, spread, possibleOvercharge, latestDate, severity, distinctFees: Array.from(feeCounts.keys()).sort((a, b) => a - b) };
       })
       .filter((row) => row.orders.length >= 2 && row.spread > 0)
       .sort((a, b) => {
