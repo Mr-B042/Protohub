@@ -13918,12 +13918,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       converterRole
     };
   });
-  const teamRecoveredCartRows = abandonedCartRecoveryRows.filter((row) => row.conversionKind === "manual_recovery");
+  // Team Recovery uses RECOVERY DATE (linked order creation date) not cart creation
+  // date — a cart abandoned in 2025 but recovered in 2026 should appear under 2026.
+  // Build recovery rows from ALL carts (not just period-filtered ones), then filter
+  // by when the linked order was actually created (the recovery moment).
+  const allCartRecoveryRows = abandonedCarts
+    .filter((cart) => matchesProductFilter(cart.productId, cart.productName, cartProductIds) && (viewerScopeRepId === null || cart.assignedRepId === viewerScopeRepId))
+    .map((cart) => {
+      const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
+      const conversionKind = abandonedCartConversionKindFor(linkedOrder);
+      const linkedStatus = linkedOrder?.status ?? "New";
+      const recoveryNote = abandonedCartRecoveryNoteFor(linkedOrder, cart.id);
+      const converterName = recoveryNote?.by ?? users.find((u) => u.id === linkedOrder?.assignedRepId)?.name ?? users.find((u) => u.id === cart.assignedRepId)?.name ?? "Team";
+      const converterRole = users.find((u) => u.name.trim().toLowerCase() === converterName.trim().toLowerCase())?.role ?? "Team";
+      return { cart, linkedOrder, conversionKind, linkedStatus, converterName, converterRole };
+    });
+  const teamRecoveredCartRows = allCartRecoveryRows.filter((row) =>
+    row.conversionKind === "manual_recovery" &&
+    isInPeriod(orderCreatedKey(row.linkedOrder!), cartsPeriod, cartsDateRange)
+  );
   const customerFinishedLaterRows = abandonedCartRecoveryRows.filter((row) => row.conversionKind === "customer_self_completed");
   const teamRecoveredDeliveredRows = teamRecoveredCartRows.filter((row) => row.linkedStatus === "Delivered");
   const teamRecoveredFailedRows = teamRecoveredCartRows.filter((row) => abandonedCartIsBadRecoveredOutcome(row.linkedStatus));
   const teamRecoveredPendingRows = teamRecoveredCartRows.filter((row) => abandonedCartIsPendingRecoveredOutcome(row.linkedStatus));
-  const convertedMissingLinkedOrderRows = filteredAbandonedCarts.filter((cart) => cart.status === "Converted" && !linkedOrderBySourceCartId.has(cart.id));
+  const convertedMissingLinkedOrderRows = abandonedCarts.filter((cart) =>
+    cart.status === "Converted" &&
+    !linkedOrderBySourceCartId.has(cart.id) &&
+    matchesProductFilter(cart.productId, cart.productName, cartProductIds) &&
+    (viewerScopeRepId === null || cart.assignedRepId === viewerScopeRepId) &&
+    isInPeriod(cart.lastActivity || cart.createdAt, cartsPeriod, cartsDateRange)
+  );
   const cartLinkRepairRows = cartLinkRepairReport?.rows ?? [];
   const cartLinkRepairableRows = cartLinkRepairRows.filter((row) => row.repairStatus === "repairable");
   const cartLinkAlreadyLinkedRows = cartLinkRepairRows.filter((row) => row.repairStatus === "already_linked");
