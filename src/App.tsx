@@ -24562,12 +24562,48 @@ ${waybillLineItems(w).length > 1
       normalisePackageCompanion(idx === companionIndex ? { ...companion, active: nextActive } : companion)
     );
     const _offerProdId = selectedProduct.id;
+
+    // Auto-sync the same offer's visibility on ALL other packages where it exists.
+    // Matches by companionId first, then by offer signature (product + bundle
+    // components) so copies made via "Copy to…" also update in one tap.
+    // Runs in the background — the source package updates first optimistically.
+    const targetKeys = new Set(packageCompanionSyncKeys(normalisePackageCompanion(target)));
+    const siblingsToSync: { productId: string; pkg: ProductPackage; matchedIdx: number }[] = [];
+    for (const product of products) {
+      for (const pkg of product.packages ?? []) {
+        if (pkg.id === item.id || isTemporaryPackageId(pkg.id)) continue;
+        const companions = (pkg.companionProducts ?? []).map(normalisePackageCompanion);
+        const matchedIdx = companions.findIndex((c) =>
+          packageCompanionSyncKeys(c).some((k) => targetKeys.has(k))
+        );
+        if (matchedIdx >= 0) siblingsToSync.push({ productId: product.id, pkg, matchedIdx });
+      }
+    }
+
+    // Optimistic update: source package
     setProducts((value) =>
       value.map((p) => p.id === _offerProdId
         ? { ...p, packages: p.packages.map((pkg) => pkg.id === item.id ? { ...pkg, companionProducts: nextCompanions } : pkg) }
         : p)
     );
-    showToast(`${nextActive ? "Showing" : "Hiding"} this ${isComboOffer ? "combo add-on" : "add-on"} on the customer form.`);
+    // Optimistic update: all sibling packages
+    if (siblingsToSync.length > 0) {
+      setProducts((prev) => prev.map((p) => ({
+        ...p,
+        packages: p.packages.map((pkg) => {
+          const match = siblingsToSync.find((s) => s.pkg.id === pkg.id);
+          if (!match) return pkg;
+          const companions = (pkg.companionProducts ?? []).map(normalisePackageCompanion);
+          return { ...pkg, companionProducts: companions.map((c, i) => i === match.matchedIdx ? { ...c, active: nextActive } : c) };
+        })
+      })));
+    }
+
+    const syncWord = nextActive ? "Showing" : "Hiding";
+    const syncCount = siblingsToSync.length;
+    showToast(`${syncWord} this ${isComboOffer ? "combo add-on" : "add-on"}${syncCount > 0 ? ` across ${syncCount + 1} packages` : " on the customer form"}.`);
+
+    // Persist: source package
     productsApi.updatePackage(_offerProdId, item.id, { companionProducts: nextCompanions }).catch((err: any) => {
       setProducts((value) =>
         value.map((p) => p.id === _offerProdId
@@ -24575,6 +24611,14 @@ ${waybillLineItems(w).length > 1
           : p)
       );
       showToast(`Failed to ${nextActive ? "show" : "hide"} ${isComboOffer ? "combo add-on" : "add-on"}: ${err?.message ?? "please retry"}.`);
+    });
+    // Persist: sibling packages (fire-and-forget; errors show a toast per package)
+    siblingsToSync.forEach(({ productId, pkg, matchedIdx }) => {
+      const companions = (pkg.companionProducts ?? []).map(normalisePackageCompanion);
+      const updated = companions.map((c, i) => i === matchedIdx ? { ...c, active: nextActive } : c);
+      productsApi.updatePackage(productId, pkg.id, { companionProducts: updated }).catch((err: any) => {
+        showToast(`Could not sync to ${pkg.name}: ${err?.message ?? "please retry"}.`);
+      });
     });
   };
 
