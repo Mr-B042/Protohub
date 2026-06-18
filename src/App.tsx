@@ -7013,8 +7013,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return stored === "pricing" || stored === "packages" ? "dashboard" : stored;
   });
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
-  const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>({});
-  const [expandedPackageRows, setExpandedPackageRows] = useState<Record<string, boolean>>({});
+  const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>(() =>
+    readPref("protohub.inventory.expandedSets", {} as Record<string, boolean>, (raw) => {
+      try { const v = JSON.parse(raw); return typeof v === "object" && v !== null ? v : null; } catch { return null; }
+    })
+  );
+  const [expandedPackageRows, setExpandedPackageRows] = useState<Record<string, boolean>>(() =>
+    readPref("protohub.inventory.expandedRows", {} as Record<string, boolean>, (raw) => {
+      try { const v = JSON.parse(raw); return typeof v === "object" && v !== null ? v : null; } catch { return null; }
+    })
+  );
   const [packageSetAction, setPackageSetAction] = useState<null | {
     mode: "duplicate" | "remove";
     setLabel: string;
@@ -7465,9 +7473,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.dashboard.revPerfMode", revPerfMode); }, [revPerfMode]);
   useEffect(() => { writePref("protohub.dashboard.revPerfCompareMode", revPerfCompareMode); }, [revPerfCompareMode]);
   // Order-inflow heatmap controls (metric / fixed window / hour grouping).
-  const [heatmapMetric, setHeatmapMetric] = useState<"orders" | "delivered" | "revenue">("orders");
-  const [heatmapWindow, setHeatmapWindow] = useState<"dashboard" | "30" | "90" | "all">("dashboard");
-  const [heatmapGroup, setHeatmapGroup] = useState<"hour" | "3h">("hour");
+  const [heatmapMetric, setHeatmapMetric] = useState<"orders" | "delivered" | "revenue">(() =>
+    readPref("protohub.heatmap.metric", "orders" as "orders" | "delivered" | "revenue", (r) => ["orders","delivered","revenue"].includes(r) ? r as any : null)
+  );
+  const [heatmapWindow, setHeatmapWindow] = useState<"dashboard" | "30" | "90" | "all">(() =>
+    readPref("protohub.heatmap.window", "dashboard" as "dashboard"|"30"|"90"|"all", (r) => ["dashboard","30","90","all"].includes(r) ? r as any : null)
+  );
+  const [heatmapGroup, setHeatmapGroup] = useState<"hour" | "3h">(() =>
+    readPref("protohub.heatmap.group", "hour" as "hour"|"3h", (r) => ["hour","3h"].includes(r) ? r as any : null)
+  );
   // Target-profit planner: a net-profit goal for the period; the break-even panel
   // goal-seeks the deliveries + delivery rate needed to hit it.
   const [profitTargetInput, setProfitTargetInput] = useState<string>(() =>
@@ -7558,6 +7572,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => { writePref("protohub.deliveries.agent",  deliveryAgent);     }, [deliveryAgent]);
   useEffect(() => { writePref("protohub.deliveries.productIds", JSON.stringify(Array.from(deliveriesProductIds))); }, [deliveriesProductIds]);
   useEffect(() => { writePref("protohub.inventory.view", inventoryView); }, [inventoryView]);
+  useEffect(() => { writePref("protohub.inventory.expandedSets", JSON.stringify(expandedPackageSets)); }, [expandedPackageSets]);
+  useEffect(() => { writePref("protohub.inventory.expandedRows", JSON.stringify(expandedPackageRows)); }, [expandedPackageRows]);
+  useEffect(() => { writePref("protohub.heatmap.metric", heatmapMetric); }, [heatmapMetric]);
+  useEffect(() => { writePref("protohub.heatmap.window", heatmapWindow); }, [heatmapWindow]);
+  useEffect(() => { writePref("protohub.heatmap.group", heatmapGroup); }, [heatmapGroup]);
   const [showDeliveriesProductFilter, setShowDeliveriesProductFilter] = useState(false);
   // Customers product filter
   const [customerProductIds, setCustomerProductIds] = useState<Set<string>>(() =>
