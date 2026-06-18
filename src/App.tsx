@@ -31775,9 +31775,12 @@ ${waybillLineItems(w).length > 1
                   <p className="text-xs text-gray-500 mt-0.5">Track what is already earned, what unlocks next, and which live order can move your bonus fastest.</p>
                 </div>
                 <div className="flex flex-col gap-2 sm:items-end">
-                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    {weekRangeLabel(repBonusWeekStart, repBonusWeekEnd)}
-                  </span>
+                  <div className="flex flex-col sm:items-end gap-0.5">
+                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                      {weekRangeLabel(repBonusWeekStart, repBonusWeekEnd)}
+                    </span>
+                    <span className="text-[11px] text-gray-400 italic">Bonus always tracks the current week — not the period filter above.</span>
+                  </div>
                   {(currentRole === "Owner" || currentRole === "Admin") && (
                     <button
                       type="button"
