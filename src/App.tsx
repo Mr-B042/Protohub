@@ -18454,7 +18454,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     const skipped = sorted[0];
     const rest = sorted.slice(1);
-    const reordered = [...rest.slice(0, -1), skipped, rest[rest.length - 1]];
+    // Move skipped rep to the end. The old "second-to-last" formula broke with
+    // exactly 2 reps: rest.slice(0,-1) = [] so reordered = [skipped, rest[0]] —
+    // same order, no change. Moving to last works correctly for any count ≥ 2.
+    const reordered = [...rest, skipped];
     const prevUsers = users;
     setUsers((prev) => prev.map((u) => {
       const idx = reordered.findIndex((r) => r.id === u.id);
