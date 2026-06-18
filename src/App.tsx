@@ -7701,8 +7701,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         let applyKeys = keys;
         if (conflicts.length > 0) {
           const lines = conflicts.map((k) => `• ${fieldLabel(k)}: ₦${Number(cur[k]).toLocaleString()} → ₦${Number(s[k]).toLocaleString()}`).join("\n");
-          const ok = window.confirm(`Replace value(s) you already have?\n\n${lines}\n\nOK = use the pulled numbers · Cancel = keep yours (still fills any empty fields).`);
-          if (!ok) applyKeys = keys.filter((k) => !conflicts.includes(k));
+          // Non-conflicts fill immediately; confirm adds the conflicting overrides too.
+          applyKeys = keys.filter((k) => !conflicts.includes(k));
+          showConfirm("Replace values you already have?", () => {
+            const conflictMerge: Record<string, number> = {};
+            for (const k of conflicts) conflictMerge[k] = s[k];
+            if (Object.keys(conflictMerge).length > 0) {
+              setBatchEconomics((p: any) => p ? { ...p, batch: { ...p.batch, ...conflictMerge } } : p);
+              showToast(`Replaced ${Object.keys(conflictMerge).length} conflicting value(s).`);
+            }
+          }, { detail: lines });
         }
         const merge: Record<string, number> = {};
         for (const k of applyKeys) merge[k] = s[k];
@@ -8516,12 +8524,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Only Owner or Admin can bootstrap remittance history.");
       return;
     }
-    const confirmed = window.confirm(
-      "Bootstrap missing remittance history for older orders? This creates estimated receipt-dated cash entries for orders that already have remitted amounts but no remittance ledger rows yet. Protohub will use each order's last updated time as the best available historical receipt date."
-    );
-    if (!confirmed) return;
-
-    setFinanceRemittanceBackfillLoading(true);
+    showConfirm("Bootstrap missing remittance history?", () => {
+      void (async () => {
+        setFinanceRemittanceBackfillLoading(true);
     try {
       const result = await remittanceTransactionsApi.backfill({ dateMode: "updated_at" });
       const insertedCount = Math.max(0, Number(result?.insertedCount ?? 0));
@@ -8550,6 +8555,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } finally {
       setFinanceRemittanceBackfillLoading(false);
     }
+      })();
+    }, { detail: "Creates estimated receipt-dated entries for orders that already have remitted amounts but no ledger rows. Uses each order's last-updated time as the best available historical date." });
   };
 
   useEffect(() => {
@@ -10991,16 +10998,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
   const deleteMarketingVariant = async (variant: MarketingLinkVariant) => {
-    if (!window.confirm(`Delete "${variant.label}" tracked link? Existing orders stay attributed, but this saved shortcut will disappear.`)) return;
-    const snapshot = marketingLinkVariants;
-    setMarketingLinkVariants((prev) => prev.filter((row) => row.id !== variant.id));
-    try {
-      await marketingLinkVariantsApi.delete(variant.id);
-      showToast("Landing-page link deleted.");
-    } catch (err: any) {
-      setMarketingLinkVariants(snapshot);
-      showToast(`Could not delete link: ${err?.message ?? err}`);
-    }
+    showConfirm(`Delete "${variant.label}" tracked link?`, () => {
+      const snapshot = marketingLinkVariants;
+      setMarketingLinkVariants((prev) => prev.filter((row) => row.id !== variant.id));
+      marketingLinkVariantsApi.delete(variant.id).then(() => showToast("Landing-page link deleted.")).catch((err: any) => { setMarketingLinkVariants(snapshot); showToast(`Could not delete link: ${err?.message ?? err}`); });
+    }, { detail: "Existing orders stay attributed, but this saved shortcut will disappear.", danger: true, confirmLabel: "Delete" });
   };
   const remapProductKeyedRecord = <T,>(value: Record<string, T>, tempId: string, savedId: string) => {
     if (tempId === savedId || !Object.prototype.hasOwnProperty.call(value, tempId)) {
@@ -21200,6 +21202,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const showToast = (message: string) => setToast(message);
 
+  // In-app confirm dialog — replaces every window.confirm() with a premium
+  // modal so it matches the app's design and works on all browsers/webviews.
+  const [confirmDialog, setConfirmDialog] = useState<{
+    message: string;
+    detail?: string;
+    confirmLabel?: string;
+    danger?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
+  const showConfirm = (
+    message: string,
+    onConfirm: () => void,
+    opts?: { detail?: string; confirmLabel?: string; danger?: boolean }
+  ) => setConfirmDialog({ message, onConfirm, ...opts });
+
   const normalizeWhatsAppPhone = (phone: string | null | undefined) => {
     let clean = (phone ?? "").replace(/\D/g, "");
     if (!clean) return null;
@@ -25697,22 +25714,32 @@ ${waybillLineItems(w).length > 1
     let note: string | undefined;
     if (action === "reject") {
       note = (window.prompt("Reason for rejecting this cash variance (optional):") ?? "").trim() || undefined;
-    } else if (!window.confirm("Approve this cash variance? The cash is already recorded — this signs off on it.")) {
+    } else {
+      showConfirm("Approve this cash variance?", () => {
+        const nextStatus2: TrackedOrder["remittanceVarianceStatus"] = "approved";
+        setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, remittanceVarianceStatus: nextStatus2 } : o));
+        ordersApi.reviewRemittanceVariance(orderId, { action: "approve" }).catch((err: any) => {
+          setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? order : o));
+          showToast(`Could not approve the variance: ${err?.message ?? "please retry"}.`);
+        });
+        showToast(`Cash variance approved on ${orderId}.`);
+      }, { detail: "The cash is already recorded — this signs off on it." });
       return;
     }
-    const nextStatus: TrackedOrder["remittanceVarianceStatus"] = action === "approve" ? "approved" : "rejected";
+    // Only the "reject" path reaches here (the "approve" path returns after showConfirm).
+    const nextStatus: TrackedOrder["remittanceVarianceStatus"] = "rejected";
     setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, remittanceVarianceStatus: nextStatus } : o));
     ordersApi.reviewRemittanceVariance(orderId, { action, note }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? order : o));
-      showToast(`Could not ${action} the variance: ${err?.message ?? "please retry"}.`);
+      showToast(`Could not reject the variance: ${err?.message ?? "please retry"}.`);
     });
-    showToast(action === "approve" ? `Cash variance approved on ${orderId}.` : `Cash variance rejected on ${orderId}.`);
+    showToast(`Cash variance rejected on ${orderId}.`);
   };
 
   // Approve a whole batch of pending variances at once (one confirm, then fire each).
   const approveVarianceBatch = async (orderIds: string[]) => {
     if (orderIds.length === 0) return;
-    if (!window.confirm(`Approve all ${orderIds.length} cash variance(s) in this batch? The cash is already recorded — this signs them off.`)) return;
+    showConfirm(`Approve all ${orderIds.length} cash variance${orderIds.length === 1 ? "" : "s"} in this batch?`, async () => {
     const snapshot = trackedOrders;
     setTrackedOrders((prev) => prev.map((o) => orderIds.includes(o.id) ? { ...o, remittanceVarianceStatus: "approved" } : o));
     const results = await Promise.allSettled(orderIds.map((id) => ordersApi.reviewRemittanceVariance(id, { action: "approve" })));
@@ -25727,6 +25754,7 @@ ${waybillLineItems(w).length > 1
     if (failed === 0) showToast(`Approved ${ok} cash variance(s).`);
     else if (ok > 0) showToast(`Approved ${ok}; ${failed} failed — please retry.`);
     else showToast(`Could not approve — all ${failed} failed. Please retry.`);
+    }, { detail: "The cash is already recorded — this signs them off.", confirmLabel: "Approve all" });
   };
 
   // Owner unlocks a settled remittance (one order, or a whole partner's orders) so an
@@ -26428,32 +26456,22 @@ ${waybillLineItems(w).length > 1
       showToast("This order is already unassigned.");
       return;
     }
-    if (!window.confirm(`Remove the assigned owner from order ${selectedOrder.id}?`)) {
-      return;
-    }
-    const orderSnapshot = selectedOrder;
-    const nextResponse = "Assignment removed";
-    const nextNotes = [
-      { id: makeNoteId(), text: `Assignment removed from ${users.find((user) => user.id === selectedOrder.assignedRepId)?.name ?? "current owner"}.`, by: ownerName, date: new Date().toISOString() },
-      ...orderNotesFor(selectedOrder)
-    ];
-    setTrackedOrders((value) =>
-      value.map((order) =>
-        order.id === selectedOrder.id
-          ? { ...order, assignedRepId: undefined, response: nextResponse, notes: nextNotes }
-          : order
-      )
-    );
-    closeModal();
-    showToast(`${selectedOrder.id} is now unassigned.`);
-    ordersApi.update(selectedOrder.id, {
-      assigned_rep_id: null,
-      response: nextResponse,
-      timeline_notes: nextNotes
-    }).catch((err: any) => {
-      setTrackedOrders((value) => value.map((order) => order.id === selectedOrder.id ? orderSnapshot : order));
-      showToast(`Failed to remove assignment from ${selectedOrder.id}: ${err?.message ?? "please retry"}.`);
-    });
+    const _so = selectedOrder;
+    showConfirm(`Remove the assigned rep from order ${_so.id}?`, () => {
+      const orderSnapshot = _so;
+      const nextResponse = "Assignment removed";
+      const nextNotes = [
+        { id: makeNoteId(), text: `Assignment removed from ${users.find((user) => user.id === _so.assignedRepId)?.name ?? "current owner"}.`, by: ownerName, date: new Date().toISOString() },
+        ...orderNotesFor(_so)
+      ];
+      setTrackedOrders((value) => value.map((order) => order.id === _so.id ? { ...order, assignedRepId: undefined, response: nextResponse, notes: nextNotes } : order));
+      closeModal();
+      showToast(`${_so.id} is now unassigned.`);
+      ordersApi.update(_so.id, { assigned_rep_id: null, response: nextResponse, timeline_notes: nextNotes }).catch((err: any) => {
+        setTrackedOrders((value) => value.map((order) => order.id === _so.id ? orderSnapshot : order));
+        showToast(`Failed to remove assignment from ${_so.id}: ${err?.message ?? "please retry"}.`);
+      });
+    }, { danger: true, confirmLabel: "Remove" });
   };
 
   const addOrderNote = () => {
@@ -28473,7 +28491,7 @@ ${waybillLineItems(w).length > 1
     }
     const lineItems = waybillLineItems(record);
     const itemsLabel = lineItems.map((it) => `${it.quantity} × ${it.productName}`).join(", ");
-    if (!window.confirm(`Delete waybill ${record.id}?${record.status === "In Transit" ? " Stock will be returned to the sender first." : ""}\n\n${itemsLabel}\n\nThis cannot be undone.`)) return;
+    showConfirm(`Delete waybill ${record.id}?`, () => {
 
     const productsSnapshot = products;
     const agentStockSnapshot = agentStock;
@@ -28515,6 +28533,7 @@ ${waybillLineItems(w).length > 1
       setExpenses(expenseSnapshot);
       showToast(`Failed to delete waybill: ${err?.message ?? "please retry"}.`);
     });
+    }, { danger: true, confirmLabel: "Delete", detail: itemsLabel + (record.status === "In Transit" ? " — stock will be returned to the sender first." : "") });
   };
 
   const openEditWaybillModal = (waybillId: string, record?: WaybillRecord) => {
@@ -28697,10 +28716,7 @@ ${waybillLineItems(w).length > 1
       showToast("Scan first — no safe converted cart repairs are ready to apply.");
       return;
     }
-    if (!window.confirm(`Apply ${safeCount} safe converted cart link repair${safeCount === 1 ? "" : "s"}? Ambiguous rows will be left untouched.`)) {
-      return;
-    }
-
+    showConfirm(`Apply ${safeCount} safe converted cart link repair${safeCount === 1 ? "" : "s"}?`, async () => {
     setCartLinkRepairApplying(true);
     try {
       const result = await cartsApi.applyConvertedLinkRepairs() as {
@@ -28723,6 +28739,7 @@ ${waybillLineItems(w).length > 1
     } finally {
       setCartLinkRepairApplying(false);
     }
+    }, { detail: "Ambiguous rows will be left untouched.", confirmLabel: "Apply" });
   };
 
   const applyConvertedCartLinkRepairRow = async (row: ConvertedCartLinkRepairRow) => {
@@ -28731,14 +28748,12 @@ ${waybillLineItems(w).length > 1
       showToast("This cart has no submitted order number to verify.");
       return;
     }
-    const label = `${row.cartId} → order #${row.orderId}`;
-    if (!window.confirm(`Re-check and link ${label}? The backend will block this if the order is missing, belongs to another cart, or changed while reviewing.`)) {
-      return;
-    }
+    const label = `${row.cartId} → order #${row.orderId ?? "?"}`;
+    showConfirm(`Re-check and link ${label}?`, async () => {
 
     setCartLinkRepairApplyingId(row.cartId);
     try {
-      const result = await cartsApi.applyConvertedLinkRepair(row.cartId, row.orderId) as {
+      const result = await cartsApi.applyConvertedLinkRepair(row.cartId, row.orderId!) as {
         repaired?: { cartId: string; orderId: string }[];
         repairedCount?: number;
         report?: ConvertedCartLinkRepairReport;
@@ -28760,6 +28775,7 @@ ${waybillLineItems(w).length > 1
     } finally {
       setCartLinkRepairApplyingId(null);
     }
+    }, { detail: "The backend will block this if the order is missing, belongs to another cart, or changed while reviewing.", confirmLabel: "Re-check & link" });
   };
 
   const deleteCartRecord = (cart: AbandonedCartRecord) => {
@@ -28768,10 +28784,7 @@ ${waybillLineItems(w).length > 1
       showToast("Only Owner/Admin can delete abandoned carts.");
       return;
     }
-    if (!window.confirm(`Delete abandoned cart ${cart.id} for ${cart.customer || "this customer"}? This cannot be undone.`)) {
-      return;
-    }
-
+    showConfirm(`Delete cart ${cart.id}${cart.customer ? ` for ${cart.customer}` : ""}?`, () => {
     const cartSnapshot = cart;
     const wasSelected = selectedCartId === cart.id;
     const wasModalOpen = wasSelected && ["cartDetails", "assignCart", "convertCart"].includes(modal ?? "");
@@ -28797,6 +28810,7 @@ ${waybillLineItems(w).length > 1
       setAbandonedCarts((value) => [cartSnapshot, ...value.filter((item) => item.id !== cartSnapshot.id)]);
       showToast(`Failed to delete ${cartSnapshot.id}: ${err?.message ?? "please retry"}.`);
     });
+    }, { danger: true, confirmLabel: "Delete", detail: "This cannot be undone." });
   };
 
   const exportCartsCsv = () => {
@@ -29195,15 +29209,16 @@ ${waybillLineItems(w).length > 1
 
   const deletePayRate = (userId: string) => {
     const name = users.find((u) => u.id === userId)?.name ?? "this user";
-    if (!window.confirm(`Remove the pay structure for ${name}? They'll go back to "Not set". Past payroll runs are unaffected.`)) return;
-    const prevStructures = [...payStructures];
-    setPayStructures((value) => value.filter((item) => item.userId !== userId));
-    setModal(null);
-    showToast(`Pay structure removed for ${name}.`);
-    payStructuresApi.delete(userId).catch((err: any) => {
-      setPayStructures(prevStructures);
-      showToast(`Failed to remove pay rate: ${err.message}`);
-    });
+    showConfirm(`Remove the pay structure for ${name}?`, () => {
+      const prevStructures = [...payStructures];
+      setPayStructures((value) => value.filter((item) => item.userId !== userId));
+      setModal(null);
+      showToast(`Pay structure removed for ${name}.`);
+      payStructuresApi.delete(userId).catch((err: any) => {
+        setPayStructures(prevStructures);
+        showToast(`Failed to remove pay rate: ${err.message}`);
+      });
+    }, { detail: "They'll go back to 'Not set'. Past payroll runs are unaffected.", danger: true, confirmLabel: "Remove" });
   };
 
   const previewPayroll = async () => {
@@ -44875,7 +44890,7 @@ ${waybillLineItems(w).length > 1
                       ><Settings className="w-3.5 h-3.5" />{showBatchTierConfig ? "Hide" : "Edit"} cost-tier rules</button>
                       {selectedBatchId && (
                         <button
-                          onClick={() => { if (window.confirm("Delete this batch? Orders stay; they just un-link from it.")) batchesApi.delete(selectedBatchId!).then(() => { setSelectedBatchId(null); setBatchEconomics(null); loadBatches(); }); }}
+                          onClick={() => showConfirm("Delete this batch?", () => { batchesApi.delete(selectedBatchId!).then(() => { setSelectedBatchId(null); setBatchEconomics(null); loadBatches(); }); }, { detail: "Orders stay; they just un-link from it.", danger: true, confirmLabel: "Delete" })}
                           className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50"
                         ><Trash2 className="w-3.5 h-3.5" />Delete batch</button>
                       )}
@@ -47315,7 +47330,7 @@ ${waybillLineItems(w).length > 1
                     <Repeat2 className="w-4 h-4" /> Advance Sequence
                   </button>
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-red-200 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors disabled:opacity-40" disabled={roundRobinActiveRows.length === 0} onClick={() => {
-                    if (!window.confirm("Reset the sequence? This will move the pointer back to position 1 and start fresh. Excluded reps remain excluded.")) return;
+                    showConfirm("Reset the round-robin sequence?", () => {
                     const sorted = roundRobinActiveRows.map((r) => r.user).sort((a, b) => a.name.localeCompare(b.name));
                     if (sorted.some((user) => isTemporaryUserId(user.id))) {
                       showToast("A team member is still syncing. Try again in a moment.");
@@ -47331,6 +47346,7 @@ ${waybillLineItems(w).length > 1
                       setUsers(prevUsers);
                       showToast(`Failed to save sequence: ${err.message}`);
                     });
+                    }, { detail: "Moves the pointer back to position 1. Excluded reps remain excluded.", danger: true, confirmLabel: "Reset" });
                   }}>
                     <RefreshCw className="w-4 h-4" /> Reset Sequence
                   </button>
@@ -51744,7 +51760,7 @@ ${waybillLineItems(w).length > 1
                                               <button
                                                 type="button"
                                                 className="!min-h-0 inline-flex items-center justify-center rounded-md border border-red-100 bg-white px-2 py-1 text-[11px] font-bold text-red-500 hover:bg-red-50 transition-colors"
-                                                onClick={() => { if (window.confirm(`Remove this offer from ${item.name}?`)) deletePackageCompanion(item, companionIdx); }}
+                                                onClick={() => showConfirm(`Remove this offer from ${item.name}?`, () => deletePackageCompanion(item, companionIdx), { danger: true, confirmLabel: "Remove" })}
                                                 title="Remove this offer from this package"
                                               ><Trash2 className="w-3 h-3" /></button>
                                             </div>
@@ -52395,6 +52411,30 @@ ${waybillLineItems(w).length > 1
           </div>
         </main>
       </div>
+
+      {/* Premium in-app confirm dialog — replaces all window.confirm() popups */}
+      {confirmDialog && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-4" onClick={() => setConfirmDialog(null)}>
+          <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-[#0f1822] p-6 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3">
+              <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-lg ${confirmDialog.danger ? "bg-red-100 dark:bg-red-500/15" : "bg-amber-100 dark:bg-amber-500/15"}`}>
+                {confirmDialog.danger ? "⚠️" : "❓"}
+              </span>
+              <div className="min-w-0">
+                <p className="m-0 text-sm font-bold text-gray-900 dark:text-slate-100 leading-snug">{confirmDialog.message}</p>
+                {confirmDialog.detail && <p className="m-0 mt-1 text-xs text-gray-500 dark:text-slate-400 leading-relaxed">{confirmDialog.detail}</p>}
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button className="!min-h-0 px-4 py-2 rounded-lg border border-gray-200 dark:border-slate-700 text-sm font-semibold text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors" onClick={() => setConfirmDialog(null)}>Cancel</button>
+              <button
+                className={`!min-h-0 px-4 py-2 rounded-lg text-sm font-bold text-white transition-colors ${confirmDialog.danger ? "bg-red-600 hover:bg-red-700" : "bg-[#1F8FE0] hover:bg-blue-700"}`}
+                onClick={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}
+              >{confirmDialog.confirmLabel ?? "Confirm"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {managerActionDialog && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4">
@@ -60276,7 +60316,7 @@ ${waybillLineItems(w).length > 1
                   </section>
 
                   <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
-                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => { if (window.confirm("Reset bonus config to defaults?")) { updateProductBonusConfig(product.id, () => defaultBonusConfig()); showToast("Reset to defaults"); } }}>Reset to Defaults</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => showConfirm("Reset bonus config to defaults?", () => { updateProductBonusConfig(product.id, () => defaultBonusConfig()); showToast("Reset to defaults"); })}>Reset to Defaults</button>
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={closeModal}>Done</button>
                   </div>
                 </div>
@@ -60727,17 +60767,16 @@ ${waybillLineItems(w).length > 1
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-gray-100">
                     <button
                       className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-md"
-                      onClick={async () => {
-                        if (!window.confirm(`Delete expense ${expense.id}? This cannot be undone.`)) return;
+                      onClick={() => showConfirm(`Delete expense ${expense.id}?`, () => {
                         const snapshot = expense;
                         setExpenses((prev) => prev.filter((e) => e.id !== expense.id));
                         showToast(`Expense ${expense.id} deleted.`);
                         closeModal();
-                        try { await expensesApi.delete(expense.id); } catch (err: any) {
+                        expensesApi.delete(expense.id).catch((err: any) => {
                           setExpenses((prev) => [snapshot, ...prev]);
                           showToast(`Failed to delete expense: ${err.message}`);
-                        }
-                      }}
+                        });
+                      }, { danger: true, confirmLabel: "Delete", detail: "This cannot be undone." })}
                     ><Trash2 className="w-3.5 h-3.5" /> Delete expense</button>
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button>
                   </div>
