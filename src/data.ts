@@ -51,6 +51,7 @@ export const navItems = [
   { label: "Marketing", icon: TrendingUp },
   { label: "User Management", icon: Users },
   { label: "Round-Robin", icon: Repeat2 },
+  { label: "WhatsApp", icon: MessageCircle },
   { label: "Embed Form", icon: Code2 },
   { label: "Notifications", icon: Bell },
   { label: "Call Rep Console", icon: Phone },

@@ -112,7 +112,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, whatsappSettingsApi
 } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
@@ -182,7 +182,7 @@ type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" |
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
-type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings";
+type ActivePage = "Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type OrderScheduleFilter = "All schedule marks" | "Scheduled Delivered" | "Scheduled Late" | "Scheduled Pending";
@@ -1847,29 +1847,29 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
-    "Ad Tracking", "Marketing", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings"
+    "Ad Tracking", "Marketing", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Admin": [
     "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
-    "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings"
+    "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Manager": [
     "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Sales Reps", "Sales Teams", "Weekend Stock Summary", "Customers", "Round-Robin", "Notifications", "Settings"
+    "Sales Reps", "Sales Teams", "Weekend Stock Summary", "Customers", "Round-Robin", "Notifications", "Settings", "WhatsApp"
   ],
   "Sales Rep": [
-    "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary", "Notifications", "Settings"
+    "Sales Rep Workspace", "Call Rep Console", "Weekend Stock Summary", "Notifications", "Settings", "WhatsApp"
   ],
   "Inventory Manager": [
-    "Dashboard", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings"
+    "Dashboard", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings", "WhatsApp"
   ],
   "Marketer": [
-    "Orders", "Marketing", "Embed Form", "Notifications", "Settings"
+    "Orders", "Marketing", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Viewer": [
-    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Customers", "Notifications", "Settings"
+    "Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Customers", "Notifications", "Settings", "WhatsApp"
   ]
 };
 
@@ -1909,7 +1909,8 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Round-Robin": "#/dashboard/admin/round-robin",
   "Embed Form": "#/dashboard/admin/embed",
   Notifications: "#/dashboard/admin/notifications",
-  Settings: "#/dashboard/admin/settings"
+  Settings: "#/dashboard/admin/settings",
+  WhatsApp: "#/dashboard/admin/whatsapp"
 };
 
 const dashboardHashForRolePage = (page: ActivePage, role: EditableUserRole): string => {
@@ -7247,6 +7248,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [emailMessagesLoading, setEmailMessagesLoading] = useState(false);
   const [emailActivityPage, setEmailActivityPage] = useState(1);
   const [emailActivityTotal, setEmailActivityTotal] = useState(0);
+  // WhatsApp automation page state
+  const [waSettings, setWaSettings] = useState<Record<string, any> | null>(null);
+  const [waSettingsLoading, setWaSettingsLoading] = useState(false);
+  const [waConnecting, setWaConnecting] = useState(false);
+  const [waDisconnecting, setWaDisconnecting] = useState(false);
+  const [waConnectMode, setWaConnectMode] = useState<"qr" | "pairing_code">("qr");
+  const [waPairingPhone, setWaPairingPhone] = useState("");
   const [smsSettings, setSmsSettings] = useState<SmsSettingsState | null>(null);
   const [smsSettingsLoading, setSmsSettingsLoading] = useState(false);
   const [smsSettingsSaving, setSmsSettingsSaving] = useState(false);
@@ -8675,6 +8683,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
 
     await loadSmsBalance(options);
+  };
+
+  // Load WhatsApp settings when the WhatsApp page is opened (Owner only — others see Coming Soon)
+  useEffect(() => {
+    if (activePage !== "WhatsApp" || realRole !== "Owner") return;
+    if (waSettings || waSettingsLoading) return;
+    setWaSettingsLoading(true);
+    whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
+  }, [activePage, realRole]);
+
+  const waConnect = async () => {
+    setWaConnecting(true);
+    try {
+      const updated = await whatsappSettingsApi.connect({ mode: waConnectMode, phone: waConnectMode === "pairing_code" ? waPairingPhone : undefined });
+      setWaSettings(updated);
+    } catch (err: any) { showToast(`Could not start connection: ${err?.message ?? "please retry"}.`); }
+    finally { setWaConnecting(false); }
+  };
+  const waDisconnect = async () => {
+    showConfirm("Disconnect WhatsApp?", async () => {
+      setWaDisconnecting(true);
+      try { const updated = await whatsappSettingsApi.disconnect(); setWaSettings(updated); }
+      catch (err: any) { showToast(`Could not disconnect: ${err?.message ?? "please retry"}.`); }
+      finally { setWaDisconnecting(false); }
+    }, { detail: "Automation will stop until reconnected.", danger: true, confirmLabel: "Disconnect" });
+  };
+  const waRefresh = () => {
+    setWaSettingsLoading(true);
+    whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => {}).finally(() => setWaSettingsLoading(false));
   };
 
   useEffect(() => {
@@ -23060,7 +23097,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Workspace" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings") {
+    if (label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Workspace" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
       if (label === "Inventory") {
         setInventoryView("dashboard");
       }
@@ -49144,6 +49181,137 @@ ${waybillLineItems(w).length > 1
               </>);
               })()}
               </div>
+            </div>
+          ) : activePage === "WhatsApp" ? (
+            <div className="space-y-6 max-w-2xl mx-auto">
+              {/* Header */}
+              <header>
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#25D366]/15 text-[#25D366]">
+                    <MessageCircle className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <h1 className="text-xl font-black text-gray-900 m-0">WhatsApp Automation</h1>
+                    <p className="text-xs text-gray-500 m-0">Auto-send order updates and follow-ups via WhatsApp Business.</p>
+                  </div>
+                </div>
+              </header>
+
+              {realRole !== "Owner" ? (
+                /* Coming Soon — all non-Owner roles */
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-8 py-14 text-center">
+                  <span className="text-4xl">📲</span>
+                  <h2 className="mt-4 text-lg font-black text-gray-900">Coming soon for {currentRole}s</h2>
+                  <p className="mt-2 text-sm text-gray-500 max-w-sm mx-auto">
+                    WhatsApp automation will be available for your role soon. The Owner can set up the connection now and automate order messages for the whole team.
+                  </p>
+                </div>
+              ) : (
+                /* Owner view — connection management */
+                <div className="space-y-4">
+                  {waSettingsLoading ? (
+                    <div className="rounded-2xl border border-gray-200 bg-white p-6 animate-pulse">
+                      <div className="h-4 w-32 bg-gray-200 rounded mb-3" />
+                      <div className="h-8 w-48 bg-gray-200 rounded mb-2" />
+                      <div className="h-3 w-64 bg-gray-100 rounded" />
+                    </div>
+                  ) : (
+                    <article className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                      {/* Status row */}
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div>
+                          <p className="text-[11px] font-black uppercase tracking-wider text-gray-400 m-0">Connection status</p>
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className={`inline-flex h-2.5 w-2.5 rounded-full ${
+                              waSettings?.connection_status === "connected" ? "bg-emerald-500" :
+                              waSettings?.connection_status === "pairing" || waSettings?.connection_status === "connecting" ? "bg-amber-400 animate-pulse" :
+                              "bg-gray-300"
+                            }`} />
+                            <span className="text-base font-black text-gray-900 capitalize">
+                              {waSettings?.connection_status === "connected" ? "Connected" :
+                               waSettings?.connection_status === "pairing" ? "Pairing…" :
+                               waSettings?.connection_status === "connecting" ? "Connecting…" :
+                               "Disconnected"}
+                            </span>
+                          </div>
+                          {waSettings?.connected_phone && (
+                            <p className="mt-1 text-sm text-gray-600 m-0">+{waSettings.connected_phone}{waSettings.connected_name ? ` · ${waSettings.connected_name}` : ""}</p>
+                          )}
+                          {waSettings?.last_error && (
+                            <p className="mt-1 text-xs text-rose-600 m-0">Last error: {waSettings.last_error}</p>
+                          )}
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors" onClick={waRefresh} disabled={waSettingsLoading}>
+                            <RefreshCw className={`h-3.5 w-3.5 ${waSettingsLoading ? "animate-spin" : ""}`} /> Refresh
+                          </button>
+                          {waSettings?.connection_status === "connected" && (
+                            <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 text-xs font-bold text-rose-600 hover:bg-rose-50 transition-colors" onClick={waDisconnect} disabled={waDisconnecting}>
+                              {waDisconnecting ? "Disconnecting…" : "Disconnect"}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* QR / pairing code */}
+                      {waSettings?.connection_status !== "connected" && (
+                        <div className="mt-5 space-y-4 border-t border-gray-100 pt-5">
+                          <p className="text-sm font-semibold text-gray-700 m-0">Connect your WhatsApp Business number</p>
+                          <div className="flex gap-2">
+                            {(["qr", "pairing_code"] as const).map((mode) => (
+                              <button key={mode} type="button"
+                                className={`!min-h-0 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${waConnectMode === mode ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
+                                onClick={() => setWaConnectMode(mode)}>
+                                {mode === "qr" ? "QR Code" : "Pairing Code"}
+                              </button>
+                            ))}
+                          </div>
+                          {waConnectMode === "pairing_code" && (
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-600 mb-1">Your WhatsApp Business phone number</label>
+                              <input
+                                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30"
+                                placeholder="+234 800 000 0000"
+                                value={waPairingPhone}
+                                onChange={(e) => setWaPairingPhone(e.target.value)}
+                              />
+                            </div>
+                          )}
+                          {waSettings?.qr_code_data_url && waSettings.connection_status === "pairing" && waConnectMode === "qr" && (
+                            <div className="flex flex-col items-center gap-3 p-4 bg-gray-50 rounded-xl border border-gray-100">
+                              <p className="text-xs text-gray-500 m-0">Scan this QR code in WhatsApp → Linked Devices → Link a Device</p>
+                              <img src={waSettings.qr_code_data_url} alt="WhatsApp QR Code" className="w-48 h-48 rounded-xl" />
+                            </div>
+                          )}
+                          {waSettings?.pairing_code && waSettings.connection_status === "pairing" && waConnectMode === "pairing_code" && (
+                            <div className="flex items-center gap-3 p-4 bg-[#25D366]/10 rounded-xl border border-[#25D366]/20">
+                              <span className="text-2xl font-black tracking-[0.2em] text-gray-900">{waSettings.pairing_code}</span>
+                              <p className="text-xs text-gray-600 m-0">Enter this code in WhatsApp → Settings → Linked Devices → Link with phone number</p>
+                            </div>
+                          )}
+                          <button
+                            className="!min-h-0 inline-flex items-center justify-center gap-2 w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#25D366] text-white text-sm font-black hover:bg-[#1ebe57] transition-colors disabled:opacity-50"
+                            onClick={waConnect}
+                            disabled={waConnecting || (waConnectMode === "pairing_code" && !waPairingPhone.trim())}
+                          >
+                            <MessageCircle className="h-4 w-4" />
+                            {waConnecting ? "Starting connection…" : waSettings?.connection_status === "pairing" ? "Waiting for scan…" : "Connect WhatsApp Business"}
+                          </button>
+                        </div>
+                      )}
+                    </article>
+                  )}
+
+                  {/* Coming soon — automation rules, templates, broadcast */}
+                  <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50/60 px-6 py-8 text-center">
+                    <p className="text-[11px] font-black uppercase tracking-wider text-gray-400 m-0">Coming next</p>
+                    <h3 className="mt-2 text-base font-black text-gray-700">Automation rules, templates &amp; broadcast</h3>
+                    <p className="mt-1 text-sm text-gray-500 max-w-md mx-auto">
+                      Once connected, you'll be able to auto-send order confirmations, delivery reminders, and follow-up messages — and broadcast to customer lists directly from here.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           ) : activePage === "Settings" ? (
             <div className="space-y-8">
