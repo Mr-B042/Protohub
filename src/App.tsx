@@ -8687,7 +8687,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // Load WhatsApp settings when the WhatsApp page is opened (Owner only — others see Coming Soon)
   useEffect(() => {
-    if (activePage !== "WhatsApp" || realRole !== "Owner") return;
+    if (activePage !== "WhatsApp" || currentRole !== "Owner") return;
     if (waSettings || waSettingsLoading) return;
     setWaSettingsLoading(true);
     whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
@@ -19509,7 +19509,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "embed-form": "Embed Form",
       notifications: "Notifications",
       "call-rep-console": "Call Rep Console",
-      settings: "Settings"
+      settings: "Settings",
+      whatsapp: "WhatsApp"
     };
 
     const adminOrderWorkspaceRoutePage = section === "orders"
@@ -23066,7 +23067,8 @@ ${waybillLineItems(w).length > 1
       "Embed Form": "#/dashboard/admin/embed",
       Notifications: "#/dashboard/admin/notifications",
       "Call Rep Console": "#/dashboard/admin/call-rep-console",
-      Settings: "#/dashboard/admin/settings"
+      Settings: "#/dashboard/admin/settings",
+      WhatsApp: "#/dashboard/admin/whatsapp"
     };
     const syncAdminHash = (nextLabel: string) => {
       const nextHash = adminHashByLabel[nextLabel];
@@ -49197,8 +49199,8 @@ ${waybillLineItems(w).length > 1
                 </div>
               </header>
 
-              {realRole !== "Owner" ? (
-                /* Coming Soon — all non-Owner roles */
+              {currentRole !== "Owner" ? (
+                /* Coming Soon — all non-Owner roles (including spy-mode as non-Owner) */
                 <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-8 py-14 text-center">
                   <span className="text-4xl">📲</span>
                   <h2 className="mt-4 text-lg font-black text-gray-900">Coming soon for {currentRole}s</h2>
