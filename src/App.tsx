@@ -49767,7 +49767,7 @@ ${waybillLineItems(w).length > 1
               </div>
             </div>
           ) : activePage === "WhatsApp" ? (
-            <div className="mx-auto max-w-6xl space-y-4 px-2 sm:px-0 sm:space-y-6">
+            <div className="mx-auto max-w-6xl space-y-3 sm:space-y-5 px-0">
               {/* WhatsApp connected success popup */}
               {/* Not-on-WhatsApp error popup */}
               {waNotOnWhatsApp && (
@@ -49842,8 +49842,8 @@ ${waybillLineItems(w).length > 1
                 const orgPairing = orgStatus === "pairing" || orgStatus === "connecting";
                 const isOwner = currentRole === "Owner";
                 return (
-                  <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <section className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
+                    <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div>
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Owner automation account{!isOwner && " — view only"}</p>
                         <div className="mt-2 flex items-center gap-2">
@@ -49982,7 +49982,7 @@ ${waybillLineItems(w).length > 1
                         return (
                           <div
                             key={key}
-                            className={`flex items-center gap-4 px-5 py-4 transition-colors ${enabled ? "bg-white" : "bg-gray-50/60"}`}
+                            className={`flex items-center gap-3 sm:gap-4 px-3 sm:px-5 py-3 sm:py-4 transition-colors ${enabled ? "bg-white" : "bg-gray-50/60"}`}
                           >
                             {/* Icon */}
                             <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${enabled ? iconBg : "bg-gray-100"} ${enabled ? color : "text-gray-400"} transition-colors`}>
@@ -49995,7 +49995,7 @@ ${waybillLineItems(w).length > 1
                                 <p className={`m-0 text-sm font-black leading-tight ${enabled ? "text-gray-900" : "text-gray-400"}`}>{label}</p>
                                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${to === "rep" ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"}`}>{to === "rep" ? "Rep" : "Customer"}</span>
                               </div>
-                              <p className={`m-0 mt-0.5 text-xs leading-relaxed ${enabled ? "text-gray-500" : "text-gray-400"}`}>{desc}</p>
+                              <p className={`m-0 mt-0.5 text-xs leading-relaxed hidden sm:block ${enabled ? "text-gray-500" : "text-gray-400"}`}>{desc}</p>
                             </div>
 
                             {/* Toggle */}
@@ -50198,15 +50198,15 @@ ${waybillLineItems(w).length > 1
                 const userRiskAck = whatsappRiskAcknowledged(waUserAccount);
                 const activeDestinations = waDestinations.filter((destination) => destination.active !== false);
                 return (
-                  <section className="grid gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.72fr)]">
+                  <section className="grid gap-3 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.72fr)]">
                     {isSpying && spiedUser && (
                       <div className="lg:col-span-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 flex items-center gap-2 text-sm font-bold text-blue-800">
                         <span className="shrink-0">👁</span>
                         <span>Viewing <span className="font-black">{spiedUser.name}</span>'s WhatsApp — read-only. Connect/disconnect actions are disabled in view-as mode.</span>
                       </div>
                     )}
-                    <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
+                      <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
                         <div>
                           <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">My WhatsApp</p>
                           <div className="mt-2 flex items-center gap-2">
@@ -50377,29 +50377,23 @@ ${waybillLineItems(w).length > 1
                       </article>
                     )}
 
-                    <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm lg:col-span-2">
+                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm lg:col-span-2">
                       <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Recent personal dispatches</p>
-                      <div className="mt-3 overflow-x-auto">
+                      <div className="mt-3 space-y-2">
                         {waUserDispatches.length === 0 ? (
                           <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No WhatsApp dispatches logged yet.</p>
-                        ) : (
-                          <table className="w-full min-w-[640px] text-left text-sm">
-                            <thead className="text-[10px] font-black uppercase tracking-wider text-gray-400">
-                              <tr><th className="py-2">Order</th><th>Destination</th><th>Mode</th><th>Status</th><th>When</th></tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {waUserDispatches.slice(0, 10).map((dispatch) => (
-                                <tr key={dispatch.id}>
-                                  <td className="py-2 font-bold text-gray-900">{dispatch.orderId}</td>
-                                  <td className="py-2 text-gray-600">{dispatch.destinationLabel || "Manual WhatsApp group"}</td>
-                                  <td className="py-2 text-gray-600">{dispatch.sendMode}</td>
-                                  <td className="py-2 font-bold text-gray-700">{dispatch.status}</td>
-                                  <td className="py-2 text-gray-500">{formatMoment(dispatch.createdAt || dispatch.sentAt)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
+                        ) : waUserDispatches.slice(0, 10).map((dispatch) => (
+                          <div key={dispatch.id} className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+                            <div className="min-w-0">
+                              <p className="m-0 text-sm font-bold text-gray-900 truncate">{dispatch.orderId}</p>
+                              <p className="m-0 text-xs text-gray-500 truncate">{dispatch.destinationLabel || "Manual group"} · {dispatch.sendMode}</p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="m-0 text-xs font-bold text-gray-700">{dispatch.status}</p>
+                              <p className="m-0 text-[10px] text-gray-400">{formatMoment(dispatch.createdAt || dispatch.sentAt)}</p>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </article>
                   </section>
@@ -50412,33 +50406,26 @@ ${waybillLineItems(w).length > 1
               )}
 
               {(currentRole === "Owner" || currentRole === "Admin") && (
-                <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                <section className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
                   <div className="flex flex-col gap-1">
                     <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Team dispatch health</p>
                     <h2 className="m-0 text-lg font-black text-gray-900">Recent team sends</h2>
                   </div>
-                  <div className="mt-3 overflow-x-auto">
+                  <div className="mt-3 space-y-2">
                     {waTeamDispatches.length === 0 ? (
                       <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No team dispatch logs yet.</p>
-                    ) : (
-                      <table className="w-full min-w-[720px] text-left text-sm">
-                        <thead className="text-[10px] font-black uppercase tracking-wider text-gray-400">
-                          <tr><th className="py-2">Order</th><th>Sender</th><th>Destination</th><th>Mode</th><th>Status</th><th>When</th></tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {waTeamDispatches.slice(0, 12).map((dispatch) => (
-                            <tr key={dispatch.id}>
-                              <td className="py-2 font-bold text-gray-900">{dispatch.orderId}</td>
-                              <td className="py-2 text-gray-600">{dispatch.senderName || dispatch.senderUserId || "User"}</td>
-                              <td className="py-2 text-gray-600">{dispatch.destinationLabel || "Manual WhatsApp group"}</td>
-                              <td className="py-2 text-gray-600">{dispatch.sendMode}</td>
-                              <td className="py-2 font-bold text-gray-700">{dispatch.status}</td>
-                              <td className="py-2 text-gray-500">{formatMoment(dispatch.createdAt || dispatch.sentAt)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
+                    ) : waTeamDispatches.slice(0, 12).map((dispatch) => (
+                      <div key={dispatch.id} className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+                        <div className="min-w-0">
+                          <p className="m-0 text-sm font-bold text-gray-900 truncate">{dispatch.orderId}</p>
+                          <p className="m-0 text-xs text-gray-500 truncate">{dispatch.senderName || "User"} · {dispatch.destinationLabel || "Manual group"} · {dispatch.sendMode}</p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="m-0 text-xs font-bold text-gray-700">{dispatch.status}</p>
+                          <p className="m-0 text-[10px] text-gray-400">{formatMoment(dispatch.createdAt || dispatch.sentAt)}</p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </section>
               )}
