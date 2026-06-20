@@ -1510,27 +1510,10 @@ export async function sendOrderNewCustomerWhatsApp(
   const currency = order.currency ?? "NGN";
   const amount = typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0";
 
-  // Generate a PDF receipt to attach alongside the confirmation message
-  let pdfBuffer: Buffer | undefined;
-  try {
-    pdfBuffer = await generateOrderReceiptPdf({
-      id: order.id,
-      customer: order.customer,
-      phone: order.phone,
-      productName: order.productName,
-      packageName: order.packageName,
-      amount: order.amount,
-      currency: order.currency,
-      city: order.city,
-      state: order.state,
-      source: order.source
-    });
-  } catch (err) {
-    logger.warn("wa order_new: pdf generation failed, sending text only", {
-      orderId: order.id, error: (err as Error).message
-    });
-  }
-
+  // NOTE: PDF and media are intentionally excluded from the first customer message.
+  // Sending a document/image as the first ever message from an unknown number
+  // triggers WhatsApp's spam filter — the message lands in "Message Requests"
+  // instead of the customer's main chat. Plain text first messages reach the inbox.
   await queueOrSendWhatsApp(
     orgId, "order_new",
     {
@@ -1545,13 +1528,8 @@ export async function sendOrderNewCustomerWhatsApp(
       state: order.state ?? ""
     },
     phone,
-    { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined },
-    {
-      imageUrl: order.productImageUrl ?? undefined,
-      videoUrl: order.productVideoUrl ?? undefined,
-      pdfBuffer,
-      pdfFileName: `Order-Receipt-${order.id}.pdf`
-    }
+    { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined }
+    // No media on first message — avoid spam filter
   );
 }
 

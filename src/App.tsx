@@ -8770,8 +8770,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (!canSeeOrgAutomation) return;
     if (waSettings || waSettingsLoading) return;
-    setWaSettingsLoading(true);
-    whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
+    // Defer until the browser is idle so it doesn't compete with the initial render
+    const id = (window as any).requestIdleCallback
+      ? (window as any).requestIdleCallback(() => {
+          setWaSettingsLoading(true);
+          whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
+        }, { timeout: 3000 })
+      : setTimeout(() => {
+          setWaSettingsLoading(true);
+          whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
+        }, 1500);
+    return () => {
+      if ((window as any).cancelIdleCallback) (window as any).cancelIdleCallback(id);
+      else clearTimeout(id);
+    };
   }, [canSeeOrgAutomation]);
 
   // Auto-poll org automation account every 3s while it is pairing.
@@ -8850,13 +8862,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // ── WhatsApp Inbox ──────────────────────────────────────────
   const canUseInbox = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager" || currentRole === "Sales Rep";
 
-  // Load conversation list on mount so inbox is ready when navigating from an order.
+  // Load conversation list only when on the WhatsApp page (not on every mount).
+  // When navigating from an order button the list is loaded inline at that point.
   useEffect(() => {
-    if (!canUseInbox) return;
+    if (activePage !== "WhatsApp" || !canUseInbox) return;
     let cancelled = false;
-    whatsappConversationsApi.list(60).then(r => { if (!cancelled) setWaConversations(r.conversations ?? []); }).catch(() => {});
+    setWaConvsLoading(true);
+    whatsappConversationsApi.list(60).then(r => { if (!cancelled) setWaConversations(r.conversations ?? []); }).catch(() => {}).finally(() => { if (!cancelled) setWaConvsLoading(false); });
     return () => { cancelled = true; };
-  }, [canUseInbox, currentRole, authUser?.id]);
+  }, [activePage, canUseInbox, currentRole, authUser?.id]);
 
   // Poll conversation list every 8s while on WhatsApp page
   useEffect(() => {
