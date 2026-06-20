@@ -1450,6 +1450,7 @@ type OrderEventPayload = {
   id: string;
   customer?: string | null;
   phone?: string | null;
+  whatsapp?: string | null;
   productName?: string | null;
   packageName?: string | null;
   amount?: number | null;
@@ -1468,6 +1469,9 @@ type OrderEventRepContact = {
   name: string;
   phone: string;
 };
+
+const customerWhatsAppTarget = (order: Pick<OrderEventPayload, "phone" | "whatsapp">) =>
+  order.whatsapp?.trim() || order.phone?.trim() || "";
 
 /** Anti-ban: customer messages have a tighter per-recipient daily cap */
 const CUSTOMER_WHATSAPP_DAY_CAP = 1; // max 1 message per customer per event type per day
@@ -1496,16 +1500,17 @@ async function customerAlreadyMessagedToday(
  */
 export async function sendOrderNewCustomerWhatsApp(
   orgId: string,
-  order: OrderEventPayload
-): Promise<void> {
+  order: OrderEventPayload,
+  options: { ignoreCustomerDedupe?: boolean } = {}
+): Promise<QueueOrSendWhatsAppResult | null> {
   const settings = await loadSettings(orgId);
-  if (!isConnected(settings)) return;
-  if (!settings?.triggers?.order_new) return;
-  const phone = order.phone?.trim();
-  if (!phone) return;
-  const normalizedPhone = normalizePhoneForWhatsApp(phone);
-  if (!normalizedPhone) return;
-  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_new")) return;
+  if (!isConnected(settings)) return null;
+  if (!settings?.triggers?.order_new) return null;
+  const targetPhone = customerWhatsAppTarget(order);
+  if (!targetPhone) return null;
+  const normalizedPhone = normalizePhoneForWhatsApp(targetPhone);
+  if (!normalizedPhone) return null;
+  if (!options.ignoreCustomerDedupe && await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_new")) return null;
 
   const currency = order.currency ?? "NGN";
   const amount = typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0";
@@ -1514,12 +1519,12 @@ export async function sendOrderNewCustomerWhatsApp(
   // Sending a document/image as the first ever message from an unknown number
   // triggers WhatsApp's spam filter — the message lands in "Message Requests"
   // instead of the customer's main chat. Plain text first messages reach the inbox.
-  await queueOrSendWhatsApp(
+  return queueOrSendWhatsApp(
     orgId, "order_new",
     {
       order_id: order.id,
       customer: order.customer ?? "Customer",
-      phone,
+      phone: order.phone?.trim() || targetPhone,
       product_name: order.productName ?? "your order",
       package_name: order.packageName ?? "",
       amount,
@@ -1527,7 +1532,7 @@ export async function sendOrderNewCustomerWhatsApp(
       city: order.city ?? "",
       state: order.state ?? ""
     },
-    phone,
+    targetPhone,
     { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined }
     // No media on first message — avoid spam filter
   );
@@ -1579,17 +1584,17 @@ export async function sendOrderNewRepWhatsApp(
 export async function sendOrderScheduledCustomerWhatsApp(
   orgId: string,
   order: OrderEventPayload
-): Promise<void> {
+): Promise<QueueOrSendWhatsAppResult | null> {
   const settings = await loadSettings(orgId);
-  if (!isConnected(settings)) return;
-  if (!settings?.triggers?.order_scheduled) return;
-  const phone = order.phone?.trim();
-  if (!phone) return;
-  const normalizedPhone = normalizePhoneForWhatsApp(phone);
-  if (!normalizedPhone) return;
-  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_scheduled")) return;
+  if (!isConnected(settings)) return null;
+  if (!settings?.triggers?.order_scheduled) return null;
+  const targetPhone = customerWhatsAppTarget(order);
+  if (!targetPhone) return null;
+  const normalizedPhone = normalizePhoneForWhatsApp(targetPhone);
+  if (!normalizedPhone) return null;
+  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_scheduled")) return null;
 
-  await queueOrSendWhatsApp(
+  return queueOrSendWhatsApp(
     orgId, "order_scheduled",
     {
       order_id: order.id,
@@ -1597,7 +1602,7 @@ export async function sendOrderScheduledCustomerWhatsApp(
       product_name: order.productName ?? "your order",
       scheduled_date: order.scheduledDate ?? "soon"
     },
-    phone,
+    targetPhone,
     { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined }
   );
 }
@@ -1609,17 +1614,17 @@ export async function sendOrderFailedCustomerWhatsApp(
   orgId: string,
   order: OrderEventPayload,
   rep?: OrderEventRepContact | null
-): Promise<void> {
+): Promise<QueueOrSendWhatsAppResult | null> {
   const settings = await loadSettings(orgId);
-  if (!isConnected(settings)) return;
-  if (!settings?.triggers?.order_failed) return;
-  const phone = order.phone?.trim();
-  if (!phone) return;
-  const normalizedPhone = normalizePhoneForWhatsApp(phone);
-  if (!normalizedPhone) return;
-  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_failed")) return;
+  if (!isConnected(settings)) return null;
+  if (!settings?.triggers?.order_failed) return null;
+  const targetPhone = customerWhatsAppTarget(order);
+  if (!targetPhone) return null;
+  const normalizedPhone = normalizePhoneForWhatsApp(targetPhone);
+  if (!normalizedPhone) return null;
+  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_failed")) return null;
 
-  await queueOrSendWhatsApp(
+  return queueOrSendWhatsApp(
     orgId, "order_failed",
     {
       order_id: order.id,
@@ -1627,7 +1632,7 @@ export async function sendOrderFailedCustomerWhatsApp(
       product_name: order.productName ?? "your order",
       rep_contact: rep?.phone ?? "our team"
     },
-    phone,
+    targetPhone,
     { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined }
   );
 }
@@ -1638,24 +1643,24 @@ export async function sendOrderFailedCustomerWhatsApp(
 export async function sendOrderDeliveredCustomerWhatsApp(
   orgId: string,
   order: OrderEventPayload
-): Promise<void> {
+): Promise<QueueOrSendWhatsAppResult | null> {
   const settings = await loadSettings(orgId);
-  if (!isConnected(settings)) return;
-  if (!settings?.triggers?.order_delivered) return;
-  const phone = order.phone?.trim();
-  if (!phone) return;
-  const normalizedPhone = normalizePhoneForWhatsApp(phone);
-  if (!normalizedPhone) return;
-  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_delivered")) return;
+  if (!isConnected(settings)) return null;
+  if (!settings?.triggers?.order_delivered) return null;
+  const targetPhone = customerWhatsAppTarget(order);
+  if (!targetPhone) return null;
+  const normalizedPhone = normalizePhoneForWhatsApp(targetPhone);
+  if (!normalizedPhone) return null;
+  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_delivered")) return null;
 
-  await queueOrSendWhatsApp(
+  return queueOrSendWhatsApp(
     orgId, "order_delivered",
     {
       order_id: order.id,
       customer: order.customer ?? "Customer",
       product_name: order.productName ?? "your order"
     },
-    phone,
+    targetPhone,
     { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined }
   );
 }

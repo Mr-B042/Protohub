@@ -168,6 +168,17 @@ const WHATSAPP_DISPATCH_ORDER_SELECT = [
 ].join(", ");
 
 const normalizePhoneDigits = (value: string | null | undefined) => String(value ?? "").replace(/\D/g, "");
+const normalizeCustomerWhatsAppPhone = (value: string | null | undefined) => {
+  const digits = normalizePhoneDigits(value);
+  if (!digits) return "";
+  if (digits.startsWith("234") && digits.length >= 13 && digits.length <= 15) return digits;
+  if (digits.startsWith("0") && digits.length === 11) return `234${digits.slice(1)}`;
+  if (!digits.startsWith("0") && digits.length === 10) return `234${digits}`;
+  if (!digits.startsWith("0") && digits.length >= 11 && digits.length <= 15) return digits;
+  return digits;
+};
+const orderWhatsAppTarget = (order: { phone?: string | null; whatsapp?: string | null }) =>
+  order.whatsapp?.trim() || order.phone?.trim() || "";
 
 async function loadWhatsAppDispatchOrder(orgId: string, orderId: string) {
   const { data, error } = await supabase
@@ -851,6 +862,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (r
     id: data.id,
     customer: data.customer,
     phone: data.phone,
+    whatsapp: data.whatsapp ?? null,
     productName: data.product_name,
     packageName: data.package_name,
     amount: typeof data.amount === "number" ? data.amount : Number(data.amount ?? 0),
@@ -1686,6 +1698,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       id: data.id,
       customer: data.customer,
       phone: data.phone,
+      whatsapp: data.whatsapp ?? null,
       productName: data.product_name,
       packageName: data.package_name,
       amount: typeof data.amount === "number" ? data.amount : Number(data.amount ?? 0),
@@ -2740,16 +2753,14 @@ router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
 });
 
 // ── GET /api/orders/:id/whatsapp-status ──────────────────────────────────────
-// Returns the latest WhatsApp message log entries for this order's phone.
+// Returns the latest WhatsApp message log entries for this order's WhatsApp/phone target.
 router.get("/:id/whatsapp-status", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
   const { data: order } = await supabase
-    .from("orders").select("phone").eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
-  if (!order?.phone) { res.json({ messages: [] }); return; }
+    .from("orders").select("phone, whatsapp").eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
+  const targetPhone = orderWhatsAppTarget(order ?? {});
+  if (!targetPhone) { res.json({ messages: [], normalizedPhone: "" }); return; }
 
-  const digits = (order.phone as string).replace(/\D/g, "");
-  const normalized = digits.startsWith("234") ? digits
-    : digits.startsWith("0") && digits.length === 11 ? `234${digits.slice(1)}`
-    : digits.length === 10 ? `234${digits}` : digits;
+  const normalized = normalizeCustomerWhatsAppPhone(targetPhone);
 
   const { data } = await supabase
     .from("whatsapp_messages")
@@ -2764,25 +2775,19 @@ router.get("/:id/whatsapp-status", requireRole("Owner", "Admin", "Manager"), asy
 
 // ── POST /api/orders/:id/whatsapp-resend ─────────────────────────────────────
 // Owner/Admin: resend the order_new WhatsApp confirmation to the customer.
-// Clears the 24h dedup log entry first so the send is not blocked.
+// Bypasses the 24h customer dedupe guard, but keeps previous logs intact.
 router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, res) => {
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, customer, phone, product_name, package_name, amount, currency, source, city, state, package_id")
+    .select("id, customer, phone, whatsapp, product_name, package_name, amount, currency, source, city, state, package_id")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
   if (error || !order) { res.status(404).json({ error: "Order not found." }); return; }
-  if (!order.phone) { res.status(400).json({ error: "Order has no phone number." }); return; }
+  const targetPhone = orderWhatsAppTarget(order);
+  if (!targetPhone) { res.status(400).json({ error: "Order has no WhatsApp or phone number." }); return; }
 
-  // Clear the 24h dedup so the resend is not blocked
-  const normalizedPhone = order.phone.replace(/\D/g, "").replace(/^0(\d{10})$/, "234$1").replace(/^(\d{10})$/, "234$1");
-  await supabase.from("whatsapp_messages")
-    .delete()
-    .eq("org_id", req.user!.orgId)
-    .eq("normalized_phone", normalizedPhone)
-    .eq("trigger", "order_new")
-    .then(() => undefined, () => undefined);
+  const normalizedPhone = normalizeCustomerWhatsAppPhone(targetPhone);
 
   // Fetch package image/video
   let productImageUrl: string | null = null;
@@ -2794,10 +2799,11 @@ router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, r
   }
 
   try {
-    await sendOrderNewCustomerWhatsApp(req.user!.orgId, {
+    const result = await sendOrderNewCustomerWhatsApp(req.user!.orgId, {
       id: order.id,
       customer: order.customer,
       phone: order.phone,
+      whatsapp: order.whatsapp ?? null,
       productName: order.product_name,
       packageName: order.package_name,
       amount: typeof order.amount === "number" ? order.amount : Number(order.amount ?? 0),
@@ -2807,8 +2813,20 @@ router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, r
       state: (order as any).state ?? null,
       productImageUrl,
       productVideoUrl
+    }, { ignoreCustomerDedupe: true });
+    if (!result) {
+      res.status(409).json({
+        error: "WhatsApp confirmation was not sent. Check that WhatsApp automation is connected, enabled, and the customer order_new trigger is on."
+      });
+      return;
+    }
+    const suffix = result.deferred && result.scheduledFor
+      ? ` It is queued for ${new Date(result.scheduledFor).toLocaleString("en-NG", { timeZone: "Africa/Lagos" })}.`
+      : "";
+    res.json({
+      ok: true,
+      message: `WhatsApp confirmation ${result.deferred ? "queued" : "resent"} to ${order.customer} (${normalizedPhone}).${suffix}`
     });
-    res.json({ ok: true, message: `WhatsApp confirmation resent to ${order.customer}` });
   } catch (err: any) {
     const msg = err?.message ?? "";
     if (msg.startsWith("NOT_ON_WHATSAPP")) {
