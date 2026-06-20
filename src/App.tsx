@@ -50125,7 +50125,7 @@ ${waybillLineItems(w).length > 1
                   </div>
 
                   {/* Mobile: show list OR thread; Desktop: side-by-side */}
-                  <div className="flex lg:grid lg:grid-cols-[280px_1fr]" style={{ height: "min(600px, 80dvh)" }}>
+                  <div className="flex lg:grid lg:grid-cols-[280px_1fr]" style={{ height: "min(600px, 80dvh)", overflow: "hidden" }}>
 
                     {/* Conversation list — full screen on mobile when no thread open */}
                     <div className={`flex-col overflow-y-auto border-r border-gray-100 w-full lg:w-auto h-full ${waActivePhone ? "hidden lg:flex" : "flex"}`}>
@@ -50197,8 +50197,8 @@ ${waybillLineItems(w).length > 1
                               <button type="button" className="!min-h-0 hidden lg:flex items-center rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-500 hover:bg-gray-100" onClick={() => setWaActivePhone(null)}>✕</button>
                             </div>
 
-                            {/* Messages — fill remaining height */}
-                            <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-3 min-h-0">
+                            {/* Messages — fill remaining height. overflow-y-scroll forces scrollbar track so the area is always scrollable */}
+                            <div className="overflow-y-scroll px-3 sm:px-4 py-4 space-y-3" style={{ flex: "1 1 0", minHeight: 0 }}>
                               {waThreadLoading && !waThread ? (
                                 <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
                               ) : (() => {
