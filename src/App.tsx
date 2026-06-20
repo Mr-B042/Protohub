@@ -7991,12 +7991,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const isSpying = realRole === "Owner" && Boolean(spiedUser);
 
   // Keep the API module in sync so every request carries X-Spy-User-Id when spying.
-  // Also flush stale conversation cache whenever the spy target changes.
+  // Also flush + immediately reload conversations so role-filtered data replaces cached data.
   useEffect(() => {
     setApiSpyUserId(isSpying && spiedUser?.id ? spiedUser.id : null);
-    setWaConversations([]);   // force fresh load so role-filtered data replaces cached data
+    setWaConversations([]);
     setWaActivePhone(null);
     setWaThread(null);
+    // Immediately re-fetch with the new spy context (don't wait for the page-level effect)
+    whatsappConversationsApi.list(60)
+      .then(r => setWaConversations(r.conversations ?? []))
+      .catch(() => {});
   }, [isSpying, spiedUser?.id]);
 
   const currentManagedUser = isSpying ? spiedUser : realManagedUser;
@@ -8876,7 +8880,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setWaConvsLoading(true);
     whatsappConversationsApi.list(60).then(r => { if (!cancelled) setWaConversations(r.conversations ?? []); }).catch(() => {}).finally(() => { if (!cancelled) setWaConvsLoading(false); });
     return () => { cancelled = true; };
-  }, [activePage, canUseInbox, currentRole, authUser?.id]);
+  }, [activePage, canUseInbox, currentRole, authUser?.id, isSpying, spiedUser?.id]);
 
   // Poll conversation list every 8s while on WhatsApp page
   useEffect(() => {
