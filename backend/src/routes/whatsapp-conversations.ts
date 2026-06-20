@@ -41,16 +41,29 @@ router.get("/", async (req, res) => {
       .order("received_at", { ascending: false })
       .limit(2000); // fetch enough to build conversation list
 
-    // For Sales Reps, scope to their assigned orders' phones
-    if (role === "Sales Rep") {
-      // Get their assigned order phones
-      const { data: myOrders } = await supabase
+    // Sales Reps + Managers: scope to their assigned orders' phones only.
+    // Owner/Admin see all conversations.
+    if (role === "Sales Rep" || role === "Manager") {
+      const repFilter = supabase
         .from("orders")
-        .select("phone, id")
+        .select("phone")
         .eq("org_id", orgId)
-        .eq("assigned_rep_id", userId)
         .not("phone", "is", null);
-      const myPhones = Array.from(new Set((myOrders ?? []).map((o: any) => normalizeDigits(o.phone ?? "")).filter(Boolean)));
+
+      // Sales Rep → their directly assigned orders only
+      // Manager → orders assigned to anyone in their team
+      // For simplicity we scope Manager to same as rep for now (their direct assigns)
+      const filteredRepOrders = await repFilter.eq("assigned_rep_id", userId);
+
+      const myOrders = filteredRepOrders.data ?? [];
+
+      // Normalize all phones to 234-prefixed format so they match the inbox table
+      const myPhones = Array.from(new Set(
+        myOrders
+          .map((o: any) => normalizeNgPhone(o.phone ?? ""))
+          .filter((p) => p.length >= 10)
+      ));
+
       if (myPhones.length === 0) { res.json({ conversations: [] }); return; }
       query = query.in("normalized_phone", myPhones);
     }
@@ -120,20 +133,16 @@ router.get("/:phone", async (req, res) => {
   if (!normalizedPhone) { res.status(400).json({ error: "Invalid phone." }); return; }
 
   try {
-    // Rep scope check
-    if (role === "Sales Rep") {
-      const { data: myOrders } = await supabase
-        .from("orders").select("id").eq("org_id", orgId).eq("assigned_rep_id", userId)
-        .eq("phone", req.params["phone"]).limit(1);
-      if (!myOrders?.length) {
-        // Also check normalized
-        const { data: myOrders2 } = await supabase
-          .from("orders").select("id").eq("org_id", orgId).eq("assigned_rep_id", userId).limit(500);
-        const myPhones = (await supabase.from("orders").select("phone").eq("org_id", orgId).eq("assigned_rep_id", userId)).data
-          ?.map((o: any) => normalizeDigits(o.phone ?? "")).filter(Boolean) ?? [];
-        if (!myPhones.includes(normalizedPhone)) {
-          res.status(403).json({ error: "Not your assigned customer." }); return;
-        }
+    // Rep/Manager scope check — verify the requested phone belongs to one of their assigned orders
+    if (role === "Sales Rep" || role === "Manager") {
+      const { data: assignedOrders } = await supabase
+        .from("orders").select("phone").eq("org_id", orgId).eq("assigned_rep_id", userId);
+      const myPhones = new Set(
+        (assignedOrders ?? []).map((o: any) => normalizeNgPhone(o.phone ?? "")).filter((p) => p.length >= 10)
+      );
+      if (!myPhones.has(normalizedPhone)) {
+        res.status(403).json({ error: "Not your assigned customer." }); return;
+
       }
     }
 
@@ -233,11 +242,13 @@ router.post("/:phone/send", async (req, res) => {
   const parsed = SendSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
 
-  // Rep can only message their assigned customers
-  if (role === "Sales Rep") {
-    const myPhones = (await supabase.from("orders").select("phone").eq("org_id", orgId).eq("assigned_rep_id", userId)).data
-      ?.map((o: any) => normalizeDigits(o.phone ?? "")).filter(Boolean) ?? [];
-    if (!myPhones.includes(normalizedPhone)) {
+  // Rep/Manager can only message their assigned customers
+  if (role === "Sales Rep" || role === "Manager") {
+    const { data: assignedOrders } = await supabase.from("orders").select("phone").eq("org_id", orgId).eq("assigned_rep_id", userId);
+    const myPhones = new Set(
+      (assignedOrders ?? []).map((o: any) => normalizeNgPhone(o.phone ?? "")).filter((p: string) => p.length >= 10)
+    );
+    if (!myPhones.has(normalizedPhone)) {
       res.status(403).json({ error: "Not your assigned customer." }); return;
     }
   }
