@@ -727,6 +727,11 @@ async function getSessionDir(orgId: string) {
 
 async function clearSessionDir(orgId: string) {
   await rm(path.join(sessionRoot, orgId), { recursive: true, force: true }).catch(() => undefined);
+  // Also wipe Supabase creds so stale credentials don't cause instant re-logout on next pair
+  await supabase.from("whatsapp_settings")
+    .update({ baileys_creds: null, baileys_keys: null })
+    .eq("org_id", orgId)
+    .then(() => undefined, () => undefined);
 }
 
 // Supabase-backed auth state for org connections.
@@ -919,6 +924,12 @@ async function getUserSessionDir(orgId: string, userId: string) {
 
 async function clearUserSessionDir(orgId: string, userId: string) {
   await rm(path.join(sessionRoot, "users", orgId, userId), { recursive: true, force: true }).catch(() => undefined);
+  // Also wipe Supabase creds so stale credentials don't cause instant re-logout on next pair
+  await supabase.from("whatsapp_user_accounts")
+    .update({ baileys_creds: null, baileys_keys: null })
+    .eq("org_id", orgId)
+    .eq("user_id", userId)
+    .then(() => undefined, () => undefined);
 }
 
 async function updateUserConnectionRow(orgId: string, userId: string, payload: Record<string, unknown>) {
