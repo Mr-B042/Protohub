@@ -54535,23 +54535,54 @@ ${waybillLineItems(w).length > 1
                   </div>
                 ) : (
                   <>
-                    {/* Smart destination picker */}
+                    {/* Smart destination picker — filtered by order state + assigned rep */}
                     {(() => {
                       const allDests = (waAllDestinations.length > 0 ? waAllDestinations : waDestinations).filter((d: any) => d.active !== false);
-                      const assignedRepId = waDispatchModal.order.assignedRepId ?? (waDispatchModal.order as any).assigned_rep_id ?? null;
+                      const order = waDispatchModal.order;
+                      const assignedRepId = order.assignedRepId ?? null;
+                      const orderState = (order.state ?? "").toLowerCase().trim();
+
+                      // Find ALL reps who have orders in this state to surface their groups
+                      const repsInState = new Set(
+                        trackedOrders
+                          .filter(o => (o.state ?? "").toLowerCase().trim() === orderState && o.assignedRepId)
+                          .map(o => o.assignedRepId!)
+                      );
+
+                      const getRepIds = (d: any): string[] =>
+                        d.assignedRepIds ?? d.assigned_rep_ids ?? (d.assignedRepId ? [d.assignedRepId] : []);
+
                       const search = waDispatchSearch.toLowerCase();
                       const filtered = allDests.filter((d: any) => {
                         if (!search) return true;
-                        const ownerName: string = d.owner?.name ?? d.ownerName ?? "";
-                        const repName: string = d.rep?.name ?? d.repName ?? "";
-                        return d.label.toLowerCase().includes(search) || ownerName.toLowerCase().includes(search) || repName.toLowerCase().includes(search);
+                        const ownerName: string = d.owner?.name ?? "";
+                        const assignedRepNames: string = users
+                          .filter((u: any) => getRepIds(d).includes(u.id))
+                          .map((u: any) => u.name).join(" ");
+                        return d.label.toLowerCase().includes(search)
+                          || ownerName.toLowerCase().includes(search)
+                          || assignedRepNames.toLowerCase().includes(search);
                       });
-                      // Group: rep-matched first, then by owner
-                      const repMatch = filtered.filter((d: any) => ((d.assignedRepIds ?? d.assigned_rep_ids ?? (d.assignedRepId ? [d.assignedRepId] : [])).includes(assignedRepId ?? "")));
-                      const others = filtered.filter((d: any) => d.assignedRepId !== assignedRepId && d.assigned_rep_id !== assignedRepId);
-                      const grouped: Array<{ header?: string; items: any[] }> = [];
-                      if (assignedRepId && repMatch.length > 0) grouped.push({ header: "⭐ Suggested for this order's rep", items: repMatch });
-                      if (others.length > 0) grouped.push({ header: repMatch.length > 0 ? "Other groups" : undefined, items: others });
+
+                      // Tier 1: assigned rep's groups (most specific)
+                      const repMatch = assignedRepId
+                        ? filtered.filter((d: any) => getRepIds(d).includes(assignedRepId))
+                        : [];
+                      // Tier 2: other reps in the same state (same territory)
+                      const stateMatch = filtered.filter((d: any) =>
+                        !getRepIds(d).includes(assignedRepId ?? "") &&
+                        getRepIds(d).some(id => repsInState.has(id))
+                      );
+                      // Tier 3: everything else
+                      const rest = filtered.filter((d: any) => {
+                        const ids = getRepIds(d);
+                        return !ids.includes(assignedRepId ?? "") && !ids.some(id => repsInState.has(id));
+                      });
+
+                      const grouped: Array<{ header?: string; color?: string; items: any[] }> = [];
+                      if (repMatch.length > 0) grouped.push({ header: `⭐ For this order's rep${orderState ? ` · ${order.state}` : ""}`, color: "text-[#25D366]", items: repMatch });
+                      if (stateMatch.length > 0) grouped.push({ header: `📍 Other ${order.state || "state"} agents`, color: "text-amber-600", items: stateMatch });
+                      if (rest.length > 0) grouped.push({ header: grouped.length > 0 ? "All other groups" : undefined, items: rest });
                       return (
                         <div>
                           <span className="mb-2 block text-xs font-black uppercase tracking-[0.18em] text-gray-400">Send to group</span>
@@ -54573,9 +54604,9 @@ ${waybillLineItems(w).length > 1
                               <p className="m-0 font-bold">Manual group</p>
                               <p className="m-0 text-xs text-gray-400">Pick the group yourself in WhatsApp</p>
                             </button>
-                            {grouped.map(({ header, items }) => (
+                            {grouped.map(({ header, color, items }) => (
                               <Fragment key={header ?? "default"}>
-                                {header && <p className="m-0 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-gray-400">{header}</p>}
+                                {header && <p className={`m-0 px-2 py-1 text-[10px] font-black uppercase tracking-wider ${color ?? "text-gray-400"}`}>{header}</p>}
                                 {items.map((d: any) => {
                                   const ownerName: string = d.owner?.name ?? d.ownerName ?? "";
                                   const repName: string = d.rep?.name ?? d.assigned_rep?.name ?? "";
