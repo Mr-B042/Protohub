@@ -49953,8 +49953,27 @@ ${waybillLineItems(w).length > 1
                     icon: <PackageCheck className="h-4 w-4" />,
                     color: "text-emerald-600", iconBg: "bg-emerald-50"
                   },
+                  {
+                    key: "order_follow_up_rep", label: "Follow-up reminder → Rep", to: "rep",
+                    desc: "Sends the rep a WhatsApp nudge when an order is overdue. Uses the follow-up schedule timing.",
+                    icon: <BellRing className="h-4 w-4" />,
+                    color: "text-indigo-600", iconBg: "bg-indigo-50"
+                  },
+                  {
+                    key: "order_follow_up_manager", label: "Follow-up escalation → Manager", to: "rep",
+                    desc: "Escalates to the manager if the rep's follow-up is still unresolved.",
+                    icon: <BellRing className="h-4 w-4" />,
+                    color: "text-orange-600", iconBg: "bg-orange-50"
+                  },
+                  {
+                    key: "order_follow_up_owner", label: "Follow-up escalation → Owner", to: "rep",
+                    desc: "Final escalation to the Owner when both rep and manager nudges have not resolved the order.",
+                    icon: <BellRing className="h-4 w-4" />,
+                    color: "text-gray-600", iconBg: "bg-gray-100"
+                  },
                 ];
                 const onCount = TRIGGER_META.filter(({ key }) => Boolean(triggers[key])).length;
+                const total = TRIGGER_META.length;
                 return (
                   <section className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
                     {/* Header */}
@@ -49965,7 +49984,7 @@ ${waybillLineItems(w).length > 1
                         </span>
                         <div>
                           <p className="m-0 text-sm font-black text-gray-900">Automation triggers</p>
-                          <p className="m-0 text-xs text-gray-500">{onCount} of {TRIGGER_META.length} active · 1 msg / customer / event / 24 h</p>
+                          <p className="m-0 text-xs text-gray-500">{onCount} of {total} active · all off by default</p>
                         </div>
                       </div>
                       {waTriggerSaving && (

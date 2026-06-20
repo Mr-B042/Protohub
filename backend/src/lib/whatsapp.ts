@@ -21,10 +21,10 @@ export type WhatsAppMessageEvent =
   | "manual_custom_send";
 
 export const DEFAULT_WHATSAPP_TRIGGERS: Record<WhatsAppTrigger, boolean> = {
-  order_follow_up_rep: true,
+  // All triggers default OFF — owner must explicitly enable each one.
+  order_follow_up_rep: false,
   order_follow_up_manager: false,
   order_follow_up_owner: false,
-  // Customer-facing (off by default — owner opts in after connecting)
   order_new: false,
   order_new_rep: false,
   order_scheduled: false,
