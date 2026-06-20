@@ -1516,11 +1516,9 @@ export async function sendOrderNewCustomerWhatsApp(
   const currency = order.currency ?? "NGN";
   const amount = typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0";
 
-  // NOTE: PDF and media are intentionally excluded from the first customer message.
-  // Sending a document/image as the first ever message from an unknown number
-  // triggers WhatsApp's spam filter — the message lands in "Message Requests"
-  // instead of the customer's main chat. Plain text first messages reach the inbox.
-  return queueOrSendWhatsApp(
+  // Stage 1: plain text first — lands in customer's main chat (not Message Requests).
+  // Unknown senders who send attachments as the FIRST message get routed to spam.
+  const textResult = await queueOrSendWhatsApp(
     orgId, "order_new",
     {
       order_id: order.id,
@@ -1540,8 +1538,77 @@ export async function sendOrderNewCustomerWhatsApp(
       recipientName: order.customer ?? undefined,
       throwOnFailure: options.throwOnFailure
     }
-    // No media on first message — avoid spam filter
   );
+
+  // Stage 2: after a 3s delay, send PDF receipt + product image/video.
+  // Now that the text established the thread, media messages go straight through.
+  if (textResult && !textResult.deferred) {
+    const hasMedia = order.productImageUrl || order.productVideoUrl;
+    const shouldSendPdf = true; // always send receipt
+    if (hasMedia || shouldSendPdf) {
+      setTimeout(async () => {
+        try {
+          let pdfBuffer: Buffer | undefined;
+          try {
+            pdfBuffer = await generateOrderReceiptPdf({
+              id: order.id,
+              customer: order.customer,
+              phone: order.phone,
+              productName: order.productName,
+              packageName: order.packageName,
+              amount: order.amount,
+              currency: order.currency,
+              city: order.city,
+              state: order.state,
+              source: order.source
+            });
+          } catch (err) {
+            logger.warn("wa order_new: pdf generation failed for follow-up", {
+              orderId: order.id, error: (err as Error).message
+            });
+          }
+
+          if (pdfBuffer || hasMedia) {
+            await queueOrSendWhatsApp(
+              orgId, "order_new",
+              {
+                order_id: order.id,
+                customer: order.customer ?? "Customer",
+                phone: order.phone?.trim() || targetPhone,
+                product_name: order.productName ?? "your order",
+                package_name: order.packageName ?? "",
+                amount,
+                currency,
+                city: order.city ?? "",
+                state: order.state ?? ""
+              },
+              targetPhone,
+              {
+                orderId: order.id,
+                audience: "customer",
+                recipientName: order.customer ?? undefined,
+                ignoreTrigger: true,    // already checked above
+                ignoreRateLimit: true,  // same order, follow-up only
+                bodyOverride: pdfBuffer ? `📋 Order Receipt — #${order.id}` : undefined
+              },
+              {
+                imageUrl: order.productImageUrl ?? undefined,
+                videoUrl: order.productVideoUrl ?? undefined,
+                pdfBuffer,
+                pdfFileName: `Order-Receipt-${order.id}.pdf`
+              }
+            );
+          }
+        } catch (err) {
+          logger.warn("wa order_new: follow-up media send failed", {
+            orderId: order.id, error: (err as Error).message
+          });
+        }
+      }, 3000);
+    }
+  }
+
+  return textResult;
 }
 
 /**
