@@ -9665,6 +9665,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [toast, setToast] = useState("");
   const [notificationsRead, setNotificationsRead] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState("");
+  const [orderWaStatus, setOrderWaStatus] = useState<{ messages: any[]; normalizedPhone: string } | null>(null);
+  const [orderWaStatusLoading, setOrderWaStatusLoading] = useState(false);
   const [orderAuditLog, setOrderAuditLog] = useState<OrderAuditEntry[]>([]);
   const [orderFieldEdits, setOrderFieldEdits] = useState<Array<{
     id: string;
@@ -27390,6 +27392,7 @@ ${waybillLineItems(w).length > 1
   };
 
   const openRepOrderDetail = (order: TrackedOrder) => {
+    setOrderWaStatus(null); // reset WA status when opening a different order
     // An Owner/Admin/Manager coaching inside the Sales Rep Workspace gets the
     // order in a POPUP overlay — so clicking "Details" on the Follow-up Queue
     // keeps them on that view instead of navigating to the full-page Orders
@@ -55760,54 +55763,50 @@ ${waybillLineItems(w).length > 1
                       {(selectedOrder.whatsapp || selectedOrder.phone) && (
                         <div className="col-span-2 space-y-2 pt-1">
                           {/* WA delivery status panel — loads on demand for Owner/Admin */}
-                          {isOwnerOrAdmin && (() => {
-                            const [waStatus, setWaStatus] = useState<{ messages: any[]; normalizedPhone: string } | null>(null);
-                            const [waStatusLoading, setWaStatusLoading] = useState(false);
-                            return (
-                              <div>
-                                {!waStatus ? (
-                                  <button
-                                    type="button"
-                                    className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-500 text-xs font-bold hover:bg-gray-50"
-                                    disabled={waStatusLoading}
-                                    onClick={() => {
-                                      setWaStatusLoading(true);
-                                      ordersWhatsAppResendApi.status(selectedOrder.id)
-                                        .then(r => setWaStatus(r))
-                                        .catch(() => setWaStatus({ messages: [], normalizedPhone: "" }))
-                                        .finally(() => setWaStatusLoading(false));
-                                    }}
-                                  >
-                                    <MessageCircle className="w-3.5 h-3.5" />
-                                    {waStatusLoading ? "Checking…" : "Check WA delivery status"}
-                                  </button>
-                                ) : (
-                                  <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 space-y-2">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">WhatsApp messages</p>
-                                      <button type="button" className="!min-h-0 text-[10px] text-gray-400 hover:text-gray-600" onClick={() => setWaStatus(null)}>hide</button>
-                                    </div>
-                                    {waStatus.messages.length === 0 ? (
-                                      <p className="m-0 text-xs text-gray-500">No WhatsApp messages sent to this customer yet.</p>
-                                    ) : waStatus.messages.map(m => (
-                                      <div key={m.id} className="flex items-start justify-between gap-2">
-                                        <div className="min-w-0">
-                                          <p className="m-0 text-xs font-bold text-gray-700 truncate">{m.trigger?.replace(/_/g, " ")}</p>
-                                          <p className="m-0 text-[10px] text-gray-400">{formatMoment(m.created_at)}</p>
-                                        </div>
-                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${m.status === "delivered" || m.status === "read" ? "bg-emerald-100 text-emerald-700" : m.status === "sent" ? "bg-blue-100 text-blue-700" : m.status === "failed" || m.error_message ? "bg-rose-100 text-rose-700" : "bg-gray-100 text-gray-600"}`}>
-                                          {m.error_message ? "failed" : m.status}
-                                        </span>
-                                      </div>
-                                    ))}
-                                    {waStatus.messages.some(m => m.status === "sent" && !m.error_message) && (
-                                      <p className="m-0 text-[10px] text-amber-600 font-bold">⚠ "Sent" = reached WA servers. "Delivered" = confirmed on customer device.</p>
-                                    )}
+                          {isOwnerOrAdmin && (
+                            <div>
+                              {!orderWaStatus ? (
+                                <button
+                                  type="button"
+                                  className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-500 text-xs font-bold hover:bg-gray-50"
+                                  disabled={orderWaStatusLoading}
+                                  onClick={() => {
+                                    setOrderWaStatusLoading(true);
+                                    ordersWhatsAppResendApi.status(selectedOrder.id)
+                                      .then(r => setOrderWaStatus(r))
+                                      .catch(() => setOrderWaStatus({ messages: [], normalizedPhone: "" }))
+                                      .finally(() => setOrderWaStatusLoading(false));
+                                  }}
+                                >
+                                  <MessageCircle className="w-3.5 h-3.5" />
+                                  {orderWaStatusLoading ? "Checking…" : "Check WA delivery status"}
+                                </button>
+                              ) : (
+                                <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 space-y-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">WhatsApp messages</p>
+                                    <button type="button" className="!min-h-0 text-[10px] text-gray-400 hover:text-gray-600" onClick={() => setOrderWaStatus(null)}>hide</button>
                                   </div>
-                                )}
-                              </div>
-                            );
-                          })()}
+                                  {orderWaStatus.messages.length === 0 ? (
+                                    <p className="m-0 text-xs text-gray-500">No WhatsApp messages sent to this customer yet.</p>
+                                  ) : orderWaStatus.messages.map(m => (
+                                    <div key={m.id} className="flex items-start justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <p className="m-0 text-xs font-bold text-gray-700 truncate">{m.trigger?.replace(/_/g, " ")}</p>
+                                        <p className="m-0 text-[10px] text-gray-400">{formatMoment(m.created_at)}</p>
+                                      </div>
+                                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${m.status === "delivered" || m.status === "read" ? "bg-emerald-100 text-emerald-700" : m.status === "sent" ? "bg-blue-100 text-blue-700" : m.status === "failed" || m.error_message ? "bg-rose-100 text-rose-700" : "bg-gray-100 text-gray-600"}`}>
+                                        {m.error_message ? "failed" : m.status}
+                                      </span>
+                                    </div>
+                                  ))}
+                                  {orderWaStatus.messages.some(m => m.status === "sent" && !m.error_message) && (
+                                    <p className="m-0 text-[10px] text-amber-600 font-bold">⚠ "Sent" = reached WA servers. "Delivered" = confirmed on customer device.</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
