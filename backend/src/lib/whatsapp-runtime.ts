@@ -2421,6 +2421,19 @@ export async function sendConnectedWhatsApp(
 
   const jid = `${normalizeDigits(normalizedPhone)}@s.whatsapp.net`;
 
+  // Validate the number is on WhatsApp before attempting to send.
+  // Baileys sends silently to unregistered numbers (no error, never delivered).
+  try {
+    const [waCheck] = await (socket as any).onWhatsApp(jid) ?? [];
+    if (waCheck && !waCheck.exists) {
+      throw new Error(`NOT_ON_WHATSAPP: ${normalizedPhone} is not registered on WhatsApp.`);
+    }
+  } catch (e: any) {
+    // If the check itself errors (network, etc.) rethrow only our NOT_ON_WHATSAPP errors
+    if (e?.message?.startsWith("NOT_ON_WHATSAPP")) throw e;
+    // Otherwise proceed optimistically
+  }
+
   // Anti-ban jitter: random 800ms – 2500ms delay before sending customer messages
   // so multiple order confirmations don't fire in a burst pattern.
   const jitterMs = 800 + Math.floor(Math.random() * 1700);

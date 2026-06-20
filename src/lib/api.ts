@@ -720,7 +720,9 @@ export const whatsappConversationsApi = {
 
 export const ordersWhatsAppResendApi = {
   resend: (orderId: string) =>
-    post<{ ok: boolean; message: string }>(`/api/orders/${encodeURIComponent(orderId)}/whatsapp-resend`, {})
+    post<{ ok: boolean; message: string }>(`/api/orders/${encodeURIComponent(orderId)}/whatsapp-resend`, {}),
+  status: (orderId: string) =>
+    get<{ messages: Array<{ id: string; trigger: string; status: string; error_message: string | null; created_at: string; body: string }>; normalizedPhone: string }>(`/api/orders/${encodeURIComponent(orderId)}/whatsapp-status`)
 };
 
 export const whatsappOrderDispatchApi = {

@@ -2739,6 +2739,29 @@ router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   res.status(204).send();
 });
 
+// ── GET /api/orders/:id/whatsapp-status ──────────────────────────────────────
+// Returns the latest WhatsApp message log entries for this order's phone.
+router.get("/:id/whatsapp-status", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
+  const { data: order } = await supabase
+    .from("orders").select("phone").eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
+  if (!order?.phone) { res.json({ messages: [] }); return; }
+
+  const digits = (order.phone as string).replace(/\D/g, "");
+  const normalized = digits.startsWith("234") ? digits
+    : digits.startsWith("0") && digits.length === 11 ? `234${digits.slice(1)}`
+    : digits.length === 10 ? `234${digits}` : digits;
+
+  const { data } = await supabase
+    .from("whatsapp_messages")
+    .select("id, trigger, status, error_message, created_at, body")
+    .eq("org_id", req.user!.orgId)
+    .eq("normalized_phone", normalized)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  res.json({ messages: data ?? [], normalizedPhone: normalized });
+});
+
 // ── POST /api/orders/:id/whatsapp-resend ─────────────────────────────────────
 // Owner/Admin: resend the order_new WhatsApp confirmation to the customer.
 // Clears the 24h dedup log entry first so the send is not blocked.
@@ -2787,7 +2810,12 @@ router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, r
     });
     res.json({ ok: true, message: `WhatsApp confirmation resent to ${order.customer}` });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message ?? "Could not resend WhatsApp." });
+    const msg = err?.message ?? "";
+    if (msg.startsWith("NOT_ON_WHATSAPP")) {
+      res.status(422).json({ error: `${order.customer}'s number (${order.phone}) is not registered on WhatsApp. The message cannot be delivered.` });
+    } else {
+      res.status(500).json({ error: msg || "Could not resend WhatsApp." });
+    }
   }
 });
 

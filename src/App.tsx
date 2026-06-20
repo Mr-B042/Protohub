@@ -55758,44 +55758,95 @@ ${waybillLineItems(w).length > 1
 	                      </div>
 	                    )}
                       {(selectedOrder.whatsapp || selectedOrder.phone) && (
-                        <div className="col-span-2 flex flex-wrap gap-2 pt-1">
-                          <button
-                            type="button"
-                            className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#25D366] text-white text-xs font-bold hover:opacity-90"
-                            onClick={() => openWhatsAppForOrder(selectedOrder)}
-                          >
-                            <WhatsAppIcon className="w-3.5 h-3.5" /> Open WhatsApp
-                          </button>
-                          <button
-                            type="button"
-                            className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-blue-200 text-blue-700 text-xs font-bold transition-colors hover:bg-blue-50"
-                            onClick={() => openWhatsAppDispatchForOrder(selectedOrder)}
-                          >
-                            <MessageCircle className="w-3.5 h-3.5" /> Dispatch to WhatsApp
-                          </button>
-                          <button
-                            type="button"
-                            className={`!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold transition-colors ${orderSecondaryButtonClass}`}
-                            onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
-                          >
-                            <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
-                          </button>
-                          {isOwnerOrAdmin && (
+                        <div className="col-span-2 space-y-2 pt-1">
+                          {/* WA delivery status panel — loads on demand for Owner/Admin */}
+                          {isOwnerOrAdmin && (() => {
+                            const [waStatus, setWaStatus] = useState<{ messages: any[]; normalizedPhone: string } | null>(null);
+                            const [waStatusLoading, setWaStatusLoading] = useState(false);
+                            return (
+                              <div>
+                                {!waStatus ? (
+                                  <button
+                                    type="button"
+                                    className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 text-gray-500 text-xs font-bold hover:bg-gray-50"
+                                    disabled={waStatusLoading}
+                                    onClick={() => {
+                                      setWaStatusLoading(true);
+                                      ordersWhatsAppResendApi.status(selectedOrder.id)
+                                        .then(r => setWaStatus(r))
+                                        .catch(() => setWaStatus({ messages: [], normalizedPhone: "" }))
+                                        .finally(() => setWaStatusLoading(false));
+                                    }}
+                                  >
+                                    <MessageCircle className="w-3.5 h-3.5" />
+                                    {waStatusLoading ? "Checking…" : "Check WA delivery status"}
+                                  </button>
+                                ) : (
+                                  <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 space-y-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">WhatsApp messages</p>
+                                      <button type="button" className="!min-h-0 text-[10px] text-gray-400 hover:text-gray-600" onClick={() => setWaStatus(null)}>hide</button>
+                                    </div>
+                                    {waStatus.messages.length === 0 ? (
+                                      <p className="m-0 text-xs text-gray-500">No WhatsApp messages sent to this customer yet.</p>
+                                    ) : waStatus.messages.map(m => (
+                                      <div key={m.id} className="flex items-start justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <p className="m-0 text-xs font-bold text-gray-700 truncate">{m.trigger?.replace(/_/g, " ")}</p>
+                                          <p className="m-0 text-[10px] text-gray-400">{formatMoment(m.created_at)}</p>
+                                        </div>
+                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${m.status === "delivered" || m.status === "read" ? "bg-emerald-100 text-emerald-700" : m.status === "sent" ? "bg-blue-100 text-blue-700" : m.status === "failed" || m.error_message ? "bg-rose-100 text-rose-700" : "bg-gray-100 text-gray-600"}`}>
+                                          {m.error_message ? "failed" : m.status}
+                                        </span>
+                                      </div>
+                                    ))}
+                                    {waStatus.messages.some(m => m.status === "sent" && !m.error_message) && (
+                                      <p className="m-0 text-[10px] text-amber-600 font-bold">⚠ "Sent" = reached WA servers. "Delivered" = confirmed on customer device.</p>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+                          <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
-                              className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-200 bg-amber-50 text-amber-700 text-xs font-bold hover:bg-amber-100 transition-colors"
-                              onClick={async () => {
-                                try {
-                                  const r = await ordersWhatsAppResendApi.resend(selectedOrder.id);
-                                  showToast(r.message ?? "WhatsApp confirmation resent.");
-                                } catch (err: any) {
-                                  showToast(`Resend failed: ${err?.message ?? "please retry"}.`);
-                                }
-                              }}
+                              className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#25D366] text-white text-xs font-bold hover:opacity-90"
+                              onClick={() => openWhatsAppForOrder(selectedOrder)}
                             >
-                              <RefreshCw className="w-3.5 h-3.5" /> Resend WA confirmation
+                              <WhatsAppIcon className="w-3.5 h-3.5" /> Open WhatsApp
                             </button>
-                          )}
+                            <button
+                              type="button"
+                              className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-blue-200 text-blue-700 text-xs font-bold transition-colors hover:bg-blue-50"
+                              onClick={() => openWhatsAppDispatchForOrder(selectedOrder)}
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" /> Dispatch to WhatsApp
+                            </button>
+                            <button
+                              type="button"
+                              className={`!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold transition-colors ${orderSecondaryButtonClass}`}
+                              onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+                            >
+                              <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
+                            </button>
+                            {isOwnerOrAdmin && (
+                              <button
+                                type="button"
+                                className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-200 bg-amber-50 text-amber-700 text-xs font-bold hover:bg-amber-100 transition-colors"
+                                onClick={async () => {
+                                  try {
+                                    const r = await ordersWhatsAppResendApi.resend(selectedOrder.id);
+                                    showToast(r.message ?? "WhatsApp confirmation resent.");
+                                  } catch (err: any) {
+                                    showToast(`Resend failed: ${err?.message ?? "please retry"}.`);
+                                  }
+                                }}
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" /> Resend WA confirmation
+                              </button>
+                            )}
+                          </div>
                         </div>
                       )}
 	                  </div>
