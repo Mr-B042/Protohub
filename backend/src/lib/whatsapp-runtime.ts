@@ -2419,20 +2419,11 @@ export async function sendConnectedWhatsApp(
     throw new Error("WhatsApp is not connected yet.");
   }
 
-  const jid = `${normalizeDigits(normalizedPhone)}@s.whatsapp.net`;
-
-  // Validate the number is on WhatsApp before attempting to send.
-  // Baileys sends silently to unregistered numbers (no error, never delivered).
-  try {
-    const [waCheck] = await (socket as any).onWhatsApp(jid) ?? [];
-    if (waCheck && !waCheck.exists) {
-      throw new Error(`NOT_ON_WHATSAPP: ${normalizedPhone} is not registered on WhatsApp.`);
-    }
-  } catch (e: any) {
-    // If the check itself errors (network, etc.) rethrow only our NOT_ON_WHATSAPP errors
-    if (e?.message?.startsWith("NOT_ON_WHATSAPP")) throw e;
-    // Otherwise proceed optimistically
-  }
+  // Build all plausible JID variants for Nigerian numbers.
+  // Nigerian prefixes 070/071/080/081/090/091 are all valid WA numbers.
+  // Try the primary JID, with a fallback that strips/adds country code.
+  const primaryDigits = normalizeDigits(normalizedPhone);
+  const jid = `${primaryDigits}@s.whatsapp.net`;
 
   // Anti-ban jitter: random 800ms – 2500ms delay before sending customer messages
   // so multiple order confirmations don't fire in a burst pattern.

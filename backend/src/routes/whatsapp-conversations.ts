@@ -188,17 +188,37 @@ const SendSchema = z.object({
 
 // Check if a normalized phone is registered on WhatsApp via the live socket.
 // Returns the confirmed JID digits if registered, null otherwise.
+// Build all plausible Nigerian number variants for a given input.
+// Nigerian operators: 070/071 (9mobile), 080/081 (MTN), 090/091 (Airtel), etc.
+// WhatsApp JID always needs the 234 country code.
+function ngPhoneVariants(phone: string): string[] {
+  const d = phone.replace(/\D/g, "");
+  const variants: string[] = [];
+  // Already international
+  if (d.startsWith("234") && d.length >= 13) { variants.push(d); }
+  // 0XXXXXXXXXX (11 digits) → 234XXXXXXXXXX
+  else if (d.startsWith("0") && d.length === 11) { variants.push(`234${d.slice(1)}`); variants.push(d.slice(1)); }
+  // XXXXXXXXXX (10 digits) → 234XXXXXXXXXX
+  else if (!d.startsWith("0") && d.length === 10) { variants.push(`234${d}`); variants.push(`0${d}`); }
+  else { variants.push(d); }
+  return [...new Set(variants)].filter(v => v.length >= 10);
+}
+
 async function checkOnWhatsApp(orgId: string, normalizedPhone: string): Promise<string | null> {
   try {
     const socket = await ensureWhatsAppReady(orgId);
-    if (!socket) return null;
-    const jid = `${normalizedPhone}@s.whatsapp.net`;
-    const results = await (socket as any).onWhatsApp(jid);
-    const hit = Array.isArray(results) ? results[0] : results;
-    if (hit?.exists) return normalizeDigits(hit.jid ?? normalizedPhone);
+    if (!socket) return normalizedPhone; // proceed optimistically if socket unavailable
+
+    // Try all plausible variants of the number (handles 070/080/090 prefixes)
+    for (const variant of ngPhoneVariants(normalizedPhone)) {
+      const jid = `${variant}@s.whatsapp.net`;
+      const results = await (socket as any).onWhatsApp(jid).catch(() => null);
+      const hit = Array.isArray(results) ? results[0] : results;
+      if (hit?.exists) return normalizeDigits(hit.jid ?? variant);
+    }
     return null;
   } catch {
-    // If the check itself errors, optimistically allow the send to proceed
+    // If the check errors entirely, proceed optimistically rather than blocking
     return normalizedPhone;
   }
 }
