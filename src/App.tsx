@@ -50040,16 +50040,18 @@ ${waybillLineItems(w).length > 1
                     </button>
                   </div>
 
-                  <div className="grid lg:grid-cols-[280px_1fr] min-h-[420px] max-h-[600px]">
-                    {/* Conversation list */}
-                    <div className="overflow-y-auto border-b lg:border-b-0 lg:border-r border-gray-100 max-h-48 lg:max-h-none">
+                  {/* Mobile: show list OR thread; Desktop: side-by-side */}
+                  <div className="flex lg:grid lg:grid-cols-[280px_1fr]" style={{ height: "min(600px, 80dvh)" }}>
+
+                    {/* Conversation list — full screen on mobile when no thread open */}
+                    <div className={`flex-col overflow-y-auto border-r border-gray-100 w-full lg:w-auto ${waActivePhone ? "hidden lg:flex" : "flex"}`}>
                       {waConvsLoading && waConversations.length === 0 ? (
-                        <div className="flex items-center justify-center h-full p-8 text-sm text-gray-400">Loading…</div>
+                        <div className="flex items-center justify-center flex-1 p-8 text-sm text-gray-400">Loading…</div>
                       ) : waConversations.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+                        <div className="flex flex-col items-center justify-center flex-1 p-8 text-center">
                           <MessageCircle className="h-8 w-8 text-gray-200 mb-2" />
                           <p className="m-0 text-sm font-bold text-gray-400">No messages yet</p>
-                          <p className="m-0 mt-1 text-xs text-gray-400">Customers reply to your automation messages here</p>
+                          <p className="m-0 mt-1 text-xs text-gray-400">Customers who reply to your automation messages appear here</p>
                         </div>
                       ) : waConversations.map((conv) => {
                         const active = waActivePhone === conv.normalizedPhone;
@@ -50058,7 +50060,7 @@ ${waybillLineItems(w).length > 1
                             key={conv.normalizedPhone}
                             type="button"
                             onClick={() => setWaActivePhone(conv.normalizedPhone)}
-                            className={`w-full text-left px-4 py-3 border-b border-gray-50 transition-colors ${active ? "bg-[#25D366]/8 border-l-2 border-l-[#25D366]" : "hover:bg-gray-50"}`}
+                            className={`w-full text-left px-4 py-3.5 border-b border-gray-50 transition-colors ${active ? "bg-[#25D366]/8 border-l-[3px] border-l-[#25D366]" : "hover:bg-gray-50"}`}
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
@@ -50066,15 +50068,15 @@ ${waybillLineItems(w).length > 1
                                   {conv.customerName || `+${conv.normalizedPhone}`}
                                 </p>
                                 {conv.customerName && <p className="m-0 text-[10px] text-gray-400">+{conv.normalizedPhone}</p>}
-                                <p className={`m-0 mt-0.5 text-xs truncate ${conv.lastDirection === "inbound" ? "text-gray-700" : "text-gray-400 italic"}`}>
-                                  {conv.lastDirection === "outbound" && <span className="text-[#25D366]">You: </span>}
+                                <p className={`m-0 mt-0.5 text-xs truncate max-w-[200px] ${conv.lastDirection === "inbound" ? "text-gray-700" : "text-gray-400 italic"}`}>
+                                  {conv.lastDirection === "outbound" && <span className="text-[#25D366] not-italic">You: </span>}
                                   {conv.lastMessage}
                                 </p>
                               </div>
-                              <div className="shrink-0 flex flex-col items-end gap-1">
-                                <p className="m-0 text-[10px] text-gray-400">{formatMoment(conv.lastMessageAt)}</p>
+                              <div className="shrink-0 flex flex-col items-end gap-1 ml-2">
+                                <p className="m-0 text-[10px] text-gray-400 whitespace-nowrap">{formatMoment(conv.lastMessageAt)}</p>
                                 {conv.unreadCount > 0 && (
-                                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#25D366] text-[10px] font-black text-white">{conv.unreadCount}</span>
+                                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] font-black text-white">{conv.unreadCount}</span>
                                 )}
                               </div>
                             </div>
@@ -50083,105 +50085,107 @@ ${waybillLineItems(w).length > 1
                       })}
                     </div>
 
-                    {/* Thread panel */}
-                    {waActivePhone ? (
-                      <div className="flex flex-col h-full min-h-[320px]">
-                        {/* Thread header */}
-                        {(() => {
-                          const conv = waConversations.find(c => c.normalizedPhone === waActivePhone);
-                          const ord = waThread?.linkedOrder;
-                          return (
-                            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 bg-gray-50/60">
-                              <div>
-                                <p className="m-0 text-sm font-black text-gray-900">{conv?.customerName || `+${waActivePhone}`}</p>
-                                {ord && (
-                                  <p className="m-0 text-xs text-gray-500">Order #{ord.id} · {ord.product_name} · <span className={`font-bold ${ord.status === "Delivered" ? "text-emerald-600" : ord.status === "Failed" ? "text-rose-600" : "text-amber-600"}`}>{ord.status}</span></p>
-                                )}
-                              </div>
-                              <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-500 hover:bg-gray-100" onClick={() => setWaActivePhone(null)}>✕</button>
-                            </div>
-                          );
-                        })()}
-
-                        {/* Messages */}
-                        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-                          {waThreadLoading && !waThread ? (
-                            <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
-                          ) : (() => {
-                            const msgs = waThread?.messages ?? [];
-                            const totalUnread = waThread?.unreadCount ?? 0;
-                            // Divider goes before the (totalUnread)th message from the end
-                            const dividerIdx = totalUnread > 0 ? msgs.length - totalUnread : -1;
-                            return msgs.map((msg: any, idx: number) => {
-                              const out = msg.direction === "outbound";
-                              const num = idx + 1;
-                              return (
-                                <Fragment key={msg.id}>
-                                  {/* Unread divider */}
-                                  {idx === dividerIdx && (
-                                    <div ref={waUnreadDividerRef} className="flex items-center gap-2 my-2">
-                                      <div className="flex-1 h-px bg-rose-200" />
-                                      <span className="shrink-0 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-black text-rose-600">
-                                        {totalUnread} unread message{totalUnread !== 1 ? "s" : ""}
-                                      </span>
-                                      <div className="flex-1 h-px bg-rose-200" />
-                                    </div>
-                                  )}
-                                  <div className={`flex items-end gap-2 ${out ? "flex-row-reverse" : "flex-row"}`}>
-                                    {/* Sequence number */}
-                                    <span className="shrink-0 text-[10px] font-black text-gray-300 mb-2 select-none w-5 text-center">{num}</span>
-                                    <div className={`max-w-[78%] rounded-2xl px-3.5 py-2.5 shadow-sm ${out ? "bg-[#25D366] text-white rounded-br-sm" : "bg-white border border-gray-200 text-gray-900 rounded-bl-sm"}`}>
-                                      {out && msg.sent_by_name && (
-                                        <p className={`m-0 text-[10px] font-black mb-1 ${out ? "text-white/70" : "text-gray-400"}`}>{msg.sent_by_name}</p>
-                                      )}
-                                      {!out && msg.sender_name && (
-                                        <p className="m-0 text-[10px] font-black mb-1 text-[#25D366]">{msg.sender_name}</p>
-                                      )}
-                                      <p className="m-0 text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.body}</p>
-                                      <p className={`m-0 mt-1 text-[10px] ${out ? "text-white/60" : "text-gray-400"} text-right`}>
-                                        {formatMoment(msg.sent_at || msg.received_at)}
-                                      </p>
-                                    </div>
-                                  </div>
-                                </Fragment>
-                              );
-                            });
-                          })()}
-                          <div ref={waThreadBottomRef} />
-                        </div>
-
-                        {/* Reply input */}
-                        {!isSpying && (
-                          <div className="border-t border-gray-100 px-4 py-3 bg-white">
-                            <div className="flex items-end gap-2">
-                              <textarea
-                                className="flex-1 min-h-[40px] max-h-[120px] resize-none rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 placeholder:text-gray-400"
-                                placeholder="Type a message…"
-                                rows={1}
-                                value={waReplyDraft}
-                                onChange={(e) => setWaReplyDraft(e.target.value)}
-                                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); waSendReply(); } }}
-                              />
+                    {/* Thread panel — full screen on mobile when thread open */}
+                    <div className={`flex-col w-full lg:w-auto ${waActivePhone ? "flex" : "hidden lg:flex"}`}>
+                      {waActivePhone ? (() => {
+                        const conv = waConversations.find(c => c.normalizedPhone === waActivePhone);
+                        const ord = waThread?.linkedOrder;
+                        return (
+                          <>
+                            {/* Thread header — back button on mobile */}
+                            <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-gray-50/60 shrink-0">
                               <button
                                 type="button"
-                                className="!min-h-0 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#25D366] text-white hover:bg-[#1ebe57] disabled:opacity-40 transition-colors"
-                                onClick={waSendReply}
-                                disabled={!waReplyDraft.trim() || waReplySending}
+                                className="!min-h-0 lg:hidden flex items-center justify-center h-8 w-8 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100"
+                                onClick={() => setWaActivePhone(null)}
+                                aria-label="Back to conversations"
                               >
-                                {waReplySending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                                <ChevronLeft className="h-4 w-4" />
                               </button>
+                              <div className="flex-1 min-w-0">
+                                <p className="m-0 text-sm font-black text-gray-900 truncate">{conv?.customerName || `+${waActivePhone}`}</p>
+                                {ord ? (
+                                  <p className="m-0 text-xs text-gray-500 truncate">#{ord.id} · {ord.product_name} · <span className={`font-bold ${ord.status === "Delivered" ? "text-emerald-600" : ord.status === "Failed" ? "text-rose-600" : "text-amber-600"}`}>{ord.status}</span></p>
+                                ) : (
+                                  <p className="m-0 text-xs text-gray-400">+{waActivePhone}</p>
+                                )}
+                              </div>
+                              <button type="button" className="!min-h-0 hidden lg:flex items-center rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-500 hover:bg-gray-100" onClick={() => setWaActivePhone(null)}>✕</button>
                             </div>
-                            <p className="m-0 mt-1.5 text-[10px] text-gray-400">Enter to send · Shift+Enter for new line · Sent from org account</p>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center h-full text-center p-8 text-gray-400">
-                        <MessageCircle className="h-10 w-10 text-gray-200 mb-3" />
-                        <p className="m-0 text-sm font-bold text-gray-400">Select a conversation</p>
-                        <p className="m-0 mt-1 text-xs">Pick a customer from the left to read and reply</p>
-                      </div>
-                    )}
+
+                            {/* Messages — fill remaining height */}
+                            <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-3 min-h-0">
+                              {waThreadLoading && !waThread ? (
+                                <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
+                              ) : (() => {
+                                const msgs = waThread?.messages ?? [];
+                                const totalUnread = waThread?.unreadCount ?? 0;
+                                const dividerIdx = totalUnread > 0 ? msgs.length - totalUnread : -1;
+                                return msgs.map((msg: any, idx: number) => {
+                                  const out = msg.direction === "outbound";
+                                  const num = idx + 1;
+                                  return (
+                                    <Fragment key={msg.id}>
+                                      {idx === dividerIdx && (
+                                        <div ref={waUnreadDividerRef} className="flex items-center gap-2 my-2">
+                                          <div className="flex-1 h-px bg-rose-200" />
+                                          <span className="shrink-0 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-black text-rose-600">
+                                            {totalUnread} unread message{totalUnread !== 1 ? "s" : ""}
+                                          </span>
+                                          <div className="flex-1 h-px bg-rose-200" />
+                                        </div>
+                                      )}
+                                      <div className={`flex items-end gap-1.5 ${out ? "flex-row-reverse" : "flex-row"}`}>
+                                        <span className="shrink-0 text-[10px] font-black text-gray-300 mb-2 select-none w-4 text-center">{num}</span>
+                                        <div className={`max-w-[82%] sm:max-w-[75%] rounded-2xl px-3 py-2.5 shadow-sm ${out ? "bg-[#25D366] text-white rounded-br-sm" : "bg-white border border-gray-200 text-gray-900 rounded-bl-sm"}`}>
+                                          {out && msg.sent_by_name && <p className="m-0 text-[10px] font-black mb-1 text-white/70">{msg.sent_by_name}</p>}
+                                          {!out && msg.sender_name && <p className="m-0 text-[10px] font-black mb-1 text-[#25D366]">{msg.sender_name}</p>}
+                                          <p className="m-0 text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.body}</p>
+                                          <p className={`m-0 mt-1 text-[10px] ${out ? "text-white/60" : "text-gray-400"} text-right`}>{formatMoment(msg.sent_at || msg.received_at)}</p>
+                                        </div>
+                                      </div>
+                                    </Fragment>
+                                  );
+                                });
+                              })()}
+                              <div ref={waThreadBottomRef} />
+                            </div>
+
+                            {/* Reply bar — sticky at bottom */}
+                            {!isSpying && (
+                              <div className="shrink-0 border-t border-gray-100 px-3 sm:px-4 py-3 bg-white">
+                                <div className="flex items-end gap-2">
+                                  <textarea
+                                    className="flex-1 min-h-[40px] max-h-[100px] resize-none rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 placeholder:text-gray-400"
+                                    placeholder="Type a message…"
+                                    rows={1}
+                                    value={waReplyDraft}
+                                    onChange={(e) => setWaReplyDraft(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); waSendReply(); } }}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="!min-h-0 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#25D366] text-white hover:bg-[#1ebe57] disabled:opacity-40 transition-colors"
+                                    onClick={waSendReply}
+                                    disabled={!waReplyDraft.trim() || waReplySending}
+                                  >
+                                    {waReplySending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                                  </button>
+                                </div>
+                                <p className="m-0 mt-1 text-[10px] text-gray-400 hidden sm:block">Enter to send · Shift+Enter new line · Sent from org account</p>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })() : (
+                        <div className="flex flex-col items-center justify-center flex-1 text-center p-8 text-gray-400">
+                          <MessageCircle className="h-10 w-10 text-gray-200 mb-3" />
+                          <p className="m-0 text-sm font-bold text-gray-400">Select a conversation</p>
+                          <p className="m-0 mt-1 text-xs">Pick a customer from the list to read and reply</p>
+                        </div>
+                      )}
+                    </div>
+
                   </div>
                 </section>
               )}
