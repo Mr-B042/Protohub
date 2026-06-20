@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -140,6 +140,25 @@ router.delete("/:id", async (req, res) => {
     return;
   }
   res.json({ ok: true });
+});
+
+// Owner/Admin can view any user's destinations for view-as mode.
+router.get("/user/:userId", requireRole("Owner", "Admin"), async (req, res) => {
+  const { data, error } = await supabase
+    .from("whatsapp_user_destinations")
+    .select("*")
+    .eq("org_id", req.user!.orgId)
+    .eq("user_id", String(req.params["userId"] ?? ""))
+    .eq("active", true)
+    .order("is_default", { ascending: false })
+    .order("last_used_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+  res.json({ destinations: data ?? [] });
 });
 
 export default router;

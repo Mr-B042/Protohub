@@ -679,6 +679,8 @@ export const whatsappSettingsApi = {
 
 export const whatsappUserAccountApi = {
   get: () => get<{ account: any; dispatches: any[] }>("/api/whatsapp-user-account/me/connect"),
+  // Owner/Admin: fetch another user's account for view-as mode
+  getForUser: (userId: string) => get<{ account: any; dispatches: any[] }>(`/api/whatsapp-user-account/user/${encodeURIComponent(userId)}/connect`),
   connect: (body: { mode: "qr" | "pairing_code"; phone?: string; riskAcknowledged?: boolean }) =>
     post<{ account: any }>("/api/whatsapp-user-account/me/connect", body),
   acknowledgeRisk: () =>
@@ -691,6 +693,8 @@ export const whatsappUserAccountApi = {
 export const whatsappDestinationsApi = {
   list: (includeInactive = false) =>
     get<{ destinations: any[] }>(`/api/whatsapp-destinations${includeInactive ? "?includeInactive=true" : ""}`),
+  // Owner/Admin: fetch another user's destinations for view-as mode
+  listForUser: (userId: string) => get<{ destinations: any[] }>(`/api/whatsapp-destinations/user/${encodeURIComponent(userId)}`),
   create: (body: { label: string; destinationType: "group" | "phone" | "manual_group"; groupJid?: string | null; phone?: string | null; notes?: string | null; active?: boolean; isDefault?: boolean }) =>
     post<any>("/api/whatsapp-destinations", body),
   update: (id: string, body: Partial<{ label: string; destinationType: "group" | "phone" | "manual_group"; groupJid: string | null; phone: string | null; notes: string | null; active: boolean; isDefault: boolean }>) =>

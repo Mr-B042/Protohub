@@ -8740,10 +8740,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     let cancelled = false;
     setWaUserAccountLoading(true);
     setWaDestinationsLoading(true);
+    // In spy mode (Owner viewing as another user) use the admin endpoints so the
+    // page shows THAT user's data, not the Owner's.
+    const spyId = isSpying && spiedUser?.id ? spiedUser.id : null;
     Promise.all([
-      whatsappUserAccountApi.get(),
-      whatsappDestinationsApi.list(),
-      (currentRole === "Owner" || currentRole === "Admin") ? whatsappUserAccountApi.teamDispatches().catch(() => ({ dispatches: [] })) : Promise.resolve({ dispatches: [] })
+      spyId ? whatsappUserAccountApi.getForUser(spyId) : whatsappUserAccountApi.get(),
+      spyId ? whatsappDestinationsApi.listForUser(spyId) : whatsappDestinationsApi.list(),
+      (!spyId && (currentRole === "Owner" || currentRole === "Admin"))
+        ? whatsappUserAccountApi.teamDispatches().catch(() => ({ dispatches: [] }))
+        : Promise.resolve({ dispatches: [] })
     ])
       .then(([accountResult, destinationsResult, teamResult]) => {
         if (cancelled) return;
@@ -8762,7 +8767,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         }
       });
     return () => { cancelled = true; };
-  }, [activePage, canUsePersonalWhatsApp, currentRole, authUser?.id]);
+  }, [activePage, canUsePersonalWhatsApp, currentRole, authUser?.id, isSpying, spiedUser?.id]);
 
   const waConnect = async () => {
     setWaConnecting(true);
@@ -8788,10 +8793,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!canUsePersonalWhatsApp) return;
     setWaUserAccountLoading(true);
     setWaDestinationsLoading(true);
+    const spyId = isSpying && spiedUser?.id ? spiedUser.id : null;
     Promise.all([
-      whatsappUserAccountApi.get(),
-      whatsappDestinationsApi.list(),
-      (currentRole === "Owner" || currentRole === "Admin") ? whatsappUserAccountApi.teamDispatches().catch(() => ({ dispatches: [] })) : Promise.resolve({ dispatches: [] })
+      spyId ? whatsappUserAccountApi.getForUser(spyId) : whatsappUserAccountApi.get(),
+      spyId ? whatsappDestinationsApi.listForUser(spyId) : whatsappDestinationsApi.list(),
+      (!spyId && (currentRole === "Owner" || currentRole === "Admin"))
+        ? whatsappUserAccountApi.teamDispatches().catch(() => ({ dispatches: [] }))
+        : Promise.resolve({ dispatches: [] })
     ])
       .then(([accountResult, destinationsResult, teamResult]) => {
         setWaUserAccount(accountResult.account ?? null);
@@ -49586,10 +49594,10 @@ ${waybillLineItems(w).length > 1
                 const activeDestinations = waDestinations.filter((destination) => destination.active !== false);
                 return (
                   <section className="grid gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.72fr)]">
-                    {isSpying && (
-                      <div className="lg:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 flex items-center gap-2 text-sm font-bold text-amber-800">
-                        <span>⚠</span>
-                        <span>This is YOUR personal WhatsApp data — reps see their own account, not yours.</span>
+                    {isSpying && spiedUser && (
+                      <div className="lg:col-span-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 flex items-center gap-2 text-sm font-bold text-blue-800">
+                        <span className="shrink-0">👁</span>
+                        <span>Viewing <span className="font-black">{spiedUser.name}</span>'s WhatsApp — read-only. Connect/disconnect actions are disabled in view-as mode.</span>
                       </div>
                     )}
                     <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -49610,7 +49618,7 @@ ${waybillLineItems(w).length > 1
                           <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={waUserRefresh} disabled={waUserAccountLoading}>
                             <RefreshCw className={`h-3.5 w-3.5 ${waUserAccountLoading ? "animate-spin" : ""}`} /> Refresh
                           </button>
-                          {userConnected && (
+                          {userConnected && !isSpying && (
                             <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={waUserDisconnect} disabled={waUserDisconnecting}>
                               {waUserDisconnecting ? "Disconnecting..." : "Disconnect"}
                             </button>
@@ -49618,7 +49626,7 @@ ${waybillLineItems(w).length > 1
                         </div>
                       </div>
 
-                      {!userConnected && (
+                      {!userConnected && !isSpying && (
                         <div className="mt-5 space-y-4 border-t border-gray-100 pt-5">
                           <div className="flex gap-2">
                             {(["qr", "pairing_code"] as const).map((mode) => (

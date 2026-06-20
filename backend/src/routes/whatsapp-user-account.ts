@@ -179,4 +179,18 @@ router.get("/dispatches", requireRole("Owner", "Admin"), async (req, res) => {
   }
 });
 
+// Owner/Admin can view any user's account + dispatches for view-as mode.
+router.get("/user/:userId/connect", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const userId = String(req.params["userId"] ?? "");
+    const [account, dispatches] = await Promise.all([
+      loadAccount(req.user!.orgId, userId),
+      recentDispatches(req.user!.orgId, userId)
+    ]);
+    res.json({ account, dispatches });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Could not load user WhatsApp account." });
+  }
+});
+
 export default router;
