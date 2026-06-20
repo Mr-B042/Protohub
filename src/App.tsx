@@ -7300,6 +7300,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }>(null);
   const [waAllDestinations, setWaAllDestinations] = useState<any[]>([]);
   const [waDispatchSearch, setWaDispatchSearch] = useState("");
+  const [waDispatchShowAll, setWaDispatchShowAll] = useState(false);
   const [smsSettings, setSmsSettings] = useState<SmsSettingsState | null>(null);
   const [smsSettingsLoading, setSmsSettingsLoading] = useState(false);
   const [smsSettingsSaving, setSmsSettingsSaving] = useState(false);
@@ -22022,6 +22023,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const openWhatsAppDispatchForOrder = async (order: TrackedOrder) => {
     setWaDispatchSearch("");
+    setWaDispatchShowAll(false);
     setWaDispatchModal({
       order, loading: true, sending: false,
       body: formatOrderForWhatsAppDispatch(order),
@@ -54580,9 +54582,24 @@ ${waybillLineItems(w).length > 1
                         return false;
                       };
 
+                      // If the group label contains the agent's name → treat as strongest match
+                      const groupNameMatchesAgent = (a: DeliveryAgentRecord) => {
+                        const dest = destForAgent(a.id);
+                        if (!dest) return false;
+                        const label = (dest.label ?? "").toLowerCase();
+                        const name = a.name.toLowerCase();
+                        // Check if any word of the agent name appears in the group label
+                        return name.split(/\s+/).some(word => word.length > 2 && label.includes(word));
+                      };
+
                       const stateAgents = agentsWithGroup.filter(a =>
                         a.id !== orderAgentId && agentCoversState(a, orderState)
-                      );
+                      ).sort((a, b) => {
+                        // Group-name-matches-agent-name = higher priority within state tier
+                        const aMatch = groupNameMatchesAgent(a) ? 1 : 0;
+                        const bMatch = groupNameMatchesAgent(b) ? 1 : 0;
+                        return bMatch - aMatch;
+                      });
                       // All other agents with groups
                       const otherAgents = agentsWithGroup.filter(a =>
                         a.id !== orderAgentId &&
@@ -54634,46 +54651,93 @@ ${waybillLineItems(w).length > 1
                               onChange={e => setWaDispatchSearch(e.target.value)}
                             />
                           </div>
-                          <div className="space-y-1.5 max-h-56 overflow-y-auto">
-                            <button
-                              type="button"
-                              onClick={() => setWaDispatchModal(c => c ? { ...c, destinationId: "", sendMode: "assisted" } : c)}
-                              className={`w-full text-left rounded-xl px-3 py-2 text-sm border transition-colors ${!waDispatchModal.destinationId ? "bg-[#25D366]/10 border-[#25D366]/30 font-black text-[#25D366]" : "bg-white border-gray-100 hover:bg-gray-50 text-gray-500"}`}
-                            >
-                              Manual — pick group in WhatsApp
-                            </button>
+                          {/* Currently selected agent stays pinned at top even when collapsed */}
+                          {(() => {
+                            const selectedDest = allDests.find((d: any) => d.id === waDispatchModal.destinationId);
+                            const selectedAgentId = selectedDest ? getAgentId(selectedDest) : null;
+                            const selectedAgent = selectedAgentId ? agents.find(a => a.id === selectedAgentId) : null;
+                            const showingSearch = !!search;
+                            // Priority agents = assigned + same-state (always visible)
+                            const priorityAgents = [
+                              ...(assignedAgent && filterAgent(assignedAgent) ? [assignedAgent] : []),
+                              ...stateAgents.filter(a => a.id !== assignedAgent?.id)
+                            ];
+                            // Pinned = currently selected if not already in priority list
+                            const pinnedAgent = selectedAgent && !priorityAgents.find(a => a.id === selectedAgent.id) ? selectedAgent : null;
+                            // Hidden behind "See more"
+                            const collapsedAgents = showingSearch
+                              ? [...otherAgents, ...agentsWithoutGroup]
+                              : (waDispatchShowAll ? [...otherAgents, ...agentsWithoutGroup] : []);
+                            const hiddenCount = showingSearch ? 0 : otherAgents.length + agentsWithoutGroup.length;
 
-                            {assignedAgent && filterAgent(assignedAgent) && (
-                              <>
-                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-[#25D366]">Assigned agent</p>
-                                <AgentRow a={assignedAgent} />
-                              </>
-                            )}
+                            return (
+                              <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                                {/* Manual */}
+                                <button
+                                  type="button"
+                                  onClick={() => setWaDispatchModal(c => c ? { ...c, destinationId: "", sendMode: "assisted" } : c)}
+                                  className={`w-full text-left rounded-xl px-3 py-2 text-sm border transition-colors ${!waDispatchModal.destinationId ? "bg-[#25D366]/10 border-[#25D366]/30 font-black text-[#25D366]" : "bg-white border-gray-100 hover:bg-gray-50 text-gray-500"}`}
+                                >
+                                  Manual — pick group in WhatsApp
+                                </button>
 
-                            {stateAgents.length > 0 && (
-                              <>
-                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-amber-600">📍 {order.state || "Same state"} agents</p>
-                                {stateAgents.map(a => <AgentRow key={a.id} a={a} />)}
-                              </>
-                            )}
-                            {otherAgents.length > 0 && (
-                              <>
-                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Other agents</p>
-                                {otherAgents.map(a => <AgentRow key={a.id} a={a} />)}
-                              </>
-                            )}
-                            {agentsWithoutGroup.length > 0 && (
-                              <>
-                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-gray-300">No group mapped yet</p>
-                                {agentsWithoutGroup.map(a => <AgentRow key={a.id} a={a} />)}
-                              </>
-                            )}
-                            {!assignedAgent && agentsWithGroup.length === 0 && agentsWithoutGroup.length === 0 && (
-                              <p className="m-0 p-4 text-center text-sm text-gray-400">
-                                {search ? `No agents match "${waDispatchSearch}"` : "No agents found."}
-                              </p>
-                            )}
-                          </div>
+                                {/* Pinned: currently selected agent if outside priority */}
+                                {pinnedAgent && (
+                                  <>
+                                    <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-[#25D366]">Selected</p>
+                                    <AgentRow a={pinnedAgent} />
+                                  </>
+                                )}
+
+                                {/* Priority agents — always shown */}
+                                {assignedAgent && filterAgent(assignedAgent) && (
+                                  <>
+                                    <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-[#25D366]">Assigned agent</p>
+                                    <AgentRow a={assignedAgent} />
+                                  </>
+                                )}
+                                {stateAgents.length > 0 && (
+                                  <>
+                                    <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-amber-600">📍 {order.state || "Same state"}</p>
+                                    {stateAgents.filter(a => a.id !== assignedAgent?.id).map(a => <AgentRow key={a.id} a={a} />)}
+                                  </>
+                                )}
+
+                                {/* Collapsed agents — revealed by See more */}
+                                {collapsedAgents.length > 0 && (
+                                  <>
+                                    <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Other agents</p>
+                                    {otherAgents.map(a => <AgentRow key={a.id} a={a} />)}
+                                    {agentsWithoutGroup.length > 0 && (
+                                      <>
+                                        <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-gray-300">No group mapped</p>
+                                        {agentsWithoutGroup.map(a => <AgentRow key={a.id} a={a} />)}
+                                      </>
+                                    )}
+                                  </>
+                                )}
+
+                                {/* See more / See less toggle */}
+                                {!showingSearch && hiddenCount > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setWaDispatchShowAll(v => !v)}
+                                    className="!min-h-0 w-full rounded-xl border border-dashed border-gray-200 py-2 text-xs font-black text-gray-400 hover:bg-gray-50 hover:text-gray-600 transition-colors"
+                                  >
+                                    {waDispatchShowAll
+                                      ? "↑ Show less"
+                                      : `↓ See more agents (${hiddenCount})`}
+                                  </button>
+                                )}
+
+                                {!assignedAgent && agentsWithGroup.length === 0 && agentsWithoutGroup.length === 0 && (
+                                  <p className="m-0 p-4 text-center text-sm text-gray-400">
+                                    {search ? `No agents match "${waDispatchSearch}"` : "No agents found."}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })()}
