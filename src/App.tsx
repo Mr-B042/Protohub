@@ -7279,6 +7279,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waReplySending, setWaReplySending] = useState(false);
   const waThreadBottomRef = useRef<HTMLDivElement | null>(null);
   const waUnreadDividerRef = useRef<HTMLDivElement | null>(null);
+  const waInboxSectionRef = useRef<HTMLElement | null>(null);
   const [waDestinations, setWaDestinations] = useState<Record<string, any>[]>([]);
   const [waDestinationsLoading, setWaDestinationsLoading] = useState(false);
   const [waDestinationSaving, setWaDestinationSaving] = useState(false);
@@ -22084,9 +22085,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const openWhatsAppForOrder = (order: TrackedOrder) => {
+    const phone = order.whatsapp || order.phone;
+    const message = buildOrderWhatsAppMessage(order);
+    // When org account is connected: go straight to the in-app chat inbox.
+    if (whatsappStatus(waSettings) === "connected" && phone) {
+      const normalizedPhone = phone.replace(/\D/g, "");
+      if (normalizedPhone) {
+        setActivePage("WhatsApp");
+        setWaActivePhone(normalizedPhone);
+        setWaReplyDraft(message);
+        // Ensure conversation list is loaded so the left panel isn't empty
+        if (waConversations.length === 0) {
+          whatsappConversationsApi.list(60).then(r => setWaConversations(r.conversations ?? [])).catch(() => {});
+        }
+        setTimeout(() => waInboxSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
+        return;
+      }
+    }
+    // Fallback: show the picker modal (personal WA / no org connection)
     openWhatsAppPicker({
-      phone: order.whatsapp || order.phone,
-      message: buildOrderWhatsAppMessage(order),
+      phone,
+      message,
       customerName: order.customer || `order ${order.id}`,
       linkedOrderId: order.id
     });
@@ -22152,9 +22171,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const openWhatsAppForCart = (cart: AbandonedCartRecord) => {
+    const phone = cart.whatsapp || cart.phone;
+    const message = buildCartWhatsAppMessage(cart);
+    if (whatsappStatus(waSettings) === "connected" && phone) {
+      const normalizedPhone = phone.replace(/\D/g, "");
+      if (normalizedPhone) {
+        setActivePage("WhatsApp");
+        setWaActivePhone(normalizedPhone);
+        setWaReplyDraft(message);
+        setTimeout(() => waInboxSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+        return;
+      }
+    }
     openWhatsAppPicker({
-      phone: cart.whatsapp || cart.phone,
-      message: buildCartWhatsAppMessage(cart),
+      phone,
+      message,
       customerName: cart.customer || "this customer"
     });
   };
@@ -49931,7 +49962,7 @@ ${waybillLineItems(w).length > 1
 
               {/* ── WhatsApp Inbox ── visible to Owner/Admin/Manager/Sales Rep ── */}
               {canUseInbox && (
-                <section className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                <section ref={waInboxSectionRef} className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
                   {/* Header */}
                   <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
                     <div className="flex items-center gap-3">
