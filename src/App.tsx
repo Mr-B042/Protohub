@@ -50128,7 +50128,7 @@ ${waybillLineItems(w).length > 1
                   <div className="flex lg:grid lg:grid-cols-[280px_1fr]" style={{ height: "min(600px, 80dvh)" }}>
 
                     {/* Conversation list — full screen on mobile when no thread open */}
-                    <div className={`flex-col overflow-y-auto border-r border-gray-100 w-full lg:w-auto ${waActivePhone ? "hidden lg:flex" : "flex"}`}>
+                    <div className={`flex-col overflow-y-auto border-r border-gray-100 w-full lg:w-auto h-full ${waActivePhone ? "hidden lg:flex" : "flex"}`}>
                       {waConvsLoading && waConversations.length === 0 ? (
                         <div className="flex items-center justify-center flex-1 p-8 text-sm text-gray-400">Loading…</div>
                       ) : waConversations.length === 0 ? (
@@ -50170,7 +50170,7 @@ ${waybillLineItems(w).length > 1
                     </div>
 
                     {/* Thread panel — full screen on mobile when thread open */}
-                    <div className={`flex-col w-full lg:w-auto ${waActivePhone ? "flex" : "hidden lg:flex"}`}>
+                    <div className={`flex-col w-full lg:w-auto h-full overflow-hidden ${waActivePhone ? "flex" : "hidden lg:flex"}`}>
                       {waActivePhone ? (() => {
                         const conv = waConversations.find(c => c.normalizedPhone === waActivePhone);
                         const ord = waThread?.linkedOrder;
