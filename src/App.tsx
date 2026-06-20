@@ -54567,9 +54567,21 @@ ${waybillLineItems(w).length > 1
                       // Assigned agent for this order (first)
                       const assignedAgent = orderAgentId ? agents.find(a => a.id === orderAgentId) : null;
                       // Other agents in same state
+                      // Check all states an agent covers, not just their primary
+                      const agentCoversState = (a: DeliveryAgentRecord, state: string) => {
+                        if (!state) return false;
+                        const s = state.toLowerCase();
+                        if ((a.primaryBaseState ?? "").toLowerCase().includes(s)) return true;
+                        if ((a.zone ?? "").toLowerCase().includes(s)) return true;
+                        // Check all coverage rows
+                        if (a.coverage?.some(c => c.active && c.state.toLowerCase().includes(s))) return true;
+                        // Check all locations
+                        if (a.locations?.some(l => l.active && l.state.toLowerCase().includes(s))) return true;
+                        return false;
+                      };
+
                       const stateAgents = agentsWithGroup.filter(a =>
-                        a.id !== orderAgentId &&
-                        (a.primaryBaseState ?? a.zone ?? "").toLowerCase().includes(orderState)
+                        a.id !== orderAgentId && agentCoversState(a, orderState)
                       );
                       // All other agents with groups
                       const otherAgents = agentsWithGroup.filter(a =>
