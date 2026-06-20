@@ -69,19 +69,19 @@ export const DEFAULT_WHATSAPP_TEMPLATES: Record<WhatsAppTrigger, { body: string 
   },
   // Customer-facing order event templates
   order_new: {
-    body: "Hi {{customer}}, your order has been received! 🎉\n\nOrder: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\nAmount: {{currency}} {{amount}}\nDelivery to: {{city}}, {{state}}\n\nOur delivery team will contact you to arrange delivery. For enquiries call or reply to this message.\n\nThank you for your order! 🛍️"
+    body: "Dear {{customer}},\n\nThank you for your order. We have received it and it is now being processed.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\nAmount: {{currency}} {{amount}}\nDelivery to: {{city}}, {{state}}\n\nOur team will contact you shortly to confirm your delivery. For any enquiries, please reply to this message.\n\nWarm regards,\nProtohub Team"
   },
   order_new_rep: {
-    body: "📦 *New Order Assigned to You*\n\nRef: #{{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nLocation: {{city}}, {{state}}\nProduct: {{product_name}} · {{package_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nCall the customer to confirm and arrange delivery. Update the order status after contact."
+    body: "*New Order — Action Required*\n\nRef: #{{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nLocation: {{city}}, {{state}}\nProduct: {{product_name}} — {{package_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nPlease call the customer to confirm the order and arrange delivery. Update the order status after contact."
   },
   order_scheduled: {
-    body: "Hi {{customer}}, your delivery has been scheduled! 📅\n\nOrder: #{{order_id}}\nProduct: {{product_name}}\nScheduled for: {{scheduled_date}}\n\nOur delivery partner will arrive at your address. Please ensure you are available to receive the package.\n\nFor enquiries, reply to this message."
+    body: "Dear {{customer}},\n\nYour delivery has been scheduled.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nScheduled Date: {{scheduled_date}}\n\nPlease ensure you or a representative is available to receive the package on the scheduled date. Our delivery partner will contact you before arrival.\n\nFor any enquiries, please reply to this message.\n\nWarm regards,\nProtohub Team"
   },
   order_failed: {
-    body: "Hi {{customer}}, we were unable to complete your delivery today. 😔\n\nOrder: #{{order_id}}\nProduct: {{product_name}}\n\nPlease contact us to reschedule your delivery. Our team will reach out to you shortly.\n\nCall us: {{rep_contact}}"
+    body: "Dear {{customer}},\n\nWe regret to inform you that we were unable to complete your delivery today.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\n\nOur team will reach out to you shortly to reschedule your delivery at a convenient time. You may also contact us directly: {{rep_contact}}\n\nWe apologise for the inconvenience and appreciate your patience.\n\nWarm regards,\nProtohub Team"
   },
   order_delivered: {
-    body: "Hi {{customer}}, your order has been delivered! ✅\n\nOrder: #{{order_id}}\nProduct: {{product_name}}\n\nThank you for your purchase! We hope you enjoy your {{product_name}}. Please leave us a review — your feedback means a lot to us! 🌟"
+    body: "Dear {{customer}},\n\nYour order has been successfully delivered. ✅\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\nAmount: {{currency}} {{amount}}\n\nWe hope you are satisfied with your purchase. If you have any concerns about the product or delivery, please reply to this message and our team will assist you promptly.\n\nThank you for choosing us. We look forward to serving you again.\n\nWarm regards,\nProtohub Team"
   }
 };
 
