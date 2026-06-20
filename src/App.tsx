@@ -112,7 +112,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, whatsappSettingsApi
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi
 } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
@@ -7255,6 +7255,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waDisconnecting, setWaDisconnecting] = useState(false);
   const [waConnectMode, setWaConnectMode] = useState<"qr" | "pairing_code">("qr");
   const [waPairingPhone, setWaPairingPhone] = useState("");
+  const [waUserAccount, setWaUserAccount] = useState<Record<string, any> | null>(null);
+  const [waUserAccountLoading, setWaUserAccountLoading] = useState(false);
+  const [waUserConnecting, setWaUserConnecting] = useState(false);
+  const [waUserDisconnecting, setWaUserDisconnecting] = useState(false);
+  const [waUserConnectMode, setWaUserConnectMode] = useState<"qr" | "pairing_code">("qr");
+  const [waUserPairingPhone, setWaUserPairingPhone] = useState("");
+  const [waUserGroups, setWaUserGroups] = useState<Array<{ jid: string; subject: string; participants?: number | null }>>([]);
+  const [waUserGroupsLoading, setWaUserGroupsLoading] = useState(false);
+  const [waDestinations, setWaDestinations] = useState<Record<string, any>[]>([]);
+  const [waDestinationsLoading, setWaDestinationsLoading] = useState(false);
+  const [waDestinationSaving, setWaDestinationSaving] = useState(false);
+  const [waDestinationDraft, setWaDestinationDraft] = useState({ label: "", destinationType: "manual_group" as "group" | "phone" | "manual_group", groupJid: "", phone: "", notes: "", isDefault: false });
+  const [waUserDispatches, setWaUserDispatches] = useState<Record<string, any>[]>([]);
+  const [waTeamDispatches, setWaTeamDispatches] = useState<Record<string, any>[]>([]);
+  const [waDispatchModal, setWaDispatchModal] = useState<null | {
+    order: TrackedOrder;
+    loading: boolean;
+    sending: boolean;
+    body: string;
+    destinationId: string;
+    sendMode: "assisted" | "direct";
+    canDirect: boolean;
+    directBlockedReason?: string | null;
+  }>(null);
   const [smsSettings, setSmsSettings] = useState<SmsSettingsState | null>(null);
   const [smsSettingsLoading, setSmsSettingsLoading] = useState(false);
   const [smsSettingsSaving, setSmsSettingsSaving] = useState(false);
@@ -8685,13 +8709,60 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     await loadSmsBalance(options);
   };
 
-  // Load WhatsApp settings when the WhatsApp page is opened (Owner only — others see Coming Soon)
+  const recordValue = (record: Record<string, any> | null | undefined, camelKey: string, snakeKey?: string) =>
+    record?.[camelKey] ?? (snakeKey ? record?.[snakeKey] : undefined);
+  const whatsappStatus = (record: Record<string, any> | null | undefined) =>
+    String(recordValue(record, "connectionStatus", "connection_status") ?? "disconnected");
+  const whatsappQrCode = (record: Record<string, any> | null | undefined) =>
+    String(recordValue(record, "qrCodeDataUrl", "qr_code_data_url") ?? "");
+  const whatsappPairingCode = (record: Record<string, any> | null | undefined) =>
+    String(recordValue(record, "pairingCode", "pairing_code") ?? "");
+  const whatsappConnectedPhone = (record: Record<string, any> | null | undefined) =>
+    String(recordValue(record, "connectedPhone", "connected_phone") ?? "");
+  const whatsappConnectedName = (record: Record<string, any> | null | undefined) =>
+    String(recordValue(record, "connectedName", "connected_name") ?? "");
+  const whatsappLastError = (record: Record<string, any> | null | undefined) =>
+    String(recordValue(record, "lastError", "last_error") ?? "");
+  const whatsappRiskAcknowledged = (record: Record<string, any> | null | undefined) =>
+    Boolean(recordValue(record, "riskAcknowledgedAt", "risk_acknowledged_at"));
+  const canUsePersonalWhatsApp = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager" || currentRole === "Sales Rep";
+
+  // Load WhatsApp settings when the WhatsApp page is opened.
   useEffect(() => {
     if (activePage !== "WhatsApp" || currentRole !== "Owner") return;
     if (waSettings || waSettingsLoading) return;
     setWaSettingsLoading(true);
     whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
-  }, [activePage, realRole]);
+  }, [activePage, currentRole]);
+
+  useEffect(() => {
+    if (activePage !== "WhatsApp" || !canUsePersonalWhatsApp) return;
+    let cancelled = false;
+    setWaUserAccountLoading(true);
+    setWaDestinationsLoading(true);
+    Promise.all([
+      whatsappUserAccountApi.get(),
+      whatsappDestinationsApi.list(),
+      (currentRole === "Owner" || currentRole === "Admin") ? whatsappUserAccountApi.teamDispatches().catch(() => ({ dispatches: [] })) : Promise.resolve({ dispatches: [] })
+    ])
+      .then(([accountResult, destinationsResult, teamResult]) => {
+        if (cancelled) return;
+        setWaUserAccount(accountResult.account ?? null);
+        setWaUserDispatches(accountResult.dispatches ?? []);
+        setWaDestinations(destinationsResult.destinations ?? []);
+        setWaTeamDispatches(teamResult.dispatches ?? []);
+      })
+      .catch((err: any) => {
+        if (!cancelled) showToast(`Could not load My WhatsApp: ${err?.message ?? "please retry"}.`);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setWaUserAccountLoading(false);
+          setWaDestinationsLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [activePage, canUsePersonalWhatsApp, currentRole, authUser?.id]);
 
   const waConnect = async () => {
     setWaConnecting(true);
@@ -8712,6 +8783,140 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const waRefresh = () => {
     setWaSettingsLoading(true);
     whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => {}).finally(() => setWaSettingsLoading(false));
+  };
+  const waUserRefresh = () => {
+    if (!canUsePersonalWhatsApp) return;
+    setWaUserAccountLoading(true);
+    setWaDestinationsLoading(true);
+    Promise.all([
+      whatsappUserAccountApi.get(),
+      whatsappDestinationsApi.list(),
+      (currentRole === "Owner" || currentRole === "Admin") ? whatsappUserAccountApi.teamDispatches().catch(() => ({ dispatches: [] })) : Promise.resolve({ dispatches: [] })
+    ])
+      .then(([accountResult, destinationsResult, teamResult]) => {
+        setWaUserAccount(accountResult.account ?? null);
+        setWaUserDispatches(accountResult.dispatches ?? []);
+        setWaDestinations(destinationsResult.destinations ?? []);
+        setWaTeamDispatches(teamResult.dispatches ?? []);
+      })
+      .catch((err: any) => showToast(`Could not refresh My WhatsApp: ${err?.message ?? "please retry"}.`))
+      .finally(() => {
+        setWaUserAccountLoading(false);
+        setWaDestinationsLoading(false);
+      });
+  };
+  const waUserConnect = async () => {
+    setWaUserConnecting(true);
+    try {
+      const updated = await whatsappUserAccountApi.connect({
+        mode: waUserConnectMode,
+        phone: waUserConnectMode === "pairing_code" ? waUserPairingPhone : undefined
+      });
+      setWaUserAccount(updated.account ?? null);
+    } catch (err: any) {
+      showToast(`Could not start personal WhatsApp: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setWaUserConnecting(false);
+    }
+  };
+  const waUserDisconnect = async () => {
+    showConfirm("Disconnect your WhatsApp?", async () => {
+      setWaUserDisconnecting(true);
+      try {
+        const updated = await whatsappUserAccountApi.disconnect();
+        setWaUserAccount(updated.account ?? null);
+        setWaUserGroups([]);
+      } catch (err: any) {
+        showToast(`Could not disconnect: ${err?.message ?? "please retry"}.`);
+      } finally {
+        setWaUserDisconnecting(false);
+      }
+    }, { detail: "Direct group sending from your personal WhatsApp will stop until you reconnect.", danger: true, confirmLabel: "Disconnect" });
+  };
+  const waUserAcknowledgeRisk = async () => {
+    try {
+      const updated = await whatsappUserAccountApi.acknowledgeRisk();
+      setWaUserAccount(updated.account ?? null);
+      showToast("Direct-send risk acknowledged.");
+    } catch (err: any) {
+      showToast(`Could not save acknowledgement: ${err?.message ?? "please retry"}.`);
+    }
+  };
+  const waLoadGroups = async () => {
+    setWaUserGroupsLoading(true);
+    try {
+      const result = await whatsappUserAccountApi.groups();
+      setWaUserGroups(result.groups ?? []);
+      if (!result.groups?.length) showToast("No groups were imported from this WhatsApp session.");
+    } catch (err: any) {
+      showToast(`Could not import groups: ${err?.message ?? "connect your WhatsApp first"}.`);
+    } finally {
+      setWaUserGroupsLoading(false);
+    }
+  };
+  const waSaveDestination = async () => {
+    const label = waDestinationDraft.label.trim();
+    if (!label) {
+      showToast("Add a destination label first.");
+      return;
+    }
+    setWaDestinationSaving(true);
+    try {
+      await whatsappDestinationsApi.create({
+        label,
+        destinationType: waDestinationDraft.destinationType,
+        groupJid: waDestinationDraft.destinationType === "group" ? waDestinationDraft.groupJid : null,
+        phone: waDestinationDraft.destinationType === "phone" ? waDestinationDraft.phone : null,
+        notes: waDestinationDraft.notes || null,
+        active: true,
+        isDefault: waDestinationDraft.isDefault
+      });
+      setWaDestinationDraft({ label: "", destinationType: "manual_group", groupJid: "", phone: "", notes: "", isDefault: false });
+      const result = await whatsappDestinationsApi.list();
+      setWaDestinations(result.destinations ?? []);
+      showToast("WhatsApp destination saved.");
+    } catch (err: any) {
+      showToast(`Could not save destination: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setWaDestinationSaving(false);
+    }
+  };
+  const waSaveImportedGroup = async (group: { jid: string; subject: string }) => {
+    setWaDestinationSaving(true);
+    try {
+      await whatsappDestinationsApi.create({
+        label: group.subject,
+        destinationType: "group",
+        groupJid: group.jid,
+        active: true,
+        isDefault: waDestinations.length === 0
+      });
+      const result = await whatsappDestinationsApi.list();
+      setWaDestinations(result.destinations ?? []);
+      showToast("Group saved as a destination.");
+    } catch (err: any) {
+      showToast(`Could not save group: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setWaDestinationSaving(false);
+    }
+  };
+  const waSetDefaultDestination = async (destinationId: string) => {
+    try {
+      const updated = await whatsappDestinationsApi.update(destinationId, { isDefault: true });
+      setWaDestinations((items) => items.map((item) => ({ ...item, isDefault: item.id === updated.id })));
+      showToast("Default destination updated.");
+    } catch (err: any) {
+      showToast(`Could not update default: ${err?.message ?? "please retry"}.`);
+    }
+  };
+  const waHideDestination = async (destinationId: string) => {
+    try {
+      await whatsappDestinationsApi.update(destinationId, { active: false, isDefault: false });
+      setWaDestinations((items) => items.filter((item) => item.id !== destinationId));
+      showToast("Destination hidden.");
+    } catch (err: any) {
+      showToast(`Could not hide destination: ${err?.message ?? "please retry"}.`);
+    }
   };
 
   useEffect(() => {
@@ -21446,6 +21651,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     return { normalUrl: waMe, businessUrl: null };
   };
+  const buildWhatsAppShareTargets = (message: string): { normalUrl: string | null; businessUrl: string | null } => {
+    const enc = encodeURIComponent(message);
+    const waMe = `https://wa.me/?text=${enc}`;
+    if (installGuidePlatform === "android") {
+      const fallback = encodeURIComponent(waMe);
+      const intentFor = (pkg: string) =>
+        `intent://send?text=${enc}#Intent;scheme=whatsapp;package=${pkg};S.browser_fallback_url=${fallback};end`;
+      return { normalUrl: intentFor("com.whatsapp"), businessUrl: intentFor("com.whatsapp.w4b") };
+    }
+    if (installGuidePlatform === "ios") {
+      return { normalUrl: waMe, businessUrl: waMe };
+    }
+    return { normalUrl: waMe, businessUrl: null };
+  };
 
   const formatOrderForWhatsAppDispatch = (order: TrackedOrder) => {
     const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
@@ -21646,6 +21865,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     setWhatsAppPicker({ customerName: name, normalUrl, businessUrl });
   };
+  const openWhatsAppSharePicker = (message: string, label: string) => {
+    const { normalUrl, businessUrl } = buildWhatsAppShareTargets(message);
+    if (!normalUrl) {
+      showToast("Could not open WhatsApp share flow.");
+      return;
+    }
+    setWhatsAppPicker({ customerName: label, normalUrl, businessUrl });
+  };
 
   const openWhatsAppForOrder = (order: TrackedOrder) => {
     openWhatsAppPicker({
@@ -21653,6 +21880,65 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       message: buildOrderWhatsAppMessage(order),
       customerName: order.customer || `order ${order.id}`
     });
+  };
+  const openWhatsAppDispatchForOrder = async (order: TrackedOrder) => {
+    let knownDestinations = waDestinations;
+    setWaDispatchModal({
+      order,
+      loading: true,
+      sending: false,
+      body: formatOrderForWhatsAppDispatch(order),
+      destinationId: knownDestinations.find((item) => item.isDefault)?.id ?? knownDestinations[0]?.id ?? "",
+      sendMode: "assisted",
+      canDirect: false,
+      directBlockedReason: null
+    });
+    try {
+      if (!knownDestinations.length) {
+        const destinationResult = await whatsappDestinationsApi.list().catch(() => ({ destinations: [] as Record<string, any>[] }));
+        knownDestinations = destinationResult.destinations ?? [];
+        setWaDestinations(knownDestinations);
+      }
+      const preview = await whatsappOrderDispatchApi.preview(order.id);
+      const defaultDestinationId = preview.defaultDestination?.id ?? knownDestinations.find((item) => item.isDefault)?.id ?? knownDestinations[0]?.id ?? "";
+      setWaDispatchModal({
+        order,
+        loading: false,
+        sending: false,
+        body: preview.body || formatOrderForWhatsAppDispatch(order),
+        destinationId: defaultDestinationId,
+        sendMode: "assisted",
+        canDirect: !!preview.canDirect,
+        directBlockedReason: preview.directBlockedReason ?? null
+      });
+    } catch (err: any) {
+      setWaDispatchModal(null);
+      showToast(`Could not preview WhatsApp dispatch: ${err?.message ?? "please retry"}.`);
+    }
+  };
+  const submitWhatsAppDispatch = async () => {
+    if (!waDispatchModal) return;
+    const destination = waDestinations.find((item) => item.id === waDispatchModal.destinationId);
+    setWaDispatchModal((current) => current ? { ...current, sending: true } : current);
+    try {
+      const result = await whatsappOrderDispatchApi.dispatch(waDispatchModal.order.id, {
+        sendMode: waDispatchModal.sendMode,
+        destinationId: destination?.id,
+        destinationLabel: destination?.label ?? "Manual WhatsApp group",
+        destinationType: destination?.destinationType ?? "manual_group"
+      });
+      setWaDispatchModal(null);
+      waUserRefresh();
+      if (result.assisted) {
+        openWhatsAppSharePicker(result.body || waDispatchModal.body, `WhatsApp group for ${waDispatchModal.order.id}`);
+        showToast("Dispatch logged. Choose the right WhatsApp group to send.");
+      } else {
+        showToast("Order sent to WhatsApp destination.");
+      }
+    } catch (err: any) {
+      showToast(`WhatsApp dispatch failed: ${err?.message ?? "please retry"}.`);
+      setWaDispatchModal((current) => current ? { ...current, sending: false } : current);
+    }
   };
 
   const openWhatsAppForCart = (cart: AbandonedCartRecord) => {
@@ -30854,6 +31140,13 @@ ${waybillLineItems(w).length > 1
                   <button
                     type="button"
                     className={`!min-h-0 col-span-2 inline-flex items-center justify-center gap-2 rounded-2xl px-3 py-3 text-center text-sm font-black leading-5 transition-colors ${orderSecondaryButtonClass}`}
+                    onClick={() => openWhatsAppDispatchForOrder(order)}
+                  >
+                    <MessageCircle className="w-4 h-4" /> Dispatch to WhatsApp
+                  </button>
+                  <button
+                    type="button"
+                    className={`!min-h-0 col-span-2 inline-flex items-center justify-center gap-2 rounded-2xl px-3 py-3 text-center text-sm font-black leading-5 transition-colors ${orderSecondaryButtonClass}`}
                     onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}
                   >
                     <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
@@ -30935,6 +31228,14 @@ ${waybillLineItems(w).length > 1
                         onClick={() => openWhatsAppForOrder(order)}
                       >
                         <WhatsAppIcon className="w-4 h-4" />
+                      </button>
+                      <button
+                        className="p-1.5 rounded-md hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors text-gray-400 dark:text-slate-400 hover:text-[#1F8FE0]"
+                        title="Dispatch to WhatsApp group"
+                        aria-label={`Dispatch ${order.id} to WhatsApp group`}
+                        onClick={() => openWhatsAppDispatchForOrder(order)}
+                      >
+                        <MessageCircle className="w-4 h-4" />
                       </button>
                       <button 
                         className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors flex items-center gap-1.5 ${orderSecondaryButtonClass}`} 
@@ -31020,6 +31321,12 @@ ${waybillLineItems(w).length > 1
 
           <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button
+                className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-black text-blue-800 shadow-[0_14px_30px_rgba(31,143,224,0.12)] transition-colors hover:bg-blue-100 dark:border-blue-400/25 dark:bg-blue-500/12 dark:text-blue-100 dark:hover:bg-blue-500/18"
+                onClick={() => openWhatsAppDispatchForOrder(order)}
+              >
+                <MessageCircle className="h-4 w-4" /> Dispatch to WhatsApp
+              </button>
               <button
                 className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-800 shadow-[0_14px_30px_rgba(16,185,129,0.12)] transition-colors hover:bg-emerald-100 dark:border-emerald-400/25 dark:bg-emerald-500/12 dark:text-emerald-100 dark:hover:bg-emerald-500/18"
                 onClick={() => copyText(formatOrderForWhatsAppDispatch(order), `${order.id} WhatsApp group copy`)}
@@ -49185,134 +49492,304 @@ ${waybillLineItems(w).length > 1
               </div>
             </div>
           ) : activePage === "WhatsApp" ? (
-            <div className="space-y-6 max-w-2xl mx-auto">
-              {/* Header */}
-              <header>
+            <div className="mx-auto max-w-6xl space-y-6">
+              <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#25D366]/15 text-[#25D366]">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#25D366]/15 text-[#25D366]">
                     <MessageCircle className="h-5 w-5" />
                   </span>
                   <div>
-                    <h1 className="text-xl font-black text-gray-900 m-0">WhatsApp Automation</h1>
-                    <p className="text-xs text-gray-500 m-0">Auto-send order updates and follow-ups via WhatsApp Business.</p>
+                    <h1 className="m-0 text-2xl font-black text-gray-900">WhatsApp Dispatch</h1>
+                    <p className="m-0 text-sm text-gray-500">Send assigned orders safely with assisted WhatsApp, or direct-send from your connected account.</p>
                   </div>
                 </div>
+                <button
+                  type="button"
+                  className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-50"
+                  onClick={() => {
+                    if (currentRole === "Owner") waRefresh();
+                    waUserRefresh();
+                  }}
+                  disabled={waSettingsLoading || waUserAccountLoading || waDestinationsLoading}
+                >
+                  <RefreshCw className={`h-4 w-4 ${waSettingsLoading || waUserAccountLoading || waDestinationsLoading ? "animate-spin" : ""}`} /> Refresh
+                </button>
               </header>
 
-              {currentRole !== "Owner" ? (
-                /* Coming Soon — all non-Owner roles (including spy-mode as non-Owner) */
-                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-8 py-14 text-center">
-                  <span className="text-4xl">📲</span>
-                  <h2 className="mt-4 text-lg font-black text-gray-900">Coming soon for {currentRole}s</h2>
-                  <p className="mt-2 text-sm text-gray-500 max-w-sm mx-auto">
-                    WhatsApp automation will be available for your role soon. The Owner can set up the connection now and automate order messages for the whole team.
-                  </p>
-                </div>
-              ) : (
-                /* Owner view — connection management */
-                <div className="space-y-4">
-                  {waSettingsLoading ? (
-                    <div className="rounded-2xl border border-gray-200 bg-white p-6 animate-pulse">
-                      <div className="h-4 w-32 bg-gray-200 rounded mb-3" />
-                      <div className="h-8 w-48 bg-gray-200 rounded mb-2" />
-                      <div className="h-3 w-64 bg-gray-100 rounded" />
-                    </div>
-                  ) : (
-                    <article className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-                      {/* Status row */}
-                      <div className="flex items-start justify-between gap-4 flex-wrap">
-                        <div>
-                          <p className="text-[11px] font-black uppercase tracking-wider text-gray-400 m-0">Connection status</p>
-                          <div className="mt-2 flex items-center gap-2">
-                            <span className={`inline-flex h-2.5 w-2.5 rounded-full ${
-                              waSettings?.connection_status === "connected" ? "bg-emerald-500" :
-                              waSettings?.connection_status === "pairing" || waSettings?.connection_status === "connecting" ? "bg-amber-400 animate-pulse" :
-                              "bg-gray-300"
-                            }`} />
-                            <span className="text-base font-black text-gray-900 capitalize">
-                              {waSettings?.connection_status === "connected" ? "Connected" :
-                               waSettings?.connection_status === "pairing" ? "Pairing…" :
-                               waSettings?.connection_status === "connecting" ? "Connecting…" :
-                               "Disconnected"}
-                            </span>
-                          </div>
-                          {waSettings?.connected_phone && (
-                            <p className="mt-1 text-sm text-gray-600 m-0">+{waSettings.connected_phone}{waSettings.connected_name ? ` · ${waSettings.connected_name}` : ""}</p>
-                          )}
-                          {waSettings?.last_error && (
-                            <p className="mt-1 text-xs text-rose-600 m-0">Last error: {waSettings.last_error}</p>
-                          )}
+              {currentRole === "Owner" && (() => {
+                const orgStatus = whatsappStatus(waSettings);
+                const orgConnected = orgStatus === "connected";
+                const orgPairing = orgStatus === "pairing" || orgStatus === "connecting";
+                return (
+                  <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Owner automation account</p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className={`h-2.5 w-2.5 rounded-full ${orgConnected ? "bg-emerald-500" : orgPairing ? "bg-amber-400 animate-pulse" : "bg-gray-300"}`} />
+                          <span className="text-lg font-black capitalize text-gray-900">{orgConnected ? "Connected" : orgPairing ? "Pairing" : "Disconnected"}</span>
                         </div>
-                        <div className="flex gap-2 shrink-0">
-                          <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors" onClick={waRefresh} disabled={waSettingsLoading}>
-                            <RefreshCw className={`h-3.5 w-3.5 ${waSettingsLoading ? "animate-spin" : ""}`} /> Refresh
+                        {whatsappConnectedPhone(waSettings) && (
+                          <p className="m-0 mt-1 text-sm text-gray-600">+{whatsappConnectedPhone(waSettings)}{whatsappConnectedName(waSettings) ? ` - ${whatsappConnectedName(waSettings)}` : ""}</p>
+                        )}
+                        {whatsappLastError(waSettings) && <p className="m-0 mt-1 text-xs font-semibold text-rose-600">Last error: {whatsappLastError(waSettings)}</p>}
+                        <p className="m-0 mt-2 max-w-2xl text-sm text-gray-500">This keeps the existing org-level automation separate from personal order dispatch. Direct order dispatch below always uses the logged-in user's own WhatsApp account.</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={waRefresh} disabled={waSettingsLoading}>
+                          <RefreshCw className={`h-3.5 w-3.5 ${waSettingsLoading ? "animate-spin" : ""}`} /> Refresh
+                        </button>
+                        {orgConnected && (
+                          <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={waDisconnect} disabled={waDisconnecting}>
+                            {waDisconnecting ? "Disconnecting..." : "Disconnect"}
                           </button>
-                          {waSettings?.connection_status === "connected" && (
-                            <button className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 text-xs font-bold text-rose-600 hover:bg-rose-50 transition-colors" onClick={waDisconnect} disabled={waDisconnecting}>
-                              {waDisconnecting ? "Disconnecting…" : "Disconnect"}
+                        )}
+                      </div>
+                    </div>
+                    {!orgConnected && (
+                      <div className="mt-5 space-y-4 border-t border-gray-100 pt-5">
+                        <div className="flex gap-2">
+                          {(["qr", "pairing_code"] as const).map((mode) => (
+                            <button key={mode} type="button" className={`!min-h-0 rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${waConnectMode === mode ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`} onClick={() => setWaConnectMode(mode)}>
+                              {mode === "qr" ? "QR Code" : "Pairing Code"}
+                            </button>
+                          ))}
+                        </div>
+                        {waConnectMode === "pairing_code" && (
+                          <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" placeholder="+234 800 000 0000" value={waPairingPhone} onChange={(event) => setWaPairingPhone(event.target.value)} />
+                        )}
+                        {whatsappQrCode(waSettings) && waConnectMode === "qr" && (
+                          <div className="inline-flex flex-col items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                            <p className="m-0 text-xs text-gray-500">Scan in WhatsApp - Linked Devices - Link a Device</p>
+                            <img src={whatsappQrCode(waSettings)} alt="Owner WhatsApp QR code" className="h-48 w-48 rounded-xl" />
+                          </div>
+                        )}
+                        {whatsappPairingCode(waSettings) && waConnectMode === "pairing_code" && (
+                          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                            <p className="m-0 text-2xl font-black tracking-[0.2em] text-gray-900">{whatsappPairingCode(waSettings)}</p>
+                          </div>
+                        )}
+                        <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-5 py-2.5 text-sm font-black text-white transition-colors hover:bg-[#1ebe57] disabled:opacity-50 sm:w-auto" onClick={waConnect} disabled={waConnecting || (waConnectMode === "pairing_code" && !waPairingPhone.trim())}>
+                          <MessageCircle className="h-4 w-4" /> {waConnecting ? "Starting..." : "Connect owner automation WhatsApp"}
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                );
+              })()}
+
+              {canUsePersonalWhatsApp ? (() => {
+                const userStatus = whatsappStatus(waUserAccount);
+                const userConnected = userStatus === "connected";
+                const userPairing = userStatus === "pairing" || userStatus === "connecting";
+                const userRiskAck = whatsappRiskAcknowledged(waUserAccount);
+                const activeDestinations = waDestinations.filter((destination) => destination.active !== false);
+                return (
+                  <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.72fr)]">
+                    <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">My WhatsApp</p>
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className={`h-2.5 w-2.5 rounded-full ${userConnected ? "bg-emerald-500" : userPairing ? "bg-amber-400 animate-pulse" : "bg-gray-300"}`} />
+                            <span className="text-lg font-black capitalize text-gray-900">{userConnected ? "Connected" : userPairing ? "Pairing" : "Disconnected"}</span>
+                          </div>
+                          {whatsappConnectedPhone(waUserAccount) && (
+                            <p className="m-0 mt-1 text-sm text-gray-600">+{whatsappConnectedPhone(waUserAccount)}{whatsappConnectedName(waUserAccount) ? ` - ${whatsappConnectedName(waUserAccount)}` : ""}</p>
+                          )}
+                          {whatsappLastError(waUserAccount) && <p className="m-0 mt-1 text-xs font-semibold text-rose-600">Last error: {whatsappLastError(waUserAccount)}</p>}
+                          <p className="m-0 mt-2 text-sm text-gray-500">Assisted send is recommended. Direct send is limited, audited, and only available after you acknowledge the account-safety risk.</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={waUserRefresh} disabled={waUserAccountLoading}>
+                            <RefreshCw className={`h-3.5 w-3.5 ${waUserAccountLoading ? "animate-spin" : ""}`} /> Refresh
+                          </button>
+                          {userConnected && (
+                            <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={waUserDisconnect} disabled={waUserDisconnecting}>
+                              {waUserDisconnecting ? "Disconnecting..." : "Disconnect"}
                             </button>
                           )}
                         </div>
                       </div>
 
-                      {/* QR / pairing code */}
-                      {waSettings?.connection_status !== "connected" && (
+                      {!userConnected && (
                         <div className="mt-5 space-y-4 border-t border-gray-100 pt-5">
-                          <p className="text-sm font-semibold text-gray-700 m-0">Connect your WhatsApp Business number</p>
                           <div className="flex gap-2">
                             {(["qr", "pairing_code"] as const).map((mode) => (
-                              <button key={mode} type="button"
-                                className={`!min-h-0 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${waConnectMode === mode ? "bg-[#1F8FE0] text-white border-[#1F8FE0]" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
-                                onClick={() => setWaConnectMode(mode)}>
+                              <button key={mode} type="button" className={`!min-h-0 rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${waUserConnectMode === mode ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`} onClick={() => setWaUserConnectMode(mode)}>
                                 {mode === "qr" ? "QR Code" : "Pairing Code"}
                               </button>
                             ))}
                           </div>
-                          {waConnectMode === "pairing_code" && (
-                            <div>
-                              <label className="block text-xs font-semibold text-gray-600 mb-1">Your WhatsApp Business phone number</label>
-                              <input
-                                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30"
-                                placeholder="+234 800 000 0000"
-                                value={waPairingPhone}
-                                onChange={(e) => setWaPairingPhone(e.target.value)}
-                              />
+                          {waUserConnectMode === "pairing_code" && (
+                            <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" placeholder="+234 800 000 0000" value={waUserPairingPhone} onChange={(event) => setWaUserPairingPhone(event.target.value)} />
+                          )}
+                          {whatsappQrCode(waUserAccount) && waUserConnectMode === "qr" && (
+                            <div className="inline-flex flex-col items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                              <p className="m-0 text-xs text-gray-500">Scan in WhatsApp - Linked Devices - Link a Device</p>
+                              <img src={whatsappQrCode(waUserAccount)} alt="Personal WhatsApp QR code" className="h-48 w-48 rounded-xl" />
                             </div>
                           )}
-                          {waSettings?.qr_code_data_url && waSettings.connection_status === "pairing" && waConnectMode === "qr" && (
-                            <div className="flex flex-col items-center gap-3 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                              <p className="text-xs text-gray-500 m-0">Scan this QR code in WhatsApp → Linked Devices → Link a Device</p>
-                              <img src={waSettings.qr_code_data_url} alt="WhatsApp QR Code" className="w-48 h-48 rounded-xl" />
+                          {whatsappPairingCode(waUserAccount) && waUserConnectMode === "pairing_code" && (
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                              <p className="m-0 text-2xl font-black tracking-[0.2em] text-gray-900">{whatsappPairingCode(waUserAccount)}</p>
                             </div>
                           )}
-                          {waSettings?.pairing_code && waSettings.connection_status === "pairing" && waConnectMode === "pairing_code" && (
-                            <div className="flex items-center gap-3 p-4 bg-[#25D366]/10 rounded-xl border border-[#25D366]/20">
-                              <span className="text-2xl font-black tracking-[0.2em] text-gray-900">{waSettings.pairing_code}</span>
-                              <p className="text-xs text-gray-600 m-0">Enter this code in WhatsApp → Settings → Linked Devices → Link with phone number</p>
-                            </div>
-                          )}
-                          <button
-                            className="!min-h-0 inline-flex items-center justify-center gap-2 w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#25D366] text-white text-sm font-black hover:bg-[#1ebe57] transition-colors disabled:opacity-50"
-                            onClick={waConnect}
-                            disabled={waConnecting || (waConnectMode === "pairing_code" && !waPairingPhone.trim())}
-                          >
-                            <MessageCircle className="h-4 w-4" />
-                            {waConnecting ? "Starting connection…" : waSettings?.connection_status === "pairing" ? "Waiting for scan…" : "Connect WhatsApp Business"}
+                          <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-5 py-2.5 text-sm font-black text-white transition-colors hover:bg-[#1ebe57] disabled:opacity-50 sm:w-auto" onClick={waUserConnect} disabled={waUserConnecting || (waUserConnectMode === "pairing_code" && !waUserPairingPhone.trim())}>
+                            <MessageCircle className="h-4 w-4" /> {waUserConnecting ? "Starting..." : "Connect my WhatsApp"}
                           </button>
                         </div>
                       )}
-                    </article>
-                  )}
 
-                  {/* Coming soon — automation rules, templates, broadcast */}
-                  <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50/60 px-6 py-8 text-center">
-                    <p className="text-[11px] font-black uppercase tracking-wider text-gray-400 m-0">Coming next</p>
-                    <h3 className="mt-2 text-base font-black text-gray-700">Automation rules, templates &amp; broadcast</h3>
-                    <p className="mt-1 text-sm text-gray-500 max-w-md mx-auto">
-                      Once connected, you'll be able to auto-send order confirmations, delivery reminders, and follow-up messages — and broadcast to customer lists directly from here.
-                    </p>
-                  </div>
+                      <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="m-0 text-sm font-black text-amber-950">Direct send account-safety acknowledgement</p>
+                            <p className="m-0 mt-1 text-xs font-semibold text-amber-800">No bulk send in this version. Direct messages are operational order dispatches only.</p>
+                          </div>
+                          {userRiskAck ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-black text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> Acknowledged</span>
+                          ) : (
+                            <button className="!min-h-0 rounded-xl bg-amber-600 px-4 py-2 text-sm font-black text-white hover:bg-amber-700" onClick={waUserAcknowledgeRisk}>I understand</button>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+
+                    <aside className="space-y-5">
+                      <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Saved destinations</p>
+                            <h2 className="m-0 mt-1 text-lg font-black text-gray-900">{activeDestinations.length} destination{activeDestinations.length === 1 ? "" : "s"}</h2>
+                          </div>
+                          <button className="!min-h-0 rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-black text-blue-700 hover:bg-blue-50" onClick={waLoadGroups} disabled={!userConnected || waUserGroupsLoading}>
+                            {waUserGroupsLoading ? "Importing..." : "Import groups"}
+                          </button>
+                        </div>
+                        <div className="mt-4 space-y-2">
+                          {activeDestinations.length === 0 ? (
+                            <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No saved destination yet. Assisted send still works with manual group selection.</p>
+                          ) : activeDestinations.map((destination) => (
+                            <div key={destination.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="m-0 truncate text-sm font-black text-gray-900">{destination.label}</p>
+                                  <p className="m-0 mt-1 text-xs font-semibold uppercase tracking-wider text-gray-400">{destination.destinationType === "group" ? "Imported group" : destination.destinationType === "phone" ? "Phone" : "Manual group"}</p>
+                                  <p className="m-0 mt-1 break-all text-xs text-gray-500">{destination.groupJid || destination.phone || "Assisted send only"}</p>
+                                </div>
+                                {destination.isDefault && <span className="rounded-full bg-blue-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-blue-700">Default</span>}
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {!destination.isDefault && <button className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => waSetDefaultDestination(destination.id)}>Set default</button>}
+                                <button className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => waHideDestination(destination.id)}>Hide</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+
+                      <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Add destination</p>
+                        <div className="mt-3 grid gap-3">
+                          <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="Label, e.g. Lagos morning group" value={waDestinationDraft.label} onChange={(event) => setWaDestinationDraft((current) => ({ ...current, label: event.target.value }))} />
+                          <select className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100" value={waDestinationDraft.destinationType} onChange={(event) => setWaDestinationDraft((current) => ({ ...current, destinationType: event.target.value as "group" | "phone" | "manual_group" }))}>
+                            <option value="manual_group">Manual group - assisted send</option>
+                            <option value="group">Imported group JID - direct capable</option>
+                            <option value="phone">Phone number - direct capable</option>
+                          </select>
+                          {waDestinationDraft.destinationType === "group" && <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="Group JID from import" value={waDestinationDraft.groupJid} onChange={(event) => setWaDestinationDraft((current) => ({ ...current, groupJid: event.target.value }))} />}
+                          {waDestinationDraft.destinationType === "phone" && <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="+234..." value={waDestinationDraft.phone} onChange={(event) => setWaDestinationDraft((current) => ({ ...current, phone: event.target.value }))} />}
+                          <label className="flex items-center gap-2 text-sm font-bold text-gray-600">
+                            <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-[#1F8FE0]" checked={waDestinationDraft.isDefault} onChange={(event) => setWaDestinationDraft((current) => ({ ...current, isDefault: event.target.checked }))} />
+                            Use as my default destination
+                          </label>
+                          <button className="!min-h-0 rounded-xl bg-[#1F8FE0] px-4 py-2.5 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50" onClick={waSaveDestination} disabled={waDestinationSaving}>
+                            {waDestinationSaving ? "Saving..." : "Save destination"}
+                          </button>
+                        </div>
+                      </article>
+                    </aside>
+
+                    {waUserGroups.length > 0 && (
+                      <article className="rounded-2xl border border-blue-100 bg-blue-50/60 p-5 xl:col-span-2">
+                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-blue-500">Imported groups</p>
+                        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                          {waUserGroups.map((group) => (
+                            <div key={group.jid} className="rounded-xl border border-blue-100 bg-white p-3">
+                              <p className="m-0 truncate text-sm font-black text-gray-900">{group.subject}</p>
+                              <p className="m-0 mt-1 text-xs text-gray-500">{group.participants ? `${group.participants} participants` : "Group"} - {group.jid}</p>
+                              <button className="!min-h-0 mt-3 rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-black text-blue-700 hover:bg-blue-50" onClick={() => waSaveImportedGroup(group)} disabled={waDestinationSaving}>Save group</button>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+                    )}
+
+                    <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm xl:col-span-2">
+                      <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Recent personal dispatches</p>
+                      <div className="mt-3 overflow-x-auto">
+                        {waUserDispatches.length === 0 ? (
+                          <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No WhatsApp dispatches logged yet.</p>
+                        ) : (
+                          <table className="w-full min-w-[640px] text-left text-sm">
+                            <thead className="text-[10px] font-black uppercase tracking-wider text-gray-400">
+                              <tr><th className="py-2">Order</th><th>Destination</th><th>Mode</th><th>Status</th><th>When</th></tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {waUserDispatches.slice(0, 10).map((dispatch) => (
+                                <tr key={dispatch.id}>
+                                  <td className="py-2 font-bold text-gray-900">{dispatch.orderId}</td>
+                                  <td className="py-2 text-gray-600">{dispatch.destinationLabel || "Manual WhatsApp group"}</td>
+                                  <td className="py-2 text-gray-600">{dispatch.sendMode}</td>
+                                  <td className="py-2 font-bold text-gray-700">{dispatch.status}</td>
+                                  <td className="py-2 text-gray-500">{formatMoment(dispatch.createdAt || dispatch.sentAt)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </article>
+                  </section>
+                );
+              })() : (
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-8 py-14 text-center">
+                  <h2 className="mt-0 text-lg font-black text-gray-900">WhatsApp dispatch is not available for this role</h2>
+                  <p className="mx-auto mt-2 max-w-sm text-sm text-gray-500">Assigned users can connect their own WhatsApp and dispatch their assigned orders.</p>
                 </div>
+              )}
+
+              {(currentRole === "Owner" || currentRole === "Admin") && (
+                <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <div className="flex flex-col gap-1">
+                    <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Team dispatch health</p>
+                    <h2 className="m-0 text-lg font-black text-gray-900">Recent team sends</h2>
+                  </div>
+                  <div className="mt-3 overflow-x-auto">
+                    {waTeamDispatches.length === 0 ? (
+                      <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No team dispatch logs yet.</p>
+                    ) : (
+                      <table className="w-full min-w-[720px] text-left text-sm">
+                        <thead className="text-[10px] font-black uppercase tracking-wider text-gray-400">
+                          <tr><th className="py-2">Order</th><th>Sender</th><th>Destination</th><th>Mode</th><th>Status</th><th>When</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {waTeamDispatches.slice(0, 12).map((dispatch) => (
+                            <tr key={dispatch.id}>
+                              <td className="py-2 font-bold text-gray-900">{dispatch.orderId}</td>
+                              <td className="py-2 text-gray-600">{dispatch.senderName || dispatch.senderUserId || "User"}</td>
+                              <td className="py-2 text-gray-600">{dispatch.destinationLabel || "Manual WhatsApp group"}</td>
+                              <td className="py-2 text-gray-600">{dispatch.sendMode}</td>
+                              <td className="py-2 font-bold text-gray-700">{dispatch.status}</td>
+                              <td className="py-2 text-gray-500">{formatMoment(dispatch.createdAt || dispatch.sentAt)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </section>
               )}
             </div>
           ) : activePage === "Settings" ? (
@@ -53583,6 +54060,133 @@ ${waybillLineItems(w).length > 1
         );
       })()}
 
+      {waDispatchModal && (() => {
+        const destination = waDestinations.find((item) => item.id === waDispatchModal.destinationId) ?? null;
+        const destinationType = destination?.destinationType ?? "manual_group";
+        const directTarget = destinationType === "group" ? destination?.groupJid : destinationType === "phone" ? destination?.phone : "";
+        const directReady = !!waDispatchModal.canDirect && !!destination && !!directTarget && whatsappRiskAcknowledged(waUserAccount);
+        const directReason = !waDispatchModal.canDirect
+          ? (waDispatchModal.directBlockedReason || "Connect your WhatsApp and acknowledge direct-send risk first.")
+          : !destination
+            ? "Choose a saved destination first."
+            : !directTarget
+              ? "This destination is assisted-send only. Import a group or add a phone for direct send."
+              : !whatsappRiskAcknowledged(waUserAccount)
+                ? "Acknowledge the direct-send risk on the WhatsApp page first."
+                : "";
+        return (
+          <div className="fixed inset-0 z-[73] flex items-end justify-center bg-black/55 p-3 dark:bg-[rgba(3,7,18,0.86)] sm:items-center sm:p-4">
+            <section className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="whatsapp-dispatch-title">
+              <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-slate-800/80">
+                <div>
+                  <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-[#25D366]">Order dispatch</p>
+                  <h3 id="whatsapp-dispatch-title" className="m-0 mt-1 text-xl font-black text-gray-900 dark:text-slate-100">Dispatch to WhatsApp</h3>
+                  <p className="m-0 mt-1 text-sm text-gray-500 dark:text-slate-400">Preview the exact group message before sending order {waDispatchModal.order.id}.</p>
+                </div>
+                <button
+                  type="button"
+                  className="!min-h-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-slate-400 dark:hover:bg-[#1a2834] dark:hover:text-slate-100"
+                  aria-label="Close WhatsApp dispatch"
+                  onClick={() => setWaDispatchModal(null)}
+                  disabled={waDispatchModal.sending}
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="space-y-4 overflow-y-auto px-5 py-4">
+                {waDispatchModal.loading ? (
+                  <div className="space-y-3">
+                    <div className="h-11 rounded-xl bg-gray-100 animate-pulse dark:bg-slate-800" />
+                    <div className="h-44 rounded-xl bg-gray-100 animate-pulse dark:bg-slate-800" />
+                  </div>
+                ) : (
+                  <>
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.18em] text-gray-400">Destination</span>
+                      <select
+                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-[#111f2d] dark:text-slate-100"
+                        value={waDispatchModal.destinationId}
+                        onChange={(event) => {
+                          const nextId = event.target.value;
+                          setWaDispatchModal((current) => current ? {
+                            ...current,
+                            destinationId: nextId,
+                            sendMode: current.sendMode === "direct" && !nextId ? "assisted" : current.sendMode
+                          } : current);
+                        }}
+                      >
+                        <option value="">Manual WhatsApp group - assisted send</option>
+                        {waDestinations.filter((item) => item.active !== false).map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.label}{item.isDefault ? " (default)" : ""} - {item.destinationType === "group" ? "group" : item.destinationType === "phone" ? "phone" : "manual"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div>
+                      <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.18em] text-gray-400">Send mode</span>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          className={`!min-h-0 rounded-xl border px-4 py-3 text-left transition-colors ${waDispatchModal.sendMode === "assisted" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:bg-[#111f2d] dark:text-slate-200"}`}
+                          onClick={() => setWaDispatchModal((current) => current ? { ...current, sendMode: "assisted" } : current)}
+                        >
+                          <span className="block text-sm font-black">Assisted send</span>
+                          <span className="mt-1 block text-xs font-semibold opacity-75">Recommended. Opens WhatsApp and logs the action.</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={`!min-h-0 rounded-xl border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${waDispatchModal.sendMode === "direct" ? "border-blue-300 bg-blue-50 text-blue-800" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:bg-[#111f2d] dark:text-slate-200"}`}
+                          onClick={() => setWaDispatchModal((current) => current ? { ...current, sendMode: "direct" } : current)}
+                          disabled={!directReady}
+                          title={directReady ? "Send from your connected WhatsApp" : directReason}
+                        >
+                          <span className="block text-sm font-black">Direct send</span>
+                          <span className="mt-1 block text-xs font-semibold opacity-75">{directReady ? "Uses your connected WhatsApp account." : directReason}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.18em] text-gray-400">Message preview</span>
+                      <textarea
+                        className="min-h-[260px] w-full resize-y rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 font-mono text-xs leading-5 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-[#08131f] dark:text-slate-100"
+                        value={waDispatchModal.body}
+                        readOnly
+                      />
+                    </label>
+
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold leading-5 text-amber-900">
+                      Direct send is for one assigned order at a time. Use assisted send when you need to manually choose a WhatsApp group or when direct send is unavailable.
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="flex flex-col-reverse gap-2 border-t border-gray-100 px-5 py-4 dark:border-slate-800/80 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  className="!min-h-0 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-[#1a2834]"
+                  onClick={() => setWaDispatchModal(null)}
+                  disabled={waDispatchModal.sending}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl bg-[#25D366] px-5 py-2.5 text-sm font-black text-white transition-colors hover:bg-[#1ebe57] disabled:cursor-not-allowed disabled:opacity-55"
+                  onClick={submitWhatsAppDispatch}
+                  disabled={waDispatchModal.loading || waDispatchModal.sending || (waDispatchModal.sendMode === "direct" && !directReady)}
+                >
+                  <MessageCircle className="h-4 w-4" />
+                  {waDispatchModal.sending ? "Sending..." : waDispatchModal.sendMode === "direct" ? "Send direct" : "Open WhatsApp"}
+                </button>
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+
       {whatsAppPicker && (
         <div className="fixed inset-0 z-[72] flex items-center justify-center bg-black/55 dark:bg-[rgba(3,7,18,0.86)] p-4">
           <section className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="whatsapp-picker-title">
@@ -54364,6 +54968,12 @@ ${waybillLineItems(w).length > 1
 	                    <UserPlus className="w-4 h-4" /> Reassign Sales Rep
 	                  </button>
                       <button
+                        className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-medium hover:bg-blue-50 transition-colors shrink-0"
+                        onClick={() => openWhatsAppDispatchForOrder(selectedOrder)}
+                      >
+                        <MessageCircle className="w-4 h-4" /> Dispatch to WhatsApp
+                      </button>
+                      <button
                         className="!min-h-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors shrink-0"
                         onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
                       >
@@ -54413,12 +55023,20 @@ ${waybillLineItems(w).length > 1
 	                  <section>
 	                    <div className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b pb-2 mb-3 ${orderBorderClass}`}>
 	                      <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Customer Information</h3>
-	                      <button
-	                        className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
-	                        onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
-	                      >
-	                        <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
-	                      </button>
+	                      <div className="flex flex-wrap gap-2 self-start sm:self-auto">
+	                        <button
+	                          className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-medium hover:bg-blue-50 transition-colors"
+	                          onClick={() => openWhatsAppDispatchForOrder(selectedOrder)}
+	                        >
+	                          <MessageCircle className="w-4 h-4" /> Dispatch to WhatsApp
+	                        </button>
+	                        <button
+	                          className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors"
+	                          onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+	                        >
+	                          <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
+	                        </button>
+	                      </div>
 	                    </div>
 	                  <div className="grid grid-cols-2 gap-4">
 	                    <div>
@@ -54443,6 +55061,13 @@ ${waybillLineItems(w).length > 1
                             onClick={() => openWhatsAppForOrder(selectedOrder)}
                           >
                             <WhatsAppIcon className="w-3.5 h-3.5" /> Open WhatsApp
+                          </button>
+                          <button
+                            type="button"
+                            className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-blue-200 text-blue-700 text-xs font-bold transition-colors hover:bg-blue-50"
+                            onClick={() => openWhatsAppDispatchForOrder(selectedOrder)}
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" /> Dispatch to WhatsApp
                           </button>
                           <button
                             type="button"
@@ -55265,12 +55890,20 @@ ${waybillLineItems(w).length > 1
 		                          <h3 className={`font-semibold text-base m-0 ${orderTitleTextClass}`}>Form Submission</h3>
 		                          <p className={`m-0 mt-1 text-xs ${orderMutedTextClass}`}>Customer details, order intent, and attribution stay visible. Capture data is tucked away unless you need to inspect it.</p>
 		                        </div>
-		                        <button
-		                          className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors self-start sm:self-auto"
-		                          onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
-		                        >
-		                          <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
-		                        </button>
+		                        <div className="flex flex-wrap gap-2 self-start sm:self-auto">
+		                          <button
+		                            className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-blue-200 text-blue-700 text-sm font-medium hover:bg-blue-50 transition-colors"
+		                            onClick={() => openWhatsAppDispatchForOrder(selectedOrder)}
+		                          >
+		                            <MessageCircle className="w-4 h-4" /> Dispatch to WhatsApp
+		                          </button>
+		                          <button
+		                            className="!min-h-0 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 text-emerald-700 text-sm font-medium hover:bg-emerald-50 transition-colors"
+		                            onClick={() => copyText(formatOrderForWhatsAppDispatch(selectedOrder), `${selectedOrder.id} WhatsApp group copy`)}
+		                          >
+		                            <Copy className="w-4 h-4" /> Copy Order To WhatsApp Group
+		                          </button>
+		                        </div>
 		                      </div>
 		                      {renderPublicFormFieldSections(primarySections)}
 		                      {captureSections.length > 0 && (

@@ -677,6 +677,36 @@ export const whatsappSettingsApi = {
   messages: (page = 1, limit = 10) => get<{ data: any[]; total: number; page: number; pageSize: number }>(`/api/whatsapp-settings/messages?page=${page}&limit=${limit}`)
 };
 
+export const whatsappUserAccountApi = {
+  get: () => get<{ account: any; dispatches: any[] }>("/api/whatsapp-user-account/me/connect"),
+  connect: (body: { mode: "qr" | "pairing_code"; phone?: string; riskAcknowledged?: boolean }) =>
+    post<{ account: any }>("/api/whatsapp-user-account/me/connect", body),
+  acknowledgeRisk: () =>
+    post<{ account: any }>("/api/whatsapp-user-account/me/risk-acknowledgement", { riskAcknowledged: true }),
+  disconnect: () => post<{ account: any }>("/api/whatsapp-user-account/me/disconnect", {}),
+  groups: () => get<{ groups: Array<{ jid: string; subject: string; participants?: number | null }> }>("/api/whatsapp-user-account/me/groups"),
+  teamDispatches: () => get<{ dispatches: any[] }>("/api/whatsapp-user-account/dispatches?scope=team")
+};
+
+export const whatsappDestinationsApi = {
+  list: (includeInactive = false) =>
+    get<{ destinations: any[] }>(`/api/whatsapp-destinations${includeInactive ? "?includeInactive=true" : ""}`),
+  create: (body: { label: string; destinationType: "group" | "phone" | "manual_group"; groupJid?: string | null; phone?: string | null; notes?: string | null; active?: boolean; isDefault?: boolean }) =>
+    post<any>("/api/whatsapp-destinations", body),
+  update: (id: string, body: Partial<{ label: string; destinationType: "group" | "phone" | "manual_group"; groupJid: string | null; phone: string | null; notes: string | null; active: boolean; isDefault: boolean }>) =>
+    patch<any>(`/api/whatsapp-destinations/${encodeURIComponent(id)}`, body),
+  remove: (id: string) => del<{ ok: boolean }>(`/api/whatsapp-destinations/${encodeURIComponent(id)}`)
+};
+
+export const whatsappOrderDispatchApi = {
+  preview: (orderId: string) =>
+    get<{ orderId: string; body: string; defaultDestination: any | null; account: any | null; canDirect: boolean; directBlockedReason?: string | null; limits: { directPerMinute: number; directPerDay: number } }>(
+      `/api/orders/${encodeURIComponent(orderId)}/whatsapp-dispatch/preview`
+    ),
+  dispatch: (orderId: string, body: { sendMode: "assisted" | "direct"; destinationId?: string; destinationLabel?: string; destinationType?: "group" | "phone" | "manual_group" }) =>
+    post<{ dispatch: any; body: string; assisted: boolean }>(`/api/orders/${encodeURIComponent(orderId)}/whatsapp-dispatch`, body)
+};
+
 export const emailReportsApi = {
   sendWeeklyReport: () => post<{ message: string }>("/api/email/weekly-report", {})
 };

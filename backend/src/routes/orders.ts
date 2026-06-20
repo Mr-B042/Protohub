@@ -7,6 +7,7 @@ import { appendCartJourneyEvent } from "../lib/cart-journey.js";
 import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, syncOrderFollowUpTask, taskStatusFor } from "../lib/follow-up-workflow.js";
 import { FOLLOW_UP_RECOVERY_BUCKETS } from "../lib/follow-up-outcomes.js";
 import { buildPackageComponentSnapshot, orderInventoryLinesFromRow, primaryInventoryProductId, type OrderInventoryLine } from "../lib/order-inventory.js";
+import { formatOrderForWhatsAppDispatch, type WhatsAppDispatchOrderRow } from "../lib/order-whatsapp-dispatch.js";
 import { logger } from "../lib/logger.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -18,6 +19,7 @@ import {
 import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { sendNewOrderSms, sendOrderStatusSms } from "../lib/sms.js";
 import { applyOrderMarketingScope } from "../lib/marketing-attribution.js";
+import { sendConnectedUserWhatsAppToJid } from "../lib/whatsapp-runtime.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -88,6 +90,8 @@ const numericAmount = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 const roundMoney = (value: number) => Math.round(value * 100) / 100;
+const directWhatsAppPerMinuteLimit = Math.max(1, Number(process.env.WHATSAPP_USER_DIRECT_RATE_LIMIT_PER_MINUTE ?? 5) || 5);
+const directWhatsAppDailyLimit = Math.max(1, Number(process.env.WHATSAPP_USER_DIRECT_RATE_LIMIT_PER_DAY ?? 80) || 80);
 const hasOwn = (record: Record<string, unknown>, key: string) =>
   Object.prototype.hasOwnProperty.call(record, key);
 
@@ -115,6 +119,206 @@ const normalizeEditableCreatedAt = (value: string) => {
     dateKey: inferredDateKey
   };
 };
+
+const WhatsAppDispatchSchema = z.object({
+  sendMode: z.enum(["assisted", "direct"]),
+  destinationId: z.string().uuid().optional(),
+  destinationLabel: z.string().trim().max(120).optional(),
+  destinationType: z.enum(["group", "phone", "manual_group"]).optional(),
+  force: z.boolean().optional()
+});
+
+type WhatsAppDestinationRow = {
+  id: string;
+  org_id: string;
+  user_id: string;
+  label: string;
+  destination_type: "group" | "phone" | "manual_group";
+  group_jid?: string | null;
+  phone?: string | null;
+  active?: boolean | null;
+  is_default?: boolean | null;
+};
+
+const WHATSAPP_DISPATCH_ORDER_SELECT = [
+  "id",
+  "org_id",
+  "customer",
+  "phone",
+  "whatsapp",
+  "address",
+  "city",
+  "state",
+  "product_name",
+  "package_name",
+  "quantity",
+  "amount",
+  "currency",
+  "assigned_rep_id",
+  "cross_sell_lines",
+  "free_gift_lines",
+  "package_components_snapshot"
+].join(", ");
+
+const normalizePhoneDigits = (value: string | null | undefined) => String(value ?? "").replace(/\D/g, "");
+
+async function loadWhatsAppDispatchOrder(orgId: string, orderId: string) {
+  const { data, error } = await supabase
+    .from("orders")
+    .select(WHATSAPP_DISPATCH_ORDER_SELECT)
+    .eq("org_id", orgId)
+    .eq("id", orderId)
+    .single();
+
+  if (error) throw error;
+  return data as unknown as (WhatsAppDispatchOrderRow & { assigned_rep_id?: string | null });
+}
+
+function canDispatchWhatsAppOrder(role: string, userId: string, order: { assigned_rep_id?: string | null }) {
+  if (["Owner", "Admin", "Manager"].includes(role)) return true;
+  return order.assigned_rep_id === userId;
+}
+
+async function loadUserWhatsAppAccount(orgId: string, userId: string) {
+  const { data, error } = await supabase
+    .from("whatsapp_user_accounts")
+    .select("*")
+    .eq("org_id", orgId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+
+async function loadDefaultWhatsAppDestination(orgId: string, userId: string) {
+  const { data, error } = await supabase
+    .from("whatsapp_user_destinations")
+    .select("*")
+    .eq("org_id", orgId)
+    .eq("user_id", userId)
+    .eq("active", true)
+    .order("is_default", { ascending: false })
+    .order("last_used_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data as WhatsAppDestinationRow | null;
+}
+
+async function loadOwnedWhatsAppDestination(orgId: string, userId: string, destinationId: string) {
+  const { data, error } = await supabase
+    .from("whatsapp_user_destinations")
+    .select("*")
+    .eq("id", destinationId)
+    .eq("org_id", orgId)
+    .eq("user_id", userId)
+    .eq("active", true)
+    .single();
+  if (error) throw error;
+  return data as WhatsAppDestinationRow;
+}
+
+function resolveDispatchDestination(payload: z.infer<typeof WhatsAppDispatchSchema>, saved: WhatsAppDestinationRow | null): WhatsAppDestinationRow {
+  if (saved) return saved;
+  return {
+    id: "",
+    org_id: "",
+    user_id: "",
+    label: payload.destinationLabel?.trim() || "Manual WhatsApp group",
+    destination_type: payload.destinationType ?? "manual_group",
+    group_jid: null,
+    phone: null,
+    active: true,
+    is_default: false
+  };
+}
+
+function destinationRecipient(destination: WhatsAppDestinationRow) {
+  if (destination.destination_type === "group") {
+    const jid = destination.group_jid?.trim() || "";
+    return { recipientJid: jid, recipientPhone: null, directTarget: jid };
+  }
+  if (destination.destination_type === "phone") {
+    const phone = normalizePhoneDigits(destination.phone);
+    return { recipientJid: phone ? `${phone}@s.whatsapp.net` : "", recipientPhone: phone || null, directTarget: phone };
+  }
+  return { recipientJid: "", recipientPhone: null, directTarget: "" };
+}
+
+async function insertWhatsAppDispatchLog(payload: Record<string, unknown>) {
+  const { data, error } = await supabase
+    .from("whatsapp_order_dispatches")
+    .insert(payload)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Record<string, unknown>;
+}
+
+async function updateWhatsAppDispatchLog(id: string, payload: Record<string, unknown>) {
+  const { data, error } = await supabase
+    .from("whatsapp_order_dispatches")
+    .update(payload)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Record<string, unknown>;
+}
+
+async function checkDirectWhatsAppRateLimit(orgId: string, userId: string) {
+  const now = Date.now();
+  const minuteIso = new Date(now - 60_000).toISOString();
+  const dayIso = new Date(now - 24 * 60 * 60_000).toISOString();
+  const [minuteResult, dayResult] = await Promise.all([
+    supabase
+      .from("whatsapp_order_dispatches")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("sender_user_id", userId)
+      .eq("send_mode", "direct")
+      .in("status", ["queued", "sent"])
+      .gte("created_at", minuteIso),
+    supabase
+      .from("whatsapp_order_dispatches")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("sender_user_id", userId)
+      .eq("send_mode", "direct")
+      .in("status", ["queued", "sent"])
+      .gte("created_at", dayIso)
+  ]);
+  if (minuteResult.error) throw minuteResult.error;
+  if (dayResult.error) throw dayResult.error;
+  if ((minuteResult.count ?? 0) >= directWhatsAppPerMinuteLimit) {
+    return `Direct WhatsApp limit hit: ${directWhatsAppPerMinuteLimit} sends per minute.`;
+  }
+  if ((dayResult.count ?? 0) >= directWhatsAppDailyLimit) {
+    return `Direct WhatsApp daily limit hit: ${directWhatsAppDailyLimit} sends per day.`;
+  }
+  return null;
+}
+
+async function findRecentDuplicateDispatch(orgId: string, userId: string, orderId: string, destinationId: string) {
+  if (!destinationId) return null;
+  const since = new Date(Date.now() - 10 * 60_000).toISOString();
+  const { data, error } = await supabase
+    .from("whatsapp_order_dispatches")
+    .select("id, created_at")
+    .eq("org_id", orgId)
+    .eq("sender_user_id", userId)
+    .eq("order_id", orderId)
+    .eq("destination_id", destinationId)
+    .eq("send_mode", "direct")
+    .in("status", ["queued", "sent"])
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
 
 const DATE_AUDIT_UPDATE_KEYS = [
   "original_created_at",
@@ -703,6 +907,210 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (r
   }
 
   res.status(201).json(data);
+});
+
+router.get("/:id/whatsapp-dispatch/preview", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+  try {
+    const order = await loadWhatsAppDispatchOrder(req.user!.orgId, String(req.params.id));
+    if (!canDispatchWhatsAppOrder(req.user!.role, req.user!.id, order)) {
+      res.status(403).json({ error: "You can only dispatch orders assigned to you." });
+      return;
+    }
+
+    const [account, defaultDestination] = await Promise.all([
+      loadUserWhatsAppAccount(req.user!.orgId, req.user!.id),
+      loadDefaultWhatsAppDestination(req.user!.orgId, req.user!.id)
+    ]);
+    const recipient = defaultDestination ? destinationRecipient(defaultDestination) : { recipientJid: "", recipientPhone: null, directTarget: "" };
+    const canDirect = !!(
+      account?.connection_status === "connected" &&
+      account?.risk_acknowledged_at &&
+      defaultDestination &&
+      defaultDestination.destination_type !== "manual_group" &&
+      recipient.directTarget
+    );
+    const directBlockedReason = canDirect
+      ? null
+      : account?.connection_status !== "connected"
+        ? "Connect your WhatsApp before using direct send."
+        : !account?.risk_acknowledged_at
+          ? "Acknowledge the WhatsApp direct-send risk before using direct send."
+          : !defaultDestination
+            ? "Save a destination first, or use assisted send."
+            : defaultDestination.destination_type === "manual_group"
+              ? "Manual group destinations work with assisted send only. Import a group for direct send."
+              : !recipient.directTarget
+                ? "This destination is missing a group JID or phone."
+                : null;
+
+    res.json({
+      orderId: order.id,
+      body: formatOrderForWhatsAppDispatch(order),
+      defaultDestination,
+      account: account ?? null,
+      canDirect,
+      directBlockedReason,
+      limits: {
+        directPerMinute: directWhatsAppPerMinuteLimit,
+        directPerDay: directWhatsAppDailyLimit
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Could not preview WhatsApp dispatch." });
+  }
+});
+
+router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+  const parsed = WhatsAppDispatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+
+  try {
+    const order = await loadWhatsAppDispatchOrder(req.user!.orgId, String(req.params.id));
+    if (!canDispatchWhatsAppOrder(req.user!.role, req.user!.id, order)) {
+      res.status(403).json({ error: "You can only dispatch orders assigned to you." });
+      return;
+    }
+
+    const savedDestination = parsed.data.destinationId
+      ? await loadOwnedWhatsAppDestination(req.user!.orgId, req.user!.id, parsed.data.destinationId)
+      : null;
+    const destination = resolveDispatchDestination(parsed.data, savedDestination);
+    const recipient = destinationRecipient(destination);
+    const body = formatOrderForWhatsAppDispatch(order);
+    const baseLog = {
+      org_id: req.user!.orgId,
+      order_id: order.id,
+      sender_user_id: req.user!.id,
+      destination_id: savedDestination?.id ?? null,
+      send_mode: parsed.data.sendMode,
+      destination_type: destination.destination_type,
+      destination_label: destination.label,
+      recipient_jid: recipient.recipientJid || null,
+      recipient_phone: recipient.recipientPhone,
+      body,
+      provider: "baileys",
+      metadata: {
+        actorRole: req.user!.role,
+        actorName: req.user!.name,
+        assistedFallback: parsed.data.sendMode === "assisted"
+      }
+    };
+
+    if (parsed.data.sendMode === "assisted") {
+      const dispatch = await insertWhatsAppDispatchLog({
+        ...baseLog,
+        status: "opened"
+      });
+      if (savedDestination?.id) {
+        await supabase
+          .from("whatsapp_user_destinations")
+          .update({ last_used_at: new Date().toISOString() })
+          .eq("id", savedDestination.id)
+          .eq("org_id", req.user!.orgId)
+          .eq("user_id", req.user!.id);
+      }
+      res.json({ dispatch, body, assisted: true });
+      return;
+    }
+
+    if (!savedDestination?.id) {
+      const dispatch = await insertWhatsAppDispatchLog({
+        ...baseLog,
+        status: "blocked",
+        error_message: "Direct send requires one of your saved destinations."
+      });
+      res.status(400).json({ error: "Direct send requires one of your saved destinations.", dispatch });
+      return;
+    }
+
+    if (!recipient.directTarget || destination.destination_type === "manual_group") {
+      const dispatch = await insertWhatsAppDispatchLog({
+        ...baseLog,
+        status: "blocked",
+        error_message: "Direct send needs an imported group JID or phone destination."
+      });
+      res.status(400).json({ error: "Direct send needs an imported group JID or phone destination.", dispatch });
+      return;
+    }
+
+    const account = await loadUserWhatsAppAccount(req.user!.orgId, req.user!.id);
+    if (account?.connection_status !== "connected") {
+      const dispatch = await insertWhatsAppDispatchLog({
+        ...baseLog,
+        status: "blocked",
+        error_message: "Your WhatsApp is not connected."
+      });
+      res.status(400).json({ error: "Connect your WhatsApp before direct sending.", dispatch });
+      return;
+    }
+    if (!account?.risk_acknowledged_at) {
+      const dispatch = await insertWhatsAppDispatchLog({
+        ...baseLog,
+        status: "blocked",
+        error_message: "Risk acknowledgement is required before direct sending."
+      });
+      res.status(400).json({ error: "Acknowledge the WhatsApp direct-send risk before direct sending.", dispatch });
+      return;
+    }
+
+    const rateLimitReason = await checkDirectWhatsAppRateLimit(req.user!.orgId, req.user!.id);
+    if (rateLimitReason) {
+      const dispatch = await insertWhatsAppDispatchLog({
+        ...baseLog,
+        status: "rate_limited",
+        error_message: rateLimitReason
+      });
+      res.status(429).json({ error: rateLimitReason, dispatch });
+      return;
+    }
+
+    const duplicate = parsed.data.force
+      ? null
+      : await findRecentDuplicateDispatch(req.user!.orgId, req.user!.id, order.id, savedDestination.id);
+    if (duplicate) {
+      const dispatch = await insertWhatsAppDispatchLog({
+        ...baseLog,
+        status: "blocked",
+        error_message: "This order was already sent to that destination recently."
+      });
+      res.status(409).json({ error: "This order was already sent to that destination recently.", dispatch });
+      return;
+    }
+
+    const dispatch = await insertWhatsAppDispatchLog({
+      ...baseLog,
+      status: "queued"
+    });
+
+    try {
+      const result = await sendConnectedUserWhatsAppToJid(req.user!.orgId, req.user!.id, recipient.directTarget, body);
+      const updated = await updateWhatsAppDispatchLog(String(dispatch.id), {
+        status: "sent",
+        provider_message_id: result.providerMessageId ?? null,
+        provider_status: result.providerStatus,
+        sent_at: new Date().toISOString()
+      });
+      await supabase
+        .from("whatsapp_user_destinations")
+        .update({ last_used_at: new Date().toISOString() })
+        .eq("id", savedDestination.id)
+        .eq("org_id", req.user!.orgId)
+        .eq("user_id", req.user!.id);
+      res.json({ dispatch: updated, body, assisted: false });
+    } catch (sendError) {
+      const message = sendError instanceof Error ? sendError.message : "Direct WhatsApp send failed.";
+      const updated = await updateWhatsAppDispatchLog(String(dispatch.id), {
+        status: "failed",
+        error_message: message
+      });
+      res.status(400).json({ error: message, dispatch: updated });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Could not dispatch order to WhatsApp." });
+  }
 });
 
 // ── PATCH /api/orders/:id/status ──────────────────────────

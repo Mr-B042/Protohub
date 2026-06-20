@@ -21,6 +21,10 @@ type RuntimeRow = {
   pairing_phone?: string | null;
 };
 
+type UserRuntimeRow = RuntimeRow & {
+  user_id: string;
+};
+
 type RuntimeConnection = {
   orgId: string;
   socket: ReturnType<typeof makeWASocket> | null;
@@ -31,8 +35,14 @@ type RuntimeConnection = {
   pairingPhone: string | null;
 };
 
+type UserRuntimeConnection = RuntimeConnection & {
+  userId: string;
+  runtimeKey: string;
+};
+
 const quietLogger = pino({ level: "silent" });
 const runtimeConnections = new Map<string, RuntimeConnection>();
+const userRuntimeConnections = new Map<string, UserRuntimeConnection>();
 const defaultSessionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../.runtime/whatsapp");
 const sessionRoot = path.resolve(process.env.WHATSAPP_SESSION_DIR?.trim() || defaultSessionRoot);
 const WHATSAPP_READY_TIMEOUT_MS = 20_000;
@@ -768,6 +778,86 @@ async function isReplyAssistantEnabled(orgId: string) {
 
 async function markDisconnected(orgId: string, lastError: string | null = null) {
   await updateConnectionRow(orgId, {
+    connection_status: "disconnected",
+    connected_phone: null,
+    connected_name: null,
+    last_error: lastError,
+    pairing_code: null,
+    qr_code_data_url: null
+  });
+}
+
+function userRuntimeKey(orgId: string, userId: string) {
+  return `${orgId}:${userId}`;
+}
+
+function getUserConnection(orgId: string, userId: string) {
+  const runtimeKey = userRuntimeKey(orgId, userId);
+  let existing = userRuntimeConnections.get(runtimeKey);
+  if (!existing) {
+    existing = {
+      orgId,
+      userId,
+      runtimeKey,
+      socket: null,
+      connecting: null,
+      disconnecting: false,
+      reconnectTimer: null,
+      mode: "qr",
+      pairingPhone: null
+    };
+    userRuntimeConnections.set(runtimeKey, existing);
+  }
+  return existing;
+}
+
+async function getUserSessionDir(orgId: string, userId: string) {
+  const dir = path.join(sessionRoot, "users", orgId, userId);
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+async function clearUserSessionDir(orgId: string, userId: string) {
+  await rm(path.join(sessionRoot, "users", orgId, userId), { recursive: true, force: true }).catch(() => undefined);
+}
+
+async function updateUserConnectionRow(orgId: string, userId: string, payload: Record<string, unknown>) {
+  const { error } = await supabase
+    .from("whatsapp_user_accounts")
+    .upsert(
+      {
+        org_id: orgId,
+        user_id: userId,
+        provider: "baileys",
+        updated_at: new Date().toISOString(),
+        ...payload
+      },
+      { onConflict: "org_id,user_id" }
+    );
+
+  if (error) {
+    logger.warn("user whatsapp runtime state update failed", { orgId, userId, error: error.message });
+  }
+}
+
+async function bootstrapUserSettings(orgId: string, userId: string) {
+  const { data, error } = await supabase
+    .from("whatsapp_user_accounts")
+    .select("org_id, user_id, enabled, connection_status, pairing_mode, pairing_phone")
+    .eq("org_id", orgId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    logger.warn("user whatsapp runtime settings lookup failed", { orgId, userId, error: error.message });
+    return null;
+  }
+  return (data ?? null) as UserRuntimeRow | null;
+}
+
+async function markUserDisconnected(orgId: string, userId: string, lastError: string | null = null) {
+  await updateUserConnectionRow(orgId, userId, {
+    enabled: false,
     connection_status: "disconnected",
     connected_phone: null,
     connected_name: null,
@@ -1661,6 +1751,27 @@ function scheduleReconnect(connection: RuntimeConnection, delayMs: number, orgId
   }, delayMs);
 }
 
+function clearUserReconnectTimer(connection: UserRuntimeConnection) {
+  if (connection.reconnectTimer) {
+    clearTimeout(connection.reconnectTimer);
+    connection.reconnectTimer = null;
+  }
+}
+
+function scheduleUserReconnect(connection: UserRuntimeConnection, delayMs: number) {
+  clearUserReconnectTimer(connection);
+  connection.reconnectTimer = setTimeout(() => {
+    connection.reconnectTimer = null;
+    void ensureUserConnection(connection.orgId, connection.userId).catch((error) => {
+      logger.warn("user whatsapp reconnect failed", {
+        orgId: connection.orgId,
+        userId: connection.userId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }, delayMs);
+}
+
 async function waitForConnectedSocket(orgId: string, timeoutMs = WHATSAPP_READY_TIMEOUT_MS) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -1679,9 +1790,32 @@ async function waitForConnectedSocket(orgId: string, timeoutMs = WHATSAPP_READY_
   throw new Error("WhatsApp is still pairing. Wait a moment and try again.");
 }
 
+async function waitForConnectedUserSocket(orgId: string, userId: string, timeoutMs = WHATSAPP_READY_TIMEOUT_MS) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const connection = getUserConnection(orgId, userId);
+    const socket = connection.socket;
+    if (socket?.user?.id) return socket;
+
+    const current = await bootstrapUserSettings(orgId, userId);
+    if (current?.connection_status === "errored") {
+      throw new Error("Your WhatsApp connection failed before it became ready.");
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+
+  throw new Error("Your WhatsApp is still pairing. Wait a moment and try again.");
+}
+
 export async function ensureWhatsAppReady(orgId: string, timeoutMs = WHATSAPP_READY_TIMEOUT_MS) {
   await ensureConnection(orgId);
   return waitForConnectedSocket(orgId, timeoutMs);
+}
+
+export async function ensureUserWhatsAppReady(orgId: string, userId: string, timeoutMs = WHATSAPP_READY_TIMEOUT_MS) {
+  await ensureUserConnection(orgId, userId);
+  return waitForConnectedUserSocket(orgId, userId, timeoutMs);
 }
 
 async function ensureConnection(orgId: string, requestedMode?: WhatsAppPairingMode, requestedPhone?: string | null) {
@@ -1844,6 +1978,135 @@ async function ensureConnection(orgId: string, requestedMode?: WhatsAppPairingMo
   return connection.connecting;
 }
 
+async function ensureUserConnection(orgId: string, userId: string, requestedMode?: WhatsAppPairingMode, requestedPhone?: string | null) {
+  const connection = getUserConnection(orgId, userId);
+  if (connection.connecting) return connection.connecting;
+
+  connection.connecting = (async () => {
+    const current = await bootstrapUserSettings(orgId, userId);
+    if (!current?.enabled) return;
+
+    connection.mode = requestedMode ?? current.pairing_mode ?? "qr";
+    connection.pairingPhone = requestedPhone ?? current.pairing_phone ?? null;
+    if (connection.socket && !connection.disconnecting) {
+      return;
+    }
+
+    clearUserReconnectTimer(connection);
+    const sessionDir = await getUserSessionDir(orgId, userId);
+    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+
+    const sock = makeWASocket({
+      auth: state,
+      browser: Browsers.macOS("Protohub User"),
+      printQRInTerminal: false,
+      logger: quietLogger
+    });
+
+    connection.socket = sock;
+    connection.disconnecting = false;
+    sock.ev.on("creds.update", saveCreds);
+
+    sock.ev.on("connection.update", async (update) => {
+      try {
+        if (update.qr && connection.mode === "qr") {
+          const qrDataUrl = await QRCode.toDataURL(update.qr, { errorCorrectionLevel: "M", margin: 1, scale: 6 });
+          await updateUserConnectionRow(orgId, userId, {
+            connection_status: "pairing",
+            qr_code_data_url: qrDataUrl,
+            pairing_code: null,
+            last_error: null,
+            pairing_mode: "qr",
+            pairing_phone: null
+          });
+        }
+
+        if (update.connection === "open") {
+          clearUserReconnectTimer(connection);
+          await updateUserConnectionRow(orgId, userId, {
+            connection_status: "connected",
+            connected_phone: parsePhoneFromJid(sock.user?.id) ?? connection.pairingPhone,
+            connected_name: sock.user?.name ?? null,
+            last_connected_at: new Date().toISOString(),
+            last_error: null,
+            pairing_code: null,
+            qr_code_data_url: null
+          });
+        }
+
+        if (update.connection === "close") {
+          connection.socket = null;
+          const statusCode = (update.lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
+          const loggedOut = statusCode === DisconnectReason.loggedOut;
+          const reason = update.lastDisconnect?.error instanceof Error ? update.lastDisconnect.error.message : "WhatsApp connection closed.";
+          const qrExpired = /QR refs attempts ended/i.test(reason);
+
+          if (connection.disconnecting || loggedOut) {
+            clearUserReconnectTimer(connection);
+            await clearUserSessionDir(orgId, userId);
+            await markUserDisconnected(orgId, userId, loggedOut ? "WhatsApp session logged out. Pair again to continue." : null);
+            connection.disconnecting = false;
+            return;
+          }
+
+          connection.connecting = null;
+          if (qrExpired && !state.creds.registered && connection.mode === "qr") {
+            await updateUserConnectionRow(orgId, userId, {
+              connection_status: "pairing",
+              last_error: null,
+              qr_code_data_url: null,
+              pairing_code: null
+            });
+            scheduleUserReconnect(connection, 800);
+            return;
+          }
+
+          await updateUserConnectionRow(orgId, userId, {
+            connection_status: "errored",
+            last_error: reason,
+            qr_code_data_url: null,
+            pairing_code: null
+          });
+          scheduleUserReconnect(connection, 5000);
+        }
+      } catch (error) {
+        logger.warn("user whatsapp connection update handler failed", {
+          orgId,
+          userId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    });
+
+    if (!state.creds.registered && !hasPersistedWhatsAppSession(state.creds)) {
+      if (connection.mode === "pairing_code" && connection.pairingPhone) {
+        const code = await sock.requestPairingCode(connection.pairingPhone);
+        await updateUserConnectionRow(orgId, userId, {
+          connection_status: "pairing",
+          pairing_mode: "pairing_code",
+          pairing_phone: connection.pairingPhone,
+          pairing_code: code,
+          qr_code_data_url: null,
+          last_error: null
+        });
+      } else {
+        await updateUserConnectionRow(orgId, userId, {
+          connection_status: "pairing",
+          pairing_mode: "qr",
+          pairing_phone: null,
+          pairing_code: null,
+          qr_code_data_url: null,
+          last_error: null
+        });
+      }
+    }
+  })().finally(() => {
+    connection.connecting = null;
+  });
+
+  return connection.connecting;
+}
+
 export async function startWhatsAppRuntime() {
   await mkdir(sessionRoot, { recursive: true });
   const { data, error } = await supabase
@@ -1861,6 +2124,27 @@ export async function startWhatsAppRuntime() {
     void ensureConnection(row.org_id, row.pairing_mode ?? "qr", row.pairing_phone ?? null).catch((bootstrapError) => {
       logger.warn("whatsapp org bootstrap failed", {
         orgId: row.org_id,
+        error: bootstrapError instanceof Error ? bootstrapError.message : String(bootstrapError)
+      });
+    });
+  }
+
+  const { data: userData, error: userError } = await supabase
+    .from("whatsapp_user_accounts")
+    .select("org_id, user_id, enabled, connection_status, pairing_mode, pairing_phone")
+    .eq("enabled", true)
+    .in("connection_status", ["pairing", "connected", "errored"]);
+
+  if (userError) {
+    logger.warn("user whatsapp runtime bootstrap failed", { error: userError.message });
+    return;
+  }
+
+  for (const row of (userData ?? []) as UserRuntimeRow[]) {
+    void ensureUserConnection(row.org_id, row.user_id, row.pairing_mode ?? "qr", row.pairing_phone ?? null).catch((bootstrapError) => {
+      logger.warn("user whatsapp bootstrap failed", {
+        orgId: row.org_id,
+        userId: row.user_id,
         error: bootstrapError instanceof Error ? bootstrapError.message : String(bootstrapError)
       });
     });
@@ -1926,6 +2210,65 @@ export async function disconnectWhatsAppConnection(orgId: string) {
   await markDisconnected(orgId, null);
 }
 
+export async function beginUserWhatsAppConnection(orgId: string, userId: string, mode: WhatsAppPairingMode, phone?: string | null) {
+  const pairingPhone = mode === "pairing_code" ? toDbPhone(phone) : null;
+  if (mode === "pairing_code" && !pairingPhone) {
+    throw new Error("Enter your WhatsApp number with country code for pairing code mode.");
+  }
+
+  const connection = getUserConnection(orgId, userId);
+  const current = await bootstrapUserSettings(orgId, userId);
+  clearUserReconnectTimer(connection);
+
+  if (connection.socket && !connection.disconnecting) {
+    if (current?.connection_status === "connected") {
+      throw new Error("Your WhatsApp is already connected. Disconnect it first before starting a new pairing.");
+    }
+    if (
+      current?.connection_status === "pairing" &&
+      (current.pairing_mode ?? "qr") === mode &&
+      (mode !== "pairing_code" || (current.pairing_phone ?? null) === pairingPhone)
+    ) {
+      return;
+    }
+    throw new Error("A WhatsApp pairing is already in progress. Disconnect it first before starting a new one.");
+  }
+
+  await updateUserConnectionRow(orgId, userId, {
+    enabled: true,
+    connection_status: "pairing",
+    pairing_mode: mode,
+    pairing_phone: pairingPhone,
+    pairing_code: null,
+    qr_code_data_url: null,
+    last_error: null
+  });
+
+  await ensureUserConnection(orgId, userId, mode, pairingPhone);
+}
+
+export async function disconnectUserWhatsAppConnection(orgId: string, userId: string) {
+  const connection = getUserConnection(orgId, userId);
+  connection.disconnecting = true;
+  clearUserReconnectTimer(connection);
+  const socket = connection.socket;
+  connection.socket = null;
+  connection.connecting = null;
+  if (socket) {
+    try {
+      await socket.logout();
+    } catch {
+      try {
+        socket.end(new Error("Protohub requested personal WhatsApp disconnect"));
+      } catch {
+        // ignore close errors during cleanup
+      }
+    }
+  }
+  await clearUserSessionDir(orgId, userId);
+  await markUserDisconnected(orgId, userId, null);
+}
+
 export async function sendConnectedWhatsApp(orgId: string, normalizedPhone: string, body: string) {
   const socket = await ensureWhatsAppReady(orgId);
   if (!socket) {
@@ -1933,6 +2276,49 @@ export async function sendConnectedWhatsApp(orgId: string, normalizedPhone: stri
   }
 
   const jid = `${normalizeDigits(normalizedPhone)}@s.whatsapp.net`;
+  const sent = await socket.sendMessage(jid, { text: body });
+  return {
+    providerMessageId: sent?.key?.id ?? undefined,
+    providerStatus: "sent"
+  };
+}
+
+export async function listUserWhatsAppGroups(orgId: string, userId: string) {
+  const socket = await ensureUserWhatsAppReady(orgId, userId);
+  if (!socket) {
+    throw new Error("Your WhatsApp is not connected yet.");
+  }
+
+  const fetchGroups = (socket as any).groupFetchAllParticipating;
+  if (typeof fetchGroups !== "function") {
+    return [];
+  }
+
+  const groups = await fetchGroups.call(socket);
+  return Object.entries(groups ?? {}).map(([jid, meta]) => {
+    const record = (meta ?? {}) as Record<string, any>;
+    return {
+      jid,
+      subject: typeof record.subject === "string" && record.subject.trim() ? record.subject.trim() : jid,
+      participants: Array.isArray(record.participants) ? record.participants.length : null
+    };
+  }).sort((a, b) => a.subject.localeCompare(b.subject));
+}
+
+export async function sendConnectedUserWhatsAppToJid(orgId: string, userId: string, destination: string, body: string) {
+  const socket = await ensureUserWhatsAppReady(orgId, userId);
+  if (!socket) {
+    throw new Error("Your WhatsApp is not connected yet.");
+  }
+
+  const cleanDestination = destination.trim();
+  const jid = cleanDestination.includes("@")
+    ? cleanDestination
+    : `${normalizeDigits(cleanDestination)}@s.whatsapp.net`;
+  if (!jid.endsWith("@g.us") && !jid.endsWith("@s.whatsapp.net")) {
+    throw new Error("Choose a WhatsApp group or phone destination before direct sending.");
+  }
+
   const sent = await socket.sendMessage(jid, { text: body });
   return {
     providerMessageId: sent?.key?.id ?? undefined,
