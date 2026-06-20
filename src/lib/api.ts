@@ -702,6 +702,11 @@ export const whatsappDestinationsApi = {
     get<{ destinations: any[] }>(`/api/whatsapp-destinations${includeInactive ? "?includeInactive=true" : ""}`),
   // Owner/Admin: fetch another user's destinations for view-as mode
   listForUser: (userId: string) => get<{ destinations: any[] }>(`/api/whatsapp-destinations/user/${encodeURIComponent(userId)}`),
+  // Owner/Admin: all org destinations enriched with owner + assigned rep names
+  listAll: () => get<{ destinations: any[] }>("/api/whatsapp-destinations/org/all"),
+  // Owner/Admin: assign a rep to a destination
+  assignRep: (destinationId: string, repId: string | null) =>
+    patch<{ ok: boolean }>(`/api/whatsapp-destinations/${encodeURIComponent(destinationId)}/assign-rep`, { repId }),
   create: (body: { label: string; destinationType: "group" | "phone" | "manual_group"; groupJid?: string | null; phone?: string | null; notes?: string | null; active?: boolean; isDefault?: boolean }) =>
     post<any>("/api/whatsapp-destinations", body),
   update: (id: string, body: Partial<{ label: string; destinationType: "group" | "phone" | "manual_group"; groupJid: string | null; phone: string | null; notes: string | null; active: boolean; isDefault: boolean }>) =>

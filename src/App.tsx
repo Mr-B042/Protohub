@@ -7298,6 +7298,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     canDirect: boolean;
     directBlockedReason?: string | null;
   }>(null);
+  const [waAllDestinations, setWaAllDestinations] = useState<any[]>([]);
+  const [waDispatchSearch, setWaDispatchSearch] = useState("");
   const [smsSettings, setSmsSettings] = useState<SmsSettingsState | null>(null);
   const [smsSettingsLoading, setSmsSettingsLoading] = useState(false);
   const [smsSettingsSaving, setSmsSettingsSaving] = useState(false);
@@ -22019,31 +22021,42 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     });
   };
   const openWhatsAppDispatchForOrder = async (order: TrackedOrder) => {
-    let knownDestinations = waDestinations;
+    setWaDispatchSearch("");
     setWaDispatchModal({
-      order,
-      loading: true,
-      sending: false,
+      order, loading: true, sending: false,
       body: formatOrderForWhatsAppDispatch(order),
-      destinationId: knownDestinations.find((item) => item.isDefault)?.id ?? knownDestinations[0]?.id ?? "",
-      sendMode: "assisted",
-      canDirect: false,
-      directBlockedReason: null
+      destinationId: "", sendMode: "assisted", canDirect: false, directBlockedReason: null
     });
     try {
-      if (!knownDestinations.length) {
-        const destinationResult = await whatsappDestinationsApi.list().catch(() => ({ destinations: [] as Record<string, any>[] }));
-        knownDestinations = destinationResult.destinations ?? [];
-        setWaDestinations(knownDestinations);
-      }
-      const preview = await whatsappOrderDispatchApi.preview(order.id);
-      const defaultDestinationId = preview.defaultDestination?.id ?? knownDestinations.find((item) => item.isDefault)?.id ?? knownDestinations[0]?.id ?? "";
+      // Load all-org destinations (Owner/Admin) or personal destinations (rep)
+      const [personalResult, allResult, preview] = await Promise.all([
+        whatsappDestinationsApi.list().catch(() => ({ destinations: [] as any[] })),
+        (realRole === "Owner" || realRole === "Admin")
+          ? whatsappDestinationsApi.listAll().catch(() => ({ destinations: [] as any[] }))
+          : Promise.resolve({ destinations: [] as any[] }),
+        whatsappOrderDispatchApi.preview(order.id)
+      ]);
+      const personal = personalResult.destinations ?? [];
+      const allOrg = allResult.destinations ?? [];
+      setWaDestinations(personal);
+      setWaAllDestinations(allOrg.length > 0 ? allOrg : personal);
+
+      // Smart auto-select: prefer rep's assigned group for this order
+      const assignedRepId = order.assignedRepId ?? null;
+      const allDests = allOrg.length > 0 ? allOrg : personal;
+      const repGroup = assignedRepId
+        ? allDests.find((d: any) => d.assignedRepId === assignedRepId || d.assigned_rep_id === assignedRepId)
+        : null;
+      const defaultDestId = repGroup?.id
+        ?? preview.defaultDestination?.id
+        ?? allDests.find((d: any) => d.isDefault || d.is_default)?.id
+        ?? allDests[0]?.id
+        ?? "";
+
       setWaDispatchModal({
-        order,
-        loading: false,
-        sending: false,
+        order, loading: false, sending: false,
         body: preview.body || formatOrderForWhatsAppDispatch(order),
-        destinationId: defaultDestinationId,
+        destinationId: defaultDestId,
         sendMode: "assisted",
         canDirect: !!preview.canDirect,
         directBlockedReason: preview.directBlockedReason ?? null
@@ -22055,7 +22068,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const submitWhatsAppDispatch = async () => {
     if (!waDispatchModal) return;
-    const destination = waDestinations.find((item) => item.id === waDispatchModal.destinationId);
+    const allDests = waAllDestinations.length > 0 ? waAllDestinations : waDestinations;
+    const destination = allDests.find((item: any) => item.id === waDispatchModal.destinationId);
     setWaDispatchModal((current) => current ? { ...current, sending: true } : current);
     try {
       const result = await whatsappOrderDispatchApi.dispatch(waDispatchModal.order.id, {
@@ -50041,22 +50055,54 @@ ${waybillLineItems(w).length > 1
                         <div className="mt-4 space-y-2">
                           {activeDestinations.length === 0 ? (
                             <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No saved destination yet. Assisted send still works with manual group selection.</p>
-                          ) : activeDestinations.map((destination) => (
-                            <div key={destination.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="m-0 truncate text-sm font-black text-gray-900">{destination.label}</p>
-                                  <p className="m-0 mt-1 text-xs font-semibold uppercase tracking-wider text-gray-400">{destination.destinationType === "group" ? "Imported group" : destination.destinationType === "phone" ? "Phone" : "Manual group"}</p>
-                                  <p className="m-0 mt-1 break-all text-xs text-gray-500">{destination.groupJid || destination.phone || "Assisted send only"}</p>
+                          ) : activeDestinations.map((destination) => {
+                            const assignedRep = users.find(u => u.id === (destination.assignedRepId ?? destination.assigned_rep_id));
+                            return (
+                              <div key={destination.id} className={`rounded-xl border p-3 ${destination.isDefault ? "border-[#25D366]/30 bg-[#25D366]/5" : "border-gray-200 bg-gray-50"}`}>
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <p className="m-0 text-sm font-black text-gray-900 truncate">{destination.label}</p>
+                                      {destination.isDefault && <span className="shrink-0 rounded-full bg-[#25D366]/15 px-2 py-0.5 text-[10px] font-black text-[#25D366]">DEFAULT</span>}
+                                    </div>
+                                    {assignedRep && (
+                                      <p className="m-0 mt-0.5 text-xs font-bold text-purple-600">👤 {assignedRep.name}</p>
+                                    )}
+                                    <p className="m-0 mt-0.5 text-[10px] text-gray-400 uppercase tracking-wider">{destination.destinationType === "group" ? "Imported group" : destination.destinationType === "phone" ? "Phone" : "Manual group"}</p>
+                                    {(destination.groupJid || destination.phone) && (
+                                      <p className="m-0 mt-0.5 break-all text-[10px] text-gray-400">{destination.groupJid || destination.phone}</p>
+                                    )}
+                                  </div>
                                 </div>
-                                {destination.isDefault && <span className="rounded-full bg-blue-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-blue-700">Default</span>}
+                                {/* Assign to rep */}
+                                {isOwnerOrAdmin && (
+                                  <div className="mt-2">
+                                    <select
+                                      className="w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
+                                      value={destination.assignedRepId ?? destination.assigned_rep_id ?? ""}
+                                      onChange={async (e) => {
+                                        const repId = e.target.value || null;
+                                        try {
+                                          await whatsappDestinationsApi.assignRep(destination.id, repId);
+                                          setWaDestinations(prev => prev.map(d => d.id === destination.id ? { ...d, assignedRepId: repId, assigned_rep_id: repId } : d));
+                                          showToast(repId ? "Group assigned to rep." : "Rep assignment removed.");
+                                        } catch { showToast("Could not assign rep."); }
+                                      }}
+                                    >
+                                      <option value="">— Assign to a rep —</option>
+                                      {users.filter(u => u.role === "Sales Rep" || u.role === "Manager").map(u => (
+                                        <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {!destination.isDefault && <button className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => waSetDefaultDestination(destination.id)}>Set default</button>}
+                                  <button className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => waDeleteDestination(destination.id, destination.label)}>Delete</button>
+                                </div>
                               </div>
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                {!destination.isDefault && <button className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => waSetDefaultDestination(destination.id)}>Set default</button>}
-                                <button className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => waDeleteDestination(destination.id, destination.label)}>Delete</button>
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </article>
 
@@ -54473,28 +54519,76 @@ ${waybillLineItems(w).length > 1
                   </div>
                 ) : (
                   <>
-                    <label className="block">
-                      <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.18em] text-gray-400">Destination</span>
-                      <select
-                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-[#111f2d] dark:text-slate-100"
-                        value={waDispatchModal.destinationId}
-                        onChange={(event) => {
-                          const nextId = event.target.value;
-                          setWaDispatchModal((current) => current ? {
-                            ...current,
-                            destinationId: nextId,
-                            sendMode: current.sendMode === "direct" && !nextId ? "assisted" : current.sendMode
-                          } : current);
-                        }}
-                      >
-                        <option value="">Manual WhatsApp group - assisted send</option>
-                        {waDestinations.filter((item) => item.active !== false).map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.label}{item.isDefault ? " (default)" : ""} - {item.destinationType === "group" ? "group" : item.destinationType === "phone" ? "phone" : "manual"}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    {/* Smart destination picker */}
+                    {(() => {
+                      const allDests = (waAllDestinations.length > 0 ? waAllDestinations : waDestinations).filter((d: any) => d.active !== false);
+                      const assignedRepId = waDispatchModal.order.assignedRepId ?? (waDispatchModal.order as any).assigned_rep_id ?? null;
+                      const search = waDispatchSearch.toLowerCase();
+                      const filtered = allDests.filter((d: any) => {
+                        if (!search) return true;
+                        const ownerName: string = d.owner?.name ?? d.ownerName ?? "";
+                        const repName: string = d.rep?.name ?? d.repName ?? "";
+                        return d.label.toLowerCase().includes(search) || ownerName.toLowerCase().includes(search) || repName.toLowerCase().includes(search);
+                      });
+                      // Group: rep-matched first, then by owner
+                      const repMatch = filtered.filter((d: any) => d.assignedRepId === assignedRepId || d.assigned_rep_id === assignedRepId);
+                      const others = filtered.filter((d: any) => d.assignedRepId !== assignedRepId && d.assigned_rep_id !== assignedRepId);
+                      const grouped: Array<{ header?: string; items: any[] }> = [];
+                      if (assignedRepId && repMatch.length > 0) grouped.push({ header: "⭐ Suggested for this order's rep", items: repMatch });
+                      if (others.length > 0) grouped.push({ header: repMatch.length > 0 ? "Other groups" : undefined, items: others });
+                      return (
+                        <div>
+                          <span className="mb-2 block text-xs font-black uppercase tracking-[0.18em] text-gray-400">Send to group</span>
+                          <div className="relative mb-2">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+                            <input
+                              className="w-full rounded-xl border border-gray-200 bg-gray-50 pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
+                              placeholder="Search rep or group name…"
+                              value={waDispatchSearch}
+                              onChange={e => setWaDispatchSearch(e.target.value)}
+                            />
+                          </div>
+                          <div className="space-y-1 max-h-48 overflow-y-auto rounded-xl border border-gray-100 bg-gray-50 p-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setWaDispatchModal(c => c ? { ...c, destinationId: "", sendMode: "assisted" } : c)}
+                              className={`w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors ${!waDispatchModal.destinationId ? "bg-[#25D366]/10 font-black text-[#25D366]" : "hover:bg-gray-100 text-gray-600"}`}
+                            >
+                              <p className="m-0 font-bold">Manual group</p>
+                              <p className="m-0 text-xs text-gray-400">Pick the group yourself in WhatsApp</p>
+                            </button>
+                            {grouped.map(({ header, items }) => (
+                              <Fragment key={header ?? "default"}>
+                                {header && <p className="m-0 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-gray-400">{header}</p>}
+                                {items.map((d: any) => {
+                                  const ownerName: string = d.owner?.name ?? d.ownerName ?? "";
+                                  const repName: string = d.rep?.name ?? d.assigned_rep?.name ?? "";
+                                  const isSelected = waDispatchModal.destinationId === d.id;
+                                  return (
+                                    <button
+                                      key={d.id}
+                                      type="button"
+                                      onClick={() => setWaDispatchModal(c => c ? { ...c, destinationId: d.id } : c)}
+                                      className={`w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors ${isSelected ? "bg-[#25D366]/10 font-black text-[#25D366]" : "hover:bg-gray-100 text-gray-800"}`}
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <p className="m-0 font-bold truncate">{d.label}</p>
+                                        {(d.isDefault || d.is_default) && <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-[9px] font-black text-blue-700">DEFAULT</span>}
+                                      </div>
+                                      <p className="m-0 text-xs text-gray-400 truncate">
+                                        {repName ? `Rep: ${repName}` : ownerName ? `Owner: ${ownerName}` : ""}
+                                        {(d.destinationType || d.destination_type) === "group" ? " · Imported group" : (d.destinationType || d.destination_type) === "phone" ? " · Phone" : " · Manual"}
+                                      </p>
+                                    </button>
+                                  );
+                                })}
+                              </Fragment>
+                            ))}
+                            {filtered.length === 0 && <p className="m-0 p-3 text-sm text-gray-400 text-center">No groups match "{waDispatchSearch}"</p>}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     <div>
                       <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.18em] text-gray-400">Send mode</span>

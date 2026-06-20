@@ -13,7 +13,8 @@ const BaseDestinationSchema = z.object({
   phone: z.string().trim().max(40).optional().nullable(),
   notes: z.string().trim().max(240).optional().nullable(),
   active: z.boolean().default(true),
-  isDefault: z.boolean().default(false)
+  isDefault: z.boolean().default(false),
+  assignedRepId: z.string().uuid().nullable().optional()
 });
 
 const DestinationSchema = BaseDestinationSchema.superRefine((value, ctx) => {
@@ -46,6 +47,7 @@ function destinationPayload(orgId: string, userId: string, data: z.infer<typeof 
   if (data.notes !== undefined) payload.notes = data.notes?.trim() || null;
   if (data.active !== undefined) payload.active = data.active;
   if (data.isDefault !== undefined) payload.is_default = data.isDefault;
+  if ("assignedRepId" in data && data.assignedRepId !== undefined) payload.assigned_rep_id = data.assignedRepId ?? null;
   return payload;
 }
 
@@ -159,6 +161,38 @@ router.get("/user/:userId", requireRole("Owner", "Admin"), async (req, res) => {
     return;
   }
   res.json({ destinations: data ?? [] });
+});
+
+// GET /api/whatsapp-destinations/org/all — Owner/Admin: all org destinations
+// enriched with the owner's name and their assigned_rep's name.
+// Used by the smart dispatch picker.
+router.get("/org/all", requireRole("Owner", "Admin"), async (req, res) => {
+  const { data, error } = await supabase
+    .from("whatsapp_user_destinations")
+    .select("*, owner:users!whatsapp_user_destinations_user_id_fkey(id, name, role), rep:users!whatsapp_user_destinations_assigned_rep_id_fkey(id, name, role)")
+    .eq("org_id", req.user!.orgId)
+    .eq("active", true)
+    .order("is_default", { ascending: false })
+    .order("last_used_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+  res.json({ destinations: data ?? [] });
+});
+
+// PATCH /api/whatsapp-destinations/:id/assign-rep — Owner/Admin: assign rep to a destination
+router.patch("/:id/assign-rep", requireRole("Owner", "Admin"), async (req, res) => {
+  const repId: string | null = req.body?.repId ?? null;
+  const { error } = await supabase
+    .from("whatsapp_user_destinations")
+    .update({ assigned_rep_id: repId, updated_at: new Date().toISOString() })
+    .eq("id", req.params["id"])
+    .eq("org_id", req.user!.orgId);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ ok: true });
 });
 
 export default router;
