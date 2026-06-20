@@ -54535,103 +54535,124 @@ ${waybillLineItems(w).length > 1
                   </div>
                 ) : (
                   <>
-                    {/* Smart destination picker — filtered by order state + assigned rep */}
+                    {/* Rep-first smart picker — select a rep, system finds their group */}
                     {(() => {
                       const allDests = (waAllDestinations.length > 0 ? waAllDestinations : waDestinations).filter((d: any) => d.active !== false);
                       const order = waDispatchModal.order;
                       const assignedRepId = order.assignedRepId ?? null;
                       const orderState = (order.state ?? "").toLowerCase().trim();
 
-                      // Find ALL reps who have orders in this state to surface their groups
-                      const repsInState = new Set(
-                        trackedOrders
-                          .filter(o => (o.state ?? "").toLowerCase().trim() === orderState && o.assignedRepId)
-                          .map(o => o.assignedRepId!)
-                      );
-
                       const getRepIds = (d: any): string[] =>
                         d.assignedRepIds ?? d.assigned_rep_ids ?? (d.assignedRepId ? [d.assignedRepId] : []);
 
-                      const search = waDispatchSearch.toLowerCase();
-                      const filtered = allDests.filter((d: any) => {
-                        if (!search) return true;
-                        const ownerName: string = d.owner?.name ?? "";
-                        const assignedRepNames: string = users
-                          .filter((u: any) => getRepIds(d).includes(u.id))
-                          .map((u: any) => u.name).join(" ");
-                        return d.label.toLowerCase().includes(search)
-                          || ownerName.toLowerCase().includes(search)
-                          || assignedRepNames.toLowerCase().includes(search);
+                      // Build rep-centric list: each rep in this state + their group
+                      const repsForState = users.filter((u: any) => {
+                        if (u.role !== "Sales Rep" && u.role !== "Manager") return false;
+                        // Has any order in this state
+                        return trackedOrders.some(o =>
+                          o.assignedRepId === u.id &&
+                          (o.state ?? "").toLowerCase().trim() === orderState
+                        );
                       });
 
-                      // Tier 1: assigned rep's groups (most specific)
-                      const repMatch = assignedRepId
-                        ? filtered.filter((d: any) => getRepIds(d).includes(assignedRepId))
-                        : [];
-                      // Tier 2: other reps in the same state (same territory)
-                      const stateMatch = filtered.filter((d: any) =>
-                        !getRepIds(d).includes(assignedRepId ?? "") &&
-                        getRepIds(d).some(id => repsInState.has(id))
+                      // Also include reps from other states who have mapped groups (for override)
+                      const repsWithGroups = users.filter((u: any) =>
+                        !repsForState.some((r: any) => r.id === u.id) &&
+                        allDests.some((d: any) => getRepIds(d).includes(u.id))
                       );
-                      // Tier 3: everything else
-                      const rest = filtered.filter((d: any) => {
-                        const ids = getRepIds(d);
-                        return !ids.includes(assignedRepId ?? "") && !ids.some(id => repsInState.has(id));
-                      });
 
-                      const grouped: Array<{ header?: string; color?: string; items: any[] }> = [];
-                      if (repMatch.length > 0) grouped.push({ header: `⭐ For this order's rep${orderState ? ` · ${order.state}` : ""}`, color: "text-[#25D366]", items: repMatch });
-                      if (stateMatch.length > 0) grouped.push({ header: `📍 Other ${order.state || "state"} agents`, color: "text-amber-600", items: stateMatch });
-                      if (rest.length > 0) grouped.push({ header: grouped.length > 0 ? "All other groups" : undefined, items: rest });
+                      const search = waDispatchSearch.toLowerCase();
+                      const filterRep = (u: any) =>
+                        !search || u.name.toLowerCase().includes(search) ||
+                        allDests.filter((d: any) => getRepIds(d).includes(u.id))
+                          .some((d: any) => d.label.toLowerCase().includes(search));
+
+                      const stateReps = repsForState.filter(filterRep);
+                      const otherReps = repsWithGroups.filter(filterRep);
+
+                      // For a rep row: find their best group
+                      const destForRep = (repId: string) =>
+                        allDests.find((d: any) => getRepIds(d).includes(repId)) ?? null;
+
+                      const RepRow = ({ u, highlight }: { u: any; highlight?: boolean }) => {
+                        const dest = destForRep(u.id);
+                        const isAssigned = u.id === assignedRepId;
+                        const isSelected = dest && waDispatchModal.destinationId === dest.id;
+                        const noGroup = !dest;
+                        return (
+                          <button
+                            type="button"
+                            disabled={noGroup}
+                            onClick={() => dest && setWaDispatchModal(c => c ? { ...c, destinationId: dest.id } : c)}
+                            className={`w-full text-left rounded-xl px-3 py-2.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                              isSelected ? "bg-[#25D366]/15 border border-[#25D366]/30" : "bg-white border border-gray-100 hover:border-[#25D366]/30 hover:bg-[#25D366]/5"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              {/* Avatar */}
+                              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${isSelected ? "bg-[#25D366] text-white" : "bg-gray-100 text-gray-600"}`}>
+                                {u.name.slice(0, 2).toUpperCase()}
+                              </span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className={`m-0 text-sm font-black ${isSelected ? "text-[#25D366]" : "text-gray-900"}`}>{u.name}</p>
+                                  {isAssigned && <span className="shrink-0 rounded-full bg-[#25D366]/15 px-2 py-0.5 text-[10px] font-black text-[#25D366]">ASSIGNED</span>}
+                                </div>
+                                <p className="m-0 text-xs text-gray-400 truncate">
+                                  {noGroup ? "No group mapped yet" : dest.label}
+                                </p>
+                              </div>
+                              {isSelected && <CheckCircle2 className="shrink-0 h-4 w-4 text-[#25D366]" />}
+                            </div>
+                          </button>
+                        );
+                      };
+
                       return (
                         <div>
-                          <span className="mb-2 block text-xs font-black uppercase tracking-[0.18em] text-gray-400">Send to group</span>
+                          <span className="mb-2 block text-xs font-black uppercase tracking-[0.18em] text-gray-400">
+                            Send to rep's group
+                          </span>
                           <div className="relative mb-2">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                             <input
                               className="w-full rounded-xl border border-gray-200 bg-gray-50 pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
-                              placeholder="Search rep or group name…"
+                              placeholder={`Search ${order.state || "state"} reps…`}
                               value={waDispatchSearch}
                               onChange={e => setWaDispatchSearch(e.target.value)}
                             />
                           </div>
-                          <div className="space-y-1 max-h-48 overflow-y-auto rounded-xl border border-gray-100 bg-gray-50 p-1.5">
+                          <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                            {/* Manual override always first */}
                             <button
                               type="button"
                               onClick={() => setWaDispatchModal(c => c ? { ...c, destinationId: "", sendMode: "assisted" } : c)}
-                              className={`w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors ${!waDispatchModal.destinationId ? "bg-[#25D366]/10 font-black text-[#25D366]" : "hover:bg-gray-100 text-gray-600"}`}
+                              className={`w-full text-left rounded-xl px-3 py-2 text-sm border transition-colors ${!waDispatchModal.destinationId ? "bg-[#25D366]/10 border-[#25D366]/30 font-black text-[#25D366]" : "bg-white border-gray-100 hover:bg-gray-50 text-gray-500"}`}
                             >
-                              <p className="m-0 font-bold">Manual group</p>
-                              <p className="m-0 text-xs text-gray-400">Pick the group yourself in WhatsApp</p>
+                              Manual — pick group in WhatsApp
                             </button>
-                            {grouped.map(({ header, color, items }) => (
-                              <Fragment key={header ?? "default"}>
-                                {header && <p className={`m-0 px-2 py-1 text-[10px] font-black uppercase tracking-wider ${color ?? "text-gray-400"}`}>{header}</p>}
-                                {items.map((d: any) => {
-                                  const ownerName: string = d.owner?.name ?? d.ownerName ?? "";
-                                  const repName: string = d.rep?.name ?? d.assigned_rep?.name ?? "";
-                                  const isSelected = waDispatchModal.destinationId === d.id;
-                                  return (
-                                    <button
-                                      key={d.id}
-                                      type="button"
-                                      onClick={() => setWaDispatchModal(c => c ? { ...c, destinationId: d.id } : c)}
-                                      className={`w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors ${isSelected ? "bg-[#25D366]/10 font-black text-[#25D366]" : "hover:bg-gray-100 text-gray-800"}`}
-                                    >
-                                      <div className="flex items-center justify-between gap-2">
-                                        <p className="m-0 font-bold truncate">{d.label}</p>
-                                        {(d.isDefault || d.is_default) && <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-[9px] font-black text-blue-700">DEFAULT</span>}
-                                      </div>
-                                      <p className="m-0 text-xs text-gray-400 truncate">
-                                        {repName ? `Rep: ${repName}` : ownerName ? `Owner: ${ownerName}` : ""}
-                                        {(d.destinationType || d.destination_type) === "group" ? " · Imported group" : (d.destinationType || d.destination_type) === "phone" ? " · Phone" : " · Manual"}
-                                      </p>
-                                    </button>
-                                  );
-                                })}
-                              </Fragment>
-                            ))}
-                            {filtered.length === 0 && <p className="m-0 p-3 text-sm text-gray-400 text-center">No groups match "{waDispatchSearch}"</p>}
+
+                            {stateReps.length > 0 && (
+                              <>
+                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-[#25D366]">
+                                  📍 {order.state || "This state"} reps
+                                </p>
+                                {stateReps.map((u: any) => <RepRow key={u.id} u={u} highlight />)}
+                              </>
+                            )}
+
+                            {otherReps.length > 0 && (
+                              <>
+                                <p className="m-0 px-1 pt-2 text-[10px] font-black uppercase tracking-wider text-gray-400">Other reps</p>
+                                {otherReps.map((u: any) => <RepRow key={u.id} u={u} />)}
+                              </>
+                            )}
+
+                            {stateReps.length === 0 && otherReps.length === 0 && (
+                              <p className="m-0 p-4 text-center text-sm text-gray-400">
+                                No reps with mapped groups found{search ? ` for "${waDispatchSearch}"` : ""}.
+                              </p>
+                            )}
                           </div>
                         </div>
                       );
