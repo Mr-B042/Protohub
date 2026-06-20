@@ -46,6 +46,24 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     marketingAttributionTags: sanitizeMarketingAttributionTags(profile.marketing_attribution_tags)
   };
 
+  // Apply spy header inline — must happen after req.user is set.
+  // The global applySpyHeader middleware runs before requireAuth so req.user
+  // is null when it fires. Doing it here guarantees correct ordering.
+  const spyId = req.headers["x-spy-user-id"];
+  if (spyId && typeof spyId === "string" &&
+      (profile.role === "Owner" || profile.role === "Admin")) {
+    const { data: spyProfile } = await supabase
+      .from("users")
+      .select("id, role")
+      .eq("id", spyId)
+      .eq("org_id", profile.org_id)
+      .maybeSingle();
+    if (spyProfile) {
+      req.user.effectiveUserId = spyProfile.id as string;
+      req.user.effectiveUserRole = spyProfile.role as import("../types/index.js").UserRole;
+    }
+  }
+
   next();
 }
 
