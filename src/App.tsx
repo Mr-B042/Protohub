@@ -50119,9 +50119,16 @@ ${waybillLineItems(w).length > 1
                                           .map(a => {
                                             const s = score(a);
                                             const hint = s >= 2 ? " ⭐" : s === 1 ? " 📍" : "";
-                                            return (
+                                            // Build full state list from all coverage sources
+                                          const stateSet = new Set<string>();
+                                          if (a.primaryBaseState) stateSet.add(a.primaryBaseState);
+                                          if (a.zone) stateSet.add(a.zone);
+                                          a.coverage?.filter(c => c.active).forEach(c => stateSet.add(c.state));
+                                          a.locations?.filter(l => l.active).forEach(l => stateSet.add(l.state));
+                                          const stateLabel = [...stateSet].slice(0, 5).join(", ");
+                                          return (
                                               <option key={a.id} value={a.id}>
-                                                {a.name}{hint} · {a.primaryBaseState ?? a.zone}
+                                                {a.name}{hint} · {stateLabel}
                                               </option>
                                             );
                                           });
@@ -54647,7 +54654,16 @@ ${waybillLineItems(w).length > 1
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <p className={`m-0 text-sm font-black truncate ${isSelected ? "text-[#25D366]" : "text-gray-900"}`}>{a.name}</p>
                                   {isAssigned && <span className="shrink-0 rounded-full bg-[#25D366]/15 px-2 py-0.5 text-[10px] font-black text-[#25D366]">ASSIGNED</span>}
-                                  <span className="shrink-0 text-[10px] text-gray-400">{a.primaryBaseState ?? a.zone}</span>
+                                  <span className="shrink-0 text-[10px] text-gray-400 truncate max-w-[120px]">{
+                                    (() => {
+                                      const ss = new Set<string>();
+                                      if (a.primaryBaseState) ss.add(a.primaryBaseState);
+                                      if (a.zone) ss.add(a.zone);
+                                      a.coverage?.filter(c => c.active).forEach(c => ss.add(c.state));
+                                      a.locations?.filter(l => l.active).forEach(l => ss.add(l.state));
+                                      return [...ss].slice(0, 3).join(", ");
+                                    })()
+                                  }</span>
                                 </div>
                                 <p className="m-0 text-xs text-gray-400 truncate">{dest ? dest.label : "No group mapped"}</p>
                               </div>
