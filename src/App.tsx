@@ -112,7 +112,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, whatsappConversationsApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, whatsappConversationsApi, ordersWhatsAppResendApi,
   setApiSpyUserId
 } from "./lib/api";
 import {
@@ -55772,6 +55772,22 @@ ${waybillLineItems(w).length > 1
                           >
                             <Copy className="w-3.5 h-3.5" /> Copy Order To WhatsApp Group
                           </button>
+                          {isOwnerOrAdmin && (
+                            <button
+                              type="button"
+                              className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-200 bg-amber-50 text-amber-700 text-xs font-bold hover:bg-amber-100 transition-colors"
+                              onClick={async () => {
+                                try {
+                                  const r = await ordersWhatsAppResendApi.resend(selectedOrder.id);
+                                  showToast(r.message ?? "WhatsApp confirmation resent.");
+                                } catch (err: any) {
+                                  showToast(`Resend failed: ${err?.message ?? "please retry"}.`);
+                                }
+                              }}
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" /> Resend WA confirmation
+                            </button>
+                          )}
                         </div>
                       )}
 	                  </div>
