@@ -183,16 +183,24 @@ router.get("/org/all", requireRole("Owner", "Admin"), async (req, res) => {
   res.json({ destinations: data ?? [] });
 });
 
-// PATCH /api/whatsapp-destinations/:id/assign-rep — Owner/Admin: assign rep to a destination
-router.patch("/:id/assign-rep", requireRole("Owner", "Admin"), async (req, res) => {
-  const repId: string | null = req.body?.repId ?? null;
+// PATCH /api/whatsapp-destinations/:id/assign-reps — Owner/Admin: assign multiple reps
+router.patch("/:id/assign-reps", requireRole("Owner", "Admin"), async (req, res) => {
+  // repIds: array of user UUIDs (empty array = unassigned)
+  const repIds: string[] = Array.isArray(req.body?.repIds)
+    ? req.body.repIds.filter((id: unknown) => typeof id === "string")
+    : [];
   const { error } = await supabase
     .from("whatsapp_user_destinations")
-    .update({ assigned_rep_id: repId, updated_at: new Date().toISOString() })
-    .eq("id", req.params["id"])
+    .update({
+      assigned_rep_ids: repIds,
+      // keep single-rep field in sync with first entry for legacy queries
+      assigned_rep_id: repIds[0] ?? null,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", String(req.params["id"] ?? ""))
     .eq("org_id", req.user!.orgId);
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json({ ok: true });
+  res.json({ ok: true, repIds });
 });
 
 export default router;

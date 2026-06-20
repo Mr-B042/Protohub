@@ -22045,7 +22045,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const assignedRepId = order.assignedRepId ?? null;
       const allDests = allOrg.length > 0 ? allOrg : personal;
       const repGroup = assignedRepId
-        ? allDests.find((d: any) => d.assignedRepId === assignedRepId || d.assigned_rep_id === assignedRepId)
+        ? allDests.find((d: any) => ((d.assignedRepIds ?? d.assigned_rep_ids ?? (d.assignedRepId ? [d.assignedRepId] : [])).includes(assignedRepId ?? "")))
         : null;
       const defaultDestId = repGroup?.id
         ?? preview.defaultDestination?.id
@@ -50056,7 +50056,8 @@ ${waybillLineItems(w).length > 1
                           {activeDestinations.length === 0 ? (
                             <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No saved destination yet. Assisted send still works with manual group selection.</p>
                           ) : activeDestinations.map((destination) => {
-                            const assignedRep = users.find(u => u.id === (destination.assignedRepId ?? destination.assigned_rep_id));
+                            const repIds: string[] = destination.assignedRepIds ?? destination.assigned_rep_ids ?? (destination.assignedRepId ? [destination.assignedRepId] : []);
+                            const assignedReps = users.filter((u: any) => repIds.includes(u.id));
                             return (
                               <div key={destination.id} className={`rounded-xl border p-3 ${destination.isDefault ? "border-[#25D366]/30 bg-[#25D366]/5" : "border-gray-200 bg-gray-50"}`}>
                                 <div className="flex items-start justify-between gap-3">
@@ -50065,8 +50066,8 @@ ${waybillLineItems(w).length > 1
                                       <p className="m-0 text-sm font-black text-gray-900 truncate">{destination.label}</p>
                                       {destination.isDefault && <span className="shrink-0 rounded-full bg-[#25D366]/15 px-2 py-0.5 text-[10px] font-black text-[#25D366]">DEFAULT</span>}
                                     </div>
-                                    {assignedRep && (
-                                      <p className="m-0 mt-0.5 text-xs font-bold text-purple-600">👤 {assignedRep.name}</p>
+                                    {assignedReps.length > 0 && (
+                                      <p className="m-0 mt-0.5 text-xs font-bold text-purple-600">👤 {assignedReps.map((u: any) => u.name).join(", ")}</p>
                                     )}
                                     <p className="m-0 mt-0.5 text-[10px] text-gray-400 uppercase tracking-wider">{destination.destinationType === "group" ? "Imported group" : destination.destinationType === "phone" ? "Phone" : "Manual group"}</p>
                                     {(destination.groupJid || destination.phone) && (
@@ -50074,28 +50075,43 @@ ${waybillLineItems(w).length > 1
                                     )}
                                   </div>
                                 </div>
-                                {/* Assign to rep */}
-                                {isOwnerOrAdmin && (
-                                  <div className="mt-2">
-                                    <select
-                                      className="w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
-                                      value={destination.assignedRepId ?? destination.assigned_rep_id ?? ""}
-                                      onChange={async (e) => {
-                                        const repId = e.target.value || null;
-                                        try {
-                                          await whatsappDestinationsApi.assignRep(destination.id, repId);
-                                          setWaDestinations(prev => prev.map(d => d.id === destination.id ? { ...d, assignedRepId: repId, assigned_rep_id: repId } : d));
-                                          showToast(repId ? "Group assigned to rep." : "Rep assignment removed.");
-                                        } catch { showToast("Could not assign rep."); }
-                                      }}
-                                    >
-                                      <option value="">— Assign to a rep —</option>
-                                      {users.filter(u => u.role === "Sales Rep" || u.role === "Manager").map(u => (
-                                        <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                )}
+                                {/* Assign to multiple reps */}
+                                {isOwnerOrAdmin && (() => {
+                                  const currentIds: string[] = destination.assignedRepIds ?? destination.assigned_rep_ids ?? (destination.assignedRepId ? [destination.assignedRepId] : []);
+                                  const reps = users.filter((u: any) => u.role === "Sales Rep" || u.role === "Manager");
+                                  return (
+                                    <div className="mt-2">
+                                      <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Reps using this group</p>
+                                      <div className="grid gap-1">
+                                        {reps.map((u: any) => {
+                                          const checked = currentIds.includes(u.id);
+                                          return (
+                                            <label key={u.id} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors ${checked ? "bg-[#25D366]/10" : "hover:bg-gray-100"}`}>
+                                              <input
+                                                type="checkbox"
+                                                className="h-3.5 w-3.5 accent-[#25D366] rounded"
+                                                checked={checked}
+                                                onChange={async (e) => {
+                                                  const next = e.target.checked
+                                                    ? [...currentIds, u.id]
+                                                    : currentIds.filter((id: string) => id !== u.id);
+                                                  try {
+                                                    await whatsappDestinationsApi.assignReps(destination.id, next);
+                                                    setWaDestinations(prev => prev.map(d => d.id === destination.id
+                                                      ? { ...d, assignedRepIds: next, assigned_rep_ids: next, assignedRepId: next[0] ?? null }
+                                                      : d));
+                                                  } catch { showToast("Could not update rep assignment."); }
+                                                }}
+                                              />
+                                              <span className={`text-xs font-bold ${checked ? "text-[#25D366]" : "text-gray-600"}`}>{u.name}</span>
+                                              <span className="text-[10px] text-gray-400">{u.role}</span>
+                                            </label>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                                 <div className="mt-2 flex flex-wrap gap-2">
                                   {!destination.isDefault && <button className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => waSetDefaultDestination(destination.id)}>Set default</button>}
                                   <button className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => waDeleteDestination(destination.id, destination.label)}>Delete</button>
@@ -54531,7 +54547,7 @@ ${waybillLineItems(w).length > 1
                         return d.label.toLowerCase().includes(search) || ownerName.toLowerCase().includes(search) || repName.toLowerCase().includes(search);
                       });
                       // Group: rep-matched first, then by owner
-                      const repMatch = filtered.filter((d: any) => d.assignedRepId === assignedRepId || d.assigned_rep_id === assignedRepId);
+                      const repMatch = filtered.filter((d: any) => ((d.assignedRepIds ?? d.assigned_rep_ids ?? (d.assignedRepId ? [d.assignedRepId] : [])).includes(assignedRepId ?? "")));
                       const others = filtered.filter((d: any) => d.assignedRepId !== assignedRepId && d.assigned_rep_id !== assignedRepId);
                       const grouped: Array<{ header?: string; items: any[] }> = [];
                       if (assignedRepId && repMatch.length > 0) grouped.push({ header: "⭐ Suggested for this order's rep", items: repMatch });

@@ -704,9 +704,9 @@ export const whatsappDestinationsApi = {
   listForUser: (userId: string) => get<{ destinations: any[] }>(`/api/whatsapp-destinations/user/${encodeURIComponent(userId)}`),
   // Owner/Admin: all org destinations enriched with owner + assigned rep names
   listAll: () => get<{ destinations: any[] }>("/api/whatsapp-destinations/org/all"),
-  // Owner/Admin: assign a rep to a destination
-  assignRep: (destinationId: string, repId: string | null) =>
-    patch<{ ok: boolean }>(`/api/whatsapp-destinations/${encodeURIComponent(destinationId)}/assign-rep`, { repId }),
+  // Owner/Admin: assign multiple reps to a destination
+  assignReps: (destinationId: string, repIds: string[]) =>
+    patch<{ ok: boolean; repIds: string[] }>(`/api/whatsapp-destinations/${encodeURIComponent(destinationId)}/assign-reps`, { repIds }),
   create: (body: { label: string; destinationType: "group" | "phone" | "manual_group"; groupJid?: string | null; phone?: string | null; notes?: string | null; active?: boolean; isDefault?: boolean }) =>
     post<any>("/api/whatsapp-destinations", body),
   update: (id: string, body: Partial<{ label: string; destinationType: "group" | "phone" | "manual_group"; groupJid: string | null; phone: string | null; notes: string | null; active: boolean; isDefault: boolean }>) =>
