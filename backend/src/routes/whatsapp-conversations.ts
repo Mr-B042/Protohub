@@ -1,0 +1,243 @@
+import { Router } from "express";
+import { z } from "zod";
+import { supabase } from "../lib/supabase.js";
+import { requireAuth } from "../middleware/auth.js";
+import { sendConnectedWhatsApp } from "../lib/whatsapp-runtime.js";
+
+const router = Router();
+router.use(requireAuth);
+
+const normalizeDigits = (v: string) => v.replace(/\D/g, "");
+
+// ── GET /api/whatsapp/conversations ─────────────────────────────────────────
+// List conversations grouped by customer phone.
+// Owner/Admin: all conversations.
+// Sales Rep/Manager: only where linked_order is assigned to them (or their team).
+router.get("/", async (req, res) => {
+  const role = req.user!.effectiveUserRole ?? req.user!.role;
+  const userId = req.user!.effectiveUserId ?? req.user!.id;
+  const orgId = req.user!.orgId;
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50) || 50));
+
+  try {
+    // Get the most recent message per normalized_phone using a window approach:
+    // Fetch all messages, group client-side (simpler than complex Supabase aggregation)
+    let query = supabase
+      .from("whatsapp_inbox_messages")
+      .select("id, normalized_phone, sender_phone, sender_name, body, direction, linked_order_id, received_at, sent_at, sent_by_name, read_at, message_type")
+      .eq("org_id", orgId)
+      .order("received_at", { ascending: false })
+      .limit(2000); // fetch enough to build conversation list
+
+    // For Sales Reps, scope to their assigned orders' phones
+    if (role === "Sales Rep") {
+      // Get their assigned order phones
+      const { data: myOrders } = await supabase
+        .from("orders")
+        .select("phone, id")
+        .eq("org_id", orgId)
+        .eq("assigned_rep_id", userId)
+        .not("phone", "is", null);
+      const myPhones = Array.from(new Set((myOrders ?? []).map((o: any) => normalizeDigits(o.phone ?? "")).filter(Boolean)));
+      if (myPhones.length === 0) { res.json({ conversations: [] }); return; }
+      query = query.in("normalized_phone", myPhones);
+    }
+
+    const { data: messages, error } = await query;
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    // Group by normalized_phone → pick latest message per thread
+    const threadMap = new Map<string, any>();
+    for (const msg of (messages ?? [])) {
+      const phone = msg.normalized_phone;
+      if (!threadMap.has(phone)) {
+        threadMap.set(phone, {
+          normalizedPhone: phone,
+          senderPhone: msg.sender_phone,
+          customerName: msg.sender_name ?? null,
+          lastMessage: msg.body,
+          lastMessageAt: msg.received_at,
+          lastDirection: msg.direction,
+          linkedOrderId: msg.linked_order_id ?? null,
+          unreadCount: 0
+        });
+      }
+      // Count unread inbound
+      if (msg.direction === "inbound" && !msg.read_at) {
+        threadMap.get(phone)!.unreadCount += 1;
+      }
+    }
+
+    // Enrich with order customer name where available
+    const orderIds = [...threadMap.values()].map(t => t.linkedOrderId).filter(Boolean);
+    if (orderIds.length > 0) {
+      const { data: orders } = await supabase
+        .from("orders")
+        .select("id, customer, phone, assigned_rep_id")
+        .eq("org_id", orgId)
+        .in("id", orderIds);
+      const orderMap = new Map((orders ?? []).map((o: any) => [o.id, o]));
+      for (const thread of threadMap.values()) {
+        if (thread.linkedOrderId) {
+          const ord = orderMap.get(thread.linkedOrderId);
+          if (ord) {
+            if (!thread.customerName) thread.customerName = ord.customer;
+            thread.assignedRepId = ord.assigned_rep_id ?? null;
+          }
+        }
+      }
+    }
+
+    const conversations = [...threadMap.values()]
+      .sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime())
+      .slice(0, limit);
+
+    res.json({ conversations });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Could not load conversations." });
+  }
+});
+
+// ── GET /api/whatsapp/conversations/:phone ───────────────────────────────────
+// Full thread for a customer phone number.
+router.get("/:phone", async (req, res) => {
+  const orgId = req.user!.orgId;
+  const role = req.user!.effectiveUserRole ?? req.user!.role;
+  const userId = req.user!.effectiveUserId ?? req.user!.id;
+  const normalizedPhone = normalizeDigits(req.params["phone"] ?? "");
+  if (!normalizedPhone) { res.status(400).json({ error: "Invalid phone." }); return; }
+
+  try {
+    // Rep scope check
+    if (role === "Sales Rep") {
+      const { data: myOrders } = await supabase
+        .from("orders").select("id").eq("org_id", orgId).eq("assigned_rep_id", userId)
+        .eq("phone", req.params["phone"]).limit(1);
+      if (!myOrders?.length) {
+        // Also check normalized
+        const { data: myOrders2 } = await supabase
+          .from("orders").select("id").eq("org_id", orgId).eq("assigned_rep_id", userId).limit(500);
+        const myPhones = (await supabase.from("orders").select("phone").eq("org_id", orgId).eq("assigned_rep_id", userId)).data
+          ?.map((o: any) => normalizeDigits(o.phone ?? "")).filter(Boolean) ?? [];
+        if (!myPhones.includes(normalizedPhone)) {
+          res.status(403).json({ error: "Not your assigned customer." }); return;
+        }
+      }
+    }
+
+    const { data: messages, error } = await supabase
+      .from("whatsapp_inbox_messages")
+      .select("id, normalized_phone, sender_phone, sender_name, body, direction, linked_order_id, received_at, sent_at, sent_by_name, sent_by_user_id, read_at, message_type, metadata")
+      .eq("org_id", orgId)
+      .eq("normalized_phone", normalizedPhone)
+      .order("received_at", { ascending: true })
+      .limit(200);
+
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    // Mark all inbound as read
+    await supabase.from("whatsapp_inbox_messages")
+      .update({ read_at: new Date().toISOString() })
+      .eq("org_id", orgId)
+      .eq("normalized_phone", normalizedPhone)
+      .eq("direction", "inbound")
+      .is("read_at", null)
+      .then(() => undefined, () => undefined);
+
+    // Get linked order details
+    const linkedOrderId = [...(messages ?? [])].reverse().find(m => m.linked_order_id)?.linked_order_id ?? null;
+    let linkedOrder = null;
+    if (linkedOrderId) {
+      const { data: ord } = await supabase
+        .from("orders")
+        .select("id, customer, phone, status, product_name, package_name, amount, currency, assigned_rep_id")
+        .eq("org_id", orgId)
+        .eq("id", linkedOrderId)
+        .maybeSingle();
+      linkedOrder = ord ?? null;
+    }
+
+    res.json({ messages: messages ?? [], linkedOrder });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Could not load thread." });
+  }
+});
+
+// ── POST /api/whatsapp/conversations/:phone/send ─────────────────────────────
+// Rep sends a message via the org automation account.
+const SendSchema = z.object({
+  body: z.string().trim().min(1).max(4096),
+  linkedOrderId: z.string().nullable().optional()
+});
+
+router.post("/:phone/send", async (req, res) => {
+  const orgId = req.user!.orgId;
+  const role = req.user!.effectiveUserRole ?? req.user!.role;
+  const userId = req.user!.effectiveUserId ?? req.user!.id;
+  const normalizedPhone = normalizeDigits(req.params["phone"] ?? "");
+  if (!normalizedPhone) { res.status(400).json({ error: "Invalid phone." }); return; }
+
+  const parsed = SendSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+
+  // Rep can only message their assigned customers
+  if (role === "Sales Rep") {
+    const myPhones = (await supabase.from("orders").select("phone").eq("org_id", orgId).eq("assigned_rep_id", userId)).data
+      ?.map((o: any) => normalizeDigits(o.phone ?? "")).filter(Boolean) ?? [];
+    if (!myPhones.includes(normalizedPhone)) {
+      res.status(403).json({ error: "Not your assigned customer." }); return;
+    }
+  }
+
+  try {
+    // Send via org Baileys socket
+    await sendConnectedWhatsApp(orgId, normalizedPhone, parsed.data.body);
+
+    // Log as outbound in the inbox table
+    const now = new Date().toISOString();
+    const { data: inserted, error: insertErr } = await supabase
+      .from("whatsapp_inbox_messages")
+      .insert({
+        org_id: orgId,
+        provider: "baileys",
+        sender_phone: null,
+        normalized_phone: normalizedPhone,
+        direction: "outbound",
+        body: parsed.data.body,
+        message_type: "text",
+        linked_order_id: parsed.data.linkedOrderId ?? null,
+        sent_by_user_id: req.user!.id,
+        sent_by_name: req.user!.name,
+        received_at: now,
+        sent_at: now,
+        read_at: now, // outbound is always "read"
+        metadata: { sentViaInbox: true }
+      })
+      .select("id")
+      .single();
+
+    if (insertErr) {
+      res.status(500).json({ error: insertErr.message }); return;
+    }
+
+    res.json({ ok: true, id: inserted?.id });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Could not send message." });
+  }
+});
+
+// ── PATCH /api/whatsapp/conversations/:phone/read ────────────────────────────
+router.patch("/:phone/read", async (req, res) => {
+  const orgId = req.user!.orgId;
+  const normalizedPhone = normalizeDigits(req.params["phone"] ?? "");
+  await supabase.from("whatsapp_inbox_messages")
+    .update({ read_at: new Date().toISOString() })
+    .eq("org_id", orgId)
+    .eq("normalized_phone", normalizedPhone)
+    .eq("direction", "inbound")
+    .is("read_at", null)
+    .then(() => undefined, () => undefined);
+  res.json({ ok: true });
+});
+
+export default router;

@@ -112,7 +112,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, whatsappConversationsApi,
   setApiSpyUserId
 } from "./lib/api";
 import {
@@ -7269,6 +7269,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waUserGroupsLoading, setWaUserGroupsLoading] = useState(false);
   const [waJustConnected, setWaJustConnected] = useState<{ phone: string; name: string } | null>(null);
   const waPrevConnectedRef = useRef<boolean>(false);
+  // Inbox / conversations
+  const [waConversations, setWaConversations] = useState<any[]>([]);
+  const [waConvsLoading, setWaConvsLoading] = useState(false);
+  const [waActivePhone, setWaActivePhone] = useState<string | null>(null);
+  const [waThread, setWaThread] = useState<{ messages: any[]; linkedOrder: any | null } | null>(null);
+  const [waThreadLoading, setWaThreadLoading] = useState(false);
+  const [waReplyDraft, setWaReplyDraft] = useState("");
+  const [waReplySending, setWaReplySending] = useState(false);
+  const waThreadBottomRef = useRef<HTMLDivElement | null>(null);
   const [waDestinations, setWaDestinations] = useState<Record<string, any>[]>([]);
   const [waDestinationsLoading, setWaDestinationsLoading] = useState(false);
   const [waDestinationSaving, setWaDestinationSaving] = useState(false);
@@ -8821,6 +8830,84 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setWaSettingsLoading(true);
     whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => {}).finally(() => setWaSettingsLoading(false));
   };
+  // ── WhatsApp Inbox ──────────────────────────────────────────
+  const canUseInbox = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager" || currentRole === "Sales Rep";
+
+  // Load conversation list
+  useEffect(() => {
+    if (activePage !== "WhatsApp" || !canUseInbox) return;
+    let cancelled = false;
+    setWaConvsLoading(true);
+    whatsappConversationsApi.list(60).then(r => { if (!cancelled) setWaConversations(r.conversations ?? []); }).catch(() => {}).finally(() => { if (!cancelled) setWaConvsLoading(false); });
+    return () => { cancelled = true; };
+  }, [activePage, canUseInbox, currentRole, authUser?.id]);
+
+  // Poll conversation list every 8s while on WhatsApp page
+  useEffect(() => {
+    if (activePage !== "WhatsApp" || !canUseInbox) return;
+    const t = setInterval(() => {
+      whatsappConversationsApi.list(60).then(r => setWaConversations(r.conversations ?? [])).catch(() => {});
+    }, 8000);
+    return () => clearInterval(t);
+  }, [activePage, canUseInbox]);
+
+  // Load thread when active phone changes
+  useEffect(() => {
+    if (!waActivePhone) { setWaThread(null); return; }
+    let cancelled = false;
+    setWaThreadLoading(true);
+    whatsappConversationsApi.thread(waActivePhone).then(r => {
+      if (!cancelled) {
+        setWaThread(r);
+        // Mark read and update conversation list unread count
+        setWaConversations(prev => prev.map(c => c.normalizedPhone === waActivePhone ? { ...c, unreadCount: 0 } : c));
+      }
+    }).catch(() => {}).finally(() => { if (!cancelled) setWaThreadLoading(false); });
+    return () => { cancelled = true; };
+  }, [waActivePhone]);
+
+  // Poll active thread every 4s
+  useEffect(() => {
+    if (!waActivePhone) return;
+    const t = setInterval(() => {
+      whatsappConversationsApi.thread(waActivePhone).then(r => {
+        setWaThread(prev => {
+          if (!prev || r.messages.length !== prev.messages.length) return r;
+          return prev;
+        });
+      }).catch(() => {});
+    }, 4000);
+    return () => clearInterval(t);
+  }, [waActivePhone]);
+
+  // Scroll to bottom when thread updates
+  useEffect(() => {
+    if (waThread) waThreadBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [waThread?.messages.length]);
+
+  const waSendReply = async () => {
+    if (!waActivePhone || !waReplyDraft.trim() || waReplySending) return;
+    const body = waReplyDraft.trim();
+    const linkedOrderId = waThread?.linkedOrder?.id ?? null;
+    setWaReplySending(true);
+    // Optimistic
+    const optimistic = { id: `opt-${Date.now()}`, direction: "outbound", body, sent_by_name: authUser?.name ?? "Me", sent_at: new Date().toISOString(), received_at: new Date().toISOString(), message_type: "text" };
+    setWaThread(prev => prev ? { ...prev, messages: [...prev.messages, optimistic] } : prev);
+    setWaReplyDraft("");
+    try {
+      await whatsappConversationsApi.send(waActivePhone, body, linkedOrderId);
+      // Refresh thread
+      const fresh = await whatsappConversationsApi.thread(waActivePhone);
+      setWaThread(fresh);
+    } catch (err: any) {
+      showToast(`Send failed: ${err?.message ?? "please retry"}.`);
+      setWaThread(prev => prev ? { ...prev, messages: prev.messages.filter(m => m.id !== optimistic.id) } : prev);
+      setWaReplyDraft(body);
+    } finally {
+      setWaReplySending(false);
+    }
+  };
+
   const waToggleTrigger = async (trigger: string, value: boolean) => {
     if (!waSettings) return;
     const current = waSettings.triggers ?? {};
@@ -49823,6 +49910,152 @@ ${waybillLineItems(w).length > 1
                   </section>
                 );
               })()}
+
+              {/* ── WhatsApp Inbox ── visible to Owner/Admin/Manager/Sales Rep ── */}
+              {canUseInbox && (
+                <section className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                  {/* Header */}
+                  <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
+                    <div className="flex items-center gap-3">
+                      <span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-[#25D366]/10 text-[#25D366]">
+                        <MessageCircle className="h-4 w-4" />
+                        {waConversations.reduce((s, c) => s + (c.unreadCount ?? 0), 0) > 0 && (
+                          <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-black text-white">
+                            {Math.min(99, waConversations.reduce((s, c) => s + (c.unreadCount ?? 0), 0))}
+                          </span>
+                        )}
+                      </span>
+                      <div>
+                        <p className="m-0 text-sm font-black text-gray-900">Customer Inbox</p>
+                        <p className="m-0 text-xs text-gray-500">{waConversations.length} conversation{waConversations.length !== 1 ? "s" : ""} · replies sent from org account</p>
+                      </div>
+                    </div>
+                    <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => { setWaConvsLoading(true); whatsappConversationsApi.list(60).then(r => setWaConversations(r.conversations ?? [])).catch(() => {}).finally(() => setWaConvsLoading(false)); }} disabled={waConvsLoading}>
+                      <RefreshCw className={`h-3.5 w-3.5 ${waConvsLoading ? "animate-spin" : ""}`} />
+                    </button>
+                  </div>
+
+                  <div className="grid lg:grid-cols-[280px_1fr] min-h-[420px] max-h-[600px]">
+                    {/* Conversation list */}
+                    <div className="overflow-y-auto border-b lg:border-b-0 lg:border-r border-gray-100 max-h-48 lg:max-h-none">
+                      {waConvsLoading && waConversations.length === 0 ? (
+                        <div className="flex items-center justify-center h-full p-8 text-sm text-gray-400">Loading…</div>
+                      ) : waConversations.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+                          <MessageCircle className="h-8 w-8 text-gray-200 mb-2" />
+                          <p className="m-0 text-sm font-bold text-gray-400">No messages yet</p>
+                          <p className="m-0 mt-1 text-xs text-gray-400">Customers reply to your automation messages here</p>
+                        </div>
+                      ) : waConversations.map((conv) => {
+                        const active = waActivePhone === conv.normalizedPhone;
+                        return (
+                          <button
+                            key={conv.normalizedPhone}
+                            type="button"
+                            onClick={() => setWaActivePhone(conv.normalizedPhone)}
+                            className={`w-full text-left px-4 py-3 border-b border-gray-50 transition-colors ${active ? "bg-[#25D366]/8 border-l-2 border-l-[#25D366]" : "hover:bg-gray-50"}`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className={`m-0 text-sm font-black truncate ${active ? "text-[#25D366]" : "text-gray-900"}`}>
+                                  {conv.customerName || `+${conv.normalizedPhone}`}
+                                </p>
+                                {conv.customerName && <p className="m-0 text-[10px] text-gray-400">+{conv.normalizedPhone}</p>}
+                                <p className={`m-0 mt-0.5 text-xs truncate ${conv.lastDirection === "inbound" ? "text-gray-700" : "text-gray-400 italic"}`}>
+                                  {conv.lastDirection === "outbound" && <span className="text-[#25D366]">You: </span>}
+                                  {conv.lastMessage}
+                                </p>
+                              </div>
+                              <div className="shrink-0 flex flex-col items-end gap-1">
+                                <p className="m-0 text-[10px] text-gray-400">{formatMoment(conv.lastMessageAt)}</p>
+                                {conv.unreadCount > 0 && (
+                                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#25D366] text-[10px] font-black text-white">{conv.unreadCount}</span>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Thread panel */}
+                    {waActivePhone ? (
+                      <div className="flex flex-col h-full min-h-[320px]">
+                        {/* Thread header */}
+                        {(() => {
+                          const conv = waConversations.find(c => c.normalizedPhone === waActivePhone);
+                          const ord = waThread?.linkedOrder;
+                          return (
+                            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 bg-gray-50/60">
+                              <div>
+                                <p className="m-0 text-sm font-black text-gray-900">{conv?.customerName || `+${waActivePhone}`}</p>
+                                {ord && (
+                                  <p className="m-0 text-xs text-gray-500">Order #{ord.id} · {ord.product_name} · <span className={`font-bold ${ord.status === "Delivered" ? "text-emerald-600" : ord.status === "Failed" ? "text-rose-600" : "text-amber-600"}`}>{ord.status}</span></p>
+                                )}
+                              </div>
+                              <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-500 hover:bg-gray-100" onClick={() => setWaActivePhone(null)}>✕</button>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Messages */}
+                        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+                          {waThreadLoading && !waThread ? (
+                            <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
+                          ) : (waThread?.messages ?? []).map((msg: any) => {
+                            const out = msg.direction === "outbound";
+                            return (
+                              <div key={msg.id} className={`flex ${out ? "justify-end" : "justify-start"}`}>
+                                <div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 shadow-sm ${out ? "bg-[#25D366] text-white rounded-br-sm" : "bg-white border border-gray-200 text-gray-900 rounded-bl-sm"}`}>
+                                  {out && msg.sent_by_name && (
+                                    <p className={`m-0 text-[10px] font-black mb-1 ${out ? "text-white/70" : "text-gray-400"}`}>{msg.sent_by_name}</p>
+                                  )}
+                                  <p className="m-0 text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.body}</p>
+                                  <p className={`m-0 mt-1 text-[10px] ${out ? "text-white/60" : "text-gray-400"} text-right`}>
+                                    {formatMoment(msg.sent_at || msg.received_at)}
+                                  </p>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          <div ref={waThreadBottomRef} />
+                        </div>
+
+                        {/* Reply input */}
+                        {!isSpying && (
+                          <div className="border-t border-gray-100 px-4 py-3 bg-white">
+                            <div className="flex items-end gap-2">
+                              <textarea
+                                className="flex-1 min-h-[40px] max-h-[120px] resize-none rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 placeholder:text-gray-400"
+                                placeholder="Type a message…"
+                                rows={1}
+                                value={waReplyDraft}
+                                onChange={(e) => setWaReplyDraft(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); waSendReply(); } }}
+                              />
+                              <button
+                                type="button"
+                                className="!min-h-0 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#25D366] text-white hover:bg-[#1ebe57] disabled:opacity-40 transition-colors"
+                                onClick={waSendReply}
+                                disabled={!waReplyDraft.trim() || waReplySending}
+                              >
+                                {waReplySending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                              </button>
+                            </div>
+                            <p className="m-0 mt-1.5 text-[10px] text-gray-400">Enter to send · Shift+Enter for new line · Sent from org account</p>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-full text-center p-8 text-gray-400">
+                        <MessageCircle className="h-10 w-10 text-gray-200 mb-3" />
+                        <p className="m-0 text-sm font-bold text-gray-400">Select a conversation</p>
+                        <p className="m-0 mt-1 text-xs">Pick a customer from the left to read and reply</p>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              )}
 
               {canUsePersonalWhatsApp ? (() => {
                 const userStatus = whatsappStatus(waUserAccount);

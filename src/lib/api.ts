@@ -709,6 +709,15 @@ export const whatsappDestinationsApi = {
   remove: (id: string) => del<{ ok: boolean }>(`/api/whatsapp-destinations/${encodeURIComponent(id)}`)
 };
 
+export const whatsappConversationsApi = {
+  list: (limit = 50) => get<{ conversations: any[] }>(`/api/whatsapp/conversations?limit=${limit}`),
+  thread: (phone: string) => get<{ messages: any[]; linkedOrder: any | null }>(`/api/whatsapp/conversations/${encodeURIComponent(phone)}`),
+  send: (phone: string, body: string, linkedOrderId?: string | null) =>
+    post<{ ok: boolean; id: string }>(`/api/whatsapp/conversations/${encodeURIComponent(phone)}/send`, { body, linkedOrderId }),
+  markRead: (phone: string) =>
+    patch<{ ok: boolean }>(`/api/whatsapp/conversations/${encodeURIComponent(phone)}/read`, {})
+};
+
 export const whatsappOrderDispatchApi = {
   preview: (orderId: string) =>
     get<{ orderId: string; body: string; defaultDestination: any | null; account: any | null; canDirect: boolean; directBlockedReason?: string | null; limits: { directPerMinute: number; directPerDay: number } }>(
