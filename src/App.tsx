@@ -50054,38 +50054,51 @@ ${waybillLineItems(w).length > 1
                             {waUserGroupsLoading ? "Importing..." : "Import groups"}
                           </button>
                         </div>
-                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <div className="mt-4 space-y-3">
                           {activeDestinations.length === 0 ? (
                             <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No saved destination yet. Assisted send still works with manual group selection.</p>
                           ) : activeDestinations.map((destination) => {
                             const currentAgentId: string | null = destination.assignedAgentId ?? destination.assigned_agent_id ?? null;
                             const currentAgent = agents.find(a => a.id === currentAgentId);
                             return (
-                              <div key={destination.id} className={`rounded-2xl border overflow-hidden ${destination.isDefault ? "border-[#25D366]/40" : "border-gray-200"}`}>
-                                {/* Status bar — green if agent assigned, amber if not */}
-                                <div className={`px-4 py-2 flex items-center justify-between gap-2 ${currentAgent ? "bg-[#25D366]" : "bg-amber-400"}`}>
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    {currentAgent
-                                      ? <><CheckCircle2 className="h-3.5 w-3.5 text-white shrink-0" /><span className="text-xs font-black text-white truncate">{currentAgent.name} · {currentAgent.primaryBaseState ?? currentAgent.zone}</span></>
-                                      : <><AlertTriangle className="h-3.5 w-3.5 text-white shrink-0" /><span className="text-xs font-black text-white">No agent assigned yet</span></>
-                                    }
+                              <div key={destination.id} className={`rounded-2xl border overflow-hidden shadow-sm ${destination.isDefault ? "border-[#25D366]/50 shadow-[0_4px_16px_rgba(37,211,102,0.12)]" : "border-gray-200 shadow-[0_2px_8px_rgba(0,0,0,0.06)]"}`}>
+
+                                {/* ── Group identity row ── */}
+                                <div className="flex items-center gap-3 px-4 pt-4 pb-3 bg-white">
+                                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-black ${currentAgent ? "bg-[#25D366]/15 text-[#25D366]" : "bg-amber-50 text-amber-600"}`}>
+                                    <MessageCircle className="h-5 w-5" />
                                   </div>
-                                  {destination.isDefault && <span className="shrink-0 rounded-full bg-white/25 px-2 py-0.5 text-[10px] font-black text-white">DEFAULT</span>}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <p className="m-0 text-sm font-black text-gray-900 truncate">{destination.label}</p>
+                                      {destination.isDefault && (
+                                        <span className="shrink-0 rounded-full bg-[#25D366] px-2 py-0.5 text-[10px] font-black text-white">DEFAULT</span>
+                                      )}
+                                    </div>
+                                    <p className="m-0 text-[10px] text-gray-400 uppercase tracking-wider">
+                                      {destination.destinationType === "group" ? "Imported group" : destination.destinationType === "phone" ? "Phone" : "Manual group"}
+                                    </p>
+                                  </div>
                                 </div>
 
-                                {/* Group details */}
-                                <div className="px-4 py-3 bg-white">
-                                  <p className="m-0 text-sm font-black text-gray-900">{destination.label}</p>
-                                  <p className="m-0 mt-0.5 text-[10px] text-gray-400 uppercase tracking-wider">{destination.destinationType === "group" ? "Imported group" : destination.destinationType === "phone" ? "Phone" : "Manual group"}</p>
-                                  {(destination.groupJid || destination.phone) && (
-                                    <p className="m-0 mt-0.5 break-all text-[10px] text-gray-400">{destination.groupJid || destination.phone}</p>
+                                {/* ── Agent status strip ── */}
+                                <div className={`mx-4 mb-3 rounded-xl px-3 py-2 flex items-center gap-2 ${currentAgent ? "bg-[#25D366]/10 border border-[#25D366]/20" : "bg-amber-50 border border-amber-200"}`}>
+                                  {currentAgent ? (
+                                    <><CheckCircle2 className="h-4 w-4 text-[#25D366] shrink-0" />
+                                    <div className="min-w-0">
+                                      <p className="m-0 text-xs font-black text-[#25D366] truncate">{currentAgent.name}</p>
+                                      <p className="m-0 text-[10px] text-[#25D366]/70 truncate">{currentAgent.primaryBaseState ?? currentAgent.zone}</p>
+                                    </div></>
+                                  ) : (
+                                    <><AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
+                                    <p className="m-0 text-xs font-bold text-amber-700">No agent assigned — select one below</p></>
                                   )}
                                 </div>
 
-                                {/* Agent assignment — full dropdown, saves on change with clear feedback */}
+                                {/* ── Agent assignment ── */}
                                 {isOwnerOrAdmin && (
-                                  <div className="px-4 pb-3 bg-white border-t border-gray-100 pt-3">
-                                    <p className="m-0 mb-1.5 text-[10px] font-black uppercase tracking-wider text-gray-400">Courier agent for this group</p>
+                                  <div className="px-4 pb-4 bg-white border-t border-gray-50 pt-3">
+                                    <p className="m-0 mb-2 text-[10px] font-black uppercase tracking-wider text-gray-400">Courier agent</p>
                                     <select
                                       className={`w-full rounded-xl border px-3 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 ${currentAgent ? "border-[#25D366]/30 bg-[#25D366]/5 text-[#25D366]" : "border-amber-200 bg-amber-50 text-amber-700"}`}
                                       value={currentAgentId ?? ""}
@@ -50134,14 +50147,22 @@ ${waybillLineItems(w).length > 1
                                           });
                                       })()}
                                     </select>
-                                    <p className="m-0 mt-1 text-[10px] text-gray-400">Saves instantly when you pick an agent. Change anytime.</p>
+                                    <p className="m-0 mt-1.5 text-[10px] text-gray-400">Saves instantly. Change anytime.</p>
                                   </div>
                                 )}
 
-                                {/* Actions */}
-                                <div className="px-4 pb-3 bg-white flex flex-wrap gap-2">
-                                  {!destination.isDefault && <button className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => waSetDefaultDestination(destination.id)}>Set default</button>}
-                                  <button className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => waDeleteDestination(destination.id, destination.label)}>Delete</button>
+                                {/* ── Actions footer ── */}
+                                <div className="flex items-center justify-between gap-2 px-4 py-3 bg-gray-50 border-t border-gray-100">
+                                  <div className="flex gap-2">
+                                    {!destination.isDefault && (
+                                      <button className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-100 transition-colors" onClick={() => waSetDefaultDestination(destination.id)}>
+                                        Set default
+                                      </button>
+                                    )}
+                                  </div>
+                                  <button className="!min-h-0 rounded-lg border border-rose-100 bg-white px-2.5 py-1.5 text-xs font-bold text-rose-500 hover:bg-rose-50 transition-colors" onClick={() => waDeleteDestination(destination.id, destination.label)}>
+                                    Delete
+                                  </button>
                                 </div>
                               </div>
                             );
