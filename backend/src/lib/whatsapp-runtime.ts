@@ -45,7 +45,7 @@ const runtimeConnections = new Map<string, RuntimeConnection>();
 const userRuntimeConnections = new Map<string, UserRuntimeConnection>();
 const defaultSessionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../.runtime/whatsapp");
 const sessionRoot = path.resolve(process.env.WHATSAPP_SESSION_DIR?.trim() || defaultSessionRoot);
-const WHATSAPP_READY_TIMEOUT_MS = 20_000;
+const WHATSAPP_READY_TIMEOUT_MS = 8_000;
 
 const normalizeDigits = (value: string | null | undefined) => String(value ?? "").replace(/\D/g, "");
 
@@ -1951,7 +1951,7 @@ async function waitForConnectedSocket(orgId: string, timeoutMs = WHATSAPP_READY_
     await new Promise((resolve) => setTimeout(resolve, 350));
   }
 
-  throw new Error("WhatsApp is still pairing. Wait a moment and try again.");
+  throw new Error("WhatsApp socket is warming up. Wait 30 seconds and try again.");
 }
 
 async function waitForConnectedUserSocket(orgId: string, userId: string, timeoutMs = WHATSAPP_READY_TIMEOUT_MS) {

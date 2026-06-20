@@ -49906,13 +49906,20 @@ ${waybillLineItems(w).length > 1
                             disabled={!waTestPhone.trim() || waTestSending}
                             onClick={async () => {
                               setWaTestSending(true);
+                              // 25s frontend timeout so the button never spins forever
+                              const timer = setTimeout(() => {
+                                setWaTestSending(false);
+                                showToast("Test timed out — WhatsApp socket may still be warming up. Wait 30s and try again.");
+                              }, 25000);
                               try {
+                                const connectedPhone = whatsappConnectedPhone(waSettings);
                                 await whatsappSettingsApi.test(waTestPhone.trim());
-                                showToast(`Test sent to ${waTestPhone} — check that phone for a WhatsApp message from +2348127268550.`);
+                                showToast(`Test sent to ${waTestPhone} — check that phone for a message from +${connectedPhone || "your org number"}.`);
                                 setWaTestPhone("");
                               } catch (err: any) {
-                                showToast(`Test failed: ${err?.message ?? "check connection and try again"}.`);
+                                showToast(`Test failed: ${err?.message ?? "socket still warming up, wait 30s and retry"}.`);
                               } finally {
+                                clearTimeout(timer);
                                 setWaTestSending(false);
                               }
                             }}
