@@ -8735,13 +8735,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     Boolean(recordValue(record, "riskAcknowledgedAt", "risk_acknowledged_at"));
   const canUsePersonalWhatsApp = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager" || currentRole === "Sales Rep";
 
-  // Load WhatsApp settings when the WhatsApp page is opened.
+  const canSeeOrgAutomation = currentRole === "Owner" || currentRole === "Admin";
+
+  // Load WhatsApp settings when the WhatsApp page is opened (Owner + Admin can see org automation status).
   useEffect(() => {
-    if (activePage !== "WhatsApp" || currentRole !== "Owner") return;
+    if (activePage !== "WhatsApp" || !canSeeOrgAutomation) return;
     if (waSettings || waSettingsLoading) return;
     setWaSettingsLoading(true);
     whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
-  }, [activePage, currentRole]);
+  }, [activePage, canSeeOrgAutomation]);
+
+  // Auto-poll org automation account every 3s while it is pairing.
+  const waOrgPairingStatus = whatsappStatus(waSettings);
+  useEffect(() => {
+    if (activePage !== "WhatsApp" || currentRole !== "Owner") return;
+    if (waOrgPairingStatus !== "pairing" && waOrgPairingStatus !== "connecting") return;
+    const timer = setInterval(() => {
+      whatsappSettingsApi.get().then((s) => {
+        setWaSettings(s);
+        const nowConnected = whatsappStatus(s) === "connected";
+        if (nowConnected) {
+          const phone = s?.connectedPhone ?? s?.connected_phone ?? "";
+          const name  = s?.connectedName  ?? s?.connected_name  ?? "";
+          setWaJustConnected({ phone: String(phone), name: String(name) });
+        }
+      }).catch(() => {});
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [activePage, waOrgPairingStatus, currentRole]);
 
   useEffect(() => {
     if (activePage !== "WhatsApp" || !canUsePersonalWhatsApp) return;
@@ -49585,7 +49606,7 @@ ${waybillLineItems(w).length > 1
                   type="button"
                   className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-50 sm:w-auto"
                   onClick={() => {
-                    if (currentRole === "Owner") waRefresh();
+                    if (canSeeOrgAutomation) waRefresh();
                     waUserRefresh();
                   }}
                   disabled={waSettingsLoading || waUserAccountLoading || waDestinationsLoading}
@@ -49594,37 +49615,38 @@ ${waybillLineItems(w).length > 1
                 </button>
               </header>
 
-              {currentRole === "Owner" && (() => {
+              {canSeeOrgAutomation && (() => {
                 const orgStatus = whatsappStatus(waSettings);
                 const orgConnected = orgStatus === "connected";
                 const orgPairing = orgStatus === "pairing" || orgStatus === "connecting";
+                const isOwner = currentRole === "Owner";
                 return (
                   <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div>
-                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Owner automation account</p>
+                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Owner automation account{!isOwner && " — view only"}</p>
                         <div className="mt-2 flex items-center gap-2">
                           <span className={`h-2.5 w-2.5 rounded-full ${orgConnected ? "bg-emerald-500" : orgPairing ? "bg-amber-400 animate-pulse" : "bg-gray-300"}`} />
-                          <span className="text-lg font-black capitalize text-gray-900">{orgConnected ? "Connected" : orgPairing ? "Pairing" : "Disconnected"}</span>
+                          <span className="text-lg font-black capitalize text-gray-900">{orgConnected ? "Connected" : orgPairing ? "Pairing…" : "Disconnected"}</span>
                         </div>
                         {whatsappConnectedPhone(waSettings) && (
-                          <p className="m-0 mt-1 text-sm text-gray-600">+{whatsappConnectedPhone(waSettings)}{whatsappConnectedName(waSettings) ? ` - ${whatsappConnectedName(waSettings)}` : ""}</p>
+                          <p className="m-0 mt-1 text-sm font-bold text-gray-700">+{whatsappConnectedPhone(waSettings)}{whatsappConnectedName(waSettings) ? ` · ${whatsappConnectedName(waSettings)}` : ""}</p>
                         )}
                         {whatsappLastError(waSettings) && <p className="m-0 mt-1 text-xs font-semibold text-rose-600">Last error: {whatsappLastError(waSettings)}</p>}
-                        <p className="m-0 mt-2 max-w-2xl text-sm text-gray-500">This keeps the existing org-level automation separate from personal order dispatch. Direct order dispatch below always uses the logged-in user's own WhatsApp account.</p>
+                        {!isOwner && <p className="m-0 mt-2 text-sm text-gray-400">Only the Owner can connect or disconnect this account.</p>}
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={waRefresh} disabled={waSettingsLoading}>
                           <RefreshCw className={`h-3.5 w-3.5 ${waSettingsLoading ? "animate-spin" : ""}`} /> Refresh
                         </button>
-                        {orgConnected && (
+                        {isOwner && orgConnected && (
                           <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={waDisconnect} disabled={waDisconnecting}>
                             {waDisconnecting ? "Disconnecting..." : "Disconnect"}
                           </button>
                         )}
                       </div>
                     </div>
-                    {!orgConnected && (
+                    {isOwner && !orgConnected && (
                       <div className="mt-5 space-y-4 border-t border-gray-100 pt-5">
                         <div className="flex gap-2">
                           {(["qr", "pairing_code"] as const).map((mode) => (
@@ -49637,9 +49659,23 @@ ${waybillLineItems(w).length > 1
                           <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" placeholder="+234 800 000 0000" value={waPairingPhone} onChange={(event) => setWaPairingPhone(event.target.value)} />
                         )}
                         {whatsappQrCode(waSettings) && waConnectMode === "qr" && (
-                          <div className="inline-flex flex-col items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 p-4">
-                            <p className="m-0 text-xs text-gray-500">Scan in WhatsApp - Linked Devices - Link a Device</p>
-                            <img src={whatsappQrCode(waSettings)} alt="Owner WhatsApp QR code" className="h-48 w-48 rounded-xl" />
+                          <div className="flex flex-col gap-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                            <p className="m-0 text-center text-xs font-bold text-gray-500">Scan in WhatsApp → Linked Devices → Link a Device</p>
+                            <div className="mx-auto">
+                              <img src={whatsappQrCode(waSettings)} alt="Owner WhatsApp QR code" className="h-48 w-48 rounded-xl" />
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between text-xs font-bold text-gray-500">
+                                <span className="text-[#25D366]">✓ QR ready</span>
+                                <span className="animate-pulse text-amber-600">⏳ Waiting for scan…</span>
+                                <span className="text-gray-300">Connected</span>
+                              </div>
+                              <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+                                <div className="absolute inset-y-0 left-0 w-1/3 rounded-full bg-[#25D366]" />
+                                <div className="absolute inset-y-0 left-1/3 w-1/3 rounded-full bg-amber-400 animate-pulse" />
+                              </div>
+                              <p className="m-0 text-center text-[11px] text-gray-400">Page auto-refreshes when your phone connects</p>
+                            </div>
                           </div>
                         )}
                         {whatsappPairingCode(waSettings) && waConnectMode === "pairing_code" && (
@@ -49648,7 +49684,7 @@ ${waybillLineItems(w).length > 1
                           </div>
                         )}
                         <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-5 py-2.5 text-sm font-black text-white transition-colors hover:bg-[#1ebe57] disabled:opacity-50 sm:w-auto" onClick={waConnect} disabled={waConnecting || (waConnectMode === "pairing_code" && !waPairingPhone.trim())}>
-                          <MessageCircle className="h-4 w-4" /> {waConnecting ? "Starting..." : "Connect owner automation WhatsApp"}
+                          <MessageCircle className="h-4 w-4" /> {waConnecting ? "Starting…" : "Connect owner automation WhatsApp"}
                         </button>
                       </div>
                     )}
