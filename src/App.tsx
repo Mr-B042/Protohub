@@ -8764,13 +8764,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const canSeeOrgAutomation = currentRole === "Owner" || currentRole === "Admin";
 
-  // Load WhatsApp settings when the WhatsApp page is opened (Owner + Admin can see org automation status).
+  // Load WhatsApp settings on mount for Owner/Admin so the org connection status
+  // is available on any page — not just the WhatsApp page. This makes the
+  // "open in-app chat" shortcut work when clicking WhatsApp on an order from Orders page.
   useEffect(() => {
-    if (activePage !== "WhatsApp" || !canSeeOrgAutomation) return;
+    if (!canSeeOrgAutomation) return;
     if (waSettings || waSettingsLoading) return;
     setWaSettingsLoading(true);
     whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
-  }, [activePage, canSeeOrgAutomation]);
+  }, [canSeeOrgAutomation]);
 
   // Auto-poll org automation account every 3s while it is pairing.
   const waOrgPairingStatus = whatsappStatus(waSettings);
@@ -8848,14 +8850,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // ── WhatsApp Inbox ──────────────────────────────────────────
   const canUseInbox = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager" || currentRole === "Sales Rep";
 
-  // Load conversation list
+  // Load conversation list on mount so inbox is ready when navigating from an order.
   useEffect(() => {
-    if (activePage !== "WhatsApp" || !canUseInbox) return;
+    if (!canUseInbox) return;
     let cancelled = false;
-    setWaConvsLoading(true);
-    whatsappConversationsApi.list(60).then(r => { if (!cancelled) setWaConversations(r.conversations ?? []); }).catch(() => {}).finally(() => { if (!cancelled) setWaConvsLoading(false); });
+    whatsappConversationsApi.list(60).then(r => { if (!cancelled) setWaConversations(r.conversations ?? []); }).catch(() => {});
     return () => { cancelled = true; };
-  }, [activePage, canUseInbox, currentRole, authUser?.id]);
+  }, [canUseInbox, currentRole, authUser?.id]);
 
   // Poll conversation list every 8s while on WhatsApp page
   useEffect(() => {
