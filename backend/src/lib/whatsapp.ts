@@ -1479,7 +1479,7 @@ async function customerAlreadyMessagedToday(
 ): Promise<boolean> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { count } = await supabase
-    .from("org_whatsapp_log")
+    .from("whatsapp_messages")
     .select("*", { count: "exact", head: true })
     .eq("org_id", orgId)
     .eq("normalized_phone", normalizedPhone)

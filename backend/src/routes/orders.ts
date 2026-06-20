@@ -2739,4 +2739,56 @@ router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   res.status(204).send();
 });
 
+// ── POST /api/orders/:id/whatsapp-resend ─────────────────────────────────────
+// Owner/Admin: resend the order_new WhatsApp confirmation to the customer.
+// Clears the 24h dedup log entry first so the send is not blocked.
+router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, res) => {
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, customer, phone, product_name, package_name, amount, currency, source, city, state, package_id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .single();
+  if (error || !order) { res.status(404).json({ error: "Order not found." }); return; }
+  if (!order.phone) { res.status(400).json({ error: "Order has no phone number." }); return; }
+
+  // Clear the 24h dedup so the resend is not blocked
+  const normalizedPhone = order.phone.replace(/\D/g, "").replace(/^0(\d{10})$/, "234$1").replace(/^(\d{10})$/, "234$1");
+  await supabase.from("whatsapp_messages")
+    .delete()
+    .eq("org_id", req.user!.orgId)
+    .eq("normalized_phone", normalizedPhone)
+    .eq("trigger", "order_new")
+    .then(() => undefined, () => undefined);
+
+  // Fetch package image/video
+  let productImageUrl: string | null = null;
+  let productVideoUrl: string | null = null;
+  if (order.package_id) {
+    const { data: pkgRow } = await supabase.from("product_packages").select("image_url, image_urls, video_url").eq("id", order.package_id).maybeSingle();
+    productImageUrl = (pkgRow as any)?.image_url ?? (pkgRow as any)?.image_urls?.[0] ?? null;
+    productVideoUrl = (pkgRow as any)?.video_url ?? null;
+  }
+
+  try {
+    await sendOrderNewCustomerWhatsApp(req.user!.orgId, {
+      id: order.id,
+      customer: order.customer,
+      phone: order.phone,
+      productName: order.product_name,
+      packageName: order.package_name,
+      amount: typeof order.amount === "number" ? order.amount : Number(order.amount ?? 0),
+      currency: order.currency ?? "NGN",
+      source: order.source ?? null,
+      city: (order as any).city ?? null,
+      state: (order as any).state ?? null,
+      productImageUrl,
+      productVideoUrl
+    });
+    res.json({ ok: true, message: `WhatsApp confirmation resent to ${order.customer}` });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Could not resend WhatsApp." });
+  }
+});
+
 export default router;

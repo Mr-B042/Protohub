@@ -718,6 +718,11 @@ export const whatsappConversationsApi = {
     patch<{ ok: boolean }>(`/api/whatsapp/conversations/${encodeURIComponent(phone)}/read`, {})
 };
 
+export const ordersWhatsAppResendApi = {
+  resend: (orderId: string) =>
+    post<{ ok: boolean; message: string }>(`/api/orders/${encodeURIComponent(orderId)}/whatsapp-resend`, {})
+};
+
 export const whatsappOrderDispatchApi = {
   preview: (orderId: string) =>
     get<{ orderId: string; body: string; defaultDestination: any | null; account: any | null; canDirect: boolean; directBlockedReason?: string | null; limits: { directPerMinute: number; directPerDay: number } }>(

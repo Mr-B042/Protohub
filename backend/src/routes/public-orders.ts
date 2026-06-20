@@ -1246,10 +1246,9 @@ router.post("/", submitRateLimit, async (req, res) => {
     amount: typeof order.amount === "number" ? order.amount : Number(order.amount ?? 0),
     currency: order.currency ?? "NGN",
     source: order.source ?? null,
-    city: null as string | null,
-    state: null as string | null,
-    // Product image/video from the package if available
-    productImageUrl: (pkg as any)?.image_url ?? null,
+    city: (order as any).city ?? null,
+    state: (order as any).state ?? null,
+    productImageUrl: (pkg as any)?.image_url ?? ((pkg as any)?.image_urls as string[] | null)?.[0] ?? null,
     productVideoUrl: (pkg as any)?.video_url ?? null
   };
   sendOrderNewCustomerWhatsApp(product.org_id, waOrderPayload).catch((err) =>
