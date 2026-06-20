@@ -7268,6 +7268,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waTriggerSaving, setWaTriggerSaving] = useState(false);
   const [waConnecting, setWaConnecting] = useState(false);
   const [waDisconnecting, setWaDisconnecting] = useState(false);
+  const [waTestPhone, setWaTestPhone] = useState("");
+  const [waTestSending, setWaTestSending] = useState(false);
   const [waConnectMode, setWaConnectMode] = useState<"qr" | "pairing_code">("qr");
   const [waPairingPhone, setWaPairingPhone] = useState("");
   const [waUserAccount, setWaUserAccount] = useState<Record<string, any> | null>(null);
@@ -49887,6 +49889,41 @@ ${waybillLineItems(w).length > 1
                         )}
                       </div>
                     </div>
+                    {isOwner && orgConnected && (
+                      <div className="mt-4 border-t border-gray-100 pt-4">
+                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400 mb-2">Send test message</p>
+                        <div className="flex gap-2">
+                          <input
+                            type="tel"
+                            className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
+                            placeholder="e.g. 08137069653"
+                            value={waTestPhone}
+                            onChange={e => setWaTestPhone(e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-[#25D366] px-3 py-2 text-xs font-black text-white hover:bg-[#1ebe57] disabled:opacity-50"
+                            disabled={!waTestPhone.trim() || waTestSending}
+                            onClick={async () => {
+                              setWaTestSending(true);
+                              try {
+                                await whatsappSettingsApi.test(waTestPhone.trim());
+                                showToast(`Test sent to ${waTestPhone} — check that phone for a WhatsApp message from +2348127268550.`);
+                                setWaTestPhone("");
+                              } catch (err: any) {
+                                showToast(`Test failed: ${err?.message ?? "check connection and try again"}.`);
+                              } finally {
+                                setWaTestSending(false);
+                              }
+                            }}
+                          >
+                            {waTestSending ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                            {waTestSending ? "Sending…" : "Send test"}
+                          </button>
+                        </div>
+                        <p className="m-0 mt-1 text-[10px] text-gray-400">Enter any Nigerian number. If received = Baileys is working. If not = number not on WhatsApp.</p>
+                      </div>
+                    )}
                     {isOwner && !orgConnected && (
                       <div className="mt-5 space-y-4 border-t border-gray-100 pt-5">
                         <div className="flex gap-2">
