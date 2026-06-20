@@ -1,7 +1,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DisconnectReason, Browsers, useMultiFileAuthState } from "@whiskeysockets/baileys";
+import { DisconnectReason, Browsers, useMultiFileAuthState, initAuthCreds, BufferJSON } from "@whiskeysockets/baileys";
 import makeWASocket from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
@@ -727,6 +727,106 @@ async function getSessionDir(orgId: string) {
 
 async function clearSessionDir(orgId: string) {
   await rm(path.join(sessionRoot, orgId), { recursive: true, force: true }).catch(() => undefined);
+}
+
+// Supabase-backed auth state for org connections.
+// Stores Baileys credentials + signal keys in the whatsapp_settings row so
+// sessions survive Railway deploys (ephemeral filesystem).
+async function useOrgSupabaseAuthState(orgId: string) {
+  const { data } = await supabase
+    .from("whatsapp_settings")
+    .select("baileys_creds, baileys_keys")
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  const creds = data?.baileys_creds
+    ? JSON.parse(JSON.stringify(data.baileys_creds), BufferJSON.reviver)
+    : initAuthCreds();
+  const keysMap: Record<string, Record<string, unknown>> = data?.baileys_keys
+    ? JSON.parse(JSON.stringify(data.baileys_keys), BufferJSON.reviver)
+    : {};
+
+  const saveState = async () => {
+    await supabase.from("whatsapp_settings").upsert({
+      org_id: orgId,
+      baileys_creds: JSON.parse(JSON.stringify(creds, BufferJSON.replacer)),
+      baileys_keys:  JSON.parse(JSON.stringify(keysMap, BufferJSON.replacer)),
+      updated_at: new Date().toISOString()
+    }, { onConflict: "org_id" });
+  };
+
+  const state = {
+    creds,
+    keys: {
+      get: (type: string, ids: string[]) => {
+        const bucket = keysMap[type] ?? {};
+        return Object.fromEntries(ids.map((id) => [id, (bucket[id] ?? null) as any]));
+      },
+      set: async (data: Record<string, Record<string, unknown> | null>) => {
+        for (const [type, values] of Object.entries(data)) {
+          if (!values) continue;
+          if (!keysMap[type]) keysMap[type] = {};
+          for (const [id, val] of Object.entries(values)) {
+            if (val == null) delete keysMap[type][id];
+            else keysMap[type][id] = val;
+          }
+        }
+        await saveState();
+      }
+    }
+  };
+
+  return { state, saveCreds: saveState };
+}
+
+// Supabase-backed auth state for per-user personal dispatch accounts.
+async function useUserSupabaseAuthState(orgId: string, userId: string) {
+  const { data } = await supabase
+    .from("whatsapp_user_accounts")
+    .select("baileys_creds, baileys_keys")
+    .eq("org_id", orgId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const creds = data?.baileys_creds
+    ? JSON.parse(JSON.stringify(data.baileys_creds), BufferJSON.reviver)
+    : initAuthCreds();
+  const keysMap: Record<string, Record<string, unknown>> = data?.baileys_keys
+    ? JSON.parse(JSON.stringify(data.baileys_keys), BufferJSON.reviver)
+    : {};
+
+  const saveState = async () => {
+    await supabase.from("whatsapp_user_accounts").upsert({
+      org_id: orgId,
+      user_id: userId,
+      baileys_creds: JSON.parse(JSON.stringify(creds, BufferJSON.replacer)),
+      baileys_keys:  JSON.parse(JSON.stringify(keysMap, BufferJSON.replacer)),
+      updated_at: new Date().toISOString()
+    }, { onConflict: "org_id,user_id" });
+  };
+
+  const state = {
+    creds,
+    keys: {
+      get: (type: string, ids: string[]) => {
+        const bucket = keysMap[type] ?? {};
+        return Object.fromEntries(ids.map((id) => [id, (bucket[id] ?? null) as any]));
+      },
+      set: async (data: Record<string, Record<string, unknown> | null>) => {
+        for (const [type, values] of Object.entries(data)) {
+          if (!values) continue;
+          if (!keysMap[type]) keysMap[type] = {};
+          for (const [id, val] of Object.entries(values)) {
+            if (val == null) delete keysMap[type][id];
+            else keysMap[type][id] = val;
+          }
+        }
+        await saveState();
+      }
+    }
+  };
+
+  return { state, saveCreds: saveState };
 }
 
 async function updateConnectionRow(orgId: string, payload: Record<string, unknown>) {
@@ -1833,8 +1933,9 @@ async function ensureConnection(orgId: string, requestedMode?: WhatsAppPairingMo
     }
 
     clearReconnectTimer(connection);
-    const sessionDir = await getSessionDir(orgId);
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+    // Use Supabase-backed auth so sessions survive Railway restarts.
+    // Keep disk session dir as fallback migration path but no longer primary.
+    const { state, saveCreds } = await useOrgSupabaseAuthState(orgId);
 
     const sock = makeWASocket({
       auth: state,
@@ -1993,8 +2094,7 @@ async function ensureUserConnection(orgId: string, userId: string, requestedMode
     }
 
     clearUserReconnectTimer(connection);
-    const sessionDir = await getUserSessionDir(orgId, userId);
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+    const { state, saveCreds } = await useUserSupabaseAuthState(orgId, userId);
 
     const sock = makeWASocket({
       auth: state,

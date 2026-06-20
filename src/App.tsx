@@ -8736,7 +8736,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [activePage, currentRole]);
 
   useEffect(() => {
-    if (activePage !== "WhatsApp" || !canUsePersonalWhatsApp || isSpying) return;
+    if (activePage !== "WhatsApp" || !canUsePersonalWhatsApp) return;
     let cancelled = false;
     setWaUserAccountLoading(true);
     setWaDestinationsLoading(true);
@@ -8762,7 +8762,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         }
       });
     return () => { cancelled = true; };
-  }, [activePage, canUsePersonalWhatsApp, currentRole, authUser?.id, isSpying]);
+  }, [activePage, canUsePersonalWhatsApp, currentRole, authUser?.id]);
 
   const waConnect = async () => {
     setWaConnecting(true);
@@ -49492,20 +49492,20 @@ ${waybillLineItems(w).length > 1
               </div>
             </div>
           ) : activePage === "WhatsApp" ? (
-            <div className="mx-auto max-w-6xl space-y-6">
+            <div className="mx-auto max-w-6xl space-y-4 px-2 sm:px-0 sm:space-y-6">
               <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#25D366]/15 text-[#25D366]">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#25D366]/15 text-[#25D366]">
                     <MessageCircle className="h-5 w-5" />
                   </span>
                   <div>
-                    <h1 className="m-0 text-2xl font-black text-gray-900">WhatsApp Dispatch</h1>
-                    <p className="m-0 text-sm text-gray-500">Send assigned orders safely with assisted WhatsApp, or direct-send from your connected account.</p>
+                    <h1 className="m-0 text-xl font-black text-gray-900 sm:text-2xl">WhatsApp Dispatch</h1>
+                    <p className="m-0 text-xs text-gray-500 sm:text-sm">Send assigned orders safely with assisted WhatsApp, or direct-send from your connected account.</p>
                   </div>
                 </div>
                 <button
                   type="button"
-                  className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-50"
+                  className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-50 sm:w-auto"
                   onClick={() => {
                     if (currentRole === "Owner") waRefresh();
                     waUserRefresh();
@@ -49578,14 +49578,20 @@ ${waybillLineItems(w).length > 1
                 );
               })()}
 
-              {canUsePersonalWhatsApp && !isSpying ? (() => {
+              {canUsePersonalWhatsApp ? (() => {
                 const userStatus = whatsappStatus(waUserAccount);
                 const userConnected = userStatus === "connected";
                 const userPairing = userStatus === "pairing" || userStatus === "connecting";
                 const userRiskAck = whatsappRiskAcknowledged(waUserAccount);
                 const activeDestinations = waDestinations.filter((destination) => destination.active !== false);
                 return (
-                  <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.72fr)]">
+                  <section className="grid gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.72fr)]">
+                    {isSpying && (
+                      <div className="lg:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 flex items-center gap-2 text-sm font-bold text-amber-800">
+                        <span>⚠</span>
+                        <span>This is YOUR personal WhatsApp data — reps see their own account, not yours.</span>
+                      </div>
+                    )}
                     <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                         <div>
@@ -49712,9 +49718,9 @@ ${waybillLineItems(w).length > 1
                     </aside>
 
                     {waUserGroups.length > 0 && (
-                      <article className="rounded-2xl border border-blue-100 bg-blue-50/60 p-5 xl:col-span-2">
+                      <article className="rounded-2xl border border-blue-100 bg-blue-50/60 p-5 lg:col-span-2">
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-blue-500">Imported groups</p>
-                        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                           {waUserGroups.map((group) => (
                             <div key={group.jid} className="rounded-xl border border-blue-100 bg-white p-3">
                               <p className="m-0 truncate text-sm font-black text-gray-900">{group.subject}</p>
@@ -49726,7 +49732,7 @@ ${waybillLineItems(w).length > 1
                       </article>
                     )}
 
-                    <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm xl:col-span-2">
+                    <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm lg:col-span-2">
                       <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Recent personal dispatches</p>
                       <div className="mt-3 overflow-x-auto">
                         {waUserDispatches.length === 0 ? (
@@ -49755,21 +49761,12 @@ ${waybillLineItems(w).length > 1
                 );
               })() : (
                 <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-8 py-14 text-center">
-                  {isSpying ? (
-                    <>
-                      <h2 className="mt-0 text-lg font-black text-gray-900">Personal dispatch hidden in view-as mode</h2>
-                      <p className="mx-auto mt-2 max-w-sm text-sm text-gray-500">Your own WhatsApp account data is not shown while viewing as another user. Exit view-as to manage your WhatsApp.</p>
-                    </>
-                  ) : (
-                    <>
-                      <h2 className="mt-0 text-lg font-black text-gray-900">WhatsApp dispatch is not available for this role</h2>
-                      <p className="mx-auto mt-2 max-w-sm text-sm text-gray-500">Assigned users can connect their own WhatsApp and dispatch their assigned orders.</p>
-                    </>
-                  )}
+                  <h2 className="mt-0 text-lg font-black text-gray-900">WhatsApp dispatch is not available for this role</h2>
+                  <p className="mx-auto mt-2 max-w-sm text-sm text-gray-500">Assigned users can connect their own WhatsApp and dispatch their assigned orders.</p>
                 </div>
               )}
 
-              {!isSpying && (currentRole === "Owner" || currentRole === "Admin") && (
+              {(currentRole === "Owner" || currentRole === "Admin") && (
                 <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                   <div className="flex flex-col gap-1">
                     <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Team dispatch health</p>
