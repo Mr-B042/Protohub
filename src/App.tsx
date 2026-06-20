@@ -50152,24 +50152,29 @@ ${waybillLineItems(w).length > 1
                             key={conv.normalizedPhone}
                             type="button"
                             onClick={() => setWaActivePhone(conv.normalizedPhone)}
-                            className={`w-full text-left px-4 py-3.5 border-b border-gray-50 transition-colors ${active ? "bg-[#25D366]/8 border-l-[3px] border-l-[#25D366]" : "hover:bg-gray-50"}`}
+                            className={`w-full text-left px-3 py-3 border-b border-gray-100 transition-colors ${active ? "bg-[#25D366]/8 border-l-[3px] border-l-[#25D366]" : "hover:bg-gray-50"}`}
                           >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className={`m-0 text-sm font-black truncate ${active ? "text-[#25D366]" : "text-gray-900"}`}>
-                                  {conv.customerName || `+${conv.normalizedPhone}`}
-                                </p>
-                                {conv.customerName && <p className="m-0 text-[10px] text-gray-400">+{conv.normalizedPhone}</p>}
-                                <p className={`m-0 mt-0.5 text-xs truncate max-w-[200px] ${conv.lastDirection === "inbound" ? "text-gray-700" : "text-gray-400 italic"}`}>
-                                  {conv.lastDirection === "outbound" && <span className="text-[#25D366] not-italic">You: </span>}
-                                  {conv.lastMessage}
-                                </p>
+                            <div className="flex items-center gap-3">
+                              {/* Avatar */}
+                              <div className="shrink-0 h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-black text-sm select-none">
+                                {(conv.customerName || conv.normalizedPhone || "?").slice(0, 2).toUpperCase()}
                               </div>
-                              <div className="shrink-0 flex flex-col items-end gap-1 ml-2">
-                                <p className="m-0 text-[10px] text-gray-400 whitespace-nowrap">{formatMoment(conv.lastMessageAt)}</p>
-                                {conv.unreadCount > 0 && (
-                                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] font-black text-white">{conv.unreadCount}</span>
-                                )}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className={`m-0 text-sm font-black truncate ${active ? "text-[#25D366]" : "text-gray-900"}`}>
+                                    {conv.customerName || `+${conv.normalizedPhone}`}
+                                  </p>
+                                  <p className="m-0 text-[10px] text-gray-400 whitespace-nowrap shrink-0">{formatMoment(conv.lastMessageAt)}</p>
+                                </div>
+                                <div className="flex items-center justify-between gap-2 mt-0.5">
+                                  <p className={`m-0 text-xs truncate ${conv.lastDirection === "inbound" ? "text-gray-600" : "text-gray-400"}`}>
+                                    {conv.lastDirection === "outbound" && <span className="text-[#25D366]">✓ </span>}
+                                    {conv.lastMessage}
+                                  </p>
+                                  {conv.unreadCount > 0 && (
+                                    <span className="shrink-0 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] font-black text-white">{conv.unreadCount}</span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </button>
@@ -50184,29 +50189,43 @@ ${waybillLineItems(w).length > 1
                         const ord = waThread?.linkedOrder;
                         return (
                           <>
-                            {/* Thread header — back button on mobile */}
-                            <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-gray-50/60 shrink-0">
-                              <button
-                                type="button"
-                                className="!min-h-0 lg:hidden flex items-center justify-center h-8 w-8 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100"
-                                onClick={() => setWaActivePhone(null)}
-                                aria-label="Back to conversations"
-                              >
-                                <ChevronLeft className="h-4 w-4" />
+                            {/* Thread header */}
+                            <div className="flex items-center gap-3 px-3 sm:px-4 py-3 border-b border-gray-100 bg-white shrink-0">
+                              {/* Back (mobile) */}
+                              <button type="button" className="!min-h-0 lg:hidden flex items-center justify-center h-8 w-8 rounded-full text-gray-500 hover:bg-gray-100" onClick={() => setWaActivePhone(null)}>
+                                <ChevronLeft className="h-5 w-5" />
                               </button>
+                              {/* Avatar */}
+                              <div className="shrink-0 h-10 w-10 rounded-full bg-[#25D366]/20 flex items-center justify-center text-[#25D366] font-black text-sm select-none">
+                                {(conv?.customerName || waActivePhone || "?").slice(0, 2).toUpperCase()}
+                              </div>
+                              {/* Info */}
                               <div className="flex-1 min-w-0">
                                 <p className="m-0 text-sm font-black text-gray-900 truncate">{conv?.customerName || `+${waActivePhone}`}</p>
-                                {ord ? (
-                                  <p className="m-0 text-xs text-gray-500 truncate">#{ord.id} · {ord.product_name} · <span className={`font-bold ${ord.status === "Delivered" ? "text-emerald-600" : ord.status === "Failed" ? "text-rose-600" : "text-amber-600"}`}>{ord.status}</span></p>
-                                ) : (
-                                  <p className="m-0 text-xs text-gray-400">+{waActivePhone}</p>
-                                )}
+                                <p className="m-0 text-xs text-gray-500 truncate">
+                                  +{waActivePhone}
+                                  {ord && <span className="ml-2 font-bold text-[#25D366]">· Order #{ord.id} · <span className={ord.status === "Delivered" ? "text-emerald-600" : ord.status === "Failed" ? "text-rose-600" : "text-amber-600"}>{ord.status}</span></span>}
+                                </p>
                               </div>
-                              <button type="button" className="!min-h-0 hidden lg:flex items-center rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-500 hover:bg-gray-100" onClick={() => setWaActivePhone(null)}>✕</button>
+                              {/* Actions */}
+                              <div className="flex items-center gap-1 shrink-0">
+                                {(conv?.senderPhone || waActivePhone) && (
+                                  <a
+                                    href={`tel:+${(conv?.senderPhone || waActivePhone || "").replace(/\D/g, "")}`}
+                                    className="!min-h-0 flex items-center justify-center h-9 w-9 rounded-full text-[#25D366] hover:bg-[#25D366]/10 transition-colors"
+                                    title="Call customer"
+                                  >
+                                    <Phone className="h-4 w-4" />
+                                  </a>
+                                )}
+                                <button type="button" className="!min-h-0 hidden lg:flex items-center justify-center h-9 w-9 rounded-full text-gray-400 hover:bg-gray-100" onClick={() => setWaActivePhone(null)}>
+                                  <X className="h-4 w-4" />
+                                </button>
+                              </div>
                             </div>
 
-                            {/* Messages — fill remaining height. overflow-y-scroll forces scrollbar track so the area is always scrollable */}
-                            <div className="overflow-y-scroll px-3 sm:px-4 py-4 space-y-3" style={{ flex: "1 1 0", minHeight: 0 }}>
+                            {/* Messages */}
+                            <div className="overflow-y-scroll px-3 sm:px-4 py-3 space-y-1" style={{ flex: "1 1 0", minHeight: 0, background: "#f0f2f5" }}>
                               {waThreadLoading && !waThread ? (
                                 <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
                               ) : (() => {
@@ -50216,24 +50235,53 @@ ${waybillLineItems(w).length > 1
                                 return msgs.map((msg: any, idx: number) => {
                                   const out = msg.direction === "outbound";
                                   const num = idx + 1;
+                                  const type = msg.message_type ?? "text";
+                                  // Delivery tick for outbound messages
+                                  const tick = out ? (
+                                    msg.status === "delivered" || msg.status === "read"
+                                      ? <span className={`text-[11px] ${msg.status === "read" ? "text-blue-300" : "text-white/50"}`}>✓✓</span>
+                                      : <span className="text-[11px] text-white/50">✓</span>
+                                  ) : null;
                                   return (
                                     <Fragment key={msg.id}>
                                       {idx === dividerIdx && (
-                                        <div ref={waUnreadDividerRef} className="flex items-center gap-2 my-2">
-                                          <div className="flex-1 h-px bg-rose-200" />
-                                          <span className="shrink-0 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-black text-rose-600">
+                                        <div ref={waUnreadDividerRef} className="flex items-center gap-2 my-3">
+                                          <div className="flex-1 h-px bg-rose-300/60" />
+                                          <span className="shrink-0 rounded-full bg-rose-100 px-3 py-1 text-[11px] font-black text-rose-600 shadow-sm">
                                             {totalUnread} unread message{totalUnread !== 1 ? "s" : ""}
                                           </span>
-                                          <div className="flex-1 h-px bg-rose-200" />
+                                          <div className="flex-1 h-px bg-rose-300/60" />
                                         </div>
                                       )}
-                                      <div className={`flex items-end gap-1.5 ${out ? "flex-row-reverse" : "flex-row"}`}>
-                                        <span className="shrink-0 text-[10px] font-black text-gray-300 mb-2 select-none w-4 text-center">{num}</span>
-                                        <div className={`max-w-[82%] sm:max-w-[75%] rounded-2xl px-3 py-2.5 shadow-sm ${out ? "bg-[#25D366] text-white rounded-br-sm" : "bg-white border border-gray-200 text-gray-900 rounded-bl-sm"}`}>
-                                          {out && msg.sent_by_name && <p className="m-0 text-[10px] font-black mb-1 text-white/70">{msg.sent_by_name}</p>}
-                                          {!out && msg.sender_name && <p className="m-0 text-[10px] font-black mb-1 text-[#25D366]">{msg.sender_name}</p>}
-                                          <p className="m-0 text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.body}</p>
-                                          <p className={`m-0 mt-1 text-[10px] ${out ? "text-white/60" : "text-gray-400"} text-right`}>{formatMoment(msg.sent_at || msg.received_at)}</p>
+                                      <div className={`flex items-end gap-1 mt-1 ${out ? "justify-end" : "justify-start"}`}>
+                                        {/* Sequence number */}
+                                        <span className="shrink-0 text-[9px] text-gray-400 mb-1 select-none">{num}</span>
+                                        {/* Bubble */}
+                                        <div className={`relative max-w-[80%] sm:max-w-[72%] px-3 py-2 shadow-sm ${
+                                          out
+                                            ? "bg-[#d9fdd3] text-gray-900 rounded-2xl rounded-br-sm"
+                                            : "bg-white text-gray-900 rounded-2xl rounded-bl-sm border border-gray-100"
+                                        }`}>
+                                          {/* Rep name on outbound */}
+                                          {out && msg.sent_by_name && (
+                                            <p className="m-0 text-[10px] font-black text-[#25D366] mb-0.5">{msg.sent_by_name}</p>
+                                          )}
+                                          {/* Customer name on inbound */}
+                                          {!out && msg.sender_name && (
+                                            <p className="m-0 text-[10px] font-black text-[#25D366] mb-0.5">{msg.sender_name}</p>
+                                          )}
+                                          {/* Media type indicator */}
+                                          {type === "audio" && <p className="m-0 text-xs text-gray-500 flex items-center gap-1 mb-1">🎵 <span>Voice message</span></p>}
+                                          {type === "image" && <p className="m-0 text-xs text-gray-500 flex items-center gap-1 mb-1">📷 <span>Photo</span></p>}
+                                          {type === "video" && <p className="m-0 text-xs text-gray-500 flex items-center gap-1 mb-1">🎥 <span>Video</span></p>}
+                                          {type === "document" && <p className="m-0 text-xs text-gray-500 flex items-center gap-1 mb-1">📄 <span>Document</span></p>}
+                                          {/* Body */}
+                                          {msg.body && <p className="m-0 text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.body}</p>}
+                                          {/* Time + ticks */}
+                                          <div className="flex items-center justify-end gap-1 mt-0.5">
+                                            <span className="text-[10px] text-gray-400">{formatMoment(msg.sent_at || msg.received_at)}</span>
+                                            {tick}
+                                          </div>
                                         </div>
                                       </div>
                                     </Fragment>
