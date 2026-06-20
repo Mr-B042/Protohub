@@ -49955,7 +49955,7 @@ ${waybillLineItems(w).length > 1
                         <span>Viewing <span className="font-black">{spiedUser.name}</span>'s WhatsApp — read-only. Connect/disconnect actions are disabled in view-as mode.</span>
                       </div>
                     )}
-                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
+                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm lg:order-1">
                       <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
                         <div>
                           <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">My WhatsApp</p>
@@ -50043,25 +50043,30 @@ ${waybillLineItems(w).length > 1
                       </div>
                     </article>
 
-                    <aside className="space-y-5">
-                      <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Saved destinations</p>
-                            <h2 className="m-0 mt-1 text-lg font-black text-gray-900">{activeDestinations.length} destination{activeDestinations.length === 1 ? "" : "s"}</h2>
-                          </div>
-                          <button className="!min-h-0 rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-black text-blue-700 hover:bg-blue-50" onClick={waLoadGroups} disabled={!userConnected || waUserGroupsLoading}>
-                            {waUserGroupsLoading ? "Importing..." : "Import groups"}
-                          </button>
+                    {/* ── Saved Destinations — full-width horizontal card row ── */}
+                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm lg:col-span-2 lg:order-3">
+                      <div className="flex items-center justify-between gap-3 mb-4">
+                        <div>
+                          <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Saved destinations</p>
+                          <h2 className="m-0 mt-0.5 text-lg font-black text-gray-900">{activeDestinations.length} destination{activeDestinations.length === 1 ? "" : "s"}</h2>
                         </div>
-                        <div className="mt-4 space-y-3">
+                        <button className="!min-h-0 rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-black text-blue-700 hover:bg-blue-50" onClick={waLoadGroups} disabled={!userConnected || waUserGroupsLoading}>
+                          {waUserGroupsLoading ? "Importing..." : "Import groups"}
+                        </button>
+                      </div>
+                      {/* Horizontal scrollable cards */}
+                      <div className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory -mx-1 px-1">
+                        {activeDestinations.length === 0 && (
+                          <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500 w-full">No saved destination yet. Import groups to get started.</p>
+                        )}
+                        <div className="mt-0 flex gap-3 contents">
                           {activeDestinations.length === 0 ? (
                             <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No saved destination yet. Assisted send still works with manual group selection.</p>
                           ) : activeDestinations.map((destination) => {
                             const currentAgentId: string | null = destination.assignedAgentId ?? destination.assigned_agent_id ?? null;
                             const currentAgent = agents.find(a => a.id === currentAgentId);
                             return (
-                              <div key={destination.id} className={`rounded-2xl border overflow-hidden shadow-sm ${destination.isDefault ? "border-[#25D366]/50 shadow-[0_4px_16px_rgba(37,211,102,0.12)]" : "border-gray-200 shadow-[0_2px_8px_rgba(0,0,0,0.06)]"}`}>
+                              <div key={destination.id} className={`rounded-2xl border overflow-hidden shadow-sm shrink-0 w-72 snap-start ${destination.isDefault ? "border-[#25D366]/50 shadow-[0_4px_16px_rgba(37,211,102,0.12)]" : "border-gray-200 shadow-[0_2px_8px_rgba(0,0,0,0.06)]"}`}>
 
                                 {/* ── Group identity row ── */}
                                 <div className="flex items-center gap-3 px-4 pt-4 pb-3 bg-white">
@@ -50168,8 +50173,10 @@ ${waybillLineItems(w).length > 1
                             );
                           })}
                         </div>
-                      </article>
+                      </div>
+                    </article>
 
+                    <aside className="space-y-5 lg:order-2">
                       <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Add destination</p>
                         <div className="mt-3 grid gap-3">
@@ -50221,7 +50228,7 @@ ${waybillLineItems(w).length > 1
                       </article>
                     )}
 
-                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm lg:col-span-2">
+                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm lg:col-span-2 lg:order-4">
                       <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Recent personal dispatches</p>
                       <div className="mt-3 space-y-2">
                         {waUserDispatches.length === 0 ? (
