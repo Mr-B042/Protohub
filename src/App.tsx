@@ -7273,11 +7273,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waConversations, setWaConversations] = useState<any[]>([]);
   const [waConvsLoading, setWaConvsLoading] = useState(false);
   const [waActivePhone, setWaActivePhone] = useState<string | null>(null);
-  const [waThread, setWaThread] = useState<{ messages: any[]; linkedOrder: any | null } | null>(null);
+  const [waThread, setWaThread] = useState<{ messages: any[]; linkedOrder: any | null; unreadCount: number } | null>(null);
   const [waThreadLoading, setWaThreadLoading] = useState(false);
   const [waReplyDraft, setWaReplyDraft] = useState("");
   const [waReplySending, setWaReplySending] = useState(false);
   const waThreadBottomRef = useRef<HTMLDivElement | null>(null);
+  const waUnreadDividerRef = useRef<HTMLDivElement | null>(null);
   const [waDestinations, setWaDestinations] = useState<Record<string, any>[]>([]);
   const [waDestinationsLoading, setWaDestinationsLoading] = useState(false);
   const [waDestinationSaving, setWaDestinationSaving] = useState(false);
@@ -8853,7 +8854,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // Load thread when active phone changes
   useEffect(() => {
-    if (!waActivePhone) { setWaThread(null); return; }
+    if (!waActivePhone) { setWaThread(null); waThreadPrevLengthRef.current = 0; return; }
+    waThreadPrevLengthRef.current = 0; // reset so divider scroll fires on new conversation
     let cancelled = false;
     setWaThreadLoading(true);
     whatsappConversationsApi.thread(waActivePhone).then(r => {
@@ -8880,9 +8882,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => clearInterval(t);
   }, [waActivePhone]);
 
-  // Scroll to bottom when thread updates
+  // On first thread load: scroll to the unread divider; on new messages: scroll to bottom
+  const waThreadPrevLengthRef = useRef(0);
   useEffect(() => {
-    if (waThread) waThreadBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!waThread) return;
+    const isFirstLoad = waThreadPrevLengthRef.current === 0;
+    waThreadPrevLengthRef.current = waThread.messages.length;
+    if (isFirstLoad && waThread.unreadCount > 0) {
+      setTimeout(() => waUnreadDividerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+    } else {
+      waThreadBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [waThread?.messages.length]);
 
   const waSendReply = async () => {
@@ -50002,28 +50012,46 @@ ${waybillLineItems(w).length > 1
                         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
                           {waThreadLoading && !waThread ? (
                             <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
-                          ) : (waThread?.messages ?? []).map((msg: any, idx: number) => {
-                            const out = msg.direction === "outbound";
-                            const num = idx + 1;
-                            return (
-                              <div key={msg.id} className={`flex items-end gap-2 ${out ? "flex-row-reverse" : "flex-row"}`}>
-                                {/* Sequence number */}
-                                <span className="shrink-0 text-[10px] font-black text-gray-300 mb-2 select-none w-5 text-center">{num}</span>
-                                <div className={`max-w-[78%] rounded-2xl px-3.5 py-2.5 shadow-sm ${out ? "bg-[#25D366] text-white rounded-br-sm" : "bg-white border border-gray-200 text-gray-900 rounded-bl-sm"}`}>
-                                  {out && msg.sent_by_name && (
-                                    <p className={`m-0 text-[10px] font-black mb-1 ${out ? "text-white/70" : "text-gray-400"}`}>{msg.sent_by_name}</p>
+                          ) : (() => {
+                            const msgs = waThread?.messages ?? [];
+                            const totalUnread = waThread?.unreadCount ?? 0;
+                            // Divider goes before the (totalUnread)th message from the end
+                            const dividerIdx = totalUnread > 0 ? msgs.length - totalUnread : -1;
+                            return msgs.map((msg: any, idx: number) => {
+                              const out = msg.direction === "outbound";
+                              const num = idx + 1;
+                              return (
+                                <Fragment key={msg.id}>
+                                  {/* Unread divider */}
+                                  {idx === dividerIdx && (
+                                    <div ref={waUnreadDividerRef} className="flex items-center gap-2 my-2">
+                                      <div className="flex-1 h-px bg-rose-200" />
+                                      <span className="shrink-0 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-black text-rose-600">
+                                        {totalUnread} unread message{totalUnread !== 1 ? "s" : ""}
+                                      </span>
+                                      <div className="flex-1 h-px bg-rose-200" />
+                                    </div>
                                   )}
-                                  {!out && msg.sender_name && (
-                                    <p className="m-0 text-[10px] font-black mb-1 text-[#25D366]">{msg.sender_name}</p>
-                                  )}
-                                  <p className="m-0 text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.body}</p>
-                                  <p className={`m-0 mt-1 text-[10px] ${out ? "text-white/60" : "text-gray-400"} text-right`}>
-                                    {formatMoment(msg.sent_at || msg.received_at)}
-                                  </p>
-                                </div>
-                              </div>
-                            );
-                          })}
+                                  <div className={`flex items-end gap-2 ${out ? "flex-row-reverse" : "flex-row"}`}>
+                                    {/* Sequence number */}
+                                    <span className="shrink-0 text-[10px] font-black text-gray-300 mb-2 select-none w-5 text-center">{num}</span>
+                                    <div className={`max-w-[78%] rounded-2xl px-3.5 py-2.5 shadow-sm ${out ? "bg-[#25D366] text-white rounded-br-sm" : "bg-white border border-gray-200 text-gray-900 rounded-bl-sm"}`}>
+                                      {out && msg.sent_by_name && (
+                                        <p className={`m-0 text-[10px] font-black mb-1 ${out ? "text-white/70" : "text-gray-400"}`}>{msg.sent_by_name}</p>
+                                      )}
+                                      {!out && msg.sender_name && (
+                                        <p className="m-0 text-[10px] font-black mb-1 text-[#25D366]">{msg.sender_name}</p>
+                                      )}
+                                      <p className="m-0 text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.body}</p>
+                                      <p className={`m-0 mt-1 text-[10px] ${out ? "text-white/60" : "text-gray-400"} text-right`}>
+                                        {formatMoment(msg.sent_at || msg.received_at)}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </Fragment>
+                              );
+                            });
+                          })()}
                           <div ref={waThreadBottomRef} />
                         </div>
 

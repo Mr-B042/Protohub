@@ -135,6 +135,9 @@ router.get("/:phone", async (req, res) => {
 
     if (error) { res.status(500).json({ error: error.message }); return; }
 
+    // Count unread BEFORE marking as read — frontend uses this to place the divider
+    const unreadCount = (messages ?? []).filter(m => m.direction === "inbound" && !m.read_at).length;
+
     // Mark all inbound as read
     await supabase.from("whatsapp_inbox_messages")
       .update({ read_at: new Date().toISOString() })
@@ -157,7 +160,7 @@ router.get("/:phone", async (req, res) => {
       linkedOrder = ord ?? null;
     }
 
-    res.json({ messages: messages ?? [], linkedOrder });
+    res.json({ messages: messages ?? [], linkedOrder, unreadCount });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? "Could not load thread." });
   }

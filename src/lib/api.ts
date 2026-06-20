@@ -711,7 +711,7 @@ export const whatsappDestinationsApi = {
 
 export const whatsappConversationsApi = {
   list: (limit = 50) => get<{ conversations: any[] }>(`/api/whatsapp/conversations?limit=${limit}`),
-  thread: (phone: string) => get<{ messages: any[]; linkedOrder: any | null }>(`/api/whatsapp/conversations/${encodeURIComponent(phone)}`),
+  thread: (phone: string) => get<{ messages: any[]; linkedOrder: any | null; unreadCount: number }>(`/api/whatsapp/conversations/${encodeURIComponent(phone)}`),
   send: (phone: string, body: string, linkedOrderId?: string | null) =>
     post<{ ok: boolean; id: string }>(`/api/whatsapp/conversations/${encodeURIComponent(phone)}/send`, { body, linkedOrderId }),
   markRead: (phone: string) =>
