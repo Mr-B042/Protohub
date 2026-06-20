@@ -50103,9 +50103,29 @@ ${waybillLineItems(w).length > 1
                                       }}
                                     >
                                       <option value="">— Select courier agent —</option>
-                                      {agents.map(a => (
-                                        <option key={a.id} value={a.id}>{a.name} · {a.primaryBaseState ?? a.zone}</option>
-                                      ))}
+                                      {(() => {
+                                        const label = (destination.label ?? "").toLowerCase();
+                                        // Score each agent: name words in label = 2pts, zone/state in label = 1pt
+                                        const score = (a: DeliveryAgentRecord) => {
+                                          let s = 0;
+                                          const nameWords = a.name.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+                                          if (nameWords.some(w => label.includes(w))) s += 2;
+                                          const zone = (a.primaryBaseState ?? a.zone ?? "").toLowerCase();
+                                          if (zone && label.includes(zone)) s += 1;
+                                          return s;
+                                        };
+                                        return [...agents]
+                                          .sort((a, b) => score(b) - score(a))
+                                          .map(a => {
+                                            const s = score(a);
+                                            const hint = s >= 2 ? " ⭐" : s === 1 ? " 📍" : "";
+                                            return (
+                                              <option key={a.id} value={a.id}>
+                                                {a.name}{hint} · {a.primaryBaseState ?? a.zone}
+                                              </option>
+                                            );
+                                          });
+                                      })()}
                                     </select>
                                     <p className="m-0 mt-1 text-[10px] text-gray-400">Saves instantly when you pick an agent. Change anytime.</p>
                                   </div>
