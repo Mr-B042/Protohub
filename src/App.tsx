@@ -50002,13 +50002,19 @@ ${waybillLineItems(w).length > 1
                         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
                           {waThreadLoading && !waThread ? (
                             <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
-                          ) : (waThread?.messages ?? []).map((msg: any) => {
+                          ) : (waThread?.messages ?? []).map((msg: any, idx: number) => {
                             const out = msg.direction === "outbound";
+                            const num = idx + 1;
                             return (
-                              <div key={msg.id} className={`flex ${out ? "justify-end" : "justify-start"}`}>
-                                <div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 shadow-sm ${out ? "bg-[#25D366] text-white rounded-br-sm" : "bg-white border border-gray-200 text-gray-900 rounded-bl-sm"}`}>
+                              <div key={msg.id} className={`flex items-end gap-2 ${out ? "flex-row-reverse" : "flex-row"}`}>
+                                {/* Sequence number */}
+                                <span className="shrink-0 text-[10px] font-black text-gray-300 mb-2 select-none w-5 text-center">{num}</span>
+                                <div className={`max-w-[78%] rounded-2xl px-3.5 py-2.5 shadow-sm ${out ? "bg-[#25D366] text-white rounded-br-sm" : "bg-white border border-gray-200 text-gray-900 rounded-bl-sm"}`}>
                                   {out && msg.sent_by_name && (
                                     <p className={`m-0 text-[10px] font-black mb-1 ${out ? "text-white/70" : "text-gray-400"}`}>{msg.sent_by_name}</p>
+                                  )}
+                                  {!out && msg.sender_name && (
+                                    <p className="m-0 text-[10px] font-black mb-1 text-[#25D366]">{msg.sender_name}</p>
                                   )}
                                   <p className="m-0 text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.body}</p>
                                   <p className={`m-0 mt-1 text-[10px] ${out ? "text-white/60" : "text-gray-400"} text-right`}>
