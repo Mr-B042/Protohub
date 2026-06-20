@@ -47,8 +47,18 @@ router.get("/", async (req, res) => {
     //   Manager → only their own directly assigned orders
     //   Sales Rep → only their own directly assigned orders
     if (role === "Admin") {
-      // Admin sees all order-linked conversations across all reps — not orderless noise
-      query = query.not("linked_order_id", "is", null);
+      // Admin sees all conversations from phones that have ANY order assigned to a rep
+      const { data: allOrderPhones } = await supabase
+        .from("orders")
+        .select("phone")
+        .eq("org_id", orgId)
+        .not("phone", "is", null)
+        .not("assigned_rep_id", "is", null);
+      const adminPhones = Array.from(new Set(
+        (allOrderPhones ?? []).map((o: any) => normalizeNgPhone(o.phone ?? "")).filter((p) => p.length >= 10)
+      ));
+      if (adminPhones.length === 0) { res.json({ conversations: [] }); return; }
+      query = query.in("normalized_phone", adminPhones);
     } else if (role === "Sales Rep" || role === "Manager") {
       // Scope to orders assigned to this specific user
       const { data: myOrders } = await supabase
@@ -65,7 +75,9 @@ router.get("/", async (req, res) => {
       ));
 
       if (myPhones.length === 0) { res.json({ conversations: [] }); return; }
-      query = query.in("normalized_phone", myPhones).not("linked_order_id", "is", null);
+      // Phone match is sufficient — don't require linked_order_id since auto-link
+      // sometimes fails; if the phone belongs to their assigned customer that's enough.
+      query = query.in("normalized_phone", myPhones);
     }
     // Owner: no filter — sees all conversations including orderless
 
