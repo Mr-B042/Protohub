@@ -2022,6 +2022,7 @@ async function ensureConnection(orgId: string, requestedMode?: WhatsAppPairingMo
           connection.socket = null;
           const statusCode = (update.lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
           const loggedOut = statusCode === DisconnectReason.loggedOut;
+          const isConflict = statusCode === DisconnectReason.connectionReplaced;
           const reason = update.lastDisconnect?.error instanceof Error ? update.lastDisconnect.error.message : "WhatsApp connection closed.";
           const qrExpired = /QR refs attempts ended/i.test(reason);
 
@@ -2034,6 +2035,20 @@ async function ensureConnection(orgId: string, requestedMode?: WhatsAppPairingMo
           }
 
           connection.connecting = null;
+
+          // Conflict = another instance connected with the same session (e.g. a Railway deploy).
+          // Wait 30s for the new instance to stabilise, then reconnect quietly.
+          if (isConflict) {
+            await updateConnectionRow(orgId, {
+              connection_status: "connecting",
+              last_error: null,
+              qr_code_data_url: null,
+              pairing_code: null
+            });
+            scheduleReconnect(connection, 30_000, orgId);
+            return;
+          }
+
           if (qrExpired && !state.creds.registered && connection.mode === "qr") {
             await updateConnectionRow(orgId, {
               connection_status: "pairing",
@@ -2149,6 +2164,7 @@ async function ensureUserConnection(orgId: string, userId: string, requestedMode
           connection.socket = null;
           const statusCode = (update.lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
           const loggedOut = statusCode === DisconnectReason.loggedOut;
+          const isConflict = statusCode === DisconnectReason.connectionReplaced;
           const reason = update.lastDisconnect?.error instanceof Error ? update.lastDisconnect.error.message : "WhatsApp connection closed.";
           const qrExpired = /QR refs attempts ended/i.test(reason);
 
@@ -2161,6 +2177,18 @@ async function ensureUserConnection(orgId: string, userId: string, requestedMode
           }
 
           connection.connecting = null;
+
+          if (isConflict) {
+            await updateUserConnectionRow(orgId, userId, {
+              connection_status: "connecting",
+              last_error: null,
+              qr_code_data_url: null,
+              pairing_code: null
+            });
+            scheduleUserReconnect(connection, 30_000);
+            return;
+          }
+
           if (qrExpired && !state.creds.registered && connection.mode === "qr") {
             await updateUserConnectionRow(orgId, userId, {
               connection_status: "pairing",
