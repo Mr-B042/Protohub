@@ -54557,21 +54557,9 @@ ${waybillLineItems(w).length > 1
                       const getRepIds = (d: any): string[] =>
                         d.assignedRepIds ?? d.assigned_rep_ids ?? (d.assignedRepId ? [d.assignedRepId] : []);
 
-                      // Build rep-centric list: each rep in this state + their group
-                      const repsForState = users.filter((u: any) => {
-                        if (u.role !== "Sales Rep" && u.role !== "Manager") return false;
-                        // Has any order in this state
-                        return trackedOrders.some(o =>
-                          o.assignedRepId === u.id &&
-                          (o.state ?? "").toLowerCase().trim() === orderState
-                        );
-                      });
-
-                      // Also include reps from other states who have mapped groups (for override)
-                      const repsWithGroups = users.filter((u: any) =>
-                        !repsForState.some((r: any) => r.id === u.id) &&
-                        allDests.some((d: any) => getRepIds(d).includes(u.id))
-                      );
+                      // All reps/managers — show everyone with a mapped group first, rest below
+                      const allReps = users.filter((u: any) => u.role === "Sales Rep" || u.role === "Manager");
+                      const hasMappedGroup = (uid: string) => allDests.some((d: any) => getRepIds(d).includes(uid));
 
                       const search = waDispatchSearch.toLowerCase();
                       const filterRep = (u: any) =>
@@ -54579,8 +54567,16 @@ ${waybillLineItems(w).length > 1
                         allDests.filter((d: any) => getRepIds(d).includes(u.id))
                           .some((d: any) => d.label.toLowerCase().includes(search));
 
-                      const stateReps = repsForState.filter(filterRep);
-                      const otherReps = repsWithGroups.filter(filterRep);
+                      // Tier 1: assigned rep (always first regardless of group mapping)
+                      const assignedRep = assignedRepId ? allReps.find(u => u.id === assignedRepId) : null;
+                      // Tier 2: other reps WITH mapped groups (filtered by search)
+                      const mappedReps = allReps.filter((u: any) =>
+                        u.id !== assignedRepId && hasMappedGroup(u.id) && filterRep(u)
+                      );
+                      // Tier 3: reps with NO group mapped yet
+                      const unmappedReps = allReps.filter((u: any) =>
+                        u.id !== assignedRepId && !hasMappedGroup(u.id) && filterRep(u)
+                      );
 
                       // For a rep row: find their best group
                       const destForRep = (repId: string) =>
@@ -54629,13 +54625,13 @@ ${waybillLineItems(w).length > 1
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                             <input
                               className="w-full rounded-xl border border-gray-200 bg-gray-50 pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
-                              placeholder={`Search ${order.state || "state"} reps…`}
+                              placeholder="Search rep name…"
                               value={waDispatchSearch}
                               onChange={e => setWaDispatchSearch(e.target.value)}
                             />
                           </div>
                           <div className="space-y-1.5 max-h-56 overflow-y-auto">
-                            {/* Manual override always first */}
+                            {/* Manual override */}
                             <button
                               type="button"
                               onClick={() => setWaDispatchModal(c => c ? { ...c, destinationId: "", sendMode: "assisted" } : c)}
@@ -54644,25 +54640,33 @@ ${waybillLineItems(w).length > 1
                               Manual — pick group in WhatsApp
                             </button>
 
-                            {stateReps.length > 0 && (
+                            {/* Assigned rep — always shown first */}
+                            {assignedRep && filterRep(assignedRep) && (
                               <>
-                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-[#25D366]">
-                                  📍 {order.state || "This state"} reps
-                                </p>
-                                {stateReps.map((u: any) => <RepRow key={u.id} u={u} highlight />)}
+                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-[#25D366]">Assigned rep</p>
+                                <RepRow u={assignedRep} />
                               </>
                             )}
 
-                            {otherReps.length > 0 && (
+                            {/* Other reps with mapped groups */}
+                            {mappedReps.length > 0 && (
                               <>
-                                <p className="m-0 px-1 pt-2 text-[10px] font-black uppercase tracking-wider text-gray-400">Other reps</p>
-                                {otherReps.map((u: any) => <RepRow key={u.id} u={u} />)}
+                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Other reps</p>
+                                {mappedReps.map((u: any) => <RepRow key={u.id} u={u} />)}
                               </>
                             )}
 
-                            {stateReps.length === 0 && otherReps.length === 0 && (
+                            {/* Reps with no group yet — greyed out */}
+                            {unmappedReps.length > 0 && (
+                              <>
+                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-gray-300">No group mapped</p>
+                                {unmappedReps.map((u: any) => <RepRow key={u.id} u={u} />)}
+                              </>
+                            )}
+
+                            {!assignedRep && mappedReps.length === 0 && unmappedReps.length === 0 && (
                               <p className="m-0 p-4 text-center text-sm text-gray-400">
-                                No reps with mapped groups found{search ? ` for "${waDispatchSearch}"` : ""}.
+                                {search ? `No reps match "${waDispatchSearch}"` : "No reps found."}
                               </p>
                             )}
                           </div>
