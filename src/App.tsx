@@ -8910,6 +8910,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   }, [waThread?.messages.length]);
 
+  const waTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const waSendReply = async () => {
     if (!waActivePhone || !waReplyDraft.trim() || waReplySending) return;
     const body = waReplyDraft.trim();
@@ -8919,6 +8920,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const optimistic = { id: `opt-${Date.now()}`, direction: "outbound", body, sent_by_name: authUser?.name ?? "Me", sent_at: new Date().toISOString(), received_at: new Date().toISOString(), message_type: "text" };
     setWaThread(prev => prev ? { ...prev, messages: [...prev.messages, optimistic] } : prev);
     setWaReplyDraft("");
+    // Reset textarea height after clearing
+    if (waTextareaRef.current) { waTextareaRef.current.style.height = "56px"; }
     try {
       const result = await whatsappConversationsApi.send(waActivePhone, body, linkedOrderId, waActiveFallbackPhone);
       // If backend used the fallback number, switch active thread to that number
@@ -50176,13 +50179,18 @@ ${waybillLineItems(w).length > 1
                               <div className="shrink-0 border-t border-gray-100 px-3 sm:px-4 py-3 bg-white safe-area-inset-bottom">
                                 <div className="flex items-end gap-2">
                                   <textarea
-                                    className="flex-1 min-h-[56px] max-h-[160px] resize-none rounded-2xl border border-gray-200 px-4 py-3 text-base sm:text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 placeholder:text-gray-400"
+                                    ref={waTextareaRef}
+                                    className="flex-1 resize-none rounded-2xl border border-gray-200 px-4 py-3 text-base sm:text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 placeholder:text-gray-400 overflow-hidden"
                                     placeholder="Type a message…"
                                     rows={2}
                                     value={waReplyDraft}
-                                    onChange={(e) => setWaReplyDraft(e.target.value)}
+                                    onChange={(e) => {
+                                      setWaReplyDraft(e.target.value);
+                                      e.target.style.height = "auto";
+                                      e.target.style.height = Math.min(e.target.scrollHeight, 240) + "px";
+                                    }}
                                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); waSendReply(); } }}
-                                    style={{ WebkitTextSizeAdjust: "100%" }}
+                                    style={{ WebkitTextSizeAdjust: "100%", minHeight: "56px", maxHeight: "240px" }}
                                   />
                                   <button
                                     type="button"
