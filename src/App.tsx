@@ -7252,6 +7252,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // WhatsApp automation page state
   const [waSettings, setWaSettings] = useState<Record<string, any> | null>(null);
   const [waSettingsLoading, setWaSettingsLoading] = useState(false);
+  const [waTriggerSaving, setWaTriggerSaving] = useState(false);
   const [waConnecting, setWaConnecting] = useState(false);
   const [waDisconnecting, setWaDisconnecting] = useState(false);
   const [waConnectMode, setWaConnectMode] = useState<"qr" | "pairing_code">("qr");
@@ -8817,6 +8818,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const waRefresh = () => {
     setWaSettingsLoading(true);
     whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => {}).finally(() => setWaSettingsLoading(false));
+  };
+  const waToggleTrigger = async (trigger: string, value: boolean) => {
+    if (!waSettings) return;
+    const current = waSettings.triggers ?? {};
+    const updated = { ...current, [trigger]: value };
+    // Optimistic update
+    setWaSettings((s) => s ? { ...s, triggers: updated } : s);
+    setWaTriggerSaving(true);
+    try {
+      const saved = await whatsappSettingsApi.save({
+        ...waSettings,
+        triggers: updated,
+        templates: waSettings.templates ?? {}
+      });
+      setWaSettings(saved);
+    } catch (err: any) {
+      // Revert on failure
+      setWaSettings((s) => s ? { ...s, triggers: current } : s);
+      showToast(`Could not save trigger: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setWaTriggerSaving(false);
+    }
   };
   const waUserRefresh = () => {
     if (!canUsePersonalWhatsApp) return;
@@ -49688,6 +49711,63 @@ ${waybillLineItems(w).length > 1
                         </button>
                       </div>
                     )}
+                  </section>
+                );
+              })()}
+
+              {/* Automation trigger toggles — Owner only */}
+              {currentRole === "Owner" && waSettings && (() => {
+                const triggers = (waSettings.triggers ?? {}) as Record<string, boolean>;
+                const TRIGGER_META: Array<{
+                  key: string;
+                  label: string;
+                  desc: string;
+                  to: "customer" | "rep";
+                  badge: string;
+                }> = [
+                  { key: "order_new",       label: "New order confirmation",  desc: "Sent to customer the moment an order is placed. Includes product, amount, and delivery city.", to: "customer", badge: "Customer" },
+                  { key: "order_new_rep",   label: "New order rep alert",     desc: "Sent to the assigned rep immediately so they can call the customer to confirm. Bypasses business hours.", to: "rep",      badge: "Rep" },
+                  { key: "order_scheduled", label: "Scheduled delivery",      desc: "Sent to customer when an order is marked Confirmed and has a scheduled delivery date.", to: "customer", badge: "Customer" },
+                  { key: "order_failed",    label: "Failed delivery",         desc: "Sent to customer when an order is marked Failed, with the rep's contact number.", to: "customer", badge: "Customer" },
+                  { key: "order_delivered", label: "Delivery confirmed",      desc: "Sent to customer when an order is marked Delivered. Includes a review request.", to: "customer", badge: "Customer" },
+                ];
+                return (
+                  <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-start justify-between gap-4 mb-5">
+                      <div>
+                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Automation triggers</p>
+                        <h2 className="m-0 mt-1 text-lg font-black text-gray-900">What gets sent automatically</h2>
+                        <p className="m-0 mt-1 text-sm text-gray-500">Messages are sent from your connected automation account. Anti-ban: max 1 message per customer per event per 24 hours.</p>
+                      </div>
+                      {waTriggerSaving && <span className="mt-1 shrink-0 text-xs font-bold text-gray-400 animate-pulse">Saving…</span>}
+                    </div>
+                    <div className="divide-y divide-gray-100">
+                      {TRIGGER_META.map(({ key, label, desc, to, badge }) => {
+                        const enabled = Boolean(triggers[key]);
+                        return (
+                          <div key={key} className="flex items-start gap-4 py-4 first:pt-0 last:pb-0">
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={enabled}
+                              disabled={waTriggerSaving}
+                              onClick={() => waToggleTrigger(key, !enabled)}
+                              className={`relative mt-0.5 inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none disabled:opacity-60 ${enabled ? "bg-[#25D366]" : "bg-gray-200"}`}
+                            >
+                              <span className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-md ring-0 transition-transform duration-200 ${enabled ? "translate-x-5" : "translate-x-0"}`} />
+                            </button>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className={`m-0 text-sm font-black ${enabled ? "text-gray-900" : "text-gray-500"}`}>{label}</p>
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${to === "rep" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>{badge}</span>
+                                {enabled && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">ON</span>}
+                              </div>
+                              <p className="m-0 mt-0.5 text-xs text-gray-500">{desc}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </section>
                 );
               })()}
