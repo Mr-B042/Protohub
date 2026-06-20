@@ -49718,52 +49718,99 @@ ${waybillLineItems(w).length > 1
               {/* Automation trigger toggles — Owner only */}
               {currentRole === "Owner" && waSettings && (() => {
                 const triggers = (waSettings.triggers ?? {}) as Record<string, boolean>;
-                const TRIGGER_META: Array<{
-                  key: string;
-                  label: string;
-                  desc: string;
+                type TriggerMeta = {
+                  key: string; label: string; desc: string;
                   to: "customer" | "rep";
-                  badge: string;
-                }> = [
-                  { key: "order_new",       label: "New order confirmation",  desc: "Sent to customer the moment an order is placed. Includes product, amount, and delivery city.", to: "customer", badge: "Customer" },
-                  { key: "order_new_rep",   label: "New order rep alert",     desc: "Sent to the assigned rep immediately so they can call the customer to confirm. Bypasses business hours.", to: "rep",      badge: "Rep" },
-                  { key: "order_scheduled", label: "Scheduled delivery",      desc: "Sent to customer when an order is marked Confirmed and has a scheduled delivery date.", to: "customer", badge: "Customer" },
-                  { key: "order_failed",    label: "Failed delivery",         desc: "Sent to customer when an order is marked Failed, with the rep's contact number.", to: "customer", badge: "Customer" },
-                  { key: "order_delivered", label: "Delivery confirmed",      desc: "Sent to customer when an order is marked Delivered. Includes a review request.", to: "customer", badge: "Customer" },
+                  icon: React.ReactNode;
+                  color: string; iconBg: string;
+                };
+                const TRIGGER_META: TriggerMeta[] = [
+                  {
+                    key: "order_new", label: "New order confirmation", to: "customer",
+                    desc: "Customer gets a receipt the moment they order — product, amount, delivery city.",
+                    icon: <ShoppingBag className="h-4 w-4" />,
+                    color: "text-blue-600", iconBg: "bg-blue-50"
+                  },
+                  {
+                    key: "order_new_rep", label: "New order rep alert", to: "rep",
+                    desc: "Assigned rep is notified instantly with customer details so they can call immediately.",
+                    icon: <Phone className="h-4 w-4" />,
+                    color: "text-purple-600", iconBg: "bg-purple-50"
+                  },
+                  {
+                    key: "order_scheduled", label: "Scheduled delivery", to: "customer",
+                    desc: "Customer is told when to expect delivery once the order is confirmed with a date.",
+                    icon: <CalendarClock className="h-4 w-4" />,
+                    color: "text-amber-600", iconBg: "bg-amber-50"
+                  },
+                  {
+                    key: "order_failed", label: "Failed delivery", to: "customer",
+                    desc: "Customer is notified of a failed attempt with the rep's contact number to reschedule.",
+                    icon: <AlertTriangle className="h-4 w-4" />,
+                    color: "text-rose-600", iconBg: "bg-rose-50"
+                  },
+                  {
+                    key: "order_delivered", label: "Delivery confirmed", to: "customer",
+                    desc: "Customer gets a delivery confirmation and a review request once the order is marked delivered.",
+                    icon: <PackageCheck className="h-4 w-4" />,
+                    color: "text-emerald-600", iconBg: "bg-emerald-50"
+                  },
                 ];
+                const onCount = TRIGGER_META.filter(({ key }) => Boolean(triggers[key])).length;
                 return (
-                  <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <div className="flex items-start justify-between gap-4 mb-5">
-                      <div>
-                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Automation triggers</p>
-                        <h2 className="m-0 mt-1 text-lg font-black text-gray-900">What gets sent automatically</h2>
-                        <p className="m-0 mt-1 text-sm text-gray-500">Messages are sent from your connected automation account. Anti-ban: max 1 message per customer per event per 24 hours.</p>
+                  <section className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                    {/* Header */}
+                    <div className="flex items-center justify-between gap-4 px-5 py-4 border-b border-gray-100">
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#25D366]/10 text-[#25D366]">
+                          <Zap className="h-4 w-4" />
+                        </span>
+                        <div>
+                          <p className="m-0 text-sm font-black text-gray-900">Automation triggers</p>
+                          <p className="m-0 text-xs text-gray-500">{onCount} of {TRIGGER_META.length} active · 1 msg / customer / event / 24 h</p>
+                        </div>
                       </div>
-                      {waTriggerSaving && <span className="mt-1 shrink-0 text-xs font-bold text-gray-400 animate-pulse">Saving…</span>}
+                      {waTriggerSaving && (
+                        <span className="flex items-center gap-1.5 text-xs font-bold text-gray-400">
+                          <RefreshCw className="h-3 w-3 animate-spin" /> Saving…
+                        </span>
+                      )}
                     </div>
-                    <div className="divide-y divide-gray-100">
-                      {TRIGGER_META.map(({ key, label, desc, to, badge }) => {
+
+                    {/* Trigger rows */}
+                    <div className="divide-y divide-gray-50">
+                      {TRIGGER_META.map(({ key, label, desc, to, icon, color, iconBg }) => {
                         const enabled = Boolean(triggers[key]);
                         return (
-                          <div key={key} className="flex items-start gap-4 py-4 first:pt-0 last:pb-0">
+                          <div
+                            key={key}
+                            className={`flex items-center gap-4 px-5 py-4 transition-colors ${enabled ? "bg-white" : "bg-gray-50/60"}`}
+                          >
+                            {/* Icon */}
+                            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${enabled ? iconBg : "bg-gray-100"} ${enabled ? color : "text-gray-400"} transition-colors`}>
+                              {icon}
+                            </span>
+
+                            {/* Text */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className={`m-0 text-sm font-black leading-tight ${enabled ? "text-gray-900" : "text-gray-400"}`}>{label}</p>
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${to === "rep" ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"}`}>{to === "rep" ? "Rep" : "Customer"}</span>
+                              </div>
+                              <p className={`m-0 mt-0.5 text-xs leading-relaxed ${enabled ? "text-gray-500" : "text-gray-400"}`}>{desc}</p>
+                            </div>
+
+                            {/* Toggle */}
                             <button
                               type="button"
                               role="switch"
                               aria-checked={enabled}
                               disabled={waTriggerSaving}
                               onClick={() => waToggleTrigger(key, !enabled)}
-                              className={`relative mt-0.5 inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none disabled:opacity-60 ${enabled ? "bg-[#25D366]" : "bg-gray-200"}`}
+                              className={`relative shrink-0 h-7 w-12 cursor-pointer rounded-full transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#25D366]/50 disabled:cursor-not-allowed disabled:opacity-50 ${enabled ? "bg-[#25D366] shadow-[0_0_0_3px_rgba(37,211,102,0.15)]" : "bg-gray-200"}`}
                             >
-                              <span className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-md ring-0 transition-transform duration-200 ${enabled ? "translate-x-5" : "translate-x-0"}`} />
+                              <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-md transition-all duration-300 ${enabled ? "left-[calc(100%-1.375rem)]" : "left-1"}`} />
                             </button>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <p className={`m-0 text-sm font-black ${enabled ? "text-gray-900" : "text-gray-500"}`}>{label}</p>
-                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${to === "rep" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>{badge}</span>
-                                {enabled && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">ON</span>}
-                              </div>
-                              <p className="m-0 mt-0.5 text-xs text-gray-500">{desc}</p>
-                            </div>
                           </div>
                         );
                       })}
