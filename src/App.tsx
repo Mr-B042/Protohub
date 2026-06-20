@@ -7264,6 +7264,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waUserPairingPhone, setWaUserPairingPhone] = useState("");
   const [waUserGroups, setWaUserGroups] = useState<Array<{ jid: string; subject: string; participants?: number | null }>>([]);
   const [waUserGroupsLoading, setWaUserGroupsLoading] = useState(false);
+  const [waJustConnected, setWaJustConnected] = useState<{ phone: string; name: string } | null>(null);
+  const waPrevConnectedRef = useRef<boolean>(false);
   const [waDestinations, setWaDestinations] = useState<Record<string, any>[]>([]);
   const [waDestinationsLoading, setWaDestinationsLoading] = useState(false);
   const [waDestinationSaving, setWaDestinationSaving] = useState(false);
@@ -8819,6 +8821,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setWaDestinationsLoading(false);
       });
   };
+  // Auto-poll every 3s while pairing so the UI transitions to "Connected" the
+  // moment the QR is scanned, without needing a manual Refresh.
+  const waUserPairingStatus = whatsappStatus(waUserAccount);
+  useEffect(() => {
+    if (activePage !== "WhatsApp" || isSpying) return;
+    if (waUserPairingStatus !== "pairing" && waUserPairingStatus !== "connecting") return;
+    const timer = setInterval(() => {
+      whatsappUserAccountApi.get().then((result) => {
+        const account = result.account ?? null;
+        setWaUserAccount(account);
+        const nowConnected = whatsappStatus(account) === "connected";
+        if (nowConnected && !waPrevConnectedRef.current) {
+          const phone = account?.connected_phone ?? account?.connectedPhone ?? "";
+          const name  = account?.connected_name  ?? account?.connectedName  ?? "";
+          setWaJustConnected({ phone: String(phone), name: String(name) });
+          setWaDestinations((prev) => prev); // keep existing destinations
+          // Refresh destinations too
+          whatsappDestinationsApi.list().then((r) => setWaDestinations(r.destinations ?? [])).catch(() => {});
+        }
+        waPrevConnectedRef.current = nowConnected;
+      }).catch(() => {});
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [activePage, waUserPairingStatus, isSpying]);
+
+  // Track connected→disconnected transitions to reset the ref
+  useEffect(() => {
+    const nowConnected = whatsappStatus(waUserAccount) === "connected";
+    if (!nowConnected) waPrevConnectedRef.current = false;
+  }, [waUserAccount]);
+
   const waUserConnect = async () => {
     setWaUserConnecting(true);
     try {
@@ -8931,6 +8964,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } catch (err: any) {
       showToast(`Could not hide destination: ${err?.message ?? "please retry"}.`);
     }
+  };
+  const waDeleteDestination = async (destinationId: string, label: string) => {
+    showConfirm(`Delete "${label}"?`, async () => {
+      try {
+        await whatsappDestinationsApi.remove(destinationId);
+        setWaDestinations((items) => items.filter((item) => item.id !== destinationId));
+        showToast("Destination deleted.");
+      } catch (err: any) {
+        showToast(`Could not delete destination: ${err?.message ?? "please retry"}.`);
+      }
+    }, { detail: "This permanently removes the destination.", danger: true, confirmLabel: "Delete" });
   };
 
   useEffect(() => {
@@ -49507,6 +49551,26 @@ ${waybillLineItems(w).length > 1
             </div>
           ) : activePage === "WhatsApp" ? (
             <div className="mx-auto max-w-6xl space-y-4 px-2 sm:px-0 sm:space-y-6">
+              {/* WhatsApp connected success popup */}
+              {waJustConnected && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setWaJustConnected(null)}>
+                  <div className="mx-4 w-full max-w-sm rounded-3xl bg-white p-8 shadow-2xl text-center" onClick={(e) => e.stopPropagation()}>
+                    <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-[#25D366]/15">
+                      <MessageCircle className="h-10 w-10 text-[#25D366]" />
+                    </div>
+                    <h2 className="mt-0 mb-1 text-2xl font-black text-gray-900">WhatsApp Connected!</h2>
+                    {waJustConnected.phone && <p className="m-0 text-base font-bold text-gray-700">+{waJustConnected.phone}</p>}
+                    {waJustConnected.name && <p className="m-0 mt-0.5 text-sm text-gray-500">{waJustConnected.name}</p>}
+                    <p className="m-0 mt-3 text-sm text-gray-500">You can now dispatch orders to your WhatsApp groups.</p>
+                    <button
+                      className="!min-h-0 mt-5 w-full rounded-xl bg-[#25D366] px-5 py-3 text-sm font-black text-white hover:bg-[#1ebe57]"
+                      onClick={() => setWaJustConnected(null)}
+                    >
+                      Let's go
+                    </button>
+                  </div>
+                </div>
+              )}
               <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#25D366]/15 text-[#25D366]">
@@ -49615,10 +49679,13 @@ ${waybillLineItems(w).length > 1
                             <span className="text-lg font-black capitalize text-gray-900">{userConnected ? "Connected" : userPairing ? "Pairing" : "Disconnected"}</span>
                           </div>
                           {whatsappConnectedPhone(waUserAccount) && (
-                            <p className="m-0 mt-1 text-sm text-gray-600">+{whatsappConnectedPhone(waUserAccount)}{whatsappConnectedName(waUserAccount) ? ` - ${whatsappConnectedName(waUserAccount)}` : ""}</p>
+                            <p className="m-0 mt-1 text-sm font-bold text-gray-700">+{whatsappConnectedPhone(waUserAccount)}{whatsappConnectedName(waUserAccount) ? ` · ${whatsappConnectedName(waUserAccount)}` : ""}</p>
+                          )}
+                          {(waUserAccount?.last_connected_at || waUserAccount?.lastConnectedAt) && (
+                            <p className="m-0 mt-0.5 text-xs text-gray-400">Last seen {formatMoment(waUserAccount?.last_connected_at ?? waUserAccount?.lastConnectedAt)}</p>
                           )}
                           {whatsappLastError(waUserAccount) && <p className="m-0 mt-1 text-xs font-semibold text-rose-600">Last error: {whatsappLastError(waUserAccount)}</p>}
-                          <p className="m-0 mt-2 text-sm text-gray-500">Assisted send is recommended. Direct send is limited, audited, and only available after you acknowledge the account-safety risk.</p>
+                          {!userPairing && <p className="m-0 mt-2 text-sm text-gray-500">Assisted send is recommended. Direct send is limited, audited, and only available after you acknowledge the account-safety risk.</p>}
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={waUserRefresh} disabled={waUserAccountLoading}>
@@ -49645,9 +49712,24 @@ ${waybillLineItems(w).length > 1
                             <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/30" placeholder="+234 800 000 0000" value={waUserPairingPhone} onChange={(event) => setWaUserPairingPhone(event.target.value)} />
                           )}
                           {whatsappQrCode(waUserAccount) && waUserConnectMode === "qr" && (
-                            <div className="inline-flex flex-col items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 p-4">
-                              <p className="m-0 text-xs text-gray-500">Scan in WhatsApp - Linked Devices - Link a Device</p>
-                              <img src={whatsappQrCode(waUserAccount)} alt="Personal WhatsApp QR code" className="h-48 w-48 rounded-xl" />
+                            <div className="flex flex-col gap-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                              <p className="m-0 text-xs font-bold text-gray-500 text-center">Scan in WhatsApp → Linked Devices → Link a Device</p>
+                              <div className="mx-auto">
+                                <img src={whatsappQrCode(waUserAccount)} alt="Personal WhatsApp QR code" className="h-48 w-48 rounded-xl" />
+                              </div>
+                              {/* Progress steps */}
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between text-xs font-bold text-gray-500">
+                                  <span className="text-[#25D366]">✓ QR ready</span>
+                                  <span className="animate-pulse text-amber-600">⏳ Waiting for scan…</span>
+                                  <span className="text-gray-300">Connected</span>
+                                </div>
+                                <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+                                  <div className="absolute inset-y-0 left-0 w-1/3 rounded-full bg-[#25D366]" />
+                                  <div className="absolute inset-y-0 left-1/3 w-1/3 rounded-full bg-amber-400 animate-pulse" />
+                                </div>
+                                <p className="m-0 text-center text-[11px] text-gray-400">Page auto-refreshes when your phone connects</p>
+                              </div>
                             </div>
                           )}
                           {whatsappPairingCode(waUserAccount) && waUserConnectMode === "pairing_code" && (
@@ -49702,7 +49784,7 @@ ${waybillLineItems(w).length > 1
                               </div>
                               <div className="mt-3 flex flex-wrap gap-2">
                                 {!destination.isDefault && <button className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => waSetDefaultDestination(destination.id)}>Set default</button>}
-                                <button className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => waHideDestination(destination.id)}>Hide</button>
+                                <button className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => waDeleteDestination(destination.id, destination.label)}>Delete</button>
                               </div>
                             </div>
                           ))}
@@ -49735,13 +49817,27 @@ ${waybillLineItems(w).length > 1
                       <article className="rounded-2xl border border-blue-100 bg-blue-50/60 p-5 lg:col-span-2">
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-blue-500">Imported groups</p>
                         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                          {waUserGroups.map((group) => (
-                            <div key={group.jid} className="rounded-xl border border-blue-100 bg-white p-3">
-                              <p className="m-0 truncate text-sm font-black text-gray-900">{group.subject}</p>
-                              <p className="m-0 mt-1 text-xs text-gray-500">{group.participants ? `${group.participants} participants` : "Group"} - {group.jid}</p>
-                              <button className="!min-h-0 mt-3 rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-black text-blue-700 hover:bg-blue-50" onClick={() => waSaveImportedGroup(group)} disabled={waDestinationSaving}>Save group</button>
-                            </div>
-                          ))}
+                          {waUserGroups.map((group) => {
+                            const alreadySaved = waDestinations.some((d) => d.groupJid === group.jid || d.group_jid === group.jid);
+                            const savedDest = waDestinations.find((d) => d.groupJid === group.jid || d.group_jid === group.jid);
+                            return (
+                              <div key={group.jid} className={`rounded-xl border p-3 ${alreadySaved ? "border-emerald-200 bg-emerald-50/50" : "border-blue-100 bg-white"}`}>
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="m-0 truncate text-sm font-black text-gray-900">{group.subject}</p>
+                                  {alreadySaved && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">Saved</span>}
+                                </div>
+                                <p className="m-0 mt-1 text-xs text-gray-500">{group.participants ? `${group.participants} participants` : "Group"}</p>
+                                <p className="m-0 mt-0.5 truncate text-[10px] text-gray-400">{group.jid}</p>
+                                <div className="mt-3 flex gap-2">
+                                  {alreadySaved ? (
+                                    <button className="!min-h-0 rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-black text-rose-600 hover:bg-rose-50" onClick={() => savedDest && waDeleteDestination(savedDest.id, group.subject)} disabled={waDestinationSaving}>Remove</button>
+                                  ) : (
+                                    <button className="!min-h-0 rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-black text-blue-700 hover:bg-blue-50" onClick={() => waSaveImportedGroup(group)} disabled={waDestinationSaving}>Save group</button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </article>
                     )}
