@@ -49,6 +49,59 @@ const WHATSAPP_READY_TIMEOUT_MS = 20_000;
 
 const normalizeDigits = (value: string | null | undefined) => String(value ?? "").replace(/\D/g, "");
 
+function ngPhoneVariants(value: string | null | undefined) {
+  const digits = normalizeDigits(value);
+  if (!digits) return [];
+  const variants: string[] = [];
+  if (digits.startsWith("234") && digits.length >= 13) {
+    variants.push(digits);
+  } else if (digits.startsWith("0") && digits.length === 11) {
+    variants.push(`234${digits.slice(1)}`, digits.slice(1));
+  } else if (!digits.startsWith("0") && digits.length === 10) {
+    variants.push(`234${digits}`, `0${digits}`);
+  } else {
+    variants.push(digits);
+  }
+  return [...new Set(variants)].filter((variant) => variant.length >= 10);
+}
+
+async function resolveRegisteredWhatsAppJid(socket: ReturnType<typeof makeWASocket>, normalizedPhone: string) {
+  const primaryDigits = normalizeDigits(normalizedPhone);
+  if (!primaryDigits) {
+    throw new Error("Invalid WhatsApp phone number.");
+  }
+
+  const onWhatsApp = (socket as any).onWhatsApp;
+  if (typeof onWhatsApp !== "function") {
+    return `${primaryDigits}@s.whatsapp.net`;
+  }
+
+  let checked = false;
+  for (const variant of ngPhoneVariants(primaryDigits)) {
+    const candidateJid = `${variant}@s.whatsapp.net`;
+    const results = await onWhatsApp(candidateJid).catch((error: unknown) => {
+      logger.warn("whatsapp onWhatsApp check failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    });
+    if (results == null) continue;
+    checked = true;
+    const hit = Array.isArray(results) ? results[0] : results;
+    if (hit?.exists) {
+      const confirmed = typeof hit.jid === "string" && hit.jid.includes("@")
+        ? hit.jid
+        : `${normalizeDigits(hit?.jid ?? variant)}@s.whatsapp.net`;
+      return confirmed;
+    }
+  }
+
+  if (checked) {
+    throw new Error(`NOT_ON_WHATSAPP:${primaryDigits}`);
+  }
+  return `${primaryDigits}@s.whatsapp.net`;
+}
+
 type InboundAutomationDirective =
   | { kind: "confirm"; label: string; outcomeCode: string; replyNote: string }
   | {
@@ -2419,11 +2472,7 @@ export async function sendConnectedWhatsApp(
     throw new Error("WhatsApp is not connected yet.");
   }
 
-  // Build all plausible JID variants for Nigerian numbers.
-  // Nigerian prefixes 070/071/080/081/090/091 are all valid WA numbers.
-  // Try the primary JID, with a fallback that strips/adds country code.
-  const primaryDigits = normalizeDigits(normalizedPhone);
-  const jid = `${primaryDigits}@s.whatsapp.net`;
+  const jid = await resolveRegisteredWhatsAppJid(socket, normalizedPhone);
 
   // Anti-ban jitter: random 800ms – 2500ms delay before sending customer messages
   // so multiple order confirmations don't fire in a burst pattern.

@@ -111,6 +111,7 @@ type SendWhatsAppOptions = {
   ignoreTrigger?: boolean;
   ignoreSchedule?: boolean;
   ignoreRateLimit?: boolean;
+  throwOnFailure?: boolean;
 };
 
 type AssignedRepContact = {
@@ -852,7 +853,7 @@ async function queueOrSendWhatsApp(
       next_retry_at: retryable ? computeRetryAt(1) : null
     });
     logger.error("whatsapp send failed", { orgId, trigger, to: normalizedPhone, error: message });
-    if (options.ignoreEnabled) throw error;
+    if (options.ignoreEnabled || options.throwOnFailure) throw error;
     return null;
   }
 }
@@ -1501,7 +1502,7 @@ async function customerAlreadyMessagedToday(
 export async function sendOrderNewCustomerWhatsApp(
   orgId: string,
   order: OrderEventPayload,
-  options: { ignoreCustomerDedupe?: boolean } = {}
+  options: { ignoreCustomerDedupe?: boolean; throwOnFailure?: boolean } = {}
 ): Promise<QueueOrSendWhatsAppResult | null> {
   const settings = await loadSettings(orgId);
   if (!isConnected(settings)) return null;
@@ -1533,7 +1534,12 @@ export async function sendOrderNewCustomerWhatsApp(
       state: order.state ?? ""
     },
     targetPhone,
-    { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined }
+    {
+      orderId: order.id,
+      audience: "customer",
+      recipientName: order.customer ?? undefined,
+      throwOnFailure: options.throwOnFailure
+    }
     // No media on first message — avoid spam filter
   );
 }

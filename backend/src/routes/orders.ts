@@ -2813,7 +2813,7 @@ router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, r
       state: (order as any).state ?? null,
       productImageUrl,
       productVideoUrl
-    }, { ignoreCustomerDedupe: true });
+    }, { ignoreCustomerDedupe: true, throwOnFailure: true });
     if (!result) {
       res.status(409).json({
         error: "WhatsApp confirmation was not sent. Check that WhatsApp automation is connected, enabled, and the customer order_new trigger is on."
