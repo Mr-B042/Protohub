@@ -9658,6 +9658,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     customerName: string;
     normalUrl: string;
     businessUrl: string | null;
+    // For org-account direct send
+    rawPhone?: string | null;
+    rawMessage?: string | null;
+    linkedOrderId?: string | null;
+    orgSending?: boolean;
   }>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [agentView, setAgentView] = useState<"list" | "detail">("list");
@@ -22052,11 +22057,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const openWhatsAppPicker = ({
     phone,
     message,
-    customerName
+    customerName,
+    linkedOrderId
   }: {
     phone: string | null | undefined;
     message: string;
     customerName: string;
+    linkedOrderId?: string | null;
   }) => {
     const { normalUrl, businessUrl } = buildWhatsAppTargets(phone, message);
     const name = customerName || "this contact";
@@ -22065,7 +22072,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast(`No valid WhatsApp number${raw ? ` (${raw})` : ""} for ${name}.`);
       return;
     }
-    setWhatsAppPicker({ customerName: name, normalUrl, businessUrl });
+    setWhatsAppPicker({ customerName: name, normalUrl, businessUrl, rawPhone: phone ?? null, rawMessage: message, linkedOrderId: linkedOrderId ?? null });
   };
   const openWhatsAppSharePicker = (message: string, label: string) => {
     const { normalUrl, businessUrl } = buildWhatsAppShareTargets(message);
@@ -22080,7 +22087,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     openWhatsAppPicker({
       phone: order.whatsapp || order.phone,
       message: buildOrderWhatsAppMessage(order),
-      customerName: order.customer || `order ${order.id}`
+      customerName: order.customer || `order ${order.id}`,
+      linkedOrderId: order.id
     });
   };
   const openWhatsAppDispatchForOrder = async (order: TrackedOrder) => {
@@ -54762,6 +54770,42 @@ ${waybillLineItems(w).length > 1
               </button>
             </div>
             <div className="space-y-3 px-5 py-4">
+              {/* Send via org account — shown when org WA is connected and phone is available */}
+              {whatsAppPicker.rawPhone && whatsappStatus(waSettings) === "connected" && (
+                <button
+                  type="button"
+                  disabled={Boolean(whatsAppPicker.orgSending)}
+                  className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border-2 border-[#25D366] bg-[#25D366]/8 px-4 py-3 text-left text-sm font-bold text-gray-900 transition-colors hover:bg-[#25D366]/15 disabled:opacity-60"
+                  onClick={async () => {
+                    const { rawPhone, rawMessage, linkedOrderId, customerName } = whatsAppPicker;
+                    if (!rawPhone || !rawMessage) return;
+                    setWhatsAppPicker(prev => prev ? { ...prev, orgSending: true } : prev);
+                    try {
+                      await whatsappConversationsApi.send(rawPhone, rawMessage, linkedOrderId ?? null);
+                      setWhatsAppPicker(null);
+                      showToast(`Message sent to ${customerName} via company account.`);
+                      // Refresh conversation list
+                      whatsappConversationsApi.list(60).then(r => setWaConversations(r.conversations ?? [])).catch(() => {});
+                    } catch (err: any) {
+                      setWhatsAppPicker(prev => prev ? { ...prev, orgSending: false } : prev);
+                      showToast(`Send failed: ${err?.message ?? "please retry"}.`);
+                    }
+                  }}
+                >
+                  <span className="inline-flex items-center gap-3">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#25D366]/15 text-[#25D366]">
+                      <Zap className="h-4 w-4" />
+                    </span>
+                    <span>
+                      <span className="block font-black text-gray-900">Send via company account</span>
+                      <span className="block text-xs font-medium text-gray-500">Fires directly from the org WhatsApp — logged in inbox, visible to Owner & Admin. Rep never leaves the app.</span>
+                    </span>
+                  </span>
+                  {whatsAppPicker.orgSending
+                    ? <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-[#25D366]" />
+                    : <CheckCircle2 className="h-4 w-4 shrink-0 text-[#25D366]" />}
+                </button>
+              )}
               <button
                 type="button"
                 className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/15"
@@ -54805,9 +54849,11 @@ ${waybillLineItems(w).length > 1
             </div>
             <div className="border-t border-gray-100 px-5 py-3 dark:border-slate-800/80">
               <p className="m-0 text-xs text-gray-500 dark:text-slate-400">
-                {whatsAppPicker.businessUrl
-                  ? "If the chosen app isn't installed, it falls back to opening WhatsApp."
-                  : "WhatsApp Business has no desktop app — this opens WhatsApp Web."}
+                {whatsappStatus(waSettings) === "connected"
+                  ? "Company account option sends directly — no personal phone needed."
+                  : whatsAppPicker.businessUrl
+                    ? "If the chosen app isn't installed, it falls back to opening WhatsApp."
+                    : "WhatsApp Business has no desktop app — this opens WhatsApp Web."}
               </p>
             </div>
           </section>
