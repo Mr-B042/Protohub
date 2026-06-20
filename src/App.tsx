@@ -2978,6 +2978,17 @@ const formatDateOnly = (value?: string | Date | null) => {
     return d.toLocaleDateString();
   }
 };
+// Normalize Nigerian phone numbers to 234XXXXXXXXXX (WhatsApp format) on the frontend.
+const normalizeNgPhoneFe = (phone: string): string => {
+  const d = phone.replace(/\D/g, "");
+  if (!d) return d;
+  if (d.startsWith("234") && d.length >= 13) return d;
+  if (d.startsWith("0") && d.length === 11) return `234${d.slice(1)}`;
+  if (!d.startsWith("0") && d.length === 10) return `234${d}`;
+  if (d.length >= 11) return d;
+  return d;
+};
+
 const formatMoment = (value?: string | Date | null) => {
   if (!value) return "";
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -7273,10 +7284,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waConversations, setWaConversations] = useState<any[]>([]);
   const [waConvsLoading, setWaConvsLoading] = useState(false);
   const [waActivePhone, setWaActivePhone] = useState<string | null>(null);
+  const [waActiveFallbackPhone, setWaActiveFallbackPhone] = useState<string | null>(null);
   const [waThread, setWaThread] = useState<{ messages: any[]; linkedOrder: any | null; unreadCount: number } | null>(null);
   const [waThreadLoading, setWaThreadLoading] = useState(false);
   const [waReplyDraft, setWaReplyDraft] = useState("");
   const [waReplySending, setWaReplySending] = useState(false);
+  const [waNotOnWhatsApp, setWaNotOnWhatsApp] = useState<{ tried: string; fallback: string | null } | null>(null);
   const waThreadBottomRef = useRef<HTMLDivElement | null>(null);
   const waUnreadDividerRef = useRef<HTMLDivElement | null>(null);
   const waInboxSectionRef = useRef<HTMLElement | null>(null);
@@ -8906,14 +8919,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setWaThread(prev => prev ? { ...prev, messages: [...prev.messages, optimistic] } : prev);
     setWaReplyDraft("");
     try {
-      await whatsappConversationsApi.send(waActivePhone, body, linkedOrderId);
+      const result = await whatsappConversationsApi.send(waActivePhone, body, linkedOrderId, waActiveFallbackPhone);
+      // If backend used the fallback number, switch active thread to that number
+      if (result.usedFallback && result.confirmedPhone && result.confirmedPhone !== waActivePhone) {
+        setWaActivePhone(result.confirmedPhone);
+        setWaActiveFallbackPhone(null);
+        showToast(`Primary number not on WhatsApp — sent to alternate number instead.`);
+      }
       // Refresh thread
-      const fresh = await whatsappConversationsApi.thread(waActivePhone);
+      const fresh = await whatsappConversationsApi.thread(result.confirmedPhone ?? waActivePhone);
       setWaThread(fresh);
     } catch (err: any) {
-      showToast(`Send failed: ${err?.message ?? "please retry"}.`);
       setWaThread(prev => prev ? { ...prev, messages: prev.messages.filter(m => m.id !== optimistic.id) } : prev);
       setWaReplyDraft(body);
+      // Show proper popup for WhatsApp registration failure
+      if (err?.status === 422 || err?.message?.includes("NOT_ON_WHATSAPP") || err?.message?.includes("not registered")) {
+        setWaNotOnWhatsApp({ tried: waActivePhone, fallback: waActiveFallbackPhone });
+      } else {
+        showToast(`Send failed: ${err?.message ?? "please retry"}.`);
+      }
     } finally {
       setWaReplySending(false);
     }
@@ -22089,12 +22113,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const message = buildOrderWhatsAppMessage(order);
     // When org account is connected: go straight to the in-app chat inbox.
     if (whatsappStatus(waSettings) === "connected" && phone) {
-      const normalizedPhone = phone.replace(/\D/g, "");
+      const normalizedPhone = normalizeNgPhoneFe(phone);
       if (normalizedPhone) {
+        // Store the other number as fallback (whatsapp → phone or vice-versa)
+        const altPhone = (phone === (order.whatsapp || order.phone) ? order.phone : order.whatsapp) ?? null;
+        const normalizedAlt = altPhone ? normalizeNgPhoneFe(altPhone) : null;
+        const fallback = normalizedAlt && normalizedAlt !== normalizedPhone ? normalizedAlt : null;
         setActivePage("WhatsApp");
         setWaActivePhone(normalizedPhone);
+        setWaActiveFallbackPhone(fallback);
         setWaReplyDraft(message);
-        // Ensure conversation list is loaded so the left panel isn't empty
         if (waConversations.length === 0) {
           whatsappConversationsApi.list(60).then(r => setWaConversations(r.conversations ?? [])).catch(() => {});
         }
@@ -22174,10 +22202,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const phone = cart.whatsapp || cart.phone;
     const message = buildCartWhatsAppMessage(cart);
     if (whatsappStatus(waSettings) === "connected" && phone) {
-      const normalizedPhone = phone.replace(/\D/g, "");
+      const normalizedPhone = normalizeNgPhoneFe(phone);
+      const altPhone = cart.phone !== phone ? cart.phone : (cart.whatsapp !== phone ? cart.whatsapp : null);
+      const fallback = altPhone ? normalizeNgPhoneFe(altPhone) : null;
       if (normalizedPhone) {
         setActivePage("WhatsApp");
         setWaActivePhone(normalizedPhone);
+        setWaActiveFallbackPhone(fallback && fallback !== normalizedPhone ? fallback : null);
         setWaReplyDraft(message);
         setTimeout(() => waInboxSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
         return;
@@ -49737,6 +49768,31 @@ ${waybillLineItems(w).length > 1
           ) : activePage === "WhatsApp" ? (
             <div className="mx-auto max-w-6xl space-y-4 px-2 sm:px-0 sm:space-y-6">
               {/* WhatsApp connected success popup */}
+              {/* Not-on-WhatsApp error popup */}
+              {waNotOnWhatsApp && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setWaNotOnWhatsApp(null)}>
+                  <div className="mx-4 w-full max-w-sm rounded-3xl bg-white p-7 shadow-2xl" onClick={e => e.stopPropagation()}>
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-rose-100">
+                      <PhoneOff className="h-8 w-8 text-rose-500" />
+                    </div>
+                    <h2 className="mt-0 mb-2 text-center text-xl font-black text-gray-900">Number not on WhatsApp</h2>
+                    <p className="m-0 text-center text-sm text-gray-600">
+                      <span className="font-bold">+{waNotOnWhatsApp.tried}</span> is not registered on WhatsApp.
+                      {waNotOnWhatsApp.fallback && (
+                        <> The alternate number <span className="font-bold">+{waNotOnWhatsApp.fallback}</span> was also checked and is not on WhatsApp.</>
+                      )}
+                    </p>
+                    <p className="m-0 mt-3 text-center text-sm text-gray-500">Try calling the customer directly or update their WhatsApp number in the order.</p>
+                    <button
+                      className="!min-h-0 mt-5 w-full rounded-xl bg-gray-900 px-5 py-3 text-sm font-black text-white hover:bg-gray-800"
+                      onClick={() => setWaNotOnWhatsApp(null)}
+                    >
+                      OK, got it
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {waJustConnected && (
                 <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setWaJustConnected(null)}>
                   <div className="mx-4 w-full max-w-sm rounded-3xl bg-white p-8 shadow-2xl text-center" onClick={(e) => e.stopPropagation()}>

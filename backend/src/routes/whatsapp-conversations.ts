@@ -2,12 +2,24 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
-import { sendConnectedWhatsApp } from "../lib/whatsapp-runtime.js";
+import { sendConnectedWhatsApp, ensureWhatsAppReady } from "../lib/whatsapp-runtime.js";
 
 const router = Router();
 router.use(requireAuth);
 
 const normalizeDigits = (v: string) => v.replace(/\D/g, "");
+
+// Normalize Nigerian phone numbers to WhatsApp format (234XXXXXXXXXX).
+// Handles: 0812..., 812..., +234812..., 234812... all → 234812...
+function normalizeNgPhone(phone: string): string {
+  const d = phone.replace(/\D/g, "");
+  if (!d) return d;
+  if (d.startsWith("234") && d.length >= 13) return d;
+  if (d.startsWith("0") && d.length === 11) return `234${d.slice(1)}`;
+  if (!d.startsWith("0") && d.length === 10) return `234${d}`;
+  if (d.length >= 11) return d; // other international
+  return d;
+}
 
 // ── GET /api/whatsapp/conversations ─────────────────────────────────────────
 // List conversations grouped by customer phone.
@@ -104,7 +116,7 @@ router.get("/:phone", async (req, res) => {
   const orgId = req.user!.orgId;
   const role = req.user!.effectiveUserRole ?? req.user!.role;
   const userId = req.user!.effectiveUserId ?? req.user!.id;
-  const normalizedPhone = normalizeDigits(req.params["phone"] ?? "");
+  const normalizedPhone = normalizeNgPhone(req.params["phone"] ?? "");
   if (!normalizedPhone) { res.status(400).json({ error: "Invalid phone." }); return; }
 
   try {
@@ -170,14 +182,32 @@ router.get("/:phone", async (req, res) => {
 // Rep sends a message via the org automation account.
 const SendSchema = z.object({
   body: z.string().trim().min(1).max(4096),
-  linkedOrderId: z.string().nullable().optional()
+  linkedOrderId: z.string().nullable().optional(),
+  fallbackPhone: z.string().nullable().optional() // alternate number to try if primary isn't on WA
 });
+
+// Check if a normalized phone is registered on WhatsApp via the live socket.
+// Returns the confirmed JID digits if registered, null otherwise.
+async function checkOnWhatsApp(orgId: string, normalizedPhone: string): Promise<string | null> {
+  try {
+    const socket = await ensureWhatsAppReady(orgId);
+    if (!socket) return null;
+    const jid = `${normalizedPhone}@s.whatsapp.net`;
+    const results = await (socket as any).onWhatsApp(jid);
+    const hit = Array.isArray(results) ? results[0] : results;
+    if (hit?.exists) return normalizeDigits(hit.jid ?? normalizedPhone);
+    return null;
+  } catch {
+    // If the check itself errors, optimistically allow the send to proceed
+    return normalizedPhone;
+  }
+}
 
 router.post("/:phone/send", async (req, res) => {
   const orgId = req.user!.orgId;
   const role = req.user!.effectiveUserRole ?? req.user!.role;
   const userId = req.user!.effectiveUserId ?? req.user!.id;
-  const normalizedPhone = normalizeDigits(req.params["phone"] ?? "");
+  const normalizedPhone = normalizeNgPhone(req.params["phone"] ?? "");
   if (!normalizedPhone) { res.status(400).json({ error: "Invalid phone." }); return; }
 
   const parsed = SendSchema.safeParse(req.body);
@@ -193,8 +223,29 @@ router.post("/:phone/send", async (req, res) => {
   }
 
   try {
-    // Send via org Baileys socket
-    await sendConnectedWhatsApp(orgId, normalizedPhone, parsed.data.body);
+    // Validate the number is on WhatsApp; try fallback if provided.
+    let confirmedPhone = await checkOnWhatsApp(orgId, normalizedPhone);
+    let usedFallback = false;
+
+    if (!confirmedPhone) {
+      const fallback = normalizeNgPhone(parsed.data.fallbackPhone ?? "");
+      if (fallback && fallback !== normalizedPhone) {
+        confirmedPhone = await checkOnWhatsApp(orgId, fallback);
+        if (confirmedPhone) usedFallback = true;
+      }
+      if (!confirmedPhone) {
+        res.status(422).json({
+          error: "NOT_ON_WHATSAPP",
+          message: "Neither number is registered on WhatsApp. The customer cannot be reached via WhatsApp.",
+          triedPhone: normalizedPhone,
+          triedFallback: normalizeDigits(parsed.data.fallbackPhone ?? "") || null
+        });
+        return;
+      }
+    }
+
+    // Send via org Baileys socket using the confirmed number
+    await sendConnectedWhatsApp(orgId, confirmedPhone, parsed.data.body);
 
     // Log as outbound in the inbox table
     const now = new Date().toISOString();
@@ -214,7 +265,7 @@ router.post("/:phone/send", async (req, res) => {
         received_at: now,
         sent_at: now,
         read_at: now, // outbound is always "read"
-        metadata: { sentViaInbox: true }
+        metadata: { sentViaInbox: true, usedFallback, confirmedPhone }
       })
       .select("id")
       .single();
@@ -223,7 +274,7 @@ router.post("/:phone/send", async (req, res) => {
       res.status(500).json({ error: insertErr.message }); return;
     }
 
-    res.json({ ok: true, id: inserted?.id });
+    res.json({ ok: true, id: inserted?.id, confirmedPhone, usedFallback });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? "Could not send message." });
   }
@@ -232,7 +283,7 @@ router.post("/:phone/send", async (req, res) => {
 // ── PATCH /api/whatsapp/conversations/:phone/read ────────────────────────────
 router.patch("/:phone/read", async (req, res) => {
   const orgId = req.user!.orgId;
-  const normalizedPhone = normalizeDigits(req.params["phone"] ?? "");
+  const normalizedPhone = normalizeNgPhone(req.params["phone"] ?? "");
   await supabase.from("whatsapp_inbox_messages")
     .update({ read_at: new Date().toISOString() })
     .eq("org_id", orgId)
