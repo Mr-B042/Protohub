@@ -112,7 +112,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, whatsappConversationsApi, ordersWhatsAppResendApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi,
   setApiSpyUserId
 } from "./lib/api";
 import {
@@ -7282,19 +7282,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waUserGroupsLoading, setWaUserGroupsLoading] = useState(false);
   const [waJustConnected, setWaJustConnected] = useState<{ phone: string; name: string } | null>(null);
   const waPrevConnectedRef = useRef<boolean>(false);
-  // Inbox / conversations
-  const [waConversations, setWaConversations] = useState<any[]>([]);
-  const [waConvsLoading, setWaConvsLoading] = useState(false);
-  const [waActivePhone, setWaActivePhone] = useState<string | null>(null);
-  const [waActiveFallbackPhone, setWaActiveFallbackPhone] = useState<string | null>(null);
-  const [waThread, setWaThread] = useState<{ messages: any[]; linkedOrder: any | null; unreadCount: number } | null>(null);
-  const [waThreadLoading, setWaThreadLoading] = useState(false);
-  const [waReplyDraft, setWaReplyDraft] = useState("");
-  const [waReplySending, setWaReplySending] = useState(false);
-  const [waNotOnWhatsApp, setWaNotOnWhatsApp] = useState<{ tried: string; fallback: string | null } | null>(null);
-  const waThreadBottomRef = useRef<HTMLDivElement | null>(null);
-  const waUnreadDividerRef = useRef<HTMLDivElement | null>(null);
-  const waInboxSectionRef = useRef<HTMLElement | null>(null);
   const [waDestinations, setWaDestinations] = useState<Record<string, any>[]>([]);
   const [waDestinationsLoading, setWaDestinationsLoading] = useState(false);
   const [waDestinationSaving, setWaDestinationSaving] = useState(false);
@@ -7991,16 +7978,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const isSpying = realRole === "Owner" && Boolean(spiedUser);
 
   // Keep the API module in sync so every request carries X-Spy-User-Id when spying.
-  // Also flush + immediately reload conversations so role-filtered data replaces cached data.
   useEffect(() => {
     setApiSpyUserId(isSpying && spiedUser?.id ? spiedUser.id : null);
-    setWaConversations([]);
-    setWaActivePhone(null);
-    setWaThread(null);
-    // Immediately re-fetch with the new spy context (don't wait for the page-level effect)
-    whatsappConversationsApi.list(60)
-      .then(r => setWaConversations(r.conversations ?? []))
-      .catch(() => {});
   }, [isSpying, spiedUser?.id]);
 
   const currentManagedUser = isSpying ? spiedUser : realManagedUser;
@@ -8869,108 +8848,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setWaSettingsLoading(true);
     whatsappSettingsApi.get().then((s) => setWaSettings(s)).catch(() => {}).finally(() => setWaSettingsLoading(false));
   };
-  // ── WhatsApp Inbox ──────────────────────────────────────────
-  const canUseInbox = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager" || currentRole === "Sales Rep";
-
-  // Load conversation list only when on the WhatsApp page (not on every mount).
-  // When navigating from an order button the list is loaded inline at that point.
-  useEffect(() => {
-    if (activePage !== "WhatsApp" || !canUseInbox) return;
-    let cancelled = false;
-    setWaConvsLoading(true);
-    whatsappConversationsApi.list(60).then(r => { if (!cancelled) setWaConversations(r.conversations ?? []); }).catch(() => {}).finally(() => { if (!cancelled) setWaConvsLoading(false); });
-    return () => { cancelled = true; };
-  }, [activePage, canUseInbox, currentRole, authUser?.id, isSpying, spiedUser?.id]);
-
-  // Poll conversation list every 8s while on WhatsApp page
-  useEffect(() => {
-    if (activePage !== "WhatsApp" || !canUseInbox) return;
-    const t = setInterval(() => {
-      whatsappConversationsApi.list(60).then(r => setWaConversations(r.conversations ?? [])).catch(() => {});
-    }, 8000);
-    return () => clearInterval(t);
-  }, [activePage, canUseInbox]);
-
-  // Load thread when active phone changes
-  useEffect(() => {
-    if (!waActivePhone) { setWaThread(null); waThreadPrevLengthRef.current = 0; return; }
-    waThreadPrevLengthRef.current = 0; // reset so divider scroll fires on new conversation
-    let cancelled = false;
-    setWaThreadLoading(true);
-    whatsappConversationsApi.thread(waActivePhone).then(r => {
-      if (!cancelled) {
-        setWaThread(r);
-        // Mark read and update conversation list unread count
-        setWaConversations(prev => prev.map(c => c.normalizedPhone === waActivePhone ? { ...c, unreadCount: 0 } : c));
-      }
-    }).catch(() => {}).finally(() => { if (!cancelled) setWaThreadLoading(false); });
-    return () => { cancelled = true; };
-  }, [waActivePhone]);
-
-  // Poll active thread every 4s
-  useEffect(() => {
-    if (!waActivePhone) return;
-    const t = setInterval(() => {
-      whatsappConversationsApi.thread(waActivePhone).then(r => {
-        setWaThread(prev => {
-          if (!prev || r.messages.length !== prev.messages.length) return r;
-          return prev;
-        });
-      }).catch(() => {});
-    }, 4000);
-    return () => clearInterval(t);
-  }, [waActivePhone]);
-
-  // On first thread load: scroll to the unread divider; on new messages: scroll to bottom
-  const waThreadPrevLengthRef = useRef(0);
-  useEffect(() => {
-    if (!waThread) return;
-    const isFirstLoad = waThreadPrevLengthRef.current === 0;
-    waThreadPrevLengthRef.current = waThread.messages.length;
-    if (isFirstLoad && waThread.unreadCount > 0) {
-      setTimeout(() => waUnreadDividerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
-    } else {
-      waThreadBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [waThread?.messages.length]);
-
-  const waTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const waSendReply = async () => {
-    if (!waActivePhone || !waReplyDraft.trim() || waReplySending) return;
-    const body = waReplyDraft.trim();
-    const linkedOrderId = waThread?.linkedOrder?.id ?? null;
-    setWaReplySending(true);
-    // Optimistic
-    const optimistic = { id: `opt-${Date.now()}`, direction: "outbound", body, sent_by_name: authUser?.name ?? "Me", sent_at: new Date().toISOString(), received_at: new Date().toISOString(), message_type: "text" };
-    setWaThread(prev => prev ? { ...prev, messages: [...prev.messages, optimistic] } : prev);
-    setWaReplyDraft("");
-    // Reset textarea height after clearing
-    if (waTextareaRef.current) { waTextareaRef.current.style.height = "56px"; }
-    try {
-      const result = await whatsappConversationsApi.send(waActivePhone, body, linkedOrderId, waActiveFallbackPhone);
-      // If backend used the fallback number, switch active thread to that number
-      if (result.usedFallback && result.confirmedPhone && result.confirmedPhone !== waActivePhone) {
-        setWaActivePhone(result.confirmedPhone);
-        setWaActiveFallbackPhone(null);
-        showToast(`Primary number not on WhatsApp — sent to alternate number instead.`);
-      }
-      // Refresh thread
-      const fresh = await whatsappConversationsApi.thread(result.confirmedPhone ?? waActivePhone);
-      setWaThread(fresh);
-    } catch (err: any) {
-      setWaThread(prev => prev ? { ...prev, messages: prev.messages.filter(m => m.id !== optimistic.id) } : prev);
-      setWaReplyDraft(body);
-      // Show proper popup for WhatsApp registration failure
-      if (err?.status === 422 || err?.message?.includes("NOT_ON_WHATSAPP") || err?.message?.includes("not registered")) {
-        setWaNotOnWhatsApp({ tried: waActivePhone, fallback: waActiveFallbackPhone });
-      } else {
-        showToast(`Send failed: ${err?.message ?? "please retry"}.`);
-      }
-    } finally {
-      setWaReplySending(false);
-    }
-  };
-
   const waToggleTrigger = async (trigger: string, value: boolean) => {
     if (!waSettings) return;
     const current = waSettings.triggers ?? {};
@@ -9713,11 +9590,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     customerName: string;
     normalUrl: string;
     businessUrl: string | null;
-    // For org-account direct send
-    rawPhone?: string | null;
-    rawMessage?: string | null;
-    linkedOrderId?: string | null;
-    orgSending?: boolean;
   }>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [agentView, setAgentView] = useState<"list" | "detail">("list");
@@ -22113,7 +21985,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     phone,
     message,
     customerName,
-    linkedOrderId
+    linkedOrderId: _linkedOrderId
   }: {
     phone: string | null | undefined;
     message: string;
@@ -22127,7 +21999,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast(`No valid WhatsApp number${raw ? ` (${raw})` : ""} for ${name}.`);
       return;
     }
-    setWhatsAppPicker({ customerName: name, normalUrl, businessUrl, rawPhone: phone ?? null, rawMessage: message, linkedOrderId: linkedOrderId ?? null });
+    setWhatsAppPicker({ customerName: name, normalUrl, businessUrl });
   };
   const openWhatsAppSharePicker = (message: string, label: string) => {
     const { normalUrl, businessUrl } = buildWhatsAppShareTargets(message);
@@ -22139,31 +22011,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const openWhatsAppForOrder = (order: TrackedOrder) => {
-    const phone = order.whatsapp || order.phone;
-    const message = buildOrderWhatsAppMessage(order);
-    // When org account is connected: go straight to the in-app chat inbox.
-    if (whatsappStatus(waSettings) === "connected" && phone) {
-      const normalizedPhone = normalizeNgPhoneFe(phone);
-      if (normalizedPhone) {
-        // Store the other number as fallback (whatsapp → phone or vice-versa)
-        const altPhone = (phone === (order.whatsapp || order.phone) ? order.phone : order.whatsapp) ?? null;
-        const normalizedAlt = altPhone ? normalizeNgPhoneFe(altPhone) : null;
-        const fallback = normalizedAlt && normalizedAlt !== normalizedPhone ? normalizedAlt : null;
-        setActivePage("WhatsApp");
-        setWaActivePhone(normalizedPhone);
-        setWaActiveFallbackPhone(fallback);
-        setWaReplyDraft(message);
-        if (waConversations.length === 0) {
-          whatsappConversationsApi.list(60).then(r => setWaConversations(r.conversations ?? [])).catch(() => {});
-        }
-        setTimeout(() => waInboxSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
-        return;
-      }
-    }
-    // Fallback: show the picker modal (personal WA / no org connection)
     openWhatsAppPicker({
-      phone,
-      message,
+      phone: order.whatsapp || order.phone,
+      message: buildOrderWhatsAppMessage(order),
       customerName: order.customer || `order ${order.id}`,
       linkedOrderId: order.id
     });
@@ -22229,24 +22079,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const openWhatsAppForCart = (cart: AbandonedCartRecord) => {
-    const phone = cart.whatsapp || cart.phone;
-    const message = buildCartWhatsAppMessage(cart);
-    if (whatsappStatus(waSettings) === "connected" && phone) {
-      const normalizedPhone = normalizeNgPhoneFe(phone);
-      const altPhone = cart.phone !== phone ? cart.phone : (cart.whatsapp !== phone ? cart.whatsapp : null);
-      const fallback = altPhone ? normalizeNgPhoneFe(altPhone) : null;
-      if (normalizedPhone) {
-        setActivePage("WhatsApp");
-        setWaActivePhone(normalizedPhone);
-        setWaActiveFallbackPhone(fallback && fallback !== normalizedPhone ? fallback : null);
-        setWaReplyDraft(message);
-        setTimeout(() => waInboxSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
-        return;
-      }
-    }
     openWhatsAppPicker({
-      phone,
-      message,
+      phone: cart.whatsapp || cart.phone,
+      message: buildCartWhatsAppMessage(cart),
       customerName: cart.customer || "this customer"
     });
   };
@@ -49799,30 +49634,6 @@ ${waybillLineItems(w).length > 1
           ) : activePage === "WhatsApp" ? (
             <div className="mx-auto max-w-6xl space-y-3 sm:space-y-5 px-0">
               {/* WhatsApp connected success popup */}
-              {/* Not-on-WhatsApp error popup */}
-              {waNotOnWhatsApp && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setWaNotOnWhatsApp(null)}>
-                  <div className="mx-4 w-full max-w-sm rounded-3xl bg-white p-7 shadow-2xl" onClick={e => e.stopPropagation()}>
-                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-rose-100">
-                      <PhoneOff className="h-8 w-8 text-rose-500" />
-                    </div>
-                    <h2 className="mt-0 mb-2 text-center text-xl font-black text-gray-900">Number not on WhatsApp</h2>
-                    <p className="m-0 text-center text-sm text-gray-600">
-                      <span className="font-bold">+{waNotOnWhatsApp.tried}</span> is not registered on WhatsApp.
-                      {waNotOnWhatsApp.fallback && (
-                        <> The alternate number <span className="font-bold">+{waNotOnWhatsApp.fallback}</span> was also checked and is not on WhatsApp.</>
-                      )}
-                    </p>
-                    <p className="m-0 mt-3 text-center text-sm text-gray-500">Try calling the customer directly or update their WhatsApp number in the order.</p>
-                    <button
-                      className="!min-h-0 mt-5 w-full rounded-xl bg-gray-900 px-5 py-3 text-sm font-black text-white hover:bg-gray-800"
-                      onClick={() => setWaNotOnWhatsApp(null)}
-                    >
-                      OK, got it
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {waJustConnected && (
                 <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setWaJustConnected(null)}>
@@ -50107,234 +49918,6 @@ ${waybillLineItems(w).length > 1
                   </section>
                 );
               })()}
-
-              {/* ── WhatsApp Inbox ── visible to Owner/Admin/Manager/Sales Rep ── */}
-              {canUseInbox && (
-                <section ref={waInboxSectionRef} className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                  {/* Header */}
-                  <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
-                    <div className="flex items-center gap-3">
-                      <span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-[#25D366]/10 text-[#25D366]">
-                        <MessageCircle className="h-4 w-4" />
-                        {waConversations.reduce((s, c) => s + (c.unreadCount ?? 0), 0) > 0 && (
-                          <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-black text-white">
-                            {Math.min(99, waConversations.reduce((s, c) => s + (c.unreadCount ?? 0), 0))}
-                          </span>
-                        )}
-                      </span>
-                      <div>
-                        <p className="m-0 text-sm font-black text-gray-900">Customer Inbox</p>
-                        <p className="m-0 text-xs text-gray-500">{waConversations.length} conversation{waConversations.length !== 1 ? "s" : ""} · replies sent from org account</p>
-                      </div>
-                    </div>
-                    <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => { setWaConvsLoading(true); whatsappConversationsApi.list(60).then(r => setWaConversations(r.conversations ?? [])).catch(() => {}).finally(() => setWaConvsLoading(false)); }} disabled={waConvsLoading}>
-                      <RefreshCw className={`h-3.5 w-3.5 ${waConvsLoading ? "animate-spin" : ""}`} />
-                    </button>
-                  </div>
-
-                  {/* Mobile: show list OR thread; Desktop: side-by-side */}
-                  <div className="flex lg:grid lg:grid-cols-[280px_1fr]" style={{ height: "min(600px, 80dvh)", overflow: "hidden" }}>
-
-                    {/* Conversation list — full screen on mobile when no thread open */}
-                    <div className={`flex-col overflow-y-auto border-r border-gray-100 w-full lg:w-auto h-full ${waActivePhone ? "hidden lg:flex" : "flex"}`}>
-                      {waConvsLoading && waConversations.length === 0 ? (
-                        <div className="flex items-center justify-center flex-1 p-8 text-sm text-gray-400">Loading…</div>
-                      ) : waConversations.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center flex-1 p-8 text-center">
-                          <MessageCircle className="h-8 w-8 text-gray-200 mb-2" />
-                          <p className="m-0 text-sm font-bold text-gray-400">No messages yet</p>
-                          <p className="m-0 mt-1 text-xs text-gray-400">Customers who reply to your automation messages appear here</p>
-                        </div>
-                      ) : waConversations.map((conv) => {
-                        const active = waActivePhone === conv.normalizedPhone;
-                        return (
-                          <button
-                            key={conv.normalizedPhone}
-                            type="button"
-                            onClick={() => setWaActivePhone(conv.normalizedPhone)}
-                            className={`w-full text-left px-3 py-3 border-b border-gray-100 transition-colors ${active ? "bg-[#25D366]/8 border-l-[3px] border-l-[#25D366]" : "hover:bg-gray-50"}`}
-                          >
-                            <div className="flex items-center gap-3">
-                              {/* Avatar */}
-                              <div className="shrink-0 h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-black text-sm select-none">
-                                {(conv.customerName || conv.normalizedPhone || "?").slice(0, 2).toUpperCase()}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center justify-between gap-2">
-                                  <p className={`m-0 text-sm font-black truncate ${active ? "text-[#25D366]" : "text-gray-900"}`}>
-                                    {conv.customerName || `+${conv.normalizedPhone}`}
-                                  </p>
-                                  <p className="m-0 text-[10px] text-gray-400 whitespace-nowrap shrink-0">{formatMoment(conv.lastMessageAt)}</p>
-                                </div>
-                                <div className="flex items-center justify-between gap-2 mt-0.5">
-                                  <p className={`m-0 text-xs truncate ${conv.lastDirection === "inbound" ? "text-gray-600" : "text-gray-400"}`}>
-                                    {conv.lastDirection === "outbound" && <span className="text-[#25D366]">✓ </span>}
-                                    {conv.lastMessage}
-                                  </p>
-                                  {conv.unreadCount > 0 && (
-                                    <span className="shrink-0 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] font-black text-white">{conv.unreadCount}</span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {/* Thread panel — full screen on mobile when thread open */}
-                    <div className={`flex-col w-full lg:w-auto h-full overflow-hidden ${waActivePhone ? "flex" : "hidden lg:flex"}`}>
-                      {waActivePhone ? (() => {
-                        const conv = waConversations.find(c => c.normalizedPhone === waActivePhone);
-                        const ord = waThread?.linkedOrder;
-                        return (
-                          <>
-                            {/* Thread header */}
-                            <div className="flex items-center gap-3 px-3 sm:px-4 py-3 border-b border-gray-100 bg-white shrink-0">
-                              {/* Back (mobile) */}
-                              <button type="button" className="!min-h-0 lg:hidden flex items-center justify-center h-8 w-8 rounded-full text-gray-500 hover:bg-gray-100" onClick={() => setWaActivePhone(null)}>
-                                <ChevronLeft className="h-5 w-5" />
-                              </button>
-                              {/* Avatar */}
-                              <div className="shrink-0 h-10 w-10 rounded-full bg-[#25D366]/20 flex items-center justify-center text-[#25D366] font-black text-sm select-none">
-                                {(conv?.customerName || waActivePhone || "?").slice(0, 2).toUpperCase()}
-                              </div>
-                              {/* Info */}
-                              <div className="flex-1 min-w-0">
-                                <p className="m-0 text-sm font-black text-gray-900 truncate">{conv?.customerName || `+${waActivePhone}`}</p>
-                                <p className="m-0 text-xs text-gray-500 truncate">
-                                  +{waActivePhone}
-                                  {ord && <span className="ml-2 font-bold text-[#25D366]">· Order #{ord.id} · <span className={ord.status === "Delivered" ? "text-emerald-600" : ord.status === "Failed" ? "text-rose-600" : "text-amber-600"}>{ord.status}</span></span>}
-                                </p>
-                              </div>
-                              {/* Actions */}
-                              <div className="flex items-center gap-1 shrink-0">
-                                {(conv?.senderPhone || waActivePhone) && (
-                                  <a
-                                    href={`tel:+${(conv?.senderPhone || waActivePhone || "").replace(/\D/g, "")}`}
-                                    className="!min-h-0 flex items-center justify-center h-9 w-9 rounded-full text-[#25D366] hover:bg-[#25D366]/10 transition-colors"
-                                    title="Call customer"
-                                  >
-                                    <Phone className="h-4 w-4" />
-                                  </a>
-                                )}
-                                <button type="button" className="!min-h-0 hidden lg:flex items-center justify-center h-9 w-9 rounded-full text-gray-400 hover:bg-gray-100" onClick={() => setWaActivePhone(null)}>
-                                  <X className="h-4 w-4" />
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* Messages */}
-                            <div className="overflow-y-scroll px-3 sm:px-4 py-3 space-y-1" style={{ flex: "1 1 0", minHeight: 0, background: "#f0f2f5" }}>
-                              {waThreadLoading && !waThread ? (
-                                <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
-                              ) : (() => {
-                                const msgs = waThread?.messages ?? [];
-                                const totalUnread = waThread?.unreadCount ?? 0;
-                                const dividerIdx = totalUnread > 0 ? msgs.length - totalUnread : -1;
-                                return msgs.map((msg: any, idx: number) => {
-                                  const out = msg.direction === "outbound";
-                                  const num = idx + 1;
-                                  const type = msg.message_type ?? "text";
-                                  // Delivery tick for outbound messages
-                                  const tick = out ? (
-                                    msg.status === "delivered" || msg.status === "read"
-                                      ? <span className={`text-[11px] ${msg.status === "read" ? "text-blue-300" : "text-white/50"}`}>✓✓</span>
-                                      : <span className="text-[11px] text-white/50">✓</span>
-                                  ) : null;
-                                  return (
-                                    <Fragment key={msg.id}>
-                                      {idx === dividerIdx && (
-                                        <div ref={waUnreadDividerRef} className="flex items-center gap-2 my-3">
-                                          <div className="flex-1 h-px bg-rose-300/60" />
-                                          <span className="shrink-0 rounded-full bg-rose-100 px-3 py-1 text-[11px] font-black text-rose-600 shadow-sm">
-                                            {totalUnread} unread message{totalUnread !== 1 ? "s" : ""}
-                                          </span>
-                                          <div className="flex-1 h-px bg-rose-300/60" />
-                                        </div>
-                                      )}
-                                      <div className={`flex items-end gap-1 mt-1 ${out ? "justify-end" : "justify-start"}`}>
-                                        {/* Sequence number */}
-                                        <span className="shrink-0 text-[9px] text-gray-400 mb-1 select-none">{num}</span>
-                                        {/* Bubble */}
-                                        <div className={`relative max-w-[80%] sm:max-w-[72%] px-3 py-2 shadow-sm ${
-                                          out
-                                            ? "bg-[#d9fdd3] text-gray-900 rounded-2xl rounded-br-sm"
-                                            : "bg-white text-gray-900 rounded-2xl rounded-bl-sm border border-gray-100"
-                                        }`}>
-                                          {/* Rep name on outbound */}
-                                          {out && msg.sent_by_name && (
-                                            <p className="m-0 text-[10px] font-black text-[#25D366] mb-0.5">{msg.sent_by_name}</p>
-                                          )}
-                                          {/* Customer name on inbound */}
-                                          {!out && msg.sender_name && (
-                                            <p className="m-0 text-[10px] font-black text-[#25D366] mb-0.5">{msg.sender_name}</p>
-                                          )}
-                                          {/* Media type indicator */}
-                                          {type === "audio" && <p className="m-0 text-xs text-gray-500 flex items-center gap-1 mb-1">🎵 <span>Voice message</span></p>}
-                                          {type === "image" && <p className="m-0 text-xs text-gray-500 flex items-center gap-1 mb-1">📷 <span>Photo</span></p>}
-                                          {type === "video" && <p className="m-0 text-xs text-gray-500 flex items-center gap-1 mb-1">🎥 <span>Video</span></p>}
-                                          {type === "document" && <p className="m-0 text-xs text-gray-500 flex items-center gap-1 mb-1">📄 <span>Document</span></p>}
-                                          {/* Body */}
-                                          {msg.body && <p className="m-0 text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.body}</p>}
-                                          {/* Time + ticks */}
-                                          <div className="flex items-center justify-end gap-1 mt-0.5">
-                                            <span className="text-[10px] text-gray-400">{formatMoment(msg.sent_at || msg.received_at)}</span>
-                                            {tick}
-                                          </div>
-                                        </div>
-                                      </div>
-                                    </Fragment>
-                                  );
-                                });
-                              })()}
-                              <div ref={waThreadBottomRef} />
-                            </div>
-
-                            {/* Reply bar — sticky at bottom */}
-                            {!isSpying && (
-                              <div className="shrink-0 border-t border-gray-100 px-3 sm:px-4 py-3 bg-white safe-area-inset-bottom">
-                                <div className="flex items-end gap-2">
-                                  <textarea
-                                    ref={waTextareaRef}
-                                    className="flex-1 resize-none rounded-2xl border border-gray-200 px-4 py-3 text-base sm:text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 placeholder:text-gray-400 overflow-hidden"
-                                    placeholder="Type a message…"
-                                    rows={2}
-                                    value={waReplyDraft}
-                                    onChange={(e) => {
-                                      setWaReplyDraft(e.target.value);
-                                      e.target.style.height = "auto";
-                                      e.target.style.height = Math.min(e.target.scrollHeight, 240) + "px";
-                                    }}
-                                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); waSendReply(); } }}
-                                    style={{ WebkitTextSizeAdjust: "100%", minHeight: "56px", maxHeight: "240px" }}
-                                  />
-                                  <button
-                                    type="button"
-                                    className="!min-h-0 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#25D366] text-white hover:bg-[#1ebe57] disabled:opacity-40 transition-colors"
-                                    onClick={waSendReply}
-                                    disabled={!waReplyDraft.trim() || waReplySending}
-                                  >
-                                    {waReplySending ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Zap className="h-5 w-5" />}
-                                  </button>
-                                </div>
-                                <p className="m-0 mt-1.5 text-[10px] text-gray-400 hidden sm:block">Enter to send · Shift+Enter new line · Sent from org account</p>
-                              </div>
-                            )}
-                          </>
-                        );
-                      })() : (
-                        <div className="flex flex-col items-center justify-center flex-1 text-center p-8 text-gray-400">
-                          <MessageCircle className="h-10 w-10 text-gray-200 mb-3" />
-                          <p className="m-0 text-sm font-bold text-gray-400">Select a conversation</p>
-                          <p className="m-0 mt-1 text-xs">Pick a customer from the list to read and reply</p>
-                        </div>
-                      )}
-                    </div>
-
-                  </div>
-                </section>
-              )}
 
               {canUsePersonalWhatsApp ? (() => {
                 const userStatus = whatsappStatus(waUserAccount);
@@ -54994,42 +54577,6 @@ ${waybillLineItems(w).length > 1
               </button>
             </div>
             <div className="space-y-3 px-5 py-4">
-              {/* Send via org account — shown when org WA is connected and phone is available */}
-              {whatsAppPicker.rawPhone && whatsappStatus(waSettings) === "connected" && (
-                <button
-                  type="button"
-                  disabled={Boolean(whatsAppPicker.orgSending)}
-                  className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border-2 border-[#25D366] bg-[#25D366]/8 px-4 py-3 text-left text-sm font-bold text-gray-900 transition-colors hover:bg-[#25D366]/15 disabled:opacity-60"
-                  onClick={async () => {
-                    const { rawPhone, rawMessage, linkedOrderId, customerName } = whatsAppPicker;
-                    if (!rawPhone || !rawMessage) return;
-                    setWhatsAppPicker(prev => prev ? { ...prev, orgSending: true } : prev);
-                    try {
-                      await whatsappConversationsApi.send(rawPhone, rawMessage, linkedOrderId ?? null);
-                      setWhatsAppPicker(null);
-                      showToast(`Message sent to ${customerName} via company account.`);
-                      // Refresh conversation list
-                      whatsappConversationsApi.list(60).then(r => setWaConversations(r.conversations ?? [])).catch(() => {});
-                    } catch (err: any) {
-                      setWhatsAppPicker(prev => prev ? { ...prev, orgSending: false } : prev);
-                      showToast(`Send failed: ${err?.message ?? "please retry"}.`);
-                    }
-                  }}
-                >
-                  <span className="inline-flex items-center gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#25D366]/15 text-[#25D366]">
-                      <Zap className="h-4 w-4" />
-                    </span>
-                    <span>
-                      <span className="block font-black text-gray-900">Send via company account</span>
-                      <span className="block text-xs font-medium text-gray-500">Fires directly from the org WhatsApp — logged in inbox, visible to Owner & Admin. Rep never leaves the app.</span>
-                    </span>
-                  </span>
-                  {whatsAppPicker.orgSending
-                    ? <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-[#25D366]" />
-                    : <CheckCircle2 className="h-4 w-4 shrink-0 text-[#25D366]" />}
-                </button>
-              )}
               <button
                 type="button"
                 className="!min-h-0 inline-flex w-full items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/15"
@@ -55073,11 +54620,9 @@ ${waybillLineItems(w).length > 1
             </div>
             <div className="border-t border-gray-100 px-5 py-3 dark:border-slate-800/80">
               <p className="m-0 text-xs text-gray-500 dark:text-slate-400">
-                {whatsappStatus(waSettings) === "connected"
-                  ? "Company account option sends directly — no personal phone needed."
-                  : whatsAppPicker.businessUrl
-                    ? "If the chosen app isn't installed, it falls back to opening WhatsApp."
-                    : "WhatsApp Business has no desktop app — this opens WhatsApp Web."}
+                {whatsAppPicker.businessUrl
+                  ? "If the chosen app isn't installed, it falls back to opening WhatsApp."
+                  : "WhatsApp Business has no desktop app — this opens WhatsApp Web."}
               </p>
             </div>
           </section>

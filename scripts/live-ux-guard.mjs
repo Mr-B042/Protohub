@@ -23,7 +23,7 @@ const checks = [
     why: "Every WhatsApp action must keep the Normal WhatsApp / WhatsApp Business choice modal.",
     required: [
       "const [whatsAppPicker, setWhatsAppPicker]",
-      "setWhatsAppPicker({ customerName: name, normalUrl, businessUrl,",
+      "setWhatsAppPicker({ customerName: name, normalUrl, businessUrl });",
       "Normal WhatsApp",
       "WhatsApp Business"
     ]
