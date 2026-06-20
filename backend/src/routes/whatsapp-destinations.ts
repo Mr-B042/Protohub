@@ -164,12 +164,11 @@ router.get("/user/:userId", requireRole("Owner", "Admin"), async (req, res) => {
 });
 
 // GET /api/whatsapp-destinations/org/all — Owner/Admin: all org destinations
-// enriched with the owner's name and their assigned_rep's name.
-// Used by the smart dispatch picker.
+// enriched with owner name, assigned rep names, and assigned agent name.
 router.get("/org/all", requireRole("Owner", "Admin"), async (req, res) => {
   const { data, error } = await supabase
     .from("whatsapp_user_destinations")
-    .select("*, owner:users!whatsapp_user_destinations_user_id_fkey(id, name, role), rep:users!whatsapp_user_destinations_assigned_rep_id_fkey(id, name, role)")
+    .select("*, owner:users!whatsapp_user_destinations_user_id_fkey(id, name, role), agent:agents!whatsapp_user_destinations_assigned_agent_id_fkey(id, name, zone, primary_base_state)")
     .eq("org_id", req.user!.orgId)
     .eq("active", true)
     .order("is_default", { ascending: false })
@@ -181,6 +180,18 @@ router.get("/org/all", requireRole("Owner", "Admin"), async (req, res) => {
     return;
   }
   res.json({ destinations: data ?? [] });
+});
+
+// PATCH /api/whatsapp-destinations/:id/assign-agent — Owner/Admin: map to a delivery agent
+router.patch("/:id/assign-agent", requireRole("Owner", "Admin"), async (req, res) => {
+  const agentId: string | null = req.body?.agentId ?? null;
+  const { error } = await supabase
+    .from("whatsapp_user_destinations")
+    .update({ assigned_agent_id: agentId, updated_at: new Date().toISOString() })
+    .eq("id", String(req.params["id"] ?? ""))
+    .eq("org_id", req.user!.orgId);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ ok: true });
 });
 
 // PATCH /api/whatsapp-destinations/:id/assign-reps — Owner/Admin: assign multiple reps

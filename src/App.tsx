@@ -50075,46 +50075,41 @@ ${waybillLineItems(w).length > 1
                                     )}
                                   </div>
                                 </div>
-                                {/* Map reps to this group — tap a rep to assign/unassign */}
+                                {/* Map to a delivery agent — the group this courier uses */}
                                 {isOwnerOrAdmin && (() => {
-                                  const currentIds: string[] = destination.assignedRepIds ?? destination.assigned_rep_ids ?? (destination.assignedRepId ? [destination.assignedRepId] : []);
-                                  const reps = users.filter((u: any) => u.role === "Sales Rep" || u.role === "Manager");
-                                  const toggle = async (uid: string, checked: boolean) => {
-                                    const next = checked
-                                      ? [...currentIds, uid]
-                                      : currentIds.filter((id: string) => id !== uid);
-                                    try {
-                                      await whatsappDestinationsApi.assignReps(destination.id, next);
-                                      setWaDestinations(prev => prev.map(d => d.id === destination.id
-                                        ? { ...d, assignedRepIds: next, assigned_rep_ids: next, assignedRepId: next[0] ?? null }
-                                        : d));
-                                    } catch { showToast("Could not update rep assignment."); }
-                                  };
+                                  const currentAgentId: string | null = destination.assignedAgentId ?? destination.assigned_agent_id ?? null;
+                                  const currentAgent = agents.find(a => a.id === currentAgentId);
                                   return (
                                     <div className="mt-3 border-t border-gray-100 pt-3">
-                                      <p className="m-0 mb-2 text-[10px] font-black uppercase tracking-wider text-gray-400">Map to reps — tap to assign</p>
-                                      <div className="flex flex-wrap gap-2">
-                                        {reps.map((u: any) => {
-                                          const assigned = currentIds.includes(u.id);
-                                          return (
-                                            <button
-                                              key={u.id}
-                                              type="button"
-                                              onClick={() => toggle(u.id, !assigned)}
-                                              className={`!min-h-0 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-black transition-all ${
-                                                assigned
-                                                  ? "bg-[#25D366] text-white shadow-sm"
-                                                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                                              }`}
-                                            >
-                                              {assigned && <CheckCircle2 className="h-3 w-3" />}
-                                              {u.name}
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                      {currentIds.length === 0 && (
-                                        <p className="m-0 mt-1.5 text-[11px] text-amber-600 font-bold">⚠ Not mapped to any rep — won't auto-suggest in dispatch</p>
+                                      <p className="m-0 mb-2 text-[10px] font-black uppercase tracking-wider text-gray-400">Assign to agent (courier)</p>
+                                      {currentAgent && (
+                                        <div className="flex items-center gap-2 mb-2 rounded-lg bg-[#25D366]/10 px-2.5 py-1.5">
+                                          <CheckCircle2 className="h-3.5 w-3.5 text-[#25D366] shrink-0" />
+                                          <span className="text-xs font-black text-[#25D366] truncate">{currentAgent.name}</span>
+                                          <span className="text-[10px] text-gray-500 shrink-0">{currentAgent.primaryBaseState ?? currentAgent.zone}</span>
+                                        </div>
+                                      )}
+                                      <select
+                                        className="w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
+                                        value={currentAgentId ?? ""}
+                                        onChange={async (e) => {
+                                          const agentId = e.target.value || null;
+                                          try {
+                                            await whatsappDestinationsApi.assignAgent(destination.id, agentId);
+                                            setWaDestinations(prev => prev.map(d => d.id === destination.id
+                                              ? { ...d, assignedAgentId: agentId, assigned_agent_id: agentId }
+                                              : d));
+                                            showToast(agentId ? "Group assigned to agent." : "Agent assignment removed.");
+                                          } catch { showToast("Could not assign agent."); }
+                                        }}
+                                      >
+                                        <option value="">— Select courier agent —</option>
+                                        {agents.filter(a => a.id !== currentAgentId).map(a => (
+                                          <option key={a.id} value={a.id}>{a.name} · {a.primaryBaseState ?? a.zone}</option>
+                                        ))}
+                                      </select>
+                                      {!currentAgentId && (
+                                        <p className="m-0 mt-1.5 text-[11px] text-amber-600 font-bold">⚠ No agent assigned — won't auto-suggest in dispatch</p>
                                       )}
                                     </div>
                                   );
@@ -54554,61 +54549,62 @@ ${waybillLineItems(w).length > 1
                       const assignedRepId = order.assignedRepId ?? null;
                       const orderState = (order.state ?? "").toLowerCase().trim();
 
-                      const getRepIds = (d: any): string[] =>
-                        d.assignedRepIds ?? d.assigned_rep_ids ?? (d.assignedRepId ? [d.assignedRepId] : []);
+                      const getAgentId = (d: any): string | null =>
+                        d.assignedAgentId ?? d.assigned_agent_id ?? null;
 
-                      // All reps/managers — show everyone with a mapped group first, rest below
-                      const allReps = users.filter((u: any) => u.role === "Sales Rep" || u.role === "Manager");
-                      const hasMappedGroup = (uid: string) => allDests.some((d: any) => getRepIds(d).includes(uid));
+                      // Agent-first: match order's assigned courier agent
+                      const orderAgentId = (order as any).agentId ?? (order as any).agent_id ?? null;
+                      const _orderState2 = (order.state ?? "").toLowerCase().trim();
+
+                      const destForAgent = (agentId: string) =>
+                        allDests.find((d: any) => getAgentId(d) === agentId) ?? null;
 
                       const search = waDispatchSearch.toLowerCase();
-                      const filterRep = (u: any) =>
-                        !search || u.name.toLowerCase().includes(search) ||
-                        allDests.filter((d: any) => getRepIds(d).includes(u.id))
-                          .some((d: any) => d.label.toLowerCase().includes(search));
+                      const filterAgent = (a: DeliveryAgentRecord) =>
+                        !search || a.name.toLowerCase().includes(search) ||
+                        (a.primaryBaseState ?? a.zone ?? "").toLowerCase().includes(search);
 
-                      // Tier 1: assigned rep (always first regardless of group mapping)
-                      const assignedRep = assignedRepId ? allReps.find(u => u.id === assignedRepId) : null;
-                      // Tier 2: other reps WITH mapped groups (filtered by search)
-                      const mappedReps = allReps.filter((u: any) =>
-                        u.id !== assignedRepId && hasMappedGroup(u.id) && filterRep(u)
+                      // All agents that have a mapped group
+                      const agentsWithGroup = agents.filter(a => destForAgent(a.id) && filterAgent(a));
+                      const agentsWithoutGroup = agents.filter(a => !destForAgent(a.id) && filterAgent(a));
+
+                      // Assigned agent for this order (first)
+                      const assignedAgent = orderAgentId ? agents.find(a => a.id === orderAgentId) : null;
+                      // Other agents in same state
+                      const stateAgents = agentsWithGroup.filter(a =>
+                        a.id !== orderAgentId &&
+                        (a.primaryBaseState ?? a.zone ?? "").toLowerCase().includes(orderState)
                       );
-                      // Tier 3: reps with NO group mapped yet
-                      const unmappedReps = allReps.filter((u: any) =>
-                        u.id !== assignedRepId && !hasMappedGroup(u.id) && filterRep(u)
+                      // All other agents with groups
+                      const otherAgents = agentsWithGroup.filter(a =>
+                        a.id !== orderAgentId &&
+                        !stateAgents.find(s => s.id === a.id)
                       );
 
-                      // For a rep row: find their best group
-                      const destForRep = (repId: string) =>
-                        allDests.find((d: any) => getRepIds(d).includes(repId)) ?? null;
-
-                      const RepRow = ({ u, highlight }: { u: any; highlight?: boolean }) => {
-                        const dest = destForRep(u.id);
-                        const isAssigned = u.id === assignedRepId;
+                      const AgentRow = ({ a }: { a: DeliveryAgentRecord }) => {
+                        const dest = destForAgent(a.id);
+                        const isAssigned = a.id === orderAgentId;
                         const isSelected = dest && waDispatchModal.destinationId === dest.id;
-                        const noGroup = !dest;
                         return (
                           <button
                             type="button"
-                            disabled={noGroup}
+                            disabled={!dest}
                             onClick={() => dest && setWaDispatchModal(c => c ? { ...c, destinationId: dest.id } : c)}
                             className={`w-full text-left rounded-xl px-3 py-2.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                               isSelected ? "bg-[#25D366]/15 border border-[#25D366]/30" : "bg-white border border-gray-100 hover:border-[#25D366]/30 hover:bg-[#25D366]/5"
                             }`}
                           >
                             <div className="flex items-center gap-3">
-                              {/* Avatar */}
                               <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${isSelected ? "bg-[#25D366] text-white" : "bg-gray-100 text-gray-600"}`}>
-                                {u.name.slice(0, 2).toUpperCase()}
+                                {a.name.slice(0, 2).toUpperCase()}
                               </span>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <p className={`m-0 text-sm font-black ${isSelected ? "text-[#25D366]" : "text-gray-900"}`}>{u.name}</p>
+                                  <p className={`m-0 text-sm font-black truncate ${isSelected ? "text-[#25D366]" : "text-gray-900"}`}>{a.name}</p>
                                   {isAssigned && <span className="shrink-0 rounded-full bg-[#25D366]/15 px-2 py-0.5 text-[10px] font-black text-[#25D366]">ASSIGNED</span>}
+                                  <span className="shrink-0 text-[10px] text-gray-400">{a.primaryBaseState ?? a.zone}</span>
                                 </div>
-                                <p className="m-0 text-xs text-gray-400 truncate">
-                                  {noGroup ? "No group mapped yet" : dest.label}
-                                </p>
+                                <p className="m-0 text-xs text-gray-400 truncate">{dest ? dest.label : "No group mapped"}</p>
                               </div>
                               {isSelected && <CheckCircle2 className="shrink-0 h-4 w-4 text-[#25D366]" />}
                             </div>
@@ -54619,19 +54615,18 @@ ${waybillLineItems(w).length > 1
                       return (
                         <div>
                           <span className="mb-2 block text-xs font-black uppercase tracking-[0.18em] text-gray-400">
-                            Send to rep's group
+                            Send to agent's group
                           </span>
                           <div className="relative mb-2">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                             <input
                               className="w-full rounded-xl border border-gray-200 bg-gray-50 pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
-                              placeholder="Search rep name…"
+                              placeholder="Search agent name or state…"
                               value={waDispatchSearch}
                               onChange={e => setWaDispatchSearch(e.target.value)}
                             />
                           </div>
                           <div className="space-y-1.5 max-h-56 overflow-y-auto">
-                            {/* Manual override */}
                             <button
                               type="button"
                               onClick={() => setWaDispatchModal(c => c ? { ...c, destinationId: "", sendMode: "assisted" } : c)}
@@ -54640,33 +54635,34 @@ ${waybillLineItems(w).length > 1
                               Manual — pick group in WhatsApp
                             </button>
 
-                            {/* Assigned rep — always shown first */}
-                            {assignedRep && filterRep(assignedRep) && (
+                            {assignedAgent && filterAgent(assignedAgent) && (
                               <>
-                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-[#25D366]">Assigned rep</p>
-                                <RepRow u={assignedRep} />
+                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-[#25D366]">Assigned agent</p>
+                                <AgentRow a={assignedAgent} />
                               </>
                             )}
 
-                            {/* Other reps with mapped groups */}
-                            {mappedReps.length > 0 && (
+                            {stateAgents.length > 0 && (
                               <>
-                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Other reps</p>
-                                {mappedReps.map((u: any) => <RepRow key={u.id} u={u} />)}
+                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-amber-600">📍 {order.state || "Same state"} agents</p>
+                                {stateAgents.map(a => <AgentRow key={a.id} a={a} />)}
                               </>
                             )}
-
-                            {/* Reps with no group yet — greyed out */}
-                            {unmappedReps.length > 0 && (
+                            {otherAgents.length > 0 && (
                               <>
-                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-gray-300">No group mapped</p>
-                                {unmappedReps.map((u: any) => <RepRow key={u.id} u={u} />)}
+                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Other agents</p>
+                                {otherAgents.map(a => <AgentRow key={a.id} a={a} />)}
                               </>
                             )}
-
-                            {!assignedRep && mappedReps.length === 0 && unmappedReps.length === 0 && (
+                            {agentsWithoutGroup.length > 0 && (
+                              <>
+                                <p className="m-0 px-1 pt-1 text-[10px] font-black uppercase tracking-wider text-gray-300">No group mapped yet</p>
+                                {agentsWithoutGroup.map(a => <AgentRow key={a.id} a={a} />)}
+                              </>
+                            )}
+                            {!assignedAgent && agentsWithGroup.length === 0 && agentsWithoutGroup.length === 0 && (
                               <p className="m-0 p-4 text-center text-sm text-gray-400">
-                                {search ? `No reps match "${waDispatchSearch}"` : "No reps found."}
+                                {search ? `No agents match "${waDispatchSearch}"` : "No agents found."}
                               </p>
                             )}
                           </div>

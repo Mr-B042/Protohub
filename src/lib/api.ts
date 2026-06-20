@@ -707,6 +707,9 @@ export const whatsappDestinationsApi = {
   // Owner/Admin: assign multiple reps to a destination
   assignReps: (destinationId: string, repIds: string[]) =>
     patch<{ ok: boolean; repIds: string[] }>(`/api/whatsapp-destinations/${encodeURIComponent(destinationId)}/assign-reps`, { repIds }),
+  // Owner/Admin: assign a delivery agent to a destination
+  assignAgent: (destinationId: string, agentId: string | null) =>
+    patch<{ ok: boolean }>(`/api/whatsapp-destinations/${encodeURIComponent(destinationId)}/assign-agent`, { agentId }),
   create: (body: { label: string; destinationType: "group" | "phone" | "manual_group"; groupJid?: string | null; phone?: string | null; notes?: string | null; active?: boolean; isDefault?: boolean }) =>
     post<any>("/api/whatsapp-destinations", body),
   update: (id: string, body: Partial<{ label: string; destinationType: "group" | "phone" | "manual_group"; groupJid: string | null; phone: string | null; notes: string | null; active: boolean; isDefault: boolean }>) =>
