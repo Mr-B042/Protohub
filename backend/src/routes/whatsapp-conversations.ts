@@ -41,33 +41,33 @@ router.get("/", async (req, res) => {
       .order("received_at", { ascending: false })
       .limit(2000); // fetch enough to build conversation list
 
-    // Sales Reps + Managers: scope to their assigned orders' phones only.
-    // Owner/Admin see all conversations.
-    if (role === "Sales Rep" || role === "Manager") {
-      const repFilter = supabase
+    // Visibility rules:
+    //   Owner   → everything (no filter)
+    //   Admin   → all conversations linked to any rep's assigned order
+    //   Manager → only their own directly assigned orders
+    //   Sales Rep → only their own directly assigned orders
+    if (role === "Admin") {
+      // Admin sees all order-linked conversations across all reps — not orderless noise
+      query = query.not("linked_order_id", "is", null);
+    } else if (role === "Sales Rep" || role === "Manager") {
+      // Scope to orders assigned to this specific user
+      const { data: myOrders } = await supabase
         .from("orders")
         .select("phone")
         .eq("org_id", orgId)
+        .eq("assigned_rep_id", userId)
         .not("phone", "is", null);
 
-      // Sales Rep → their directly assigned orders only
-      // Manager → orders assigned to anyone in their team
-      // For simplicity we scope Manager to same as rep for now (their direct assigns)
-      const filteredRepOrders = await repFilter.eq("assigned_rep_id", userId);
-
-      const myOrders = filteredRepOrders.data ?? [];
-
-      // Normalize all phones to 234-prefixed format so they match the inbox table
       const myPhones = Array.from(new Set(
-        myOrders
+        (myOrders ?? [])
           .map((o: any) => normalizeNgPhone(o.phone ?? ""))
           .filter((p) => p.length >= 10)
       ));
 
       if (myPhones.length === 0) { res.json({ conversations: [] }); return; }
-      // Also require a linked_order so random people who text the org number never appear
       query = query.in("normalized_phone", myPhones).not("linked_order_id", "is", null);
     }
+    // Owner: no filter — sees all conversations including orderless
 
     const { data: messages, error } = await query;
     if (error) { res.status(500).json({ error: error.message }); return; }
@@ -134,18 +134,21 @@ router.get("/:phone", async (req, res) => {
   if (!normalizedPhone) { res.status(400).json({ error: "Invalid phone." }); return; }
 
   try {
-    // Rep/Manager scope check — verify the requested phone belongs to one of their assigned orders
+    // Thread access rules mirror the list rules:
+    //   Owner   → any thread
+    //   Admin   → any order-linked thread
+    //   Sales Rep / Manager → only their assigned order phones
     if (role === "Sales Rep" || role === "Manager") {
       const { data: assignedOrders } = await supabase
         .from("orders").select("phone").eq("org_id", orgId).eq("assigned_rep_id", userId);
       const myPhones = new Set(
-        (assignedOrders ?? []).map((o: any) => normalizeNgPhone(o.phone ?? "")).filter((p) => p.length >= 10)
+        (assignedOrders ?? []).map((o: any) => normalizeNgPhone(o.phone ?? "")).filter((p: string) => p.length >= 10)
       );
       if (!myPhones.has(normalizedPhone)) {
         res.status(403).json({ error: "Not your assigned customer." }); return;
-
       }
     }
+    // Admin: can open any thread (all reps' customers). Owner: unrestricted.
 
     const { data: messages, error } = await supabase
       .from("whatsapp_inbox_messages")
