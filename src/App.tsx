@@ -8736,7 +8736,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [activePage, currentRole]);
 
   useEffect(() => {
-    if (activePage !== "WhatsApp" || !canUsePersonalWhatsApp) return;
+    if (activePage !== "WhatsApp" || !canUsePersonalWhatsApp || isSpying) return;
     let cancelled = false;
     setWaUserAccountLoading(true);
     setWaDestinationsLoading(true);
@@ -8762,7 +8762,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         }
       });
     return () => { cancelled = true; };
-  }, [activePage, canUsePersonalWhatsApp, currentRole, authUser?.id]);
+  }, [activePage, canUsePersonalWhatsApp, currentRole, authUser?.id, isSpying]);
 
   const waConnect = async () => {
     setWaConnecting(true);
@@ -49578,7 +49578,7 @@ ${waybillLineItems(w).length > 1
                 );
               })()}
 
-              {canUsePersonalWhatsApp ? (() => {
+              {canUsePersonalWhatsApp && !isSpying ? (() => {
                 const userStatus = whatsappStatus(waUserAccount);
                 const userConnected = userStatus === "connected";
                 const userPairing = userStatus === "pairing" || userStatus === "connecting";
@@ -49755,12 +49755,21 @@ ${waybillLineItems(w).length > 1
                 );
               })() : (
                 <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-8 py-14 text-center">
-                  <h2 className="mt-0 text-lg font-black text-gray-900">WhatsApp dispatch is not available for this role</h2>
-                  <p className="mx-auto mt-2 max-w-sm text-sm text-gray-500">Assigned users can connect their own WhatsApp and dispatch their assigned orders.</p>
+                  {isSpying ? (
+                    <>
+                      <h2 className="mt-0 text-lg font-black text-gray-900">Personal dispatch hidden in view-as mode</h2>
+                      <p className="mx-auto mt-2 max-w-sm text-sm text-gray-500">Your own WhatsApp account data is not shown while viewing as another user. Exit view-as to manage your WhatsApp.</p>
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="mt-0 text-lg font-black text-gray-900">WhatsApp dispatch is not available for this role</h2>
+                      <p className="mx-auto mt-2 max-w-sm text-sm text-gray-500">Assigned users can connect their own WhatsApp and dispatch their assigned orders.</p>
+                    </>
+                  )}
                 </div>
               )}
 
-              {(currentRole === "Owner" || currentRole === "Admin") && (
+              {!isSpying && (currentRole === "Owner" || currentRole === "Admin") && (
                 <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                   <div className="flex flex-col gap-1">
                     <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Team dispatch health</p>
