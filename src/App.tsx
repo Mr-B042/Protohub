@@ -7991,8 +7991,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const isSpying = realRole === "Owner" && Boolean(spiedUser);
 
   // Keep the API module in sync so every request carries X-Spy-User-Id when spying.
+  // Also flush stale conversation cache whenever the spy target changes.
   useEffect(() => {
     setApiSpyUserId(isSpying && spiedUser?.id ? spiedUser.id : null);
+    setWaConversations([]);   // force fresh load so role-filtered data replaces cached data
+    setWaActivePhone(null);
+    setWaThread(null);
   }, [isSpying, spiedUser?.id]);
 
   const currentManagedUser = isSpying ? spiedUser : realManagedUser;
