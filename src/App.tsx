@@ -50052,7 +50052,7 @@ ${waybillLineItems(w).length > 1
                             {waUserGroupsLoading ? "Importing..." : "Import groups"}
                           </button>
                         </div>
-                        <div className="mt-4 space-y-2">
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
                           {activeDestinations.length === 0 ? (
                             <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No saved destination yet. Assisted send still works with manual group selection.</p>
                           ) : activeDestinations.map((destination) => {
