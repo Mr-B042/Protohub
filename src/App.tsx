@@ -50217,18 +50217,23 @@ ${waybillLineItems(w).length > 1
                   <div className="mt-3 space-y-2">
                     {waTeamDispatches.length === 0 ? (
                       <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No team dispatch logs yet.</p>
-                    ) : waTeamDispatches.slice(0, 12).map((dispatch) => (
-                      <div key={dispatch.id} className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
-                        <div className="min-w-0">
-                          <p className="m-0 text-sm font-bold text-gray-900 truncate">{dispatch.orderId}</p>
-                          <p className="m-0 text-xs text-gray-500 truncate">{dispatch.senderName || "User"} · {dispatch.destinationLabel || "Manual group"} · {dispatch.sendMode}</p>
+                    ) : waTeamDispatches.slice(0, 12).map((dispatch) => {
+                      const senderName = dispatch.sender?.name ?? dispatch.senderName ?? null;
+                      return (
+                        <div key={dispatch.id} className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+                          <div className="min-w-0">
+                            <p className="m-0 text-sm font-bold text-gray-900 truncate">Order #{dispatch.orderId}</p>
+                            <p className="m-0 text-xs text-gray-500 truncate">
+                              {senderName ? <span className="font-bold text-gray-700">{senderName}</span> : "Unknown"} · {dispatch.destinationLabel || "Manual group"} · {dispatch.sendMode}
+                            </p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <p className={`m-0 text-xs font-bold ${dispatch.status === "sent" || dispatch.status === "delivered" ? "text-emerald-600" : "text-gray-600"}`}>{dispatch.status}</p>
+                            <p className="m-0 text-[10px] text-gray-400">{formatMoment(dispatch.createdAt || dispatch.sentAt)}</p>
+                          </div>
                         </div>
-                        <div className="shrink-0 text-right">
-                          <p className="m-0 text-xs font-bold text-gray-700">{dispatch.status}</p>
-                          <p className="m-0 text-[10px] text-gray-400">{formatMoment(dispatch.createdAt || dispatch.sentAt)}</p>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </section>
               )}
