@@ -50154,26 +50154,27 @@ ${waybillLineItems(w).length > 1
 
                             {/* Reply bar — sticky at bottom */}
                             {!isSpying && (
-                              <div className="shrink-0 border-t border-gray-100 px-3 sm:px-4 py-3 bg-white">
+                              <div className="shrink-0 border-t border-gray-100 px-3 sm:px-4 py-3 bg-white safe-area-inset-bottom">
                                 <div className="flex items-end gap-2">
                                   <textarea
-                                    className="flex-1 min-h-[40px] max-h-[100px] resize-none rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 placeholder:text-gray-400"
+                                    className="flex-1 min-h-[56px] max-h-[160px] resize-none rounded-2xl border border-gray-200 px-4 py-3 text-base sm:text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 placeholder:text-gray-400"
                                     placeholder="Type a message…"
-                                    rows={1}
+                                    rows={2}
                                     value={waReplyDraft}
                                     onChange={(e) => setWaReplyDraft(e.target.value)}
                                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); waSendReply(); } }}
+                                    style={{ WebkitTextSizeAdjust: "100%" }}
                                   />
                                   <button
                                     type="button"
-                                    className="!min-h-0 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#25D366] text-white hover:bg-[#1ebe57] disabled:opacity-40 transition-colors"
+                                    className="!min-h-0 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#25D366] text-white hover:bg-[#1ebe57] disabled:opacity-40 transition-colors"
                                     onClick={waSendReply}
                                     disabled={!waReplyDraft.trim() || waReplySending}
                                   >
-                                    {waReplySending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                                    {waReplySending ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Zap className="h-5 w-5" />}
                                   </button>
                                 </div>
-                                <p className="m-0 mt-1 text-[10px] text-gray-400 hidden sm:block">Enter to send · Shift+Enter new line · Sent from org account</p>
+                                <p className="m-0 mt-1.5 text-[10px] text-gray-400 hidden sm:block">Enter to send · Shift+Enter new line · Sent from org account</p>
                               </div>
                             )}
                           </>
