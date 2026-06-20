@@ -6,6 +6,7 @@ type ReceiptOrder = {
   phone?: string | null;
   productName?: string | null;
   packageName?: string | null;
+  quantity?: number | null;
   amount?: number | null;
   currency?: string | null;
   city?: string | null;
@@ -17,7 +18,7 @@ type ReceiptOrder = {
 
 export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub"): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A6", margin: 28, info: { Title: `Order Receipt ${order.id}` } });
+    const doc = new PDFDocument({ size: "A6", margin: 28, info: { Title: `Order Receipt ${order.id}`, Author: orgName } });
     const chunks: Buffer[] = [];
     doc.on("data", (chunk: Buffer) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -27,7 +28,7 @@ export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub
     const DARK     = "#111827";
     const MUTED    = "#6B7280";
     const LINE     = "#E5E7EB";
-    const W        = doc.page.width - 56; // usable width
+    const W        = doc.page.width - 56;
 
     // ── Header bar ──────────────────────────────────────────────
     doc.rect(0, 0, doc.page.width, 44).fill(WA_GREEN);
@@ -35,28 +36,29 @@ export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub
       .text(orgName, 28, 14, { width: W / 2 });
     doc.fillColor("#ffffff99").fontSize(8).font("Helvetica")
       .text("Order Receipt", 28, 30, { width: W / 2 });
-
-    // Order ID badge top-right
     doc.fillColor("#fff").fontSize(9).font("Helvetica-Bold")
       .text(`#${order.id}`, doc.page.width / 2, 18, { width: W / 2, align: "right" });
 
-    doc.moveDown(0.2);
-
-    // ── Customer block ───────────────────────────────────────────
+    // ── Customer block ─────────────────────────────────────────
+    // NOTE: No emoji chars — Helvetica doesn't support them (renders as garbage)
     const y0 = 56;
     doc.fillColor(DARK).fontSize(11).font("Helvetica-Bold")
       .text(order.customer ?? "Customer", 28, y0);
+
+    let customerLineY = y0 + 14;
     if (order.phone) {
       doc.fillColor(MUTED).fontSize(8).font("Helvetica")
-        .text(`📱 ${order.phone}`, 28, y0 + 14);
+        .text(`Tel: ${order.phone}`, 28, customerLineY);
+      customerLineY += 12;
     }
     if (order.city || order.state) {
       doc.fillColor(MUTED).fontSize(8)
-        .text(`📍 ${[order.city, order.state].filter(Boolean).join(", ")}`, 28, y0 + (order.phone ? 24 : 14));
+        .text(`Location: ${[order.city, order.state].filter(Boolean).join(", ")}`, 28, customerLineY);
+      customerLineY += 12;
     }
 
     // ── Divider ──────────────────────────────────────────────────
-    const divY = (order.phone || order.city) ? y0 + 40 : y0 + 18;
+    const divY = customerLineY + 6;
     doc.strokeColor(LINE).lineWidth(0.5).moveTo(28, divY).lineTo(28 + W, divY).stroke();
 
     // ── Product rows ─────────────────────────────────────────────
@@ -72,39 +74,43 @@ export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub
 
     addRow("Product", order.productName ?? "—");
     if (order.packageName) addRow("Package", order.packageName);
-    if (order.source)      addRow("Channel", order.source);
+    // Quantity — e.g. "3 pcs"
+    if (order.quantity != null && order.quantity > 0) {
+      addRow("Quantity", `${order.quantity} pcs`);
+    }
+    if (order.source)       addRow("Channel", order.source);
     if (order.scheduledDate) addRow("Delivery date", order.scheduledDate);
 
-    // Cross-sell lines
+    // Cross-sell / add-ons
     if (order.crossSellLines?.length) {
       rowY += 4;
       doc.fillColor(MUTED).fontSize(7).font("Helvetica-Bold")
         .text("ADD-ONS", 28, rowY); rowY += 10;
       for (const line of order.crossSellLines) {
         addRow(
-          `  ${line.productName ?? "Add-on"} ×${line.quantity ?? 1}`,
-          line.amount != null ? `${currency} ${(line.amount).toLocaleString("en-NG")}` : "—"
+          `  ${line.productName ?? "Add-on"} x${line.quantity ?? 1}`,
+          line.amount != null ? `${currency} ${line.amount.toLocaleString("en-NG")}` : "—"
         );
       }
     }
 
-    // ── Amount block ─────────────────────────────────────────────
+    // ── Total amount block ────────────────────────────────────────
     rowY += 4;
-    doc.rect(28, rowY, W, 26).fill("#F9FAFB");
+    doc.rect(28, rowY, W, 28).fill("#F9FAFB");
     doc.fillColor(MUTED).fontSize(7.5).font("Helvetica")
-      .text("Total amount", 34, rowY + 8);
+      .text("Total amount", 34, rowY + 9);
     doc.fillColor(DARK).fontSize(12).font("Helvetica-Bold")
       .text(
         order.amount != null ? `${currency} ${order.amount.toLocaleString("en-NG")}` : "—",
-        34, rowY + 5, { width: W - 12, align: "right" }
+        34, rowY + 6, { width: W - 12, align: "right" }
       );
-    rowY += 34;
+    rowY += 36;
 
-    // ── Footer ───────────────────────────────────────────────────
+    // ── Footer ────────────────────────────────────────────────────
     doc.strokeColor(LINE).lineWidth(0.5).moveTo(28, rowY).lineTo(28 + W, rowY).stroke();
     rowY += 6;
     doc.fillColor(MUTED).fontSize(7).font("Helvetica")
-      .text("Thank you for your order! For enquiries reply to the WhatsApp message or contact our team.", 28, rowY, { width: W, align: "center" });
+      .text("Thank you for your order! Reply to this WhatsApp message for enquiries.", 28, rowY, { width: W, align: "center" });
 
     doc.end();
   });

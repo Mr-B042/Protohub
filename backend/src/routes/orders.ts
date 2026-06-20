@@ -2779,7 +2779,7 @@ router.get("/:id/whatsapp-status", requireRole("Owner", "Admin", "Manager"), asy
 router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, res) => {
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, customer, phone, whatsapp, product_name, package_name, amount, currency, source, city, state, package_id")
+    .select("id, customer, phone, whatsapp, product_name, package_name, quantity, amount, currency, source, city, state, package_id")
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .single();
@@ -2806,6 +2806,7 @@ router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, r
       whatsapp: order.whatsapp ?? null,
       productName: order.product_name,
       packageName: order.package_name,
+      quantity: typeof (order as any).quantity === "number" ? (order as any).quantity : null,
       amount: typeof order.amount === "number" ? order.amount : Number(order.amount ?? 0),
       currency: order.currency ?? "NGN",
       source: order.source ?? null,

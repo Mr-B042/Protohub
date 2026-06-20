@@ -1454,6 +1454,7 @@ type OrderEventPayload = {
   whatsapp?: string | null;
   productName?: string | null;
   packageName?: string | null;
+  quantity?: number | null;
   amount?: number | null;
   currency?: string | null;
   source?: string | null;
@@ -1556,6 +1557,7 @@ export async function sendOrderNewCustomerWhatsApp(
               phone: order.phone,
               productName: order.productName,
               packageName: order.packageName,
+              quantity: order.quantity ?? null,
               amount: order.amount,
               currency: order.currency,
               city: order.city,

@@ -1244,6 +1244,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     whatsapp: (order as any).whatsapp ?? null,
     productName: order.product_name,
     packageName: order.package_name,
+    quantity: typeof order.quantity === "number" ? order.quantity : null,
     amount: typeof order.amount === "number" ? order.amount : Number(order.amount ?? 0),
     currency: order.currency ?? "NGN",
     source: order.source ?? null,
