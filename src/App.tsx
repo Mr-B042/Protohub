@@ -50056,65 +50056,61 @@ ${waybillLineItems(w).length > 1
                           {activeDestinations.length === 0 ? (
                             <p className="m-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No saved destination yet. Assisted send still works with manual group selection.</p>
                           ) : activeDestinations.map((destination) => {
-                            const repIds: string[] = destination.assignedRepIds ?? destination.assigned_rep_ids ?? (destination.assignedRepId ? [destination.assignedRepId] : []);
-                            const assignedReps = users.filter((u: any) => repIds.includes(u.id));
+                            const currentAgentId: string | null = destination.assignedAgentId ?? destination.assigned_agent_id ?? null;
+                            const currentAgent = agents.find(a => a.id === currentAgentId);
                             return (
-                              <div key={destination.id} className={`rounded-xl border p-3 ${destination.isDefault ? "border-[#25D366]/30 bg-[#25D366]/5" : "border-gray-200 bg-gray-50"}`}>
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                      <p className="m-0 text-sm font-black text-gray-900 truncate">{destination.label}</p>
-                                      {destination.isDefault && <span className="shrink-0 rounded-full bg-[#25D366]/15 px-2 py-0.5 text-[10px] font-black text-[#25D366]">DEFAULT</span>}
-                                    </div>
-                                    {assignedReps.length > 0 && (
-                                      <p className="m-0 mt-0.5 text-xs font-bold text-purple-600">👤 {assignedReps.map((u: any) => u.name).join(", ")}</p>
-                                    )}
-                                    <p className="m-0 mt-0.5 text-[10px] text-gray-400 uppercase tracking-wider">{destination.destinationType === "group" ? "Imported group" : destination.destinationType === "phone" ? "Phone" : "Manual group"}</p>
-                                    {(destination.groupJid || destination.phone) && (
-                                      <p className="m-0 mt-0.5 break-all text-[10px] text-gray-400">{destination.groupJid || destination.phone}</p>
-                                    )}
+                              <div key={destination.id} className={`rounded-2xl border overflow-hidden ${destination.isDefault ? "border-[#25D366]/40" : "border-gray-200"}`}>
+                                {/* Status bar — green if agent assigned, amber if not */}
+                                <div className={`px-4 py-2 flex items-center justify-between gap-2 ${currentAgent ? "bg-[#25D366]" : "bg-amber-400"}`}>
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    {currentAgent
+                                      ? <><CheckCircle2 className="h-3.5 w-3.5 text-white shrink-0" /><span className="text-xs font-black text-white truncate">{currentAgent.name} · {currentAgent.primaryBaseState ?? currentAgent.zone}</span></>
+                                      : <><AlertTriangle className="h-3.5 w-3.5 text-white shrink-0" /><span className="text-xs font-black text-white">No agent assigned yet</span></>
+                                    }
                                   </div>
+                                  {destination.isDefault && <span className="shrink-0 rounded-full bg-white/25 px-2 py-0.5 text-[10px] font-black text-white">DEFAULT</span>}
                                 </div>
-                                {/* Map to a delivery agent — the group this courier uses */}
-                                {isOwnerOrAdmin && (() => {
-                                  const currentAgentId: string | null = destination.assignedAgentId ?? destination.assigned_agent_id ?? null;
-                                  const currentAgent = agents.find(a => a.id === currentAgentId);
-                                  return (
-                                    <div className="mt-3 border-t border-gray-100 pt-3">
-                                      <p className="m-0 mb-2 text-[10px] font-black uppercase tracking-wider text-gray-400">Assign to agent (courier)</p>
-                                      {currentAgent && (
-                                        <div className="flex items-center gap-2 mb-2 rounded-lg bg-[#25D366]/10 px-2.5 py-1.5">
-                                          <CheckCircle2 className="h-3.5 w-3.5 text-[#25D366] shrink-0" />
-                                          <span className="text-xs font-black text-[#25D366] truncate">{currentAgent.name}</span>
-                                          <span className="text-[10px] text-gray-500 shrink-0">{currentAgent.primaryBaseState ?? currentAgent.zone}</span>
-                                        </div>
-                                      )}
-                                      <select
-                                        className="w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
-                                        value={currentAgentId ?? ""}
-                                        onChange={async (e) => {
-                                          const agentId = e.target.value || null;
-                                          try {
-                                            await whatsappDestinationsApi.assignAgent(destination.id, agentId);
-                                            setWaDestinations(prev => prev.map(d => d.id === destination.id
-                                              ? { ...d, assignedAgentId: agentId, assigned_agent_id: agentId }
-                                              : d));
-                                            showToast(agentId ? "Group assigned to agent." : "Agent assignment removed.");
-                                          } catch { showToast("Could not assign agent."); }
-                                        }}
-                                      >
-                                        <option value="">— Select courier agent —</option>
-                                        {agents.filter(a => a.id !== currentAgentId).map(a => (
-                                          <option key={a.id} value={a.id}>{a.name} · {a.primaryBaseState ?? a.zone}</option>
-                                        ))}
-                                      </select>
-                                      {!currentAgentId && (
-                                        <p className="m-0 mt-1.5 text-[11px] text-amber-600 font-bold">⚠ No agent assigned — won't auto-suggest in dispatch</p>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-                                <div className="mt-2 flex flex-wrap gap-2">
+
+                                {/* Group details */}
+                                <div className="px-4 py-3 bg-white">
+                                  <p className="m-0 text-sm font-black text-gray-900">{destination.label}</p>
+                                  <p className="m-0 mt-0.5 text-[10px] text-gray-400 uppercase tracking-wider">{destination.destinationType === "group" ? "Imported group" : destination.destinationType === "phone" ? "Phone" : "Manual group"}</p>
+                                  {(destination.groupJid || destination.phone) && (
+                                    <p className="m-0 mt-0.5 break-all text-[10px] text-gray-400">{destination.groupJid || destination.phone}</p>
+                                  )}
+                                </div>
+
+                                {/* Agent assignment — full dropdown, saves on change with clear feedback */}
+                                {isOwnerOrAdmin && (
+                                  <div className="px-4 pb-3 bg-white border-t border-gray-100 pt-3">
+                                    <p className="m-0 mb-1.5 text-[10px] font-black uppercase tracking-wider text-gray-400">Courier agent for this group</p>
+                                    <select
+                                      className={`w-full rounded-xl border px-3 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[#25D366]/30 ${currentAgent ? "border-[#25D366]/30 bg-[#25D366]/5 text-[#25D366]" : "border-amber-200 bg-amber-50 text-amber-700"}`}
+                                      value={currentAgentId ?? ""}
+                                      onChange={async (e) => {
+                                        const agentId = e.target.value || null;
+                                        try {
+                                          await whatsappDestinationsApi.assignAgent(destination.id, agentId);
+                                          setWaDestinations(prev => prev.map(d => d.id === destination.id
+                                            ? { ...d, assignedAgentId: agentId, assigned_agent_id: agentId }
+                                            : d));
+                                          showToast(agentId
+                                            ? `✓ Saved — ${agents.find(a => a.id === agentId)?.name ?? "Agent"} assigned to this group`
+                                            : "Agent removed from this group.");
+                                        } catch { showToast("Could not save — please retry."); }
+                                      }}
+                                    >
+                                      <option value="">— Select courier agent —</option>
+                                      {agents.map(a => (
+                                        <option key={a.id} value={a.id}>{a.name} · {a.primaryBaseState ?? a.zone}</option>
+                                      ))}
+                                    </select>
+                                    <p className="m-0 mt-1 text-[10px] text-gray-400">Saves instantly when you pick an agent. Change anytime.</p>
+                                  </div>
+                                )}
+
+                                {/* Actions */}
+                                <div className="px-4 pb-3 bg-white flex flex-wrap gap-2">
                                   {!destination.isDefault && <button className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" onClick={() => waSetDefaultDestination(destination.id)}>Set default</button>}
                                   <button className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" onClick={() => waDeleteDestination(destination.id, destination.label)}>Delete</button>
                                 </div>
