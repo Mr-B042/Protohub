@@ -65,7 +65,8 @@ router.get("/", async (req, res) => {
       ));
 
       if (myPhones.length === 0) { res.json({ conversations: [] }); return; }
-      query = query.in("normalized_phone", myPhones);
+      // Also require a linked_order so random people who text the org number never appear
+      query = query.in("normalized_phone", myPhones).not("linked_order_id", "is", null);
     }
 
     const { data: messages, error } = await query;
