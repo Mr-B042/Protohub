@@ -49749,7 +49749,7 @@ ${waybillLineItems(w).length > 1
                               try {
                                 const connectedPhone = whatsappConnectedPhone(waSettings);
                                 await whatsappSettingsApi.test(waTestPhone.trim());
-                                showToast(`Test sent to ${waTestPhone} — check that phone for a message from +${connectedPhone || "your org number"}.`);
+                                showToast(`✓ Text sent — PDF receipt follows in ~3 seconds. Check +${waTestPhone} for both.`);
                                 setWaTestPhone("");
                               } catch (err: any) {
                                 showToast(`Test failed: ${err?.message ?? "socket still warming up, wait 30s and retry"}.`);

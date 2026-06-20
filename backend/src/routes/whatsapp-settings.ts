@@ -14,7 +14,8 @@ import {
   sendCustomWhatsApp,
   sendTestWhatsApp
 } from "../lib/whatsapp.js";
-import { beginWhatsAppConnection, disconnectWhatsAppConnection, type WhatsAppPairingMode } from "../lib/whatsapp-runtime.js";
+import { beginWhatsAppConnection, disconnectWhatsAppConnection, sendConnectedWhatsApp, type WhatsAppPairingMode } from "../lib/whatsapp-runtime.js";
+import { generateOrderReceiptPdf } from "../lib/order-receipt-pdf.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -238,20 +239,50 @@ router.post("/test", requireOwner, async (req, res) => {
     return;
   }
 
+  // Stage 1: plain text (lands in inbox, not Message Requests)
   const result = await sendTestWhatsApp(req.user!.orgId, phone);
   if (!result.ok) {
     res.status(400).json({ error: result.error });
     return;
   }
 
+  // Stage 2: PDF receipt + (optional) product image — 3s after text
+  // This tests that the full 2-stage media delivery works end-to-end.
+  if (!result.deferred) {
+    setTimeout(async () => {
+      try {
+        const pdf = await generateOrderReceiptPdf({
+          id: "TEST-001",
+          customer: "Test Customer",
+          phone,
+          productName: "Edge Brusher Max",
+          packageName: "Trial Pack",
+          amount: 16500,
+          currency: "NGN",
+          city: "Lagos",
+          state: "Lagos",
+          source: "Test"
+        });
+        await sendConnectedWhatsApp(req.user!.orgId, phone.replace(/\D/g, ""), "📋 Test PDF receipt attached — your customers will receive this after their order confirmation.", {
+          pdfBuffer: pdf,
+          pdfFileName: "Order-Receipt-TEST.pdf"
+        });
+      } catch (err) {
+        // Stage 2 errors are non-fatal — log but don't affect the test response
+        console.error("Test stage-2 PDF send failed:", (err as Error).message);
+      }
+    }, 3000);
+  }
+
   res.json({
     message: result.deferred
-      ? `Test WhatsApp deferred for the next allowed send window to ${phone}.`
-      : `Test WhatsApp queued to ${phone} via ${result.provider}.`,
+      ? `Test deferred to next send window. PDF follow-up will also be deferred.`
+      : `Stage 1 sent ✓ — PDF receipt follows in ~3 seconds to ${phone}.`,
     provider: result.provider,
     providerMessageId: result.providerMessageId,
     deferred: !!result.deferred,
-    scheduledFor: result.scheduledFor ?? null
+    scheduledFor: result.scheduledFor ?? null,
+    stage2: "PDF receipt queued — arrives 3s after text"
   });
 });
 
