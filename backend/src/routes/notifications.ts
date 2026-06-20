@@ -96,7 +96,7 @@ router.get("/", async (req, res) => {
     .from("system_notifications")
     .select("*")
     .eq("org_id", req.user!.orgId)
-    .or(`recipient_id.is.null,recipient_id.eq.${req.user!.id}`)
+    .or(`recipient_id.is.null,recipient_id.eq.${req.user!.effectiveUserId ?? req.user!.id}`)
     .order("created_at", { ascending: false })
     .limit(100);
   if (error) { res.status(500).json({ error: error.message }); return; }
@@ -295,7 +295,7 @@ router.patch("/read-all", async (req, res) => {
     .update({ read: true })
     .eq("org_id", req.user!.orgId)
     .eq("read", false)
-    .or(`recipient_id.is.null,recipient_id.eq.${req.user!.id}`);
+    .or(`recipient_id.is.null,recipient_id.eq.${req.user!.effectiveUserId ?? req.user!.id}`);
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ message: "All notifications marked as read." });
 });
@@ -319,7 +319,7 @@ router.delete("/read", async (req, res) => {
     .delete()
     .eq("org_id", req.user!.orgId)
     .eq("read", true)
-    .or(`recipient_id.is.null,recipient_id.eq.${req.user!.id}`);
+    .or(`recipient_id.is.null,recipient_id.eq.${req.user!.effectiveUserId ?? req.user!.id}`);
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.status(204).send();
 });

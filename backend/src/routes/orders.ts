@@ -530,11 +530,15 @@ router.get("/", async (req, res) => {
     .order(sortColumn, { ascending: false })
     .range(from, to);
 
+  // Use effectiveUserId/Role in spy mode so the Owner sees the spied user's orders.
+  const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
+  const scopeId   = req.user!.effectiveUserId   ?? req.user!.id;
+
   // Sales Reps see assigned orders; Marketers see only attributed traffic.
-  if (req.user!.role === "Marketer") {
-    query = applyOrderMarketingScope(query, req.user!.marketingAttributionTags, req.user!.id);
-  } else if (req.user!.role === "Sales Rep") {
-    query = query.eq("assigned_rep_id", req.user!.id);
+  if (scopeRole === "Marketer") {
+    query = applyOrderMarketingScope(query, req.user!.marketingAttributionTags, scopeId);
+  } else if (scopeRole === "Sales Rep") {
+    query = query.eq("assigned_rep_id", scopeId);
   } else if (repId) {
     query = query.eq("assigned_rep_id", repId as string);
   }
@@ -1188,8 +1192,10 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
 
   if (!existing) { res.status(404).json({ error: "Order not found." }); return; }
 
-  // Sales Reps can only change status on their own orders
-  if (req.user!.role === "Sales Rep" && existing.assigned_rep_id !== req.user!.id) {
+  // Sales Reps can only change status on their own orders (spy mode: use effective role/id)
+  const patchScopeRole = req.user!.effectiveUserRole ?? req.user!.role;
+  const patchScopeId   = req.user!.effectiveUserId   ?? req.user!.id;
+  if (patchScopeRole === "Sales Rep" && existing.assigned_rep_id !== patchScopeId) {
     res.status(403).json({ error: "You can only update orders assigned to you." });
     return;
   }

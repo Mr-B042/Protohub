@@ -96,6 +96,12 @@ function extractErrorMessage(payload: any, fallback: string) {
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+// ── Spy mode: the app sets this when the Owner is viewing-as another user ──
+let _spyUserId: string | null = null;
+export function setApiSpyUserId(userId: string | null) {
+  _spyUserId = userId;
+}
+
 // ── Core request helper ────────────────────────────────────
 async function request<T>(
   method: string,
@@ -112,7 +118,8 @@ async function request<T>(
       cache: "no-store", // never read from or write to HTTP cache
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(_spyUserId ? { "X-Spy-User-Id": _spyUserId } : {})
       },
       body: body !== undefined ? JSON.stringify(body) : undefined
     });

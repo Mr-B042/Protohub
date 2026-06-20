@@ -14,9 +14,11 @@ router.get("/", async (req, res) => {
     .select("phone, customer, city, state, amount, status, created_at, assigned_rep_id")
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: false });
-  // Sales Reps only see customers from their own orders
-  if (req.user!.role === "Sales Rep") {
-    query = query.eq("assigned_rep_id", req.user!.id);
+  // Sales Reps only see customers from their own orders (spy mode: use effective role/id)
+  const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
+  const scopeId   = req.user!.effectiveUserId   ?? req.user!.id;
+  if (scopeRole === "Sales Rep") {
+    query = query.eq("assigned_rep_id", scopeId);
   }
   const { data, error } = await query;
 

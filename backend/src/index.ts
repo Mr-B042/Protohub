@@ -17,6 +17,7 @@ import { supabase } from "./lib/supabase.js";
 import { processQueuedEmails, sendWeeklyReport } from "./lib/mailer.js";
 import { sendPushToRoles } from "./lib/push.js";
 
+import { applySpyHeader } from "./middleware/auth.js";
 import authRoutes     from "./routes/auth.js";
 import productRoutes  from "./routes/products.js";
 import orderRoutes    from "./routes/orders.js";
@@ -217,6 +218,9 @@ app.get("/health", (_req, res) => {
     whatsappRuntimeEnabled: ENABLE_WHATSAPP_RUNTIME
   });
 });
+
+// ── Spy middleware (Owner/Admin can pass X-Spy-User-Id to see another user's data) ──
+app.use("/api", applySpyHeader);
 
 // ── Routes ────────────────────────────────────────────────
 app.use("/api/auth/login",    authRateLimit);

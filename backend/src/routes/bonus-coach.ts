@@ -21,7 +21,8 @@ router.get("/me", async (req, res) => {
     return;
   }
   try {
-    const payload = await getRepBonusCoach(req.user!.orgId, req.user!.id, parsed.data.weekStart);
+    const scopeId = req.user!.effectiveUserId ?? req.user!.id;
+    const payload = await getRepBonusCoach(req.user!.orgId, scopeId, parsed.data.weekStart);
     res.json(payload);
   } catch (error: any) {
     res.status(400).json({ error: error?.message ?? "Failed to build bonus coach." });

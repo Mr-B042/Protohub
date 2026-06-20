@@ -59,3 +59,27 @@ export function requireRole(...roles: string[]) {
     next();
   };
 }
+
+// Spy middleware — mount on the app router after requireAuth.
+// When an Owner/Admin sends X-Spy-User-Id, loads that user's profile and sets
+// req.user.effectiveUserId so routes scope their DB queries to the spied user.
+export async function applySpyHeader(req: Request, _res: Response, next: NextFunction) {
+  const spyId = req.headers["x-spy-user-id"];
+  if (!spyId || typeof spyId !== "string" || !req.user) {
+    return next();
+  }
+  if (req.user.role !== "Owner" && req.user.role !== "Admin") {
+    return next();
+  }
+  const { data: profile } = await supabase
+    .from("users")
+    .select("id, role")
+    .eq("id", spyId)
+    .eq("org_id", req.user.orgId)
+    .maybeSingle();
+  if (profile) {
+    req.user.effectiveUserId = profile.id as string;
+    req.user.effectiveUserRole = profile.role as import("../types/index.js").UserRole;
+  }
+  next();
+}

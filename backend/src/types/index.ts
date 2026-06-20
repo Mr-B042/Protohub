@@ -17,6 +17,10 @@ export interface AuthUser {
   email: string;
   name: string;
   marketingAttributionTags?: string[];
+  // Set by spy middleware when an Owner/Admin sends X-Spy-User-Id header.
+  // Routes use this for data filtering so the Owner sees what the rep sees.
+  effectiveUserId?: string;
+  effectiveUserRole?: UserRole;
 }
 
 export interface ApiError {

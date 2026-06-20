@@ -112,7 +112,8 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi,
+  setApiSpyUserId
 } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
@@ -7957,6 +7958,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   );
   const spiedUser = spyAsUserId ? (users.find((u) => u.id === spyAsUserId) as ManagedUser | undefined) : undefined;
   const isSpying = realRole === "Owner" && Boolean(spiedUser);
+
+  // Keep the API module in sync so every request carries X-Spy-User-Id when spying.
+  useEffect(() => {
+    setApiSpyUserId(isSpying && spiedUser?.id ? spiedUser.id : null);
+  }, [isSpying, spiedUser?.id]);
 
   const currentManagedUser = isSpying ? spiedUser : realManagedUser;
   const currentRole: EditableUserRole = isSpying ? (spiedUser!.role) : realRole;
