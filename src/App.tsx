@@ -49877,41 +49877,47 @@ ${waybillLineItems(w).length > 1
                       )}
                     </div>
 
-                    {/* Trigger rows */}
-                    <div className="divide-y divide-gray-50">
+                    {/* Trigger cards */}
+                    <div className="p-3 sm:p-4 grid gap-2 sm:gap-3">
                       {TRIGGER_META.map(({ key, label, desc, to, icon, color, iconBg }) => {
                         const enabled = Boolean(triggers[key]);
                         return (
-                          <div
+                          <button
                             key={key}
-                            className={`flex items-center gap-3 sm:gap-4 px-3 sm:px-5 py-3 sm:py-4 transition-colors ${enabled ? "bg-white" : "bg-gray-50/60"}`}
+                            type="button"
+                            role="switch"
+                            aria-checked={enabled}
+                            disabled={waTriggerSaving}
+                            onClick={() => waToggleTrigger(key, !enabled)}
+                            className={`w-full text-left rounded-2xl border px-4 py-3.5 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#25D366]/40 disabled:opacity-60 ${
+                              enabled
+                                ? "bg-white border-[#25D366]/30 shadow-sm shadow-[#25D366]/10"
+                                : "bg-gray-50 border-gray-200 hover:bg-gray-100"
+                            }`}
                           >
-                            {/* Icon */}
-                            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${enabled ? iconBg : "bg-gray-100"} ${enabled ? color : "text-gray-400"} transition-colors`}>
-                              {icon}
-                            </span>
+                            <div className="flex items-center gap-3">
+                              {/* Icon — always visible, saturated when on */}
+                              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all duration-200 ${enabled ? `${iconBg} ${color}` : "bg-gray-200 text-gray-500"}`}>
+                                {icon}
+                              </span>
 
-                            {/* Text */}
-                            <div className="flex-1 min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <p className={`m-0 text-sm font-black leading-tight ${enabled ? "text-gray-900" : "text-gray-400"}`}>{label}</p>
-                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${to === "rep" ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"}`}>{to === "rep" ? "Rep" : "Customer"}</span>
+                              {/* Label + badge */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className={`m-0 text-sm font-black leading-tight ${enabled ? "text-gray-900" : "text-gray-600"}`}>{label}</p>
+                                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${to === "rep" ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"}`}>
+                                    {to === "rep" ? "Rep" : "Customer"}
+                                  </span>
+                                </div>
+                                <p className={`m-0 mt-0.5 text-xs ${enabled ? "text-gray-500" : "text-gray-400"} leading-snug line-clamp-2`}>{desc}</p>
                               </div>
-                              <p className={`m-0 mt-0.5 text-xs leading-relaxed hidden sm:block ${enabled ? "text-gray-500" : "text-gray-400"}`}>{desc}</p>
-                            </div>
 
-                            {/* Toggle */}
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={enabled}
-                              disabled={waTriggerSaving}
-                              onClick={() => waToggleTrigger(key, !enabled)}
-                              className={`relative shrink-0 h-7 w-12 cursor-pointer rounded-full transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#25D366]/50 disabled:cursor-not-allowed disabled:opacity-50 ${enabled ? "bg-[#25D366] shadow-[0_0_0_3px_rgba(37,211,102,0.15)]" : "bg-gray-200"}`}
-                            >
-                              <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-md transition-all duration-300 ${enabled ? "left-[calc(100%-1.375rem)]" : "left-1"}`} />
-                            </button>
-                          </div>
+                              {/* Toggle pill */}
+                              <span className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ${enabled ? "bg-[#25D366]" : "bg-gray-300"}`}>
+                                <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-300 ${enabled ? "translate-x-6" : "translate-x-1"}`} />
+                              </span>
+                            </div>
+                          </button>
                         );
                       })}
                     </div>
