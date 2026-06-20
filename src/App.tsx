@@ -50075,40 +50075,47 @@ ${waybillLineItems(w).length > 1
                                     )}
                                   </div>
                                 </div>
-                                {/* Assign to multiple reps */}
+                                {/* Map reps to this group — tap a rep to assign/unassign */}
                                 {isOwnerOrAdmin && (() => {
                                   const currentIds: string[] = destination.assignedRepIds ?? destination.assigned_rep_ids ?? (destination.assignedRepId ? [destination.assignedRepId] : []);
                                   const reps = users.filter((u: any) => u.role === "Sales Rep" || u.role === "Manager");
+                                  const toggle = async (uid: string, checked: boolean) => {
+                                    const next = checked
+                                      ? [...currentIds, uid]
+                                      : currentIds.filter((id: string) => id !== uid);
+                                    try {
+                                      await whatsappDestinationsApi.assignReps(destination.id, next);
+                                      setWaDestinations(prev => prev.map(d => d.id === destination.id
+                                        ? { ...d, assignedRepIds: next, assigned_rep_ids: next, assignedRepId: next[0] ?? null }
+                                        : d));
+                                    } catch { showToast("Could not update rep assignment."); }
+                                  };
                                   return (
-                                    <div className="mt-2">
-                                      <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Reps using this group</p>
-                                      <div className="grid gap-1">
+                                    <div className="mt-3 border-t border-gray-100 pt-3">
+                                      <p className="m-0 mb-2 text-[10px] font-black uppercase tracking-wider text-gray-400">Map to reps — tap to assign</p>
+                                      <div className="flex flex-wrap gap-2">
                                         {reps.map((u: any) => {
-                                          const checked = currentIds.includes(u.id);
+                                          const assigned = currentIds.includes(u.id);
                                           return (
-                                            <label key={u.id} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors ${checked ? "bg-[#25D366]/10" : "hover:bg-gray-100"}`}>
-                                              <input
-                                                type="checkbox"
-                                                className="h-3.5 w-3.5 accent-[#25D366] rounded"
-                                                checked={checked}
-                                                onChange={async (e) => {
-                                                  const next = e.target.checked
-                                                    ? [...currentIds, u.id]
-                                                    : currentIds.filter((id: string) => id !== u.id);
-                                                  try {
-                                                    await whatsappDestinationsApi.assignReps(destination.id, next);
-                                                    setWaDestinations(prev => prev.map(d => d.id === destination.id
-                                                      ? { ...d, assignedRepIds: next, assigned_rep_ids: next, assignedRepId: next[0] ?? null }
-                                                      : d));
-                                                  } catch { showToast("Could not update rep assignment."); }
-                                                }}
-                                              />
-                                              <span className={`text-xs font-bold ${checked ? "text-[#25D366]" : "text-gray-600"}`}>{u.name}</span>
-                                              <span className="text-[10px] text-gray-400">{u.role}</span>
-                                            </label>
+                                            <button
+                                              key={u.id}
+                                              type="button"
+                                              onClick={() => toggle(u.id, !assigned)}
+                                              className={`!min-h-0 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-black transition-all ${
+                                                assigned
+                                                  ? "bg-[#25D366] text-white shadow-sm"
+                                                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                              }`}
+                                            >
+                                              {assigned && <CheckCircle2 className="h-3 w-3" />}
+                                              {u.name}
+                                            </button>
                                           );
                                         })}
                                       </div>
+                                      {currentIds.length === 0 && (
+                                        <p className="m-0 mt-1.5 text-[11px] text-amber-600 font-bold">⚠ Not mapped to any rep — won't auto-suggest in dispatch</p>
+                                      )}
                                     </div>
                                   );
                                 })()}
