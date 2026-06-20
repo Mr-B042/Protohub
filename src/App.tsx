@@ -620,6 +620,7 @@ type ProductPackage = {
   featuredComboCard?: boolean;
   imageUrl?: string;
   imageUrls?: string[];
+  videoUrl?: string;
   unitSingular?: string;
   unitPlural?: string;
   attributionProductId?: string | null;
@@ -7072,6 +7073,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [packageAttributionProductId, setPackageAttributionProductId] = useState<string | null>(null);
   const [packageImageUrls, setPackageImageUrls] = useState<string[]>([]);
   const [packageImageUrlDraft, setPackageImageUrlDraft] = useState("");
+  const [packageVideoUrl, setPackageVideoUrl] = useState("");
   const [packageSaving, setPackageSaving] = useState(false);
   const [packageImageUploading, setPackageImageUploading] = useState(0);
   const [companionGalleryUrlDrafts, setCompanionGalleryUrlDrafts] = useState<Record<string, string>>({});
@@ -10605,6 +10607,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setPackageAttributionProductId(selectedPackage.attributionProductId ?? null);
     packageImageUploadTokenRef.current += 1;
     setPackageImageUrls(packageCarouselImages(selectedPackage));
+    setPackageVideoUrl(selectedPackage.videoUrl ?? "");
     setPackageImageUrlDraft("");
     setPackageImageUploading(0);
     setPackageImageSyncToTiers(false);
@@ -24140,6 +24143,7 @@ ${waybillLineItems(w).length > 1
     packageImageUploadTokenRef.current += 1;
     companionGalleryUploadTokenRef.current += 1;
     setPackageImageUrls([]);
+    setPackageVideoUrl("");
     setPackageImageUrlDraft("");
     setPackageSaving(false);
     setPackageImageUploading(0);
@@ -24693,6 +24697,7 @@ ${waybillLineItems(w).length > 1
       attributionProductId: packageRecord.attributionProductId ?? null,
       imageUrl: packageRecord.imageUrl,
       imageUrls: packageRecord.imageUrls,
+      videoUrl: packageVideoUrl.trim() || null,
       unitSingular: packageRecord.unitSingular ?? null,
       unitPlural: packageRecord.unitPlural ?? null,
       packageComponents: normalisedComponents,
@@ -58107,6 +58112,26 @@ ${waybillLineItems(w).length > 1
 	                    )}
 	                  </div>
 		                </section>
+
+                {/* WhatsApp video URL — sent alongside order confirmation */}
+                <section className="border border-gray-200 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <MessageCircle className="h-4 w-4 text-[#25D366]" />
+                    <h4 className="text-sm font-bold text-gray-900 m-0">WhatsApp product video</h4>
+                  </div>
+                  <p className="text-xs text-gray-500 m-0">Paste a hosted video URL (MP4). When a new order is confirmed, this video is sent to the customer alongside their receipt via WhatsApp automation.</p>
+                  <input
+                    type="url"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366]/30"
+                    placeholder="https://example.com/product-video.mp4"
+                    value={packageVideoUrl}
+                    onChange={(e) => setPackageVideoUrl(e.target.value)}
+                  />
+                  {packageVideoUrl.trim() && (
+                    <p className="text-[11px] text-[#25D366] font-bold m-0">✓ Video URL set — will be sent on next new order</p>
+                  )}
+                </section>
+
                 <section className="border border-gray-200 rounded-xl p-4 space-y-3">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>

@@ -2,6 +2,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { ensureWhatsAppReady, sendConnectedWhatsApp } from "./whatsapp-runtime.js";
 import { isWithinWorkingSchedule, nextWorkingScheduleAt, type WorkingSchedule } from "./business-schedule.js";
+import { generateOrderReceiptPdf } from "./order-receipt-pdf.js";
 
 export type WhatsAppProvider = "baileys";
 export type WhatsAppTrigger =
@@ -681,7 +682,7 @@ async function sendViaBaileys(
   settings: WhatsAppSettings,
   phone: string,
   body: string,
-  media?: { imageUrl?: string; videoUrl?: string }
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
 ): Promise<{ providerMessageId?: string; providerStatus?: string }> {
   try {
     await ensureWhatsAppReady(orgId);
@@ -698,7 +699,7 @@ async function deliverLoggedWhatsApp(
   logId: string | null,
   normalizedPhone: string,
   body: string,
-  media?: { imageUrl?: string; videoUrl?: string }
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
 ) {
   const result = await sendViaBaileys(orgId, settings, normalizedPhone, body, media);
   await updateWhatsAppLog(logId, {
@@ -724,7 +725,7 @@ async function queueOrSendWhatsApp(
   vars: Record<string, string>,
   recipientPhone: string,
   options: SendWhatsAppOptions = {},
-  media?: { imageUrl?: string; videoUrl?: string }
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
 ): Promise<QueueOrSendWhatsAppResult | null> {
   const settings = await loadSettings(orgId);
   if (!settings) return null;
@@ -1509,6 +1510,27 @@ export async function sendOrderNewCustomerWhatsApp(
   const currency = order.currency ?? "NGN";
   const amount = typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0";
 
+  // Generate a PDF receipt to attach alongside the confirmation message
+  let pdfBuffer: Buffer | undefined;
+  try {
+    pdfBuffer = await generateOrderReceiptPdf({
+      id: order.id,
+      customer: order.customer,
+      phone: order.phone,
+      productName: order.productName,
+      packageName: order.packageName,
+      amount: order.amount,
+      currency: order.currency,
+      city: order.city,
+      state: order.state,
+      source: order.source
+    });
+  } catch (err) {
+    logger.warn("wa order_new: pdf generation failed, sending text only", {
+      orderId: order.id, error: (err as Error).message
+    });
+  }
+
   await queueOrSendWhatsApp(
     orgId, "order_new",
     {
@@ -1526,7 +1548,9 @@ export async function sendOrderNewCustomerWhatsApp(
     { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined },
     {
       imageUrl: order.productImageUrl ?? undefined,
-      videoUrl: order.productVideoUrl ?? undefined
+      videoUrl: order.productVideoUrl ?? undefined,
+      pdfBuffer,
+      pdfFileName: `Order-Receipt-${order.id}.pdf`
     }
   );
 }

@@ -402,6 +402,7 @@ const PackageSchema = z.object({
   featuredComboCard: z.boolean().default(false),
   imageUrl:          packageMediaImageSchema,
   imageUrls:         z.array(packageMediaImageSchema.unwrap()).max(15).default([]),
+  videoUrl:          z.string().url().max(2048).nullable().optional().or(z.literal("")),
   unitSingular:     z.string().trim().max(20).nullable().optional(),
   unitPlural:       z.string().trim().max(20).nullable().optional(),
   attributionProductId: z.string().uuid().nullable().optional(),
@@ -436,6 +437,7 @@ router.post("/:id/packages",
       featuredComboCard,
       imageUrl,
       imageUrls,
+      videoUrl,
       unitSingular,
       unitPlural,
       attributionProductId,
@@ -461,6 +463,7 @@ router.post("/:id/packages",
       featured_combo_card: featuredComboCard,
       image_url: imageUrl ?? null,
       image_urls: imageUrls.filter((url) => url && url.trim()),
+      video_url: videoUrl?.trim() || null,
       unit_singular: unitSingular?.trim() || null,
       unit_plural: unitPlural?.trim() || null,
       attribution_product_id: attributionProductId ?? null,
@@ -503,6 +506,7 @@ const PackageUpdateSchema = z.object({
   featuredComboCard: z.boolean().optional(),
   imageUrl:          packageMediaImageSchema,
   imageUrls:         z.array(packageMediaImageSchema.unwrap()).max(15).optional(),
+  videoUrl:          z.string().url().max(2048).nullable().optional().or(z.literal("")),
   unitSingular:     z.string().trim().max(20).nullable().optional(),
   unitPlural:       z.string().trim().max(20).nullable().optional(),
   attributionProductId: z.string().uuid().nullable().optional(),
@@ -537,6 +541,7 @@ router.patch("/:id/packages/:pkgId",
     if (parsed.data.featuredComboCard !== undefined) updates.featured_combo_card = parsed.data.featuredComboCard;
     if (parsed.data.imageUrl !== undefined) updates.image_url = parsed.data.imageUrl || null;
     if (parsed.data.imageUrls !== undefined) updates.image_urls = parsed.data.imageUrls.filter((url) => url && url.trim());
+    if (parsed.data.videoUrl !== undefined) updates.video_url = parsed.data.videoUrl?.trim() || null;
     if (parsed.data.unitSingular !== undefined) updates.unit_singular = parsed.data.unitSingular ? parsed.data.unitSingular.trim() : null;
     if (parsed.data.unitPlural !== undefined) updates.unit_plural = parsed.data.unitPlural ? parsed.data.unitPlural.trim() : null;
     if (parsed.data.attributionProductId !== undefined) updates.attribution_product_id = parsed.data.attributionProductId ?? null;

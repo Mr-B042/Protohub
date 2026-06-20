@@ -2384,7 +2384,7 @@ export async function sendConnectedWhatsApp(
   orgId: string,
   normalizedPhone: string,
   body: string,
-  media?: { imageUrl?: string; videoUrl?: string }
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
 ) {
   const socket = await ensureWhatsAppReady(orgId);
   if (!socket) {
@@ -2401,7 +2401,28 @@ export async function sendConnectedWhatsApp(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let sent: any;
 
-  if (media?.videoUrl?.trim()) {
+  if (media?.pdfBuffer) {
+    // Send PDF receipt as document with text as caption.
+    // If there's also an image/video, send it as a second message after.
+    try {
+      sent = await socket.sendMessage(jid, {
+        document: media.pdfBuffer,
+        mimetype: "application/pdf",
+        fileName: media.pdfFileName ?? "Order-Receipt.pdf",
+        caption: body
+      } as any);
+    } catch {
+      sent = await socket.sendMessage(jid, { text: body });
+    }
+    // Send product image/video as a follow-up if available
+    if (media.videoUrl?.trim()) {
+      await new Promise((r) => setTimeout(r, 600));
+      await socket.sendMessage(jid, { video: { url: media.videoUrl.trim() }, mimetype: "video/mp4" } as any).catch(() => {});
+    } else if (media.imageUrl?.trim()) {
+      await new Promise((r) => setTimeout(r, 600));
+      await socket.sendMessage(jid, { image: { url: media.imageUrl.trim() } } as any).catch(() => {});
+    }
+  } else if (media?.videoUrl?.trim()) {
     try {
       sent = await socket.sendMessage(jid, {
         video: { url: media.videoUrl.trim() },

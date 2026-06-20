@@ -861,9 +861,29 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (r
     productImageUrl: null as string | null,
     productVideoUrl: null as string | null
   };
-  sendOrderNewCustomerWhatsApp(req.user!.orgId, waNewOrderPayload).catch((err) =>
-    logger.warn("wa order_new customer failed", { orderId: data.id, error: (err as Error).message })
-  );
+  // Look up package image/video async so it doesn't block the response
+  const orgIdSnap = req.user!.orgId;
+  const orderIdSnap = data.id;
+  ;(async () => {
+    try {
+      if (data.package_id) {
+        const { data: pkgRow } = await supabase
+          .from("product_packages")
+          .select("image_url, image_urls, video_url")
+          .eq("id", data.package_id)
+          .maybeSingle();
+        const imageUrl = (pkgRow as any)?.image_url as string | null | undefined
+          ?? ((pkgRow as any)?.image_urls as string[] | null | undefined)?.[0]
+          ?? null;
+        const videoUrl = (pkgRow as any)?.video_url as string | null | undefined ?? null;
+        if (imageUrl) waNewOrderPayload.productImageUrl = imageUrl;
+        if (videoUrl) waNewOrderPayload.productVideoUrl = videoUrl;
+      }
+      await sendOrderNewCustomerWhatsApp(orgIdSnap, waNewOrderPayload);
+    } catch (err) {
+      logger.warn("wa order_new customer failed", { orderId: orderIdSnap, error: (err as Error).message });
+    }
+  })();
   if (data.assigned_rep_id && data.assigned_rep_id !== req.user!.id) {
     // Alert the assigned rep via WhatsApp — look up their phone first
     const repId = data.assigned_rep_id;
@@ -1677,6 +1697,17 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       productImageUrl: null as string | null,
       productVideoUrl: null as string | null
     };
+    // Attach package image/video if available
+    if (data.package_id) {
+      supabase.from("product_packages").select("image_url, image_urls, video_url")
+        .eq("id", data.package_id).maybeSingle()
+        .then(({ data: pkgRow }) => {
+          const img = (pkgRow as any)?.image_url ?? (pkgRow as any)?.image_urls?.[0] ?? null;
+          const vid = (pkgRow as any)?.video_url ?? null;
+          if (img) waStatusPayload.productImageUrl = img;
+          if (vid) waStatusPayload.productVideoUrl = vid;
+        }).then(() => undefined, () => undefined);
+    }
     if (status === "Confirmed" && data.scheduled_date) {
       sendOrderScheduledCustomerWhatsApp(req.user!.orgId, waStatusPayload).catch((err) =>
         logger.warn("wa order_scheduled customer failed", { orderId: data.id, error: (err as Error).message })

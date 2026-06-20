@@ -573,7 +573,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   // 1. Resolve package → product → org
   const { data: pkg, error: pkgErr } = await supabase
     .from("product_packages")
-    .select("id, product_id, name, package_set, price, currency, quantity, companion_products, package_components, active, state_filter_mode, state_restrictions, requires_state_stock, attribution_product_id")
+    .select("id, product_id, name, package_set, price, currency, quantity, companion_products, package_components, active, state_filter_mode, state_restrictions, requires_state_stock, attribution_product_id, image_url, image_urls, video_url")
     .eq("id", d.packageId)
     .maybeSingle();
   if (pkgErr || !pkg || !pkg.active) {
