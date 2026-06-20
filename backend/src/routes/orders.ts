@@ -18,6 +18,13 @@ import {
 } from "../lib/mailer.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
 import { sendNewOrderSms, sendOrderStatusSms } from "../lib/sms.js";
+import {
+  sendOrderNewCustomerWhatsApp,
+  sendOrderNewRepWhatsApp,
+  sendOrderScheduledCustomerWhatsApp,
+  sendOrderFailedCustomerWhatsApp,
+  sendOrderDeliveredCustomerWhatsApp
+} from "../lib/whatsapp.js";
 import { applyOrderMarketingScope } from "../lib/marketing-attribution.js";
 import { sendConnectedUserWhatsAppToJid } from "../lib/whatsapp-runtime.js";
 
@@ -835,6 +842,43 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (r
     cross_sell_lines: data.cross_sell_lines
   });
 
+  // WhatsApp automation: new order confirmation to customer + rep
+  const waNewOrderPayload = {
+    id: data.id,
+    customer: data.customer,
+    phone: data.phone,
+    productName: data.product_name,
+    packageName: data.package_name,
+    amount: typeof data.amount === "number" ? data.amount : Number(data.amount ?? 0),
+    currency: data.currency ?? "NGN",
+    source: data.source ?? null,
+    city: (data as any).city ?? null,
+    state: (data as any).state ?? null,
+    productImageUrl: null as string | null,
+    productVideoUrl: null as string | null
+  };
+  sendOrderNewCustomerWhatsApp(req.user!.orgId, waNewOrderPayload).catch((err) =>
+    logger.warn("wa order_new customer failed", { orderId: data.id, error: (err as Error).message })
+  );
+  if (data.assigned_rep_id && data.assigned_rep_id !== req.user!.id) {
+    // Alert the assigned rep via WhatsApp — look up their phone first
+    const repId = data.assigned_rep_id;
+    const ordId = data.id;
+    const orgId = req.user!.orgId;
+    ;(async () => {
+      try {
+        const { data: repRow } = await supabase.from("users").select("name, phone").eq("id", repId).single();
+        const repPhone = (repRow as any)?.phone as string | null | undefined;
+        const repName  = (repRow as any)?.name  as string | null | undefined;
+        if (repPhone) {
+          await sendOrderNewRepWhatsApp(orgId, waNewOrderPayload, { name: repName ?? "Rep", phone: repPhone });
+        }
+      } catch (err) {
+        logger.warn("wa order_new rep failed", { orderId: ordId, error: (err as Error).message });
+      }
+    })();
+  }
+
   // Internal: notify owner + admins
   sendInternalNewOrderEmail(req.user!.orgId, {
     id: data.id, customer: data.customer, phone: data.phone,
@@ -1609,6 +1653,38 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     call_outcome: data.call_outcome,
     response: data.response
   }, existing?.status ?? null, status);
+
+  // WhatsApp automation: status-driven customer notifications
+  {
+    const waStatusPayload = {
+      id: data.id,
+      customer: data.customer,
+      phone: data.phone,
+      productName: data.product_name,
+      packageName: data.package_name,
+      amount: typeof data.amount === "number" ? data.amount : Number(data.amount ?? 0),
+      currency: data.currency ?? "NGN",
+      source: (data as any).source ?? null,
+      city: (data as any).city ?? null,
+      state: (data as any).state ?? null,
+      scheduledDate: data.scheduled_date ?? undefined,
+      productImageUrl: null as string | null,
+      productVideoUrl: null as string | null
+    };
+    if (status === "Confirmed" && data.scheduled_date) {
+      sendOrderScheduledCustomerWhatsApp(req.user!.orgId, waStatusPayload).catch((err) =>
+        logger.warn("wa order_scheduled customer failed", { orderId: data.id, error: (err as Error).message })
+      );
+    } else if (status === "Failed") {
+      sendOrderFailedCustomerWhatsApp(req.user!.orgId, waStatusPayload).catch((err) =>
+        logger.warn("wa order_failed customer failed", { orderId: data.id, error: (err as Error).message })
+      );
+    } else if (status === "Delivered") {
+      sendOrderDeliveredCustomerWhatsApp(req.user!.orgId, waStatusPayload).catch((err) =>
+        logger.warn("wa order_delivered customer failed", { orderId: data.id, error: (err as Error).message })
+      );
+    }
+  }
 
   // Internal: notify owner + admins when delivered
   if (status === "Delivered") {

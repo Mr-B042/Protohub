@@ -27,6 +27,7 @@ import {
   sendOrderAssignedEmail
 } from "../lib/mailer.js";
 import { sendNewOrderSms } from "../lib/sms.js";
+import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp } from "../lib/whatsapp.js";
 
 const router = Router();
 
@@ -1233,6 +1234,37 @@ router.post("/", submitRateLimit, async (req, res) => {
     quantity: order.quantity,
     cross_sell_lines: order.cross_sell_lines
   });
+
+  // WhatsApp automation: order confirmation to customer + alert to assigned rep.
+  // Both fire-and-forget; errors are logged internally and never block the response.
+  const waOrderPayload = {
+    id: order.id,
+    customer: order.customer,
+    phone: order.phone,
+    productName: order.product_name,
+    packageName: order.package_name,
+    amount: typeof order.amount === "number" ? order.amount : Number(order.amount ?? 0),
+    currency: order.currency ?? "NGN",
+    source: order.source ?? null,
+    city: null as string | null,
+    state: null as string | null,
+    // Product image/video from the package if available
+    productImageUrl: (pkg as any)?.image_url ?? null,
+    productVideoUrl: (pkg as any)?.video_url ?? null
+  };
+  sendOrderNewCustomerWhatsApp(product.org_id, waOrderPayload).catch((err) =>
+    logger.warn("wa order_new customer failed", { orderId: order.id, error: (err as Error).message })
+  );
+  if (assignedRepId) {
+    const repRow = await supabase.from("users").select("name, phone").eq("id", assignedRepId).single();
+    const repPhone = (repRow.data as any)?.phone;
+    const repName = (repRow.data as any)?.name ?? "Rep";
+    if (repPhone) {
+      sendOrderNewRepWhatsApp(product.org_id, waOrderPayload, { name: repName, phone: repPhone }).catch((err) =>
+        logger.warn("wa order_new rep failed", { orderId: order.id, error: (err as Error).message })
+      );
+    }
+  }
 
   sendInternalNewOrderEmail(product.org_id, {
     id: order.id, customer: order.customer, phone: order.phone,

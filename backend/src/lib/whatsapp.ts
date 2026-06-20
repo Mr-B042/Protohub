@@ -7,7 +7,13 @@ export type WhatsAppProvider = "baileys";
 export type WhatsAppTrigger =
   | "order_follow_up_rep"
   | "order_follow_up_manager"
-  | "order_follow_up_owner";
+  | "order_follow_up_owner"
+  // Customer-facing order event messages (via org automation account)
+  | "order_new"            // Customer: order received confirmation + product image/video
+  | "order_new_rep"        // Rep: new order alert with customer details (assisted handling)
+  | "order_scheduled"      // Customer: scheduled delivery date confirmed
+  | "order_failed"         // Customer: delivery failed, contact rep
+  | "order_delivered";     // Customer: delivery confirmed, thank you
 export type WhatsAppMessageEvent =
   | WhatsAppTrigger
   | "manual_test"
@@ -16,7 +22,13 @@ export type WhatsAppMessageEvent =
 export const DEFAULT_WHATSAPP_TRIGGERS: Record<WhatsAppTrigger, boolean> = {
   order_follow_up_rep: true,
   order_follow_up_manager: false,
-  order_follow_up_owner: false
+  order_follow_up_owner: false,
+  // Customer-facing (off by default — owner opts in after connecting)
+  order_new: false,
+  order_new_rep: false,
+  order_scheduled: false,
+  order_failed: false,
+  order_delivered: false
 };
 
 export const LEGACY_WHATSAPP_TEMPLATE_BODIES: Record<Extract<WhatsAppTrigger, "order_follow_up_rep" | "order_follow_up_manager">, string> = {
@@ -53,6 +65,22 @@ export const DEFAULT_WHATSAPP_TEMPLATES: Record<WhatsAppTrigger, { body: string 
   },
   order_follow_up_owner: {
     body: "Ref: {{order_id}}\nHi {{owner_name}}, {{stage_line}}\nCustomer: {{customer}} · {{phone}}\n{{state_line}}\nOrder: {{product_name}}\nRep: {{rep_name}} {{rep_phone}}\nManager: {{manager_name}} {{manager_phone}}\nDue: {{scheduled_date}}\n{{amount_line}}\n{{note_text}}\n{{action_prompt}}"
+  },
+  // Customer-facing order event templates
+  order_new: {
+    body: "Hi {{customer}}, your order has been received! 🎉\n\nOrder: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\nAmount: {{currency}} {{amount}}\nDelivery to: {{city}}, {{state}}\n\nOur delivery team will contact you to arrange delivery. For enquiries call or reply to this message.\n\nThank you for your order! 🛍️"
+  },
+  order_new_rep: {
+    body: "📦 *New Order Assigned to You*\n\nRef: #{{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nLocation: {{city}}, {{state}}\nProduct: {{product_name}} · {{package_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nCall the customer to confirm and arrange delivery. Update the order status after contact."
+  },
+  order_scheduled: {
+    body: "Hi {{customer}}, your delivery has been scheduled! 📅\n\nOrder: #{{order_id}}\nProduct: {{product_name}}\nScheduled for: {{scheduled_date}}\n\nOur delivery partner will arrive at your address. Please ensure you are available to receive the package.\n\nFor enquiries, reply to this message."
+  },
+  order_failed: {
+    body: "Hi {{customer}}, we were unable to complete your delivery today. 😔\n\nOrder: #{{order_id}}\nProduct: {{product_name}}\n\nPlease contact us to reschedule your delivery. Our team will reach out to you shortly.\n\nCall us: {{rep_contact}}"
+  },
+  order_delivered: {
+    body: "Hi {{customer}}, your order has been delivered! ✅\n\nOrder: #{{order_id}}\nProduct: {{product_name}}\n\nThank you for your purchase! We hope you enjoy your {{product_name}}. Please leave us a review — your feedback means a lot to us! 🌟"
   }
 };
 
@@ -652,11 +680,12 @@ async function sendViaBaileys(
   orgId: string,
   settings: WhatsAppSettings,
   phone: string,
-  body: string
+  body: string,
+  media?: { imageUrl?: string; videoUrl?: string }
 ): Promise<{ providerMessageId?: string; providerStatus?: string }> {
   try {
     await ensureWhatsAppReady(orgId);
-    return await sendConnectedWhatsApp(orgId, phone, body);
+    return await sendConnectedWhatsApp(orgId, phone, body, media);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Baileys send failed.";
     throw new WhatsAppDispatchError("baileys", message);
@@ -668,9 +697,10 @@ async function deliverLoggedWhatsApp(
   settings: WhatsAppSettings,
   logId: string | null,
   normalizedPhone: string,
-  body: string
+  body: string,
+  media?: { imageUrl?: string; videoUrl?: string }
 ) {
-  const result = await sendViaBaileys(orgId, settings, normalizedPhone, body);
+  const result = await sendViaBaileys(orgId, settings, normalizedPhone, body, media);
   await updateWhatsAppLog(logId, {
     status: "sent",
     provider_message_id: result.providerMessageId ?? null,
@@ -693,7 +723,8 @@ async function queueOrSendWhatsApp(
   trigger: WhatsAppMessageEvent,
   vars: Record<string, string>,
   recipientPhone: string,
-  options: SendWhatsAppOptions = {}
+  options: SendWhatsAppOptions = {},
+  media?: { imageUrl?: string; videoUrl?: string }
 ): Promise<QueueOrSendWhatsAppResult | null> {
   const settings = await loadSettings(orgId);
   if (!settings) return null;
@@ -800,13 +831,14 @@ async function queueOrSendWhatsApp(
   });
 
   try {
-    const result = await deliverLoggedWhatsApp(orgId, settings, logId, normalizedPhone, messageBody);
+    const result = await deliverLoggedWhatsApp(orgId, settings, logId, normalizedPhone, messageBody, media);
     logger.info("whatsapp sent", {
       orgId,
       trigger,
       provider: settings.provider,
       to: normalizedPhone,
-      providerMessageId: result.providerMessageId ?? null
+      providerMessageId: result.providerMessageId ?? null,
+      hasMedia: Boolean(media?.imageUrl || media?.videoUrl)
     });
     return result satisfies QueueOrSendWhatsAppResult;
   } catch (error) {
@@ -1410,4 +1442,218 @@ export async function processQueuedWhatsApp(limit = 100) {
       });
     }
   }
+}
+// ── Order-event WhatsApp notifications (org automation account) ──────────────
+
+type OrderEventPayload = {
+  id: string;
+  customer?: string | null;
+  phone?: string | null;
+  productName?: string | null;
+  packageName?: string | null;
+  amount?: number | null;
+  currency?: string | null;
+  source?: string | null;
+  city?: string | null;
+  state?: string | null;
+  scheduledDate?: string | null;
+  assignedRepId?: string | null;
+  // For media (product images / videos passed from the product catalogue)
+  productImageUrl?: string | null;
+  productVideoUrl?: string | null;
+};
+
+type OrderEventRepContact = {
+  name: string;
+  phone: string;
+};
+
+/** Anti-ban: customer messages have a tighter per-recipient daily cap */
+const CUSTOMER_WHATSAPP_DAY_CAP = 1; // max 1 message per customer per event type per day
+
+async function customerAlreadyMessagedToday(
+  orgId: string,
+  normalizedPhone: string,
+  trigger: WhatsAppTrigger
+): Promise<boolean> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { count } = await supabase
+    .from("org_whatsapp_log")
+    .select("*", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .eq("normalized_phone", normalizedPhone)
+    .eq("trigger", trigger)
+    .in("status", ["sent", "queued", "deferred"])
+    .gte("created_at", since);
+  return (count ?? 0) >= CUSTOMER_WHATSAPP_DAY_CAP;
+}
+
+/**
+ * Send new-order confirmation to the CUSTOMER.
+ * Includes product image or video if available.
+ * Anti-ban: checked for opt-out, rate limited, business-hours aware.
+ */
+export async function sendOrderNewCustomerWhatsApp(
+  orgId: string,
+  order: OrderEventPayload
+): Promise<void> {
+  const settings = await loadSettings(orgId);
+  if (!isConnected(settings)) return;
+  if (!settings?.triggers?.order_new) return;
+  const phone = order.phone?.trim();
+  if (!phone) return;
+  const normalizedPhone = normalizePhoneForWhatsApp(phone);
+  if (!normalizedPhone) return;
+  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_new")) return;
+
+  const currency = order.currency ?? "NGN";
+  const amount = typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0";
+
+  await queueOrSendWhatsApp(
+    orgId, "order_new",
+    {
+      order_id: order.id,
+      customer: order.customer ?? "Customer",
+      phone,
+      product_name: order.productName ?? "your order",
+      package_name: order.packageName ?? "",
+      amount,
+      currency,
+      city: order.city ?? "",
+      state: order.state ?? ""
+    },
+    phone,
+    { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined },
+    {
+      imageUrl: order.productImageUrl ?? undefined,
+      videoUrl: order.productVideoUrl ?? undefined
+    }
+  );
+}
+
+/**
+ * Send new-order alert to the ASSIGNED REP (assisted call handling).
+ * Gives the rep full customer + order details so they can call immediately.
+ */
+export async function sendOrderNewRepWhatsApp(
+  orgId: string,
+  order: OrderEventPayload,
+  rep: OrderEventRepContact
+): Promise<void> {
+  const settings = await loadSettings(orgId);
+  if (!isConnected(settings)) return;
+  if (!settings?.triggers?.order_new_rep) return;
+  if (!rep.phone?.trim()) return;
+
+  await queueOrSendWhatsApp(
+    orgId, "order_new_rep",
+    {
+      order_id: order.id,
+      customer: order.customer ?? "Customer",
+      phone: order.phone ?? "—",
+      product_name: order.productName ?? "—",
+      package_name: order.packageName ?? "—",
+      amount: typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0",
+      currency: order.currency ?? "NGN",
+      city: order.city ?? "—",
+      state: order.state ?? "—",
+      source: order.source ?? "—",
+      rep_name: rep.name,
+      rep_phone: rep.phone
+    },
+    rep.phone,
+    {
+      orderId: order.id,
+      audience: "staff",
+      recipientName: rep.name,
+      ignoreSchedule: true  // Rep alerts fire immediately regardless of business hours
+    }
+  );
+}
+
+/**
+ * Notify the customer when their order is scheduled for delivery.
+ */
+export async function sendOrderScheduledCustomerWhatsApp(
+  orgId: string,
+  order: OrderEventPayload
+): Promise<void> {
+  const settings = await loadSettings(orgId);
+  if (!isConnected(settings)) return;
+  if (!settings?.triggers?.order_scheduled) return;
+  const phone = order.phone?.trim();
+  if (!phone) return;
+  const normalizedPhone = normalizePhoneForWhatsApp(phone);
+  if (!normalizedPhone) return;
+  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_scheduled")) return;
+
+  await queueOrSendWhatsApp(
+    orgId, "order_scheduled",
+    {
+      order_id: order.id,
+      customer: order.customer ?? "Customer",
+      product_name: order.productName ?? "your order",
+      scheduled_date: order.scheduledDate ?? "soon"
+    },
+    phone,
+    { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined }
+  );
+}
+
+/**
+ * Notify the customer when a delivery attempt has failed.
+ */
+export async function sendOrderFailedCustomerWhatsApp(
+  orgId: string,
+  order: OrderEventPayload,
+  rep?: OrderEventRepContact | null
+): Promise<void> {
+  const settings = await loadSettings(orgId);
+  if (!isConnected(settings)) return;
+  if (!settings?.triggers?.order_failed) return;
+  const phone = order.phone?.trim();
+  if (!phone) return;
+  const normalizedPhone = normalizePhoneForWhatsApp(phone);
+  if (!normalizedPhone) return;
+  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_failed")) return;
+
+  await queueOrSendWhatsApp(
+    orgId, "order_failed",
+    {
+      order_id: order.id,
+      customer: order.customer ?? "Customer",
+      product_name: order.productName ?? "your order",
+      rep_contact: rep?.phone ?? "our team"
+    },
+    phone,
+    { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined }
+  );
+}
+
+/**
+ * Send a delivery confirmation to the customer.
+ */
+export async function sendOrderDeliveredCustomerWhatsApp(
+  orgId: string,
+  order: OrderEventPayload
+): Promise<void> {
+  const settings = await loadSettings(orgId);
+  if (!isConnected(settings)) return;
+  if (!settings?.triggers?.order_delivered) return;
+  const phone = order.phone?.trim();
+  if (!phone) return;
+  const normalizedPhone = normalizePhoneForWhatsApp(phone);
+  if (!normalizedPhone) return;
+  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_delivered")) return;
+
+  await queueOrSendWhatsApp(
+    orgId, "order_delivered",
+    {
+      order_id: order.id,
+      customer: order.customer ?? "Customer",
+      product_name: order.productName ?? "your order"
+    },
+    phone,
+    { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined }
+  );
 }

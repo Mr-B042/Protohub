@@ -2269,16 +2269,52 @@ export async function disconnectUserWhatsAppConnection(orgId: string, userId: st
   await markUserDisconnected(orgId, userId, null);
 }
 
-export async function sendConnectedWhatsApp(orgId: string, normalizedPhone: string, body: string) {
+export async function sendConnectedWhatsApp(
+  orgId: string,
+  normalizedPhone: string,
+  body: string,
+  media?: { imageUrl?: string; videoUrl?: string }
+) {
   const socket = await ensureWhatsAppReady(orgId);
   if (!socket) {
     throw new Error("WhatsApp is not connected yet.");
   }
 
   const jid = `${normalizeDigits(normalizedPhone)}@s.whatsapp.net`;
-  const sent = await socket.sendMessage(jid, { text: body });
+
+  // Anti-ban jitter: random 800ms – 2500ms delay before sending customer messages
+  // so multiple order confirmations don't fire in a burst pattern.
+  const jitterMs = 800 + Math.floor(Math.random() * 1700);
+  await new Promise((resolve) => setTimeout(resolve, jitterMs));
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let sent: any;
+
+  if (media?.videoUrl?.trim()) {
+    try {
+      sent = await socket.sendMessage(jid, {
+        video: { url: media.videoUrl.trim() },
+        caption: body,
+        mimetype: "video/mp4"
+      } as any);
+    } catch {
+      sent = await socket.sendMessage(jid, { text: body });
+    }
+  } else if (media?.imageUrl?.trim()) {
+    try {
+      sent = await socket.sendMessage(jid, {
+        image: { url: media.imageUrl.trim() },
+        caption: body
+      } as any);
+    } catch {
+      sent = await socket.sendMessage(jid, { text: body });
+    }
+  } else {
+    sent = await socket.sendMessage(jid, { text: body });
+  }
+
   return {
-    providerMessageId: sent?.key?.id ?? undefined,
+    providerMessageId: (sent?.key?.id as string | null | undefined) ?? undefined,
     providerStatus: "sent"
   };
 }
