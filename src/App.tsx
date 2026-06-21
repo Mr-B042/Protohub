@@ -28069,23 +28069,48 @@ ${waybillLineItems(w).length > 1
       scheduleAutoSubmit();
     };
 
+    // Pause countdown while tab is hidden (customer switched to WhatsApp, another app, etc.)
+    // Re-anchor lastInteraction to now when they come back so they get a fresh window.
+    let hiddenAt: number | null = null;
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        hiddenAt = Date.now();
+        if (autoSubmitTimerRef.current) { clearTimeout(autoSubmitTimerRef.current); autoSubmitTimerRef.current = null; }
+        if (autoSubmitTickRef.current)  { clearInterval(autoSubmitTickRef.current);  autoSubmitTickRef.current = null; }
+        setAutoSubmitSecondsLeft(null);
+      } else {
+        // Back on page — treat return as a fresh interaction, restart full window
+        lastInteractionRef.current = Date.now();
+        hiddenAt = null;
+        scheduleAutoSubmit();
+      }
+    };
+
     scheduleAutoSubmit();
 
-    window.addEventListener("mousemove",  onInteraction, { passive: true });
-    window.addEventListener("keydown",    onInteraction, { passive: true });
-    window.addEventListener("touchstart", onInteraction, { passive: true });
-    window.addEventListener("scroll",     onInteraction, { passive: true });
-    window.addEventListener("click",      onInteraction, { passive: true });
+    window.addEventListener("mousemove",   onInteraction, { passive: true });
+    window.addEventListener("keydown",     onInteraction, { passive: true });
+    window.addEventListener("touchstart",  onInteraction, { passive: true });
+    window.addEventListener("touchmove",   onInteraction, { passive: true });
+    window.addEventListener("pointerdown", onInteraction, { passive: true });
+    window.addEventListener("pointermove", onInteraction, { passive: true });
+    window.addEventListener("scroll",      onInteraction, { passive: true });
+    window.addEventListener("click",       onInteraction, { passive: true });
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       if (autoSubmitTimerRef.current) { clearTimeout(autoSubmitTimerRef.current); autoSubmitTimerRef.current = null; }
       if (autoSubmitTickRef.current)  { clearInterval(autoSubmitTickRef.current);  autoSubmitTickRef.current = null; }
       setAutoSubmitSecondsLeft(null);
-      window.removeEventListener("mousemove",  onInteraction);
-      window.removeEventListener("keydown",    onInteraction);
-      window.removeEventListener("touchstart", onInteraction);
-      window.removeEventListener("scroll",     onInteraction);
-      window.removeEventListener("click",      onInteraction);
+      window.removeEventListener("mousemove",   onInteraction);
+      window.removeEventListener("keydown",     onInteraction);
+      window.removeEventListener("touchstart",  onInteraction);
+      window.removeEventListener("touchmove",   onInteraction);
+      window.removeEventListener("pointerdown", onInteraction);
+      window.removeEventListener("pointermove", onInteraction);
+      window.removeEventListener("scroll",      onInteraction);
+      window.removeEventListener("click",       onInteraction);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [
     publicProduct, publicOrderSubmitted, publicOrderSubmitting,
