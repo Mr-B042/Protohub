@@ -9258,7 +9258,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
   const publicOrderSubmittingRef = useRef(false);
   const autoSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSubmitTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastInteractionRef = useRef<number>(Date.now());
+  const [autoSubmitSecondsLeft, setAutoSubmitSecondsLeft] = useState<number | null>(null);
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("All");
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("default");
@@ -28010,7 +28012,6 @@ ${waybillLineItems(w).length > 1
 
   // ── Auto-submit: fire when form is 6/6 complete and customer goes idle for 5 min ──
   useEffect(() => {
-    // Only active when a public product form is being filled (embed mode)
     if (!publicProduct || publicOrderSubmitted || publicOrderSubmitting) return;
 
     const nameOk    = Boolean(orderFormName.trim());
@@ -28022,22 +28023,33 @@ ${waybillLineItems(w).length > 1
     const allFilled = nameOk && phoneOk && waOk && addrOk && cityOk && stateOk;
 
     if (!allFilled) {
-      // Not complete — clear any running timer
-      if (autoSubmitTimerRef.current) {
-        clearTimeout(autoSubmitTimerRef.current);
-        autoSubmitTimerRef.current = null;
-      }
+      if (autoSubmitTimerRef.current) { clearTimeout(autoSubmitTimerRef.current); autoSubmitTimerRef.current = null; }
+      if (autoSubmitTickRef.current)  { clearInterval(autoSubmitTickRef.current);  autoSubmitTickRef.current = null; }
+      setAutoSubmitSecondsLeft(null);
       return;
     }
 
-    // All fields filled — schedule auto-submit after 5 min of inactivity
     const IDLE_MS = 5 * 60 * 1000;
+
+    const startTicker = () => {
+      if (autoSubmitTickRef.current) clearInterval(autoSubmitTickRef.current);
+      lastInteractionRef.current = Date.now();
+      setAutoSubmitSecondsLeft(Math.round(IDLE_MS / 1000));
+      autoSubmitTickRef.current = setInterval(() => {
+        const elapsed = Date.now() - lastInteractionRef.current;
+        const left = Math.max(0, Math.round((IDLE_MS - elapsed) / 1000));
+        setAutoSubmitSecondsLeft(left);
+      }, 1000);
+    };
 
     const scheduleAutoSubmit = () => {
       if (autoSubmitTimerRef.current) clearTimeout(autoSubmitTimerRef.current);
+      startTicker();
       autoSubmitTimerRef.current = setTimeout(() => {
         const idleSince = Date.now() - lastInteractionRef.current;
         if (idleSince >= IDLE_MS && !publicOrderSubmittingRef.current) {
+          if (autoSubmitTickRef.current) { clearInterval(autoSubmitTickRef.current); autoSubmitTickRef.current = null; }
+          setAutoSubmitSecondsLeft(null);
           submitPublicOrder();
         }
       }, IDLE_MS);
@@ -28050,14 +28062,16 @@ ${waybillLineItems(w).length > 1
 
     scheduleAutoSubmit();
 
-    window.addEventListener("mousemove", onInteraction, { passive: true });
-    window.addEventListener("keydown",   onInteraction, { passive: true });
-    window.addEventListener("touchstart",onInteraction, { passive: true });
-    window.addEventListener("scroll",    onInteraction, { passive: true });
-    window.addEventListener("click",     onInteraction, { passive: true });
+    window.addEventListener("mousemove",  onInteraction, { passive: true });
+    window.addEventListener("keydown",    onInteraction, { passive: true });
+    window.addEventListener("touchstart", onInteraction, { passive: true });
+    window.addEventListener("scroll",     onInteraction, { passive: true });
+    window.addEventListener("click",      onInteraction, { passive: true });
 
     return () => {
       if (autoSubmitTimerRef.current) { clearTimeout(autoSubmitTimerRef.current); autoSubmitTimerRef.current = null; }
+      if (autoSubmitTickRef.current)  { clearInterval(autoSubmitTickRef.current);  autoSubmitTickRef.current = null; }
+      setAutoSubmitSecondsLeft(null);
       window.removeEventListener("mousemove",  onInteraction);
       window.removeEventListener("keydown",    onInteraction);
       window.removeEventListener("touchstart", onInteraction);
@@ -34502,6 +34516,30 @@ ${waybillLineItems(w).length > 1
                     </span>
                   </div>
                   {requireConfirmation && <label className="preview-check"><input type="checkbox" checked={orderFormConfirmed} onChange={(event) => setOrderFormConfirmed(event.target.checked)} /> {confirmationText}</label>}
+                  {autoSubmitSecondsLeft !== null && !publicOrderSubmitting && (
+                    <div style={{ display:"flex", alignItems:"center", gap:10, background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:12, padding:"10px 14px" }}>
+                      <div style={{ position:"relative", flexShrink:0, width:36, height:36 }}>
+                        <svg width="36" height="36" viewBox="0 0 36 36" style={{ transform:"rotate(-90deg)" }}>
+                          <circle cx="18" cy="18" r="15" fill="none" stroke="#d1fae5" strokeWidth="3" />
+                          <circle cx="18" cy="18" r="15" fill="none" stroke="#16a34a" strokeWidth="3"
+                            strokeDasharray={`${2 * Math.PI * 15}`}
+                            strokeDashoffset={`${2 * Math.PI * 15 * (1 - autoSubmitSecondsLeft / 300)}`}
+                            strokeLinecap="round" style={{ transition:"stroke-dashoffset 1s linear" }} />
+                        </svg>
+                        <span style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:800, color:"#16a34a" }}>
+                          {autoSubmitSecondsLeft >= 60 ? `${Math.ceil(autoSubmitSecondsLeft/60)}m` : `${autoSubmitSecondsLeft}s`}
+                        </span>
+                      </div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <p style={{ margin:0, fontSize:12, fontWeight:800, color:"#15803d" }}>Your order will submit automatically</p>
+                        <p style={{ margin:0, fontSize:11, color:"#4ade80", fontWeight:600 }}>
+                          {autoSubmitSecondsLeft >= 60
+                            ? `in ${Math.floor(autoSubmitSecondsLeft/60)}:${String(autoSubmitSecondsLeft%60).padStart(2,"0")} — or tap Order Now to submit immediately`
+                            : `in ${autoSubmitSecondsLeft}s — or tap Order Now to submit immediately`}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                   <button className="primary-button" onClick={submitPublicOrder} disabled={publicOrderSubmitting} style={{ opacity: publicOrderSubmitting ? 0.65 : 1, cursor: publicOrderSubmitting ? "not-allowed" : "pointer" }}>
                     {publicOrderSubmitting ? "Submitting…" : "Order Now"}
                   </button>
