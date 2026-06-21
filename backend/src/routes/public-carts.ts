@@ -329,6 +329,35 @@ router.post("/", captureRateLimit, async (req, res) => {
   res.status(201).json(data);
 });
 
+// ── POST /api/public/carts/:id/heartbeat ─────────────────
+// Real-time "customer is typing / scrolling / idle" signal from the embed form.
+// Fires every 3s while the customer is active. Writes to live_status (jsonb).
+// Rate-limited via the same captureRateLimit (60 req/min per IP).
+router.post("/:id/heartbeat", captureRateLimit, async (req, res) => {
+  const cartId = String(req.params.id ?? "").trim();
+  if (!/^[A-Za-z0-9\-_]+$/.test(cartId)) { res.status(400).json({ error: "Invalid cart id." }); return; }
+
+  const action = String(req.body?.action ?? "active").slice(0, 40);
+  const field  = req.body?.field ? String(req.body.field).slice(0, 40) : null;
+  const section = req.body?.section ? String(req.body.section).slice(0, 40) : null;
+
+  const liveStatus = {
+    action,
+    ...(field   ? { field }   : {}),
+    ...(section ? { section } : {}),
+    ts: new Date().toISOString()
+  };
+
+  // Only update if the cart exists — don't create phantom rows
+  const { error } = await supabase
+    .from("abandoned_carts")
+    .update({ live_status: liveStatus, last_activity: new Date().toISOString() })
+    .eq("id", cartId);
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ ok: true });
+});
+
 // ── POST /api/public/carts/:id/events ────────────────────
 // Tracks the customer's journey through the public order form. Works even
 // before the abandoned cart row has been fully captured, as long as the

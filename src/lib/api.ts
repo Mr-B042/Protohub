@@ -797,7 +797,13 @@ export const cartsApi = {
   },
   changeDate: (id: string, body: { createdAt: string; reason: string }) => patch<any>(`/api/carts/${id}/date`, body),
   update: (id: string, body: unknown) => patch<any>(`/api/carts/${id}`, body),
-  delete: (id: string) => del<void>(`/api/carts/${id}`)
+  delete: (id: string) => del<void>(`/api/carts/${id}`),
+  liveStatus: (id: string) => get<{ id: string; liveStatus: any; lastActivity: string }>(`/api/carts/${encodeURIComponent(id)}/live`),
+  heartbeat: (id: string, body: { action: string; field?: string; section?: string }) =>
+    fetch(`/api/public/carts/${encodeURIComponent(id)}/heartbeat`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body), keepalive: true
+    }).catch(() => {})
 };
 
 // ── Public Orders ────────────────────────────────────────

@@ -9262,6 +9262,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const lastInteractionRef = useRef<number>(Date.now());
   const autoSubmitFiredRef = useRef(false);
   const firstFieldFilledAtRef = useRef<number | null>(null);
+  const [selectedCartLiveStatus, setSelectedCartLiveStatus] = useState<{ action: string; field?: string; section?: string; ts: string } | null>(null);
+  const cartLivePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const currentHeartbeatActionRef = useRef<{ action: string; field?: string; section?: string }>({ action: "active" });
   const [autoSubmitSecondsLeft, setAutoSubmitSecondsLeft] = useState<number | null>(null);
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("All");
   const [pushSubscribed, setPushSubscribed] = useState(false);
@@ -9611,6 +9615,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     createdAt: string;
   }>>([]);
   const [selectedCartId, setSelectedCartId] = useState("");
+  // Live activity poll — runs every 3s when a cart is selected and was active recently
+  useEffect(() => {
+    if (cartLivePollRef.current) { clearInterval(cartLivePollRef.current); cartLivePollRef.current = null; }
+    setSelectedCartLiveStatus(null);
+    if (!selectedCartId) return;
+    const poll = async () => {
+      try {
+        const r = await cartsApi.liveStatus(selectedCartId);
+        if (r?.liveStatus) setSelectedCartLiveStatus(r.liveStatus);
+        else setSelectedCartLiveStatus(null);
+      } catch { /* ignore — cart may have been deleted */ }
+    };
+    poll();
+    cartLivePollRef.current = setInterval(poll, 3000);
+    return () => { if (cartLivePollRef.current) { clearInterval(cartLivePollRef.current); cartLivePollRef.current = null; } };
+  }, [selectedCartId]);
   const [expandedOrderCaptureDataId, setExpandedOrderCaptureDataId] = useState<string | null>(null);
   const [expandedCartCaptureDataId, setExpandedCartCaptureDataId] = useState<string | null>(null);
   const [expandedTrackingMonitorId, setExpandedTrackingMonitorId] = useState<string | null>(null);
@@ -28118,6 +28138,19 @@ ${waybillLineItems(w).length > 1
     showWhatsappField, requireWhatsapp, addressRequired
   ]);
 
+  // ── Embed form heartbeat — sends live activity to admin every 3s ──
+  useEffect(() => {
+    if (!publicProduct || publicOrderSubmitted || !abandonedDraftCartId) return;
+    if (heartbeatIntervalRef.current) { clearInterval(heartbeatIntervalRef.current); heartbeatIntervalRef.current = null; }
+    const send = () => {
+      const s = currentHeartbeatActionRef.current;
+      cartsApi.heartbeat(abandonedDraftCartId, s);
+    };
+    send();
+    heartbeatIntervalRef.current = setInterval(send, 3000);
+    return () => { if (heartbeatIntervalRef.current) { clearInterval(heartbeatIntervalRef.current); heartbeatIntervalRef.current = null; } };
+  }, [publicProduct, publicOrderSubmitted, abandonedDraftCartId]);
+
   const openCreateTeamModal = () => {
     setNewTeamName("");
     setNewTeamLeadId("");
@@ -34080,7 +34113,7 @@ ${waybillLineItems(w).length > 1
                       style={{ position: "absolute", left: "-9999px", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
                     />
                     <label className="field-full">
-                      <input value={orderFormName} onChange={(event) => setOrderFormName(event.target.value)} placeholder="Your Name *" />
+                      <input value={orderFormName} onChange={(event) => setOrderFormName(event.target.value)} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "name" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }} placeholder="Your Name *" />
                     </label>
                     <label className="field-full">
                       <div className="phone-prefix-row" style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
@@ -34088,7 +34121,7 @@ ${waybillLineItems(w).length > 1
                         <input
                           style={{ flex: 1 }}
                           value={orderFormPhone}
-                          onChange={(event) => setOrderFormPhone(event.target.value.replace(/[^\d\s\-]/g, ""))}
+                          onChange={(event) => setOrderFormPhone(event.target.value.replace(/[^\d\s\-]/g, ""))} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "phone" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }}
                           placeholder="Your Phone Number *"
                           inputMode="tel"
                           pattern="[0-9\s\-]{7,15}"
@@ -34107,7 +34140,7 @@ ${waybillLineItems(w).length > 1
                           <input
                             style={{ flex: 1 }}
                             value={orderFormWhatsapp}
-                            onChange={(event) => setOrderFormWhatsapp(sanitizePhoneDigitsInput(event.target.value))}
+                            onChange={(event) => setOrderFormWhatsapp(sanitizePhoneDigitsInput(event.target.value))} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "whatsapp" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }}
                             placeholder={`Your WhatsApp Number${requireWhatsapp ? " *" : ""}`}
                             inputMode="tel"
                             pattern="[0-9]{7,15}"
@@ -34123,10 +34156,10 @@ ${waybillLineItems(w).length > 1
                       </label>
                     )}
                     <label className="field-full">
-                      <input value={orderFormAddress} onChange={(event) => setOrderFormAddress(event.target.value)} placeholder={`Your Address${addressRequired ? " *" : ""}`} />
+                      <input value={orderFormAddress} onChange={(event) => setOrderFormAddress(event.target.value)} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "address" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }} placeholder={`Your Address${addressRequired ? " *" : ""}`} />
                     </label>
                     <label className="field-full">
-                      <input value={orderFormCity} onChange={(event) => setOrderFormCity(event.target.value)} placeholder={`Your City${cityRequired ? " *" : ""}`} />
+                      <input value={orderFormCity} onChange={(event) => setOrderFormCity(event.target.value)} onFocus={() => { currentHeartbeatActionRef.current = { action: "typing", field: "city" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }} placeholder={`Your City${cityRequired ? " *" : ""}`} />
                     </label>
                     <label className="field-full">
                       {(() => {
@@ -34142,7 +34175,7 @@ ${waybillLineItems(w).length > 1
                             )
                           : nigeriaStates;
                         return (
-                          <select required value={orderFormState} onChange={(event) => setOrderFormState(event.target.value)}>
+                          <select required value={orderFormState} onChange={(event) => setOrderFormState(event.target.value)} onFocus={() => { currentHeartbeatActionRef.current = { action: "choosing", field: "state" }; }} onBlur={() => { currentHeartbeatActionRef.current = { action: "active" }; }}>
                             <option value="" disabled>Select your state *</option>
                             {allowed.map((state) => <option key={state} value={state}>{state}</option>)}
                           </select>
@@ -58061,6 +58094,37 @@ ${waybillLineItems(w).length > 1
 	              })();
 	              return (
 	                <div className="px-6 py-5 flex flex-col gap-5">
+	                  {/* Live activity banner */}
+	                  {(() => {
+	                    if (!selectedCartLiveStatus) return null;
+	                    const ageSec = (Date.now() - new Date(selectedCartLiveStatus.ts).getTime()) / 1000;
+	                    if (ageSec > 12) return null; // stale — customer went idle
+	                    const { action, field } = selectedCartLiveStatus;
+	                    const fieldLabel: Record<string, string> = { name: "name", phone: "phone number", whatsapp: "WhatsApp", address: "address", city: "city", state: "state" };
+	                    const label = action === "typing" && field
+	                      ? `Typing ${fieldLabel[field] ?? field}…`
+	                      : action === "choosing" && field
+	                      ? `Choosing ${fieldLabel[field] ?? field}…`
+	                      : action === "scrolling" ? "Scrolling through the form…"
+	                      : "Active on form";
+	                    return (
+	                      <div className="flex items-center gap-3 rounded-xl bg-emerald-50 border border-emerald-200 px-3.5 py-2.5">
+	                        <span className="relative flex h-2.5 w-2.5 shrink-0">
+	                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+	                          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+	                        </span>
+	                        <p className="m-0 text-xs font-black text-emerald-800">{selectedCart.customer || "Customer"} is live —</p>
+	                        <p className="m-0 text-xs font-bold text-emerald-700 flex items-center gap-1">
+	                          {label}
+	                          <span className="inline-flex gap-0.5 items-end h-3">
+	                            <span className="w-0.5 rounded-full bg-emerald-500 animate-bounce" style={{ height: 6, animationDelay: "0ms" }} />
+	                            <span className="w-0.5 rounded-full bg-emerald-500 animate-bounce" style={{ height: 10, animationDelay: "150ms" }} />
+	                            <span className="w-0.5 rounded-full bg-emerald-500 animate-bounce" style={{ height: 6, animationDelay: "300ms" }} />
+	                          </span>
+	                        </p>
+	                      </div>
+	                    );
+	                  })()}
 	                  {/* Header */}
 	                  <div className="flex items-start justify-between gap-3 flex-wrap">
 	                    <div className="min-w-0">

@@ -1462,4 +1462,18 @@ router.delete("/:id",
   }
 );
 
+// ── GET /api/carts/:id/live ─── Admin polls live_status of a specific cart ──
+router.get("/:id/live", async (req, res) => {
+  const cartId = String(req.params.id).trim();
+  const { data, error } = await supabase
+    .from("abandoned_carts")
+    .select("id, live_status, last_activity")
+    .eq("org_id", req.user!.orgId)
+    .eq("id", cartId)
+    .maybeSingle();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (!data) { res.status(404).json({ error: "Cart not found." }); return; }
+  res.json({ id: data.id, liveStatus: data.live_status, lastActivity: data.last_activity });
+});
+
 export default router;
