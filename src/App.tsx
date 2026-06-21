@@ -4380,7 +4380,7 @@ type CartInfoFormConfig = { showEmail?: boolean; showWhatsapp?: boolean };
 type CartInfoField = { label: string; value?: string; done: boolean };
 const cartCustomerInfoFields = (cart: AbandonedCartRecord, cfg: CartInfoFormConfig = {}): CartInfoField[] => {
   const list: CartInfoField[] = [
-    { label: "Name",  value: cart.customer, done: Boolean((cart.customer ?? "").trim()) },
+    { label: "Name",  value: cart.customer, done: Boolean((cart.customer ?? "").trim()) && cart.customer !== "Partial lead" },
     { label: "Phone", value: cart.phone,    done: Boolean((cart.phone ?? "").trim()) },
   ];
   // WhatsApp is on by default; Email is off by default — only count when the form shows them.
@@ -28078,6 +28078,15 @@ ${waybillLineItems(w).length > 1
       autoSubmitTimerRef.current = setTimeout(() => {
         const idleSince = Date.now() - lastInteractionRef.current;
         if (idleSince >= IDLE_MS && !publicOrderSubmittingRef.current) {
+          // Re-check all fields at fire time — customer may have cleared a field after countdown started
+          const currentNameOk  = Boolean((document.querySelector('input[placeholder*="Name"]') as HTMLInputElement | null)?.value.trim() ?? orderFormName.trim());
+          const currentPhoneOk = orderFormPhone.replace(/\D/g,"").length >= 7;
+          if (!currentNameOk || !currentPhoneOk) {
+            // Form is no longer complete — abort, clear countdown
+            if (autoSubmitTickRef.current) { clearInterval(autoSubmitTickRef.current); autoSubmitTickRef.current = null; }
+            setAutoSubmitSecondsLeft(null);
+            return;
+          }
           if (autoSubmitTickRef.current) { clearInterval(autoSubmitTickRef.current); autoSubmitTickRef.current = null; }
           setAutoSubmitSecondsLeft(null);
           autoSubmitFiredRef.current = true;
