@@ -8458,11 +8458,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (activePage !== "Embed Form" && activePage !== "Settings") return;
-    // Also load traffic stats when on the links tab
-    if (activePage === "Settings") {
-      setLinkTrafficLoading(true);
-      marketingLinkVariantsApi.traffic().then(setLinkTraffic).catch(()=>{}).finally(()=>setLinkTrafficLoading(false));
-    }
+    // Load traffic stats on both Embed Form and Settings pages
+    setLinkTrafficLoading(true);
+    marketingLinkVariantsApi.traffic().then(setLinkTraffic).catch(()=>{}).finally(()=>setLinkTrafficLoading(false));
     if (!authUser?.id || !canManageMetaCapiSettings) {
       setMetaCapiConfigs([]);
       setMetaCapiConfigsLoading(false);
