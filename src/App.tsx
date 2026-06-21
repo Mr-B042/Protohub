@@ -50102,16 +50102,17 @@ ${waybillLineItems(w).length > 1
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         {isDirty && <span className="text-[10px] font-black text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Unsaved</span>}
-                        {/* Toggle ON/OFF */}
+                        {/* Toggle — same style as trigger cards */}
                         <button
                           type="button" role="switch" aria-checked={upsellEnabled}
                           onClick={() => waToggleTrigger("order_upsell", !upsellEnabled)}
                           disabled={waTriggerSaving}
-                          className={`relative shrink-0 h-7 w-12 cursor-pointer rounded-full transition-all duration-300 focus:outline-none disabled:opacity-50 ${upsellEnabled ? "bg-rose-500 shadow-[0_0_0_3px_rgba(244,63,94,0.15)]" : "bg-gray-200"}`}
+                          className="!min-h-0 p-0 focus:outline-none disabled:opacity-50"
                         >
-                          <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-md transition-all duration-300 ${upsellEnabled ? "left-[calc(100%-1.375rem)]" : "left-1"}`} />
+                          <span className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ${upsellEnabled ? "bg-rose-500" : "bg-gray-300"}`}>
+                            <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-300 ${upsellEnabled ? "translate-x-6" : "translate-x-1"}`} />
+                          </span>
                         </button>
-                        <span className={`text-xs font-black ${upsellEnabled ? "text-rose-600" : "text-gray-400"}`}>{upsellEnabled ? "ON" : "OFF"}</span>
                       </div>
                     </div>
 
