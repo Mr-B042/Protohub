@@ -53132,7 +53132,7 @@ ${waybillLineItems(w).length > 1
                                         </span>
                                       )}
                                       {item.requiresStateStock && (
-                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 whitespace-nowrap" title="Requires available agent stock in the customer's state">
+                                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wide bg-emerald-600 text-white whitespace-nowrap shadow-sm" title="Requires available agent stock in the customer's state">
                                           Stock-gated
                                         </span>
                                       )}
@@ -53192,7 +53192,7 @@ ${waybillLineItems(w).length > 1
                                               </span>
                                             )}
                                             {companion.requiresStateStock && (
-                                              <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-emerald-700">
+                                              <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-600 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-white shadow-sm">
                                                 Stock-gated
                                               </span>
                                             )}
