@@ -227,6 +227,13 @@ type MetaCapiConfigRecord = {
   pixelId: string;
   accessToken?: string;
   hasAccessToken?: boolean;
+  redirectUrl?: string;
+  landingPageUrl?: string;
+  productId?: string | null;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  testEventCode?: string;
   active: boolean;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -319,7 +326,7 @@ type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
 type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed" | "order_rescheduled" | "order_assigned" | "order_follow_up"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string; recipientId?: string };
 type EmailProviderName = "resend" | "mailjet";
-type SettingsPanel = "workspace" | "email" | "sms" | "meta";
+type SettingsPanel = "workspace" | "email" | "sms" | "meta" | "links";
 type DisplayDensity = "compact" | "comfortable";
 type RevenueCompareMode = "periods" | "statuses";
 type WorkingDayName = "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday";
@@ -7343,6 +7350,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [metaDefaultDraft, setMetaDefaultDraft] = useState({ pixelId: "", accessToken: "", thankYouUrl: "", testEventCode: "" });
   const [metaDefaultSaving, setMetaDefaultSaving] = useState(false);
   const [metaDefaultSaved, setMetaDefaultSaved] = useState(false);
+  const [linksEditingId, setLinksEditingId] = useState<string|null>(null);
+  const [linksAdding, setLinksAdding] = useState(false);
+  const [linksSaving, setLinksSaving] = useState(false);
+  const emptyLinkDraft = () => ({ label:"", pixelId:"", accessToken:"", redirectUrl:"", landingPageUrl:"", utmSource:"facebook", utmMedium:"paid_social", utmCampaign:"", testEventCode:"", mode:"hybrid" as EmbedMetaTrackingMode, productId:"" });
+  const [linkDraft, setLinkDraft] = useState(emptyLinkDraft());
+  const [linkCopiedId, setLinkCopiedId] = useState<string|null>(null);
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>("workspace");
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
@@ -50889,7 +50902,8 @@ ${waybillLineItems(w).length > 1
                       { id: "workspace", label: "Workspace", hint: "Push, branding, app install, timezone, account" },
                       ...(canManageMessagingSettings ? [{ id: "email", label: "Email Delivery", hint: "Provider setup, templates, activity" }] : []),
                       ...(canViewSmsHealth ? [{ id: "sms", label: "SMS Delivery", hint: canManageMessagingSettings ? "Balance, provider setup, templates, activity" : "Balance and SMS health only" }] : []),
-                      ...(currentRole === "Owner" ? [{ id: "meta", label: "Meta & Ads", hint: "Pixel ID, CAPI token, thank-you page URL" }] : [])
+                      ...(currentRole === "Owner" ? [{ id: "meta", label: "Meta & Ads", hint: "Pixel ID, CAPI token, thank-you page URL" }] : []),
+                      ...(currentRole === "Owner" ? [{ id: "links", label: "Links & Tracking", hint: "All landing pages, pixels and redirect URLs in one place" }] : [])
                     ].map((tab) => {
                       const active = settingsPanel === tab.id;
                       return (
@@ -52849,6 +52863,224 @@ ${waybillLineItems(w).length > 1
                 </div>
               </section>
               )}
+
+              {settingsPanel === "links" && currentRole === "Owner" && (() => {
+                const visibleConfigs = metaCapiConfigs.filter(c => c.trackingKey !== "__default__");
+
+                const buildEmbedUrl = (c: MetaCapiConfigRecord) => {
+                  const base = c.landingPageUrl?.trim() || "";
+                  const prod = products.find(p => p.id === c.productId);
+                  if (!prod) return base;
+                  const pkg = prod.packages?.[0];
+                  const params = new URLSearchParams();
+                  params.set("product", prod.id);
+                  if (pkg?.id) params.set("package_set", pkg.name ?? "");
+                  if (c.redirectUrl?.trim()) params.set("redirect_url", c.redirectUrl.trim());
+                  if (c.utmSource?.trim()) params.set("utm_source", c.utmSource.trim());
+                  if (c.utmMedium?.trim()) params.set("utm_medium", c.utmMedium.trim());
+                  if (c.utmCampaign?.trim()) params.set("utm_campaign", c.utmCampaign.trim());
+                  if (c.pixelId?.trim()) params.set("meta_pixel_id", c.pixelId.trim());
+                  params.set("tracking_mode", c.mode === "hybrid" || c.mode === "protohub" ? "hybrid" : "landing_page");
+                  params.set("tracking_key", c.trackingKey);
+                  if (c.testEventCode?.trim()) params.set("meta_test_event_code", c.testEventCode.trim());
+                  if (c.label?.trim()) params.set("embed_label", c.label.trim());
+                  return `${base}#/order-form/embed?${params.toString()}`;
+                };
+
+                const startEdit = (c: MetaCapiConfigRecord) => {
+                  setLinksEditingId(c.id);
+                  setLinkDraft({ label: c.label, pixelId: c.pixelId, accessToken: "", redirectUrl: c.redirectUrl ?? "", landingPageUrl: c.landingPageUrl ?? "", utmSource: c.utmSource ?? "facebook", utmMedium: c.utmMedium ?? "paid_social", utmCampaign: c.utmCampaign ?? "", testEventCode: c.testEventCode ?? "", mode: c.mode, productId: c.productId ?? "" });
+                  setLinksAdding(true);
+                };
+
+                const saveLink = async () => {
+                  if (!linkDraft.label.trim() || !linkDraft.pixelId.trim()) { showToast("Label and Pixel ID are required."); return; }
+                  setLinksSaving(true);
+                  try {
+                    const trackingKey = linksEditingId
+                      ? (metaCapiConfigs.find(c => c.id === linksEditingId)?.trackingKey ?? linkDraft.label.toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,"").slice(0,40))
+                      : linkDraft.label.toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,"").slice(0,40) + "_" + Date.now().toString(36);
+                    const saved = await metaCapiSettingsApi.save({ ...linkDraft, trackingKey, active: true });
+                    setMetaCapiConfigs(prev => {
+                      const without = prev.filter(c => c.id !== saved.id);
+                      return [...without, saved].sort((a,b) => a.label.localeCompare(b.label));
+                    });
+                    setLinksAdding(false);
+                    setLinksEditingId(null);
+                    setLinkDraft(emptyLinkDraft());
+                    showToast("✓ Tracking link saved.");
+                  } catch (e: any) { showToast(e?.message ?? "Could not save — please retry."); }
+                  finally { setLinksSaving(false); }
+                };
+
+                const modeColors: Record<string,string> = { hybrid:"bg-emerald-100 text-emerald-700", landing_page:"bg-blue-100 text-blue-700", protohub:"bg-purple-100 text-purple-700", off:"bg-gray-100 text-gray-500" };
+                const modeLabel: Record<string,string> = { hybrid:"Hybrid", landing_page:"Landing page", protohub:"CAPI only", off:"Off" };
+
+                return (
+                  <section className="space-y-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-base font-bold text-gray-800">Links & Tracking</h2>
+                        <p className="text-sm text-gray-500 mt-0.5">One row per landing page campaign. Each link bundles pixel, CAPI, redirect, and UTM params — copy the generated embed URL and paste it on your landing page.</p>
+                      </div>
+                      {!linksAdding && (
+                        <button type="button" className="!min-h-0 shrink-0 inline-flex items-center gap-2 rounded-xl bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-blue-700"
+                          onClick={() => { setLinksAdding(true); setLinksEditingId(null); setLinkDraft(emptyLinkDraft()); }}>
+                          <Plus className="h-4 w-4" /> New link
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Add / Edit form */}
+                    {linksAdding && (
+                      <div className="rounded-2xl border border-[#1F8FE0]/30 bg-blue-50/40 p-5 space-y-4">
+                        <p className="m-0 text-xs font-black uppercase tracking-wider text-[#1F8FE0]">{linksEditingId ? "Edit tracking link" : "New tracking link"}</p>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="sm:col-span-2">
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Label *</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="e.g. Edge Brusher TikTok — June" value={linkDraft.label} onChange={e=>setLinkDraft(d=>({...d,label:e.target.value}))} />
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Meta Pixel ID *</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="2171263370039172" value={linkDraft.pixelId} onChange={e=>setLinkDraft(d=>({...d,pixelId:e.target.value.trim()}))} />
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Tracking mode</p>
+                            <select className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={linkDraft.mode} onChange={e=>setLinkDraft(d=>({...d,mode:e.target.value as EmbedMetaTrackingMode}))}>
+                              <option value="hybrid">Hybrid — landing page pixel + CAPI (recommended)</option>
+                              <option value="landing_page">Landing page only — pixel on thank-you page</option>
+                              <option value="protohub">CAPI only — server fires directly</option>
+                              <option value="off">Off</option>
+                            </select>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">CAPI access token {(linkDraft.mode==="hybrid"||linkDraft.mode==="protohub") ? "*" : "(optional)"}</p>
+                            <input type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                              placeholder={linksEditingId && metaCapiConfigs.find(c=>c.id===linksEditingId)?.hasAccessToken ? "Token saved — paste to replace" : "Paste from Meta Events Manager"}
+                              value={linkDraft.accessToken} onChange={e=>setLinkDraft(d=>({...d,accessToken:e.target.value}))} />
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Thank-you / redirect URL</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="https://yoursite.com/thank-you" value={linkDraft.redirectUrl} onChange={e=>setLinkDraft(d=>({...d,redirectUrl:e.target.value.trim()}))} />
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Landing page base URL</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="https://yoursite.com" value={linkDraft.landingPageUrl} onChange={e=>setLinkDraft(d=>({...d,landingPageUrl:e.target.value.trim()}))} />
+                            <p className="m-0 mt-1 text-[10px] text-gray-400">Used to build the full embed URL below</p>
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Product (for embed URL)</p>
+                            <select className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" value={linkDraft.productId} onChange={e=>setLinkDraft(d=>({...d,productId:e.target.value}))}>
+                              <option value="">— Select product —</option>
+                              {products.filter(p=>p.active!==false).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">UTM source</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="facebook / tiktok / google" value={linkDraft.utmSource} onChange={e=>setLinkDraft(d=>({...d,utmSource:e.target.value.trim()}))} />
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">UTM medium</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="paid_social / cpc" value={linkDraft.utmMedium} onChange={e=>setLinkDraft(d=>({...d,utmMedium:e.target.value.trim()}))} />
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">UTM campaign</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="june_launch / ramadan_2026" value={linkDraft.utmCampaign} onChange={e=>setLinkDraft(d=>({...d,utmCampaign:e.target.value.trim()}))} />
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Test event code <span className="font-normal normal-case text-gray-400">(remove after testing)</span></p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="TEST12345" value={linkDraft.testEventCode} onChange={e=>setLinkDraft(d=>({...d,testEventCode:e.target.value.trim()}))} />
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 pt-1 flex-wrap">
+                          <button type="button" className="!min-h-0 rounded-xl bg-[#1F8FE0] px-5 py-2.5 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50"
+                            disabled={linksSaving||!linkDraft.label.trim()||!linkDraft.pixelId.trim()}
+                            onClick={saveLink}>{linksSaving?"Saving…":linksEditingId?"Update link":"Save link"}</button>
+                          <button type="button" className="!min-h-0 text-sm text-gray-400 hover:text-gray-600"
+                            onClick={()=>{setLinksAdding(false);setLinksEditingId(null);setLinkDraft(emptyLinkDraft());}}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Config cards */}
+                    {visibleConfigs.length === 0 && !linksAdding && (
+                      <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 py-14 text-center">
+                        <ExternalLink className="h-8 w-8 text-gray-200 mx-auto mb-2" />
+                        <p className="m-0 text-sm font-bold text-gray-400">No tracking links yet</p>
+                        <p className="m-0 mt-1 text-xs text-gray-400">Create one for each landing page / ad campaign</p>
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      {visibleConfigs.map(c => {
+                        const embedUrl = buildEmbedUrl(c);
+                        const prod = products.find(p => p.id === c.productId);
+                        return (
+                          <div key={c.id} className={`rounded-2xl border bg-white shadow-sm overflow-hidden transition-opacity ${c.active ? "" : "opacity-60"}`}>
+                            {/* Card header */}
+                            <div className="flex items-center gap-3 px-4 py-3.5 border-b border-gray-100">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="m-0 text-sm font-black text-gray-900 truncate">{c.label}</p>
+                                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${modeColors[c.mode] ?? "bg-gray-100 text-gray-500"}`}>{modeLabel[c.mode] ?? c.mode}</span>
+                                  {c.hasAccessToken && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">CAPI ✓</span>}
+                                  {c.testEventCode && <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700">Test mode</span>}
+                                </div>
+                                <p className="m-0 mt-0.5 text-[11px] text-gray-400 truncate">Pixel {c.pixelId} · key: {c.trackingKey}</p>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50" onClick={()=>startEdit(c)}>Edit</button>
+                                <button type="button" className="!min-h-0 rounded-lg border border-rose-100 px-2.5 py-1 text-[11px] font-bold text-rose-500 hover:bg-rose-50"
+                                  onClick={()=>showConfirm(`Remove "${c.label}"?`, async()=>{ await metaCapiSettingsApi.delete(c.id); setMetaCapiConfigs(p=>p.filter(x=>x.id!==c.id)); showToast("Removed."); },{danger:true,confirmLabel:"Remove"})}>Remove</button>
+                                <button type="button" role="switch" aria-checked={c.active} className="!min-h-0 p-0"
+                                  onClick={async()=>{ await metaCapiSettingsApi.toggle(c.id,!c.active); setMetaCapiConfigs(p=>p.map(x=>x.id===c.id?{...x,active:!c.active}:x)); }}>
+                                  <span className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${c.active?"bg-[#1F8FE0]":"bg-gray-300"}`}>
+                                    <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${c.active?"translate-x-6":"translate-x-1"}`}/>
+                                  </span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* URLs row */}
+                            <div className="px-4 py-3 grid gap-2 sm:grid-cols-2 text-xs">
+                              {c.redirectUrl && (
+                                <div className="min-w-0">
+                                  <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400 mb-0.5">Thank-you page</p>
+                                  <a href={c.redirectUrl} target="_blank" rel="noreferrer" className="text-[#1F8FE0] truncate block hover:underline">{c.redirectUrl}</a>
+                                </div>
+                              )}
+                              {prod && (
+                                <div className="min-w-0">
+                                  <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400 mb-0.5">Product</p>
+                                  <p className="m-0 text-gray-700 truncate">{prod.name}</p>
+                                </div>
+                              )}
+                              {(c.utmSource || c.utmCampaign) && (
+                                <div className="min-w-0 sm:col-span-2">
+                                  <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400 mb-0.5">UTM</p>
+                                  <p className="m-0 text-gray-600 truncate">{[c.utmSource,c.utmMedium,c.utmCampaign].filter(Boolean).join(" / ")}</p>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Embed URL copy strip */}
+                            {c.landingPageUrl && c.productId && (
+                              <div className="border-t border-gray-100 bg-gray-50/60 px-4 py-2.5 flex items-center gap-2">
+                                <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400 shrink-0">Embed URL</p>
+                                <p className="m-0 flex-1 text-[11px] text-gray-500 truncate font-mono">{embedUrl}</p>
+                                <button type="button" className="!min-h-0 shrink-0 inline-flex items-center gap-1 rounded-lg bg-white border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50"
+                                  onClick={()=>{ copyText(embedUrl, ""); setLinkCopiedId(c.id); setTimeout(()=>setLinkCopiedId(null),2000); }}>
+                                  {linkCopiedId===c.id ? <><Check className="h-3 w-3 text-emerald-500"/>Copied!</> : <><Copy className="h-3 w-3"/>Copy</>}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })()}
 
             </div>
           ) : activePage === "Inventory" ? (

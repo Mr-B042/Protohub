@@ -618,6 +618,7 @@ export const marketingSpendApi = {
 export const metaCapiSettingsApi = {
   list: () => get<any[]>("/api/meta-capi-settings"),
   save: (body: unknown) => post<any>("/api/meta-capi-settings", body),
+  toggle: (id: string, active: boolean) => patch<any>(`/api/meta-capi-settings/${encodeURIComponent(id)}/toggle`, { active }),
   delete: (id: string) => del<{ ok: boolean }>(`/api/meta-capi-settings/${encodeURIComponent(id)}`)
 };
 
