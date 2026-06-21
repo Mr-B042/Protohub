@@ -1788,13 +1788,16 @@ export async function sendOrderDeliveredCustomerWhatsApp(
 
 // ── Post-order upsell ────────────────────────────────────────────────────────
 type UpsellConfig = {
-  productId: string;
-  packageId: string;
+  id?: string;
+  enabled?: boolean;
   name: string;
   price: number;
+  strikePrice?: number | null;
   currency: string;
   imageUrl?: string | null;
-  delayMinutes?: number; // default 5
+  productId?: string | null;
+  packageId?: string | null;
+  delayMinutes?: number;
 };
 
 export async function sendOrderUpsellWhatsApp(
@@ -1811,79 +1814,53 @@ export async function sendOrderUpsellWhatsApp(
   if (!normalizedPhone) return;
   if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_upsell")) return;
 
-  // Read upsell product config from org settings
-  const upsellCfg = (settings as any).upsell_config as UpsellConfig | null;
-  if (!upsellCfg?.productId || !upsellCfg?.name) return;
+  // Support both array (new) and single object (legacy) config formats
+  const rawCfg = (settings as any).upsell_config;
+  const allConfigs: UpsellConfig[] = Array.isArray(rawCfg)
+    ? rawCfg
+    : (rawCfg && typeof rawCfg === "object" ? [rawCfg] : []);
 
-  // Don't upsell if the customer already has this product in their current order
-  // Check cross_sell_lines, package_components_snapshot, and the main product
-  const { data: orderRow } = await supabase
-    .from("orders")
-    .select("cross_sell_lines, product_id, package_id")
-    .eq("id", order.id)
-    .eq("org_id", orgId)
-    .maybeSingle();
+  // Only consider enabled configs with a name
+  const enabledConfigs = allConfigs.filter((c: any) => c.enabled !== false && c.name);
+  if (enabledConfigs.length === 0) return;
 
-  if (orderRow) {
-    // Skip if the upsell product IS the main product they ordered
-    if (orderRow.product_id === upsellCfg.productId) {
-      logger.info("wa order_upsell: skipped — customer already ordered this product", {
-        orgId, orderId: order.id
-      });
-      return;
+  // Pick the first config that passes stock check + not already in order
+  // (tries each in order until one qualifies)
+  let upsellCfg: UpsellConfig | null = null;
+  for (const cfg of enabledConfigs) {
+    if (!cfg.name) continue;
+    // Check not already in order
+    if (cfg.productId) {
+      const { data: orderRow } = await supabase
+        .from("orders").select("cross_sell_lines, product_id").eq("id", order.id).eq("org_id", orgId).maybeSingle();
+      if (orderRow?.product_id === cfg.productId) continue;
+      const lines = Array.isArray(orderRow?.cross_sell_lines) ? orderRow.cross_sell_lines : [];
+      if (lines.some((l: any) => l.productId === cfg.productId || l.product_id === cfg.productId)) continue;
     }
-    // Skip if the upsell product is already in their cross-sell add-ons
-    const existingLines = Array.isArray(orderRow.cross_sell_lines) ? orderRow.cross_sell_lines : [];
-    const alreadyHasIt = existingLines.some((line: any) =>
-      line.productId === upsellCfg.productId ||
-      line.product_id === upsellCfg.productId
-    );
-    if (alreadyHasIt) {
-      logger.info("wa order_upsell: skipped — product already in cross-sell lines", {
-        orgId, orderId: order.id
-      });
-      return;
-    }
+    upsellCfg = cfg;
+    break;
   }
+  if (!upsellCfg) return;
 
-  // Stock check — only send if the customer's state has stock for the upsell product
+  const upsellCfgFull = upsellCfg as UpsellConfig & { strikePrice?: number | null };
+  if (!upsellCfgFull.name) return;
+
+  // Stock check for the selected config
   const customerState = order.state?.trim();
-  if (customerState) {
+  if (customerState && upsellCfgFull.productId) {
     const { data: agentStock } = await supabase
-      .from("agent_location_inventory")
-      .select("quantity")
-      .eq("org_id", orgId)
-      .eq("product_id", upsellCfg.productId)
-      .gt("quantity", 0)
-      .limit(1)
-      .maybeSingle();
-
-    // Also check via agent coverage — find agents covering this state
+      .from("agent_location_inventory").select("quantity")
+      .eq("org_id", orgId).eq("product_id", upsellCfgFull.productId).gt("quantity", 0).limit(1).maybeSingle();
     if (!agentStock) {
-      const { data: agentLocations } = await supabase
-        .from("agent_locations")
-        .select("id, agent_locations_inventory(quantity)")
-        .eq("org_id", orgId)
-        .ilike("state", `%${customerState}%`)
-        .limit(10);
-
-      const hasStateStock = (agentLocations ?? []).some((loc: any) =>
-        (loc.agent_locations_inventory ?? []).some((inv: any) => inv.quantity > 0)
-      );
-      if (!hasStateStock) {
-        logger.info("wa order_upsell: skipped — no stock in customer state", {
-          orgId, orderId: order.id, state: customerState
-        });
-        return;
-      }
+      logger.info("wa order_upsell: skipped — no stock in customer state", { orgId, orderId: order.id, state: customerState });
+      return;
     }
   }
 
-  const currency = upsellCfg.currency ?? "NGN";
+  const currency = upsellCfgFull.currency ?? "NGN";
   const firstName = (order.customer ?? "").split(" ")[0] || "there";
-  const delayMs = ((upsellCfg.delayMinutes ?? 5) * 60 * 1000);
+  const delayMs = ((upsellCfgFull.delayMinutes ?? 5) * 60 * 1000);
 
-  // Send after configured delay (default 5 minutes after order confirmation)
   setTimeout(async () => {
     try {
       await queueOrSendWhatsApp(
@@ -1891,24 +1868,19 @@ export async function sendOrderUpsellWhatsApp(
         {
           first_name: firstName,
           order_id: order.id,
-          upsell_name: upsellCfg.name,
-          upsell_price: upsellCfg.price.toLocaleString("en-NG"),
+          upsell_name: upsellCfgFull.name,
+          upsell_price: upsellCfgFull.price.toLocaleString("en-NG"),
           upsell_currency: currency,
-          // strike_line: shows crossed-out original price if configured, otherwise empty
-          strike_line: (upsellCfg as any).strikePrice
-            ? `~~${currency} ${Number((upsellCfg as any).strikePrice).toLocaleString("en-NG")}~~ → `
+          strike_line: upsellCfgFull.strikePrice
+            ? `~~${currency} ${Number(upsellCfgFull.strikePrice).toLocaleString("en-NG")}~~ → `
             : ""
         },
         targetPhone,
         { orderId: order.id, audience: "customer", recipientName: firstName },
-        {
-          imageUrl: upsellCfg.imageUrl ?? undefined
-        }
+        { imageUrl: upsellCfgFull.imageUrl ?? undefined }
       );
     } catch (err) {
-      logger.warn("wa order_upsell: send failed", {
-        orgId, orderId: order.id, error: (err as Error).message
-      });
+      logger.warn("wa order_upsell: send failed", { orgId, orderId: order.id, error: (err as Error).message });
     }
   }, delayMs);
 }

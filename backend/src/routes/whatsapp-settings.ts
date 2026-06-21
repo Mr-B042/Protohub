@@ -80,12 +80,26 @@ const TemplateSchema = z.object({
   body: z.string().trim().min(1, "Template body is required.")
 });
 
+const UpsellItemSchema = z.object({
+  id: z.string().optional(),
+  enabled: z.boolean().optional(),
+  name: z.string(),
+  price: z.number(),
+  strikePrice: z.number().nullable().optional(),
+  currency: z.string().default("NGN"),
+  imageUrl: z.string().nullable().optional(),
+  productId: z.string().nullable().optional(),
+  packageId: z.string().nullable().optional(),
+  delayMinutes: z.number().optional()
+});
+
 const SettingsSchema = z.object({
   enabled: z.boolean(),
   assistant_outcome_autofill_enabled: z.boolean().default(true),
   provider: z.enum(["baileys"]).default("baileys"),
   triggers: z.record(z.boolean()),
-  templates: z.record(TemplateSchema)
+  templates: z.record(TemplateSchema),
+  upsell_config: z.union([z.array(UpsellItemSchema), UpsellItemSchema]).nullable().optional()
 });
 
 const ConnectSchema = z.object({
@@ -158,7 +172,7 @@ router.put("/", requireOwner, async (req, res) => {
   }
 
   const d = parsed.data;
-  const payload = {
+  const payload: Record<string, unknown> = {
     org_id: req.user!.orgId,
     enabled: d.enabled,
     assistant_outcome_autofill_enabled: d.assistant_outcome_autofill_enabled,
@@ -167,6 +181,7 @@ router.put("/", requireOwner, async (req, res) => {
     templates: normalizeTemplateMap(d.templates, { ...DEFAULT_WHATSAPP_TEMPLATES }),
     updated_at: new Date().toISOString()
   };
+  if (d.upsell_config !== undefined) payload.upsell_config = d.upsell_config;
 
   const { data, error } = await supabase
     .from("whatsapp_settings")

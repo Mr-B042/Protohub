@@ -7271,6 +7271,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waTriggerSaving, setWaTriggerSaving] = useState(false);
   const [waUpsellSaving, setWaUpsellSaving] = useState(false);
   const [waUpsellDraft, setWaUpsellDraft] = useState<{name:string;price:string;strikePrice:string;imageUrl:string;productId:string;delayMinutes:number}>({ name:"",price:"",strikePrice:"",imageUrl:"",productId:"",delayMinutes:5 });
+  const [waUpsellEditingId, setWaUpsellEditingId] = useState<string | null>(null);
+  const [waUpsellAdding, setWaUpsellAdding] = useState(false);
+  const [waTab, setWaTab] = useState<"connection"|"automation"|"groups"|"activity">("connection");
   const [waConnecting, setWaConnecting] = useState(false);
   const [waDisconnecting, setWaDisconnecting] = useState(false);
   const [waTestPhone, setWaTestPhone] = useState("");
@@ -49811,7 +49814,29 @@ ${waybillLineItems(w).length > 1
                 </button>
               </header>
 
-              {canSeeOrgAutomation && (() => {
+              {/* ── Tab navigation ── */}
+              {(() => {
+                const tabs: { key: "connection"|"automation"|"groups"|"activity"; label: string; icon: React.ReactNode; ownerOnly?: boolean }[] = [
+                  { key: "connection",  label: "Connection",      icon: <MessageCircle className="h-3.5 w-3.5" /> },
+                  { key: "automation",  label: "Automation",      icon: <Zap className="h-3.5 w-3.5" />,    ownerOnly: true },
+                  { key: "groups",      label: "Groups & Agents", icon: <Users className="h-3.5 w-3.5" /> },
+                  { key: "activity",    label: "Activity",        icon: <Clock className="h-3.5 w-3.5" /> },
+                ];
+                const visible = tabs.filter(t => !t.ownerOnly || currentRole === "Owner");
+                return (
+                  <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mb-1 no-scrollbar">
+                    {visible.map(t => (
+                      <button key={t.key} type="button"
+                        className={`!min-h-0 inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-black transition-all ${waTab === t.key ? "bg-[#25D366] text-white shadow-sm" : "bg-white border border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-800"}`}
+                        onClick={() => setWaTab(t.key)}>
+                        {t.icon}{t.label}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {canSeeOrgAutomation && waTab === "connection" && (() => {
                 const orgStatus = whatsappStatus(waSettings);
                 const orgConnected = orgStatus === "connected";
                 const orgPairing = orgStatus === "pairing" || orgStatus === "connecting";
@@ -49931,7 +49956,7 @@ ${waybillLineItems(w).length > 1
               })()}
 
               {/* Automation trigger toggles — Owner only */}
-              {currentRole === "Owner" && waSettings && (() => {
+              {waTab === "automation" && currentRole === "Owner" && waSettings && (() => {
                 const triggers = (waSettings.triggers ?? {}) as Record<string, boolean>;
                 type TriggerMeta = {
                   key: string; label: string; desc: string;
@@ -50065,234 +50090,190 @@ ${waybillLineItems(w).length > 1
                 );
               })()}
 
-              {/* ── Post-order upsell configuration ── */}
-              {currentRole === "Owner" && waSettings && (() => {
-                const cfg = (waSettings.upsellConfig ?? (waSettings as any).upsell_config ?? {}) as Record<string, any>;
-                const upsellEnabled = Boolean((waSettings.triggers as any)?.order_upsell);
-                const initDraft = () => ({
-                  name: cfg.name ?? "", price: cfg.price != null ? String(cfg.price) : "",
-                  strikePrice: cfg.strikePrice != null ? String(cfg.strikePrice) : "",
-                  imageUrl: cfg.imageUrl ?? "", productId: cfg.productId ?? "", delayMinutes: cfg.delayMinutes ?? 5
-                });
-                const isDirty = waUpsellDraft.name !== (cfg.name ?? "") ||
-                  waUpsellDraft.price !== (cfg.price != null ? String(cfg.price) : "") ||
-                  waUpsellDraft.strikePrice !== (cfg.strikePrice != null ? String(cfg.strikePrice) : "") ||
-                  waUpsellDraft.imageUrl !== (cfg.imageUrl ?? "") ||
-                  waUpsellDraft.productId !== (cfg.productId ?? "") ||
-                  waUpsellDraft.delayMinutes !== (cfg.delayMinutes ?? 5);
-                const saveUpsell = async () => {
-                  if (!waUpsellDraft.name.trim() || !waUpsellDraft.price) { showToast("Add a name and price before saving."); return; }
+              {/* ── Post-order upsell products — list with per-item toggle ── */}
+              {waTab === "automation" && currentRole === "Owner" && waSettings && (() => {
+                const rawCfg = (waSettings.upsellConfig ?? (waSettings as any).upsell_config);
+                // Support both array (new) and single object (legacy)
+                const upsellList: any[] = Array.isArray(rawCfg) ? rawCfg
+                  : (rawCfg && typeof rawCfg === "object" ? [{ ...rawCfg, id: rawCfg.id ?? "legacy", enabled: true }] : []);
+                const upsellMasterOn = Boolean((waSettings.triggers as any)?.order_upsell);
+
+                const saveList = async (next: any[]) => {
                   setWaUpsellSaving(true);
                   try {
-                    const next = { name: waUpsellDraft.name.trim(), price: Number(waUpsellDraft.price), strikePrice: waUpsellDraft.strikePrice ? Number(waUpsellDraft.strikePrice) : null, currency: "NGN", imageUrl: waUpsellDraft.imageUrl.trim() || null, productId: waUpsellDraft.productId.trim() || null, delayMinutes: waUpsellDraft.delayMinutes };
                     const saved = await whatsappSettingsApi.save({ ...waSettings, upsell_config: next, triggers: waSettings.triggers, templates: waSettings.templates });
                     setWaSettings(saved);
+                  } catch { showToast("Could not save — please retry."); }
+                  finally { setWaUpsellSaving(false); }
+                };
+
+                const toggleItem = (id: string) => {
+                  const next = upsellList.map(u => u.id === id ? { ...u, enabled: !u.enabled } : u);
+                  saveList(next);
+                };
+
+                const deleteItem = (id: string) => {
+                  showConfirm("Remove this upsell offer?", async () => {
+                    await saveList(upsellList.filter(u => u.id !== id));
+                    showToast("Upsell removed.");
+                  }, { danger: true, confirmLabel: "Remove" });
+                };
+
+                const addOrUpdateItem = async () => {
+                  if (!waUpsellDraft.name.trim() || !waUpsellDraft.price) { showToast("Name and price are required."); return; }
+                  setWaUpsellSaving(true);
+                  try {
+                    const item = {
+                      id: waUpsellEditingId ?? `upsell-${Date.now()}`,
+                      enabled: true,
+                      name: waUpsellDraft.name.trim(),
+                      price: Number(waUpsellDraft.price),
+                      strikePrice: waUpsellDraft.strikePrice ? Number(waUpsellDraft.strikePrice) : null,
+                      currency: "NGN",
+                      imageUrl: waUpsellDraft.imageUrl.trim() || null,
+                      productId: waUpsellDraft.productId.trim() || null,
+                      delayMinutes: waUpsellDraft.delayMinutes
+                    };
+                    const next = waUpsellEditingId
+                      ? upsellList.map(u => u.id === waUpsellEditingId ? item : u)
+                      : [...upsellList, item];
+                    const saved = await whatsappSettingsApi.save({ ...waSettings, upsell_config: next, triggers: waSettings.triggers, templates: waSettings.templates });
+                    setWaSettings(saved);
+                    setWaUpsellAdding(false);
+                    setWaUpsellEditingId(null);
+                    setWaUpsellDraft({ name:"",price:"",strikePrice:"",imageUrl:"",productId:"",delayMinutes:5 });
                     showToast("✓ Upsell offer saved.");
                   } catch { showToast("Could not save — please retry."); }
                   finally { setWaUpsellSaving(false); }
                 };
-                // Selected product for upsell
-                const selectedUpsellProduct = products.find(p => p.id === waUpsellDraft.productId);
+
+                const startEdit = (u: any) => {
+                  setWaUpsellEditingId(u.id);
+                  setWaUpsellDraft({ name: u.name ?? "", price: u.price != null ? String(u.price) : "", strikePrice: u.strikePrice != null ? String(u.strikePrice) : "", imageUrl: u.imageUrl ?? "", productId: u.productId ?? "", delayMinutes: u.delayMinutes ?? 5 });
+                  setWaUpsellAdding(true);
+                };
+
                 return (
                   <section className="rounded-2xl border border-rose-200 bg-white shadow-sm overflow-hidden">
-                    {/* Header with inline toggle */}
+                    {/* Header */}
                     <div className="flex items-center gap-3 px-5 py-4 border-b border-rose-100 bg-rose-50/40">
                       <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-100 text-rose-600"><ShoppingBag className="h-4 w-4" /></span>
                       <div className="flex-1 min-w-0">
-                        <p className="m-0 text-sm font-black text-gray-900">Post-order upsell</p>
-                        <p className="m-0 text-xs text-gray-500">Personalised add-on offer · {waUpsellDraft.delayMinutes}m after confirmation · stock-checked · skipped if already ordered</p>
+                        <p className="m-0 text-sm font-black text-gray-900">Post-order upsell offers</p>
+                        <p className="m-0 text-xs text-gray-500">{upsellList.filter(u=>u.enabled).length} active · stock-checked · skipped if already in order · first qualifying offer sent</p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        {isDirty && <span className="text-[10px] font-black text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Unsaved</span>}
-                        {/* Toggle — same style as trigger cards */}
-                        <button
-                          type="button" role="switch" aria-checked={upsellEnabled}
-                          onClick={() => waToggleTrigger("order_upsell", !upsellEnabled)}
-                          disabled={waTriggerSaving}
-                          className="!min-h-0 p-0 focus:outline-none disabled:opacity-50"
-                        >
-                          <span className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ${upsellEnabled ? "bg-rose-500" : "bg-gray-300"}`}>
-                            <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-300 ${upsellEnabled ? "translate-x-6" : "translate-x-1"}`} />
+                        {waUpsellSaving && <RefreshCw className="h-3.5 w-3.5 animate-spin text-gray-400" />}
+                        <button type="button" role="switch" aria-checked={upsellMasterOn}
+                          onClick={() => waToggleTrigger("order_upsell", !upsellMasterOn)} disabled={waTriggerSaving}
+                          className="!min-h-0 p-0 focus:outline-none disabled:opacity-50">
+                          <span className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ${upsellMasterOn ? "bg-rose-500" : "bg-gray-300"}`}>
+                            <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-300 ${upsellMasterOn ? "translate-x-6" : "translate-x-1"}`} />
                           </span>
                         </button>
                       </div>
                     </div>
 
-                    <div className="p-4 sm:p-5 space-y-4">
-                      {cfg.name && !isDirty && (
-                        <div className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold ${upsellEnabled ? "bg-rose-50 border border-rose-200 text-rose-700" : "bg-gray-50 border border-gray-200 text-gray-500"}`}>
-                          {upsellEnabled ? <Zap className="h-3.5 w-3.5 shrink-0" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />}
-                          {upsellEnabled ? `Active: "${cfg.name}" for NGN ${Number(cfg.price||0).toLocaleString("en-NG")} — fires ${cfg.delayMinutes ?? 5}m after orders` : `Saved but OFF: "${cfg.name}" — toggle ON above to activate`}
+                    {/* Saved upsell list */}
+                    <div className="divide-y divide-gray-50">
+                      {upsellList.length === 0 && !waUpsellAdding && (
+                        <div className="px-5 py-8 text-center">
+                          <ShoppingBag className="h-8 w-8 text-gray-200 mx-auto mb-2" />
+                          <p className="m-0 text-sm font-bold text-gray-400">No upsell offers yet</p>
+                          <p className="m-0 mt-1 text-xs text-gray-400">Add your first offer below</p>
                         </div>
                       )}
-
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div>
-                          <p className="m-0 mb-1.5 text-[10px] font-black uppercase tracking-wider text-gray-400">Offer name <span className="text-rose-500">*</span></p>
-                          <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
-                            placeholder="e.g. 2pcs Cute Whale Soap Holder"
-                            value={waUpsellDraft.name} onChange={e => setWaUpsellDraft(d => ({ ...d, name: e.target.value }))} />
-                        </div>
-                        <div>
-                          <p className="m-0 mb-1.5 text-[10px] font-black uppercase tracking-wider text-gray-400">Price (NGN) <span className="text-rose-500">*</span></p>
-                          <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
-                            placeholder="e.g. 4900" type="number" min={0}
-                            value={waUpsellDraft.price} onChange={e => setWaUpsellDraft(d => ({ ...d, price: e.target.value }))} />
-                          {waUpsellDraft.price && <p className="m-0 mt-1 text-[11px] text-gray-400">= NGN {Number(waUpsellDraft.price||0).toLocaleString("en-NG")}</p>}
-                        </div>
-                        <div>
-                          <p className="m-0 mb-1.5 text-[10px] font-black uppercase tracking-wider text-gray-400">Original price <span className="text-gray-400 font-normal normal-case">(struck through — optional)</span></p>
-                          <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
-                            placeholder="e.g. 10000"
-                            type="number" min={0}
-                            value={waUpsellDraft.strikePrice}
-                            onChange={e => setWaUpsellDraft(d => ({ ...d, strikePrice: e.target.value }))} />
-                          {waUpsellDraft.strikePrice && <p className="m-0 mt-1 text-[11px] text-gray-400"><s>NGN {Number(waUpsellDraft.strikePrice||0).toLocaleString("en-NG")}</s> → NGN {Number(waUpsellDraft.price||0).toLocaleString("en-NG")}</p>}
-                        </div>
-
-                        {/* Product image — upload or URL */}
-                        <div className="sm:col-span-2">
-                          <p className="m-0 mb-1.5 text-[10px] font-black uppercase tracking-wider text-gray-400">Product image <span className="text-gray-400 font-normal normal-case">(sent with the offer)</span></p>
-                          <div className="flex gap-2">
-                            <input className="flex-1 rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
-                              placeholder="Paste image URL, or Ctrl+V to paste image directly"
-                              value={waUpsellDraft.imageUrl}
-                              onChange={e => setWaUpsellDraft(d => ({ ...d, imageUrl: e.target.value }))}
-                              onPaste={async e => {
-                                const items = Array.from(e.clipboardData?.items ?? []);
-                                const imgItem = items.find(it => it.type.startsWith("image/"));
-                                if (!imgItem) return; // let normal URL paste happen
-                                e.preventDefault();
-                                const file = imgItem.getAsFile();
-                                if (!file) return;
-                                try {
-                                  const reader = new FileReader();
-                                  reader.onload = async re => {
-                                    const dataUrl = String(re.target?.result ?? "");
-                                    if (!dataUrl) return;
-                                    showToast("Uploading pasted image…");
-                                    const { url } = await productsApi.uploadPackageImage(dataUrl, `upsell-${Date.now()}.png`);
-                                    setWaUpsellDraft(d => ({ ...d, imageUrl: url }));
-                                    showToast("✓ Image uploaded from clipboard.");
-                                  };
-                                  reader.readAsDataURL(file);
-                                } catch { showToast("Could not upload pasted image — try URL instead."); }
-                              }}
-                            />
-                            <label className="!min-h-0 inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black text-rose-600 cursor-pointer hover:bg-rose-100 transition-colors shrink-0">
-                              <Upload className="h-3.5 w-3.5" /> Upload
-                              <input type="file" accept="image/*" className="hidden" onChange={async e => {
-                                const file = e.target.files?.[0];
-                                if (!file) return;
-                                try {
-                                  const reader = new FileReader();
-                                  reader.onload = async re => {
-                                    const dataUrl = String(re.target?.result ?? "");
-                                    if (!dataUrl) return;
-                                    const { url } = await productsApi.uploadPackageImage(dataUrl, file.name);
-                                    setWaUpsellDraft(d => ({ ...d, imageUrl: url }));
-                                  };
-                                  reader.readAsDataURL(file);
-                                } catch { showToast("Upload failed — paste URL instead."); }
-                              }} />
-                            </label>
-                          </div>
-                          {waUpsellDraft.imageUrl && (
-                            <div className="mt-3 flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
-                              <img
-                                src={waUpsellDraft.imageUrl}
-                                alt="upsell product preview"
-                                className="h-24 w-24 shrink-0 rounded-xl object-cover border border-gray-200 shadow-sm"
-                                onError={e => { e.currentTarget.style.display = "none"; (e.currentTarget.nextSibling as HTMLElement | null)?.setAttribute("style", "display:flex"); }}
-                              />
-                              <div className="hidden items-center justify-center h-24 w-24 shrink-0 rounded-xl border border-dashed border-gray-300 bg-white text-xs text-gray-400 font-bold text-center">
-                                Image failed to load
-                              </div>
-                              <div className="min-w-0">
-                                <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1">Image preview</p>
-                                <p className="m-0 text-xs text-gray-600 break-all">{waUpsellDraft.imageUrl}</p>
-                                <button type="button" className="!min-h-0 mt-2 text-[11px] text-rose-500 font-bold hover:underline"
-                                  onClick={() => setWaUpsellDraft(d => ({ ...d, imageUrl: "" }))}>Remove</button>
-                              </div>
-                            </div>
+                      {upsellList.map((u: any) => (
+                        <div key={u.id} className={`flex items-center gap-3 px-5 py-3.5 ${u.enabled ? "bg-white" : "bg-gray-50/60"}`}>
+                          {/* Thumb */}
+                          {u.imageUrl ? (
+                            <img src={u.imageUrl} alt={u.name} className="h-12 w-12 shrink-0 rounded-xl object-cover border border-gray-100" onError={e => (e.currentTarget.style.display="none")} />
+                          ) : (
+                            <div className="h-12 w-12 shrink-0 rounded-xl bg-rose-50 flex items-center justify-center text-rose-300"><ShoppingBag className="h-5 w-5" /></div>
                           )}
-                        </div>
-
-                        {/* Product picker — searchable dropdown */}
-                        <div className="sm:col-span-2">
-                          <p className="m-0 mb-1.5 text-[10px] font-black uppercase tracking-wider text-gray-400">Product <span className="text-gray-400 font-normal normal-case">(for stock check — pick from your catalogue)</span></p>
-                          <select
-                            className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white"
-                            value={waUpsellDraft.productId}
-                            onChange={e => {
-                              const prod = products.find(p => p.id === e.target.value);
-                              setWaUpsellDraft(d => ({
-                                ...d,
-                                productId: e.target.value,
-                                // Auto-fill name from product if offer name is blank
-                                name: d.name || prod?.name || d.name
-                              }));
-                            }}
-                          >
-                            <option value="">— Select product for stock check (optional) —</option>
-                            {products.filter(p => p.active !== false).map(p => (
-                              <option key={p.id} value={p.id}>{p.name}</option>
-                            ))}
-                          </select>
-                          {selectedUpsellProduct && (
-                            <p className="m-0 mt-1 text-[11px] text-emerald-600 font-bold flex items-center gap-1">
-                              <CheckCircle2 className="h-3 w-3" /> {selectedUpsellProduct.name} selected — stock will be verified in customer's state before sending
+                          {/* Info */}
+                          <div className="flex-1 min-w-0">
+                            <p className={`m-0 text-sm font-black truncate ${u.enabled ? "text-gray-900" : "text-gray-400"}`}>{u.name}</p>
+                            <p className="m-0 text-xs text-gray-500">
+                              {u.strikePrice && <s className="mr-1 text-gray-400">NGN {Number(u.strikePrice).toLocaleString("en-NG")}</s>}
+                              NGN {Number(u.price||0).toLocaleString("en-NG")} · {u.delayMinutes ?? 5}m delay
                             </p>
-                          )}
-                        </div>
-
-                        <div>
-                          <p className="m-0 mb-1.5 text-[10px] font-black uppercase tracking-wider text-gray-400">Send after</p>
-                          <div className="flex items-center gap-2">
-                            {[2,5,10,15].map(m => (
-                              <button key={m} type="button"
-                                className={`!min-h-0 rounded-lg border px-3 py-2 text-sm font-black transition-colors ${waUpsellDraft.delayMinutes === m ? "border-rose-400 bg-rose-500 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
-                                onClick={() => setWaUpsellDraft(d => ({ ...d, delayMinutes: m }))}
-                              >{m}m</button>
-                            ))}
+                          </div>
+                          {/* Actions */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50" onClick={() => startEdit(u)}>Edit</button>
+                            <button type="button" className="!min-h-0 rounded-lg border border-rose-100 px-2 py-1 text-[11px] font-bold text-rose-500 hover:bg-rose-50" onClick={() => deleteItem(u.id)}>Remove</button>
+                            <button type="button" role="switch" aria-checked={u.enabled} className="!min-h-0 p-0 focus:outline-none" onClick={() => toggleItem(u.id)}>
+                              <span className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ${u.enabled ? "bg-rose-500" : "bg-gray-300"}`}>
+                                <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-300 ${u.enabled ? "translate-x-6" : "translate-x-1"}`} />
+                              </span>
+                            </button>
                           </div>
                         </div>
-                      </div>
-
-                      {/* Preview */}
-                      {waUpsellDraft.name && waUpsellDraft.price && (
-                        <div className="rounded-xl border border-gray-100 bg-[#f0f2f5] p-3">
-                          <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400 mb-2">WhatsApp preview</p>
-                          <div className="bg-[#d9fdd3] rounded-2xl rounded-br-sm px-3.5 py-2.5 max-w-xs shadow-sm">
-                            <p className="m-0 text-sm text-gray-900 whitespace-pre-wrap leading-relaxed">{[
-                              `Hi [John]! 🎉`,
-                              ``,
-                              `Thank you for ordering — we are preparing your delivery now.`,
-                              ``,
-                              `Quick question — would you like to add *${waUpsellDraft.name || "your product"}* to your order?`,
-                              waUpsellDraft.strikePrice
-                                ? `~~NGN ${Number(waUpsellDraft.strikePrice||0).toLocaleString("en-NG")}~~ → Just *NGN ${Number(waUpsellDraft.price||0).toLocaleString("en-NG")}* — ships in the same delivery.`
-                                : `Just *NGN ${Number(waUpsellDraft.price||0).toLocaleString("en-NG")}* — ships in the same delivery.`,
-                              ``,
-                              `Reply *YES* to add it or *NO* to skip. 😊`
-                            ].join("\n")}</p>
-                            {waUpsellDraft.imageUrl && <p className="m-0 mt-1.5 text-[11px] text-emerald-700 font-bold">📷 + product image attached</p>}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="flex items-center gap-3 pt-1">
-                        <button type="button"
-                          className="!min-h-0 rounded-xl bg-rose-500 px-5 py-2.5 text-sm font-black text-white hover:bg-rose-600 disabled:opacity-50 transition-colors"
-                          onClick={saveUpsell} disabled={waUpsellSaving || !waUpsellDraft.name.trim() || !waUpsellDraft.price}>
-                          {waUpsellSaving ? <><RefreshCw className="h-3.5 w-3.5 animate-spin inline mr-1.5" />Saving…</> : "Save upsell offer"}
-                        </button>
-                        {isDirty && <button type="button" className="!min-h-0 text-sm text-gray-400 hover:text-gray-600" onClick={() => setWaUpsellDraft(initDraft())}>Discard</button>}
-                      </div>
+                      ))}
                     </div>
+
+                    {/* Add / Edit form */}
+                    {waUpsellAdding ? (
+                      <div className="border-t border-gray-100 px-5 py-4 bg-gray-50/40 space-y-3">
+                        <p className="m-0 text-xs font-black uppercase tracking-wider text-gray-500">{waUpsellEditingId ? "Edit offer" : "Add new offer"}</p>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Name *</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" placeholder="e.g. 2pcs Whale Soap Holder" value={waUpsellDraft.name} onChange={e => setWaUpsellDraft(d=>({...d,name:e.target.value}))} />
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Price (NGN) *</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" type="number" min={0} placeholder="4900" value={waUpsellDraft.price} onChange={e => setWaUpsellDraft(d=>({...d,price:e.target.value}))} />
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Original price (strike-through)</p>
+                            <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" type="number" min={0} placeholder="10000" value={waUpsellDraft.strikePrice} onChange={e => setWaUpsellDraft(d=>({...d,strikePrice:e.target.value}))} />
+                            {waUpsellDraft.strikePrice && waUpsellDraft.price && <p className="m-0 mt-1 text-[11px] text-gray-400"><s>NGN {Number(waUpsellDraft.strikePrice||0).toLocaleString("en-NG")}</s> → NGN {Number(waUpsellDraft.price||0).toLocaleString("en-NG")}</p>}
+                          </div>
+                          <div>
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Send after</p>
+                            <div className="flex gap-2">{[2,5,10,15].map(m => <button key={m} type="button" className={`!min-h-0 rounded-lg border px-3 py-2 text-sm font-black ${waUpsellDraft.delayMinutes===m?"border-rose-400 bg-rose-500 text-white":"border-gray-200 text-gray-600 hover:bg-gray-50"}`} onClick={()=>setWaUpsellDraft(d=>({...d,delayMinutes:m}))}>{m}m</button>)}</div>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Product image (paste URL or Ctrl+V to paste)</p>
+                            <div className="flex gap-2">
+                              <input className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" placeholder="https://..." value={waUpsellDraft.imageUrl} onChange={e=>setWaUpsellDraft(d=>({...d,imageUrl:e.target.value}))}
+                                onPaste={async e=>{const img=Array.from(e.clipboardData?.items??[]).find(it=>it.type.startsWith("image/"));if(!img)return;e.preventDefault();const file=img.getAsFile();if(!file)return;const reader=new FileReader();reader.onload=async re=>{const d=String(re.target?.result??"");if(!d)return;showToast("Uploading…");const{url}=await productsApi.uploadPackageImage(d,`upsell-${Date.now()}.png`);setWaUpsellDraft(x=>({...x,imageUrl:url}));showToast("✓ Uploaded.")};reader.readAsDataURL(file);}} />
+                              <label className="!min-h-0 inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black text-rose-600 cursor-pointer hover:bg-rose-100 shrink-0"><Upload className="h-3.5 w-3.5"/>Upload<input type="file" accept="image/*" className="hidden" onChange={async e=>{const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=async re=>{const d=String(re.target?.result??"");if(!d)return;const{url}=await productsApi.uploadPackageImage(d,file.name);setWaUpsellDraft(x=>({...x,imageUrl:url}))};reader.readAsDataURL(file)}}/></label>
+                            </div>
+                            {waUpsellDraft.imageUrl && <img src={waUpsellDraft.imageUrl} alt="preview" className="mt-2 h-16 w-16 rounded-xl object-cover border border-gray-200" onError={e=>(e.currentTarget.style.display="none")} />}
+                          </div>
+                          <div className="sm:col-span-2">
+                            <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Product (for stock check)</p>
+                            <select className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 bg-white" value={waUpsellDraft.productId} onChange={e=>{const p=products.find(x=>x.id===e.target.value);setWaUpsellDraft(d=>({...d,productId:e.target.value,name:d.name||p?.name||d.name}))}}>
+                              <option value="">— Select product (optional) —</option>
+                              {products.filter(p=>p.active!==false).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        {/* Preview */}
+                        {waUpsellDraft.name && waUpsellDraft.price && (
+                          <div className="rounded-xl bg-[#d9fdd3] px-3.5 py-2.5 max-w-xs shadow-sm">
+                            <p className="m-0 text-sm text-gray-900 whitespace-pre-wrap leading-relaxed">{[`Hi [John]! 🎉`,``,`Would you like to add *${waUpsellDraft.name}* to your order?`,waUpsellDraft.strikePrice?`~~NGN ${Number(waUpsellDraft.strikePrice||0).toLocaleString("en-NG")}~~ → Just *NGN ${Number(waUpsellDraft.price||0).toLocaleString("en-NG")}*`:`Just *NGN ${Number(waUpsellDraft.price||0).toLocaleString("en-NG")}*`,``,`Reply *YES* or *NO* 😊`].join("\n")}</p>
+                          </div>
+                        )}
+                        <div className="flex gap-2 pt-1">
+                          <button type="button" className="!min-h-0 rounded-xl bg-rose-500 px-4 py-2 text-sm font-black text-white hover:bg-rose-600 disabled:opacity-50" onClick={addOrUpdateItem} disabled={waUpsellSaving||!waUpsellDraft.name.trim()||!waUpsellDraft.price}>{waUpsellSaving?"Saving…":waUpsellEditingId?"Update offer":"Add offer"}</button>
+                          <button type="button" className="!min-h-0 text-sm text-gray-400 hover:text-gray-600" onClick={()=>{setWaUpsellAdding(false);setWaUpsellEditingId(null);setWaUpsellDraft({name:"",price:"",strikePrice:"",imageUrl:"",productId:"",delayMinutes:5})}}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="px-5 py-3 border-t border-gray-100 bg-gray-50/30">
+                        <button type="button" className="!min-h-0 inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2 text-sm font-black text-rose-600 hover:bg-rose-50 transition-colors" onClick={()=>{setWaUpsellAdding(true);setWaUpsellEditingId(null);setWaUpsellDraft({name:"",price:"",strikePrice:"",imageUrl:"",productId:"",delayMinutes:5})}}>
+                          <Plus className="h-4 w-4" /> Add upsell offer
+                        </button>
+                      </div>
+                    )}
                   </section>
                 );
               })()}
+
 
               {canUsePersonalWhatsApp ? (() => {
                 const userStatus = whatsappStatus(waUserAccount);
@@ -50300,15 +50281,15 @@ ${waybillLineItems(w).length > 1
                 const userPairing = userStatus === "pairing" || userStatus === "connecting";
                 const userRiskAck = whatsappRiskAcknowledged(waUserAccount);
                 const activeDestinations = waDestinations.filter((destination) => destination.active !== false);
+                const spyBanner = isSpying && spiedUser ? (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 flex items-center gap-2 text-sm font-bold text-blue-800">
+                    <span className="shrink-0">👁</span>
+                    <span>Viewing <span className="font-black">{spiedUser.name}</span>'s WhatsApp — read-only. Connect/disconnect actions are disabled in view-as mode.</span>
+                  </div>
+                ) : null;
                 return (
-                  <section className="grid gap-3 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.72fr)]">
-                    {isSpying && spiedUser && (
-                      <div className="lg:col-span-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 flex items-center gap-2 text-sm font-bold text-blue-800">
-                        <span className="shrink-0">👁</span>
-                        <span>Viewing <span className="font-black">{spiedUser.name}</span>'s WhatsApp — read-only. Connect/disconnect actions are disabled in view-as mode.</span>
-                      </div>
-                    )}
-                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm lg:order-1">
+                  <div className="space-y-3 sm:space-y-5">
+                    {waTab === "connection" && <>{spyBanner}<article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
                       <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
                         <div>
                           <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">My WhatsApp</p>
@@ -50394,10 +50375,11 @@ ${waybillLineItems(w).length > 1
                           )}
                         </div>
                       </div>
-                    </article>
+                    </article></>}
 
+                    {waTab === "groups" && <>{spyBanner}
                     {/* ── Saved Destinations — full-width horizontal card row ── */}
-                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm lg:col-span-2 lg:order-3">
+                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
                       <div className="flex items-center justify-between gap-3 mb-4">
                         <div>
                           <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Saved destinations</p>
@@ -50553,7 +50535,7 @@ ${waybillLineItems(w).length > 1
                     </aside>
 
                     {waUserGroups.length > 0 && (
-                      <article className="rounded-2xl border border-blue-100 bg-blue-50/60 p-5 lg:col-span-2">
+                      <article className="rounded-2xl border border-blue-100 bg-blue-50/60 p-5">
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-blue-500">Imported groups</p>
                         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                           {waUserGroups.map((group) => {
@@ -50579,9 +50561,10 @@ ${waybillLineItems(w).length > 1
                           })}
                         </div>
                       </article>
-                    )}
+                    )}</>}
 
-                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm lg:col-span-2 lg:order-4">
+                    {waTab === "activity" && <>
+                    <article className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
                       <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Recent personal dispatches</p>
                       <div className="mt-3 space-y-2">
                         {waUserDispatches.length === 0 ? (
@@ -50599,8 +50582,8 @@ ${waybillLineItems(w).length > 1
                           </div>
                         ))}
                       </div>
-                    </article>
-                  </section>
+                    </article></>}
+                  </div>
                 );
               })() : (
                 <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-8 py-14 text-center">
@@ -50609,7 +50592,7 @@ ${waybillLineItems(w).length > 1
                 </div>
               )}
 
-              {(currentRole === "Owner" || currentRole === "Admin") && (
+              {waTab === "activity" && (currentRole === "Owner" || currentRole === "Admin") && (
                 <section className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
                   <div className="flex flex-col gap-1">
                     <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Team dispatch health</p>
