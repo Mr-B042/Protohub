@@ -25260,6 +25260,29 @@ ${waybillLineItems(w).length > 1
     });
   };
 
+  const togglePackageCompanionStockGate = (item: ProductPackage, companionIndex: number) => {
+    if (!selectedProduct) return;
+    if (isTemporaryPackageId(item.id)) { showToast("This package is still syncing. Try again."); return; }
+    const currentCompanions = item.companionProducts ?? [];
+    const target = currentCompanions[companionIndex];
+    if (!target) return;
+    const nextGated = !target.requiresStateStock;
+    const nextCompanions = currentCompanions.map((c, idx) =>
+      normalisePackageCompanion(idx === companionIndex ? { ...c, requiresStateStock: nextGated } : c)
+    );
+    setProducts((prev) => prev.map((product) =>
+      product.id !== selectedProduct.id ? product : {
+        ...product,
+        packages: product.packages.map((pkg) =>
+          pkg.id !== item.id ? pkg : { ...pkg, companionProducts: nextCompanions }
+        )
+      }
+    ));
+    productsApi.updatePackage(selectedProduct.id, item.id, { companionProducts: nextCompanions })
+      .then(() => showToast(`Stock gate ${nextGated ? "enabled" : "removed"} for this offer.`))
+      .catch(() => showToast("Could not update stock gate — please retry."));
+  };
+
   const togglePackageCompanionActive = (item: ProductPackage, companionIndex: number) => {
     if (!selectedProduct) return;
     if (isTemporaryPackageId(item.id)) {
@@ -53286,6 +53309,15 @@ ${waybillLineItems(w).length > 1
                                                   );
                                                 })()}
                                               </div>
+                                              {/* Stock-gate toggle */}
+                                              <button
+                                                type="button"
+                                                className={`!min-h-0 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-black transition-colors whitespace-nowrap ${companion.requiresStateStock ? "border-purple-400 bg-purple-600 text-white hover:bg-purple-700" : "border-purple-200 bg-white text-purple-600 hover:bg-purple-50"}`}
+                                                onClick={() => togglePackageCompanionStockGate(item, companionIdx)}
+                                                title={companion.requiresStateStock ? "Remove stock gate" : "Enable stock gate"}
+                                              >
+                                                {companion.requiresStateStock ? "Stock-gated" : "Stock-gate"}
+                                              </button>
                                               {/* Delete */}
                                               <button
                                                 type="button"
