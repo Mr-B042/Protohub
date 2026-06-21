@@ -6674,7 +6674,9 @@ const summarizeCartJourneyAnalytics = (journeyMap: Record<string, CartJourneyEve
   for (const events of Object.values(journeyMap)) {
     if (events.length === 0) continue;
     const seenTypes = new Set(events.map((event) => event.eventType));
-    if (seenTypes.has("form_opened")) funnel.opened += 1;
+    // Count as "opened" if the form was opened OR if there are any journey events at all
+    // (dedup-merged carts lose their form_opened event since it was on the original cart ID)
+    if (seenTypes.has("form_opened") || seenTypes.has("first_interaction") || seenTypes.has("package_selected") || seenTypes.has("state_selected") || seenTypes.has("submit_attempted") || seenTypes.has("order_submitted")) funnel.opened += 1;
     if (seenTypes.has("package_selected")) funnel.packageSelected += 1;
     if (seenTypes.has("state_selected")) funnel.stateSelected += 1;
     if (seenTypes.has("additional_item_preview_opened")) funnel.additionalItemViewed += 1;
