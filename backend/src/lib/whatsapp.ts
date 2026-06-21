@@ -72,16 +72,16 @@ export const DEFAULT_WHATSAPP_TEMPLATES: Record<WhatsAppTrigger, { body: string 
     body: "Dear {{customer}},\n\nThank you for your order. We have received it and it is now being processed.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\n{{addons_line}}Amount: {{currency}} {{amount}}\nDelivery to: {{city}}, {{state}}\n\nOur team will contact you shortly to confirm your delivery. For any enquiries, please reply to this message.\n\nWarm regards,\nProtohub Team"
   },
   order_new_rep: {
-    body: "*New Order — Action Required*\n\nRef: #{{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nLocation: {{city}}, {{state}}\nProduct: {{product_name}} — {{package_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nPlease call the customer to confirm the order and arrange delivery. Update the order status after contact."
+    body: "*New Order — Action Required*\n\nRef: #{{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nLocation: {{city}}, {{state}}\nProduct: {{product_name}} — {{package_name}}\n{{addons_line}}Amount: {{currency}} {{amount}}\nSource: {{source}}\n\nPlease call the customer to confirm the order and arrange delivery. Update the order status after contact."
   },
   order_scheduled: {
-    body: "Dear {{customer}},\n\nYour delivery has been scheduled.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nScheduled Date: {{scheduled_date}}\n\nPlease ensure you or a representative is available to receive the package on the scheduled date. Our delivery partner will contact you before arrival.\n\nFor any enquiries, please reply to this message.\n\nWarm regards,\nProtohub Team"
+    body: "Dear {{customer}},\n\nYour delivery has been scheduled.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\n{{addons_line}}Scheduled Date: {{scheduled_date}}\n\nPlease ensure you or a representative is available to receive the package on the scheduled date. Our delivery partner will contact you before arrival.\n\nFor any enquiries, please reply to this message.\n\nWarm regards,\nProtohub Team"
   },
   order_failed: {
-    body: "Dear {{customer}},\n\nWe regret to inform you that we were unable to complete your delivery today.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\n\nOur team will reach out to you shortly to reschedule your delivery at a convenient time. You may also contact us directly: {{rep_contact}}\n\nWe apologise for the inconvenience and appreciate your patience.\n\nWarm regards,\nProtohub Team"
+    body: "Dear {{customer}},\n\nWe regret to inform you that we were unable to complete your delivery today.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\n{{addons_line}}Amount: {{currency}} {{amount}}\n\nOur team will reach out to you shortly to reschedule your delivery at a convenient time. You may also contact us directly: {{rep_contact}}\n\nWe apologise for the inconvenience and appreciate your patience.\n\nWarm regards,\nProtohub Team"
   },
   order_delivered: {
-    body: "Dear {{customer}},\n\nYour order has been successfully delivered. ✅\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\nAmount: {{currency}} {{amount}}\n\nWe hope you are satisfied with your purchase. If you have any concerns about the product or delivery, please reply to this message and our team will assist you promptly.\n\nThank you for choosing us. We look forward to serving you again.\n\nWarm regards,\nProtohub Team"
+    body: "Dear {{customer}},\n\nYour order has been successfully delivered. ✅\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\n{{addons_line}}Amount Paid: {{currency}} {{amount}}\n\nWe hope you are satisfied with your purchase. If you have any concerns about the product or delivery, please reply to this message and our team will assist you promptly.\n\nThank you for choosing us. We look forward to serving you again.\n\nWarm regards,\nProtohub Team"
   }
 };
 
@@ -1476,6 +1476,20 @@ type OrderEventRepContact = {
 const customerWhatsAppTarget = (order: Pick<OrderEventPayload, "phone" | "whatsapp">) =>
   order.whatsapp?.trim() || order.phone?.trim() || "";
 
+// Build the addon lines string for template interpolation.
+// Returns empty string when no addons so the template line collapses cleanly.
+function buildAddonsLine(order: OrderEventPayload, currency?: string): string {
+  const lines = order.crossSellLines ?? [];
+  if (!lines.length) return "";
+  const cur = currency ?? order.currency ?? "NGN";
+  return lines.map(l => {
+    const name = l.displayName ?? l.productName ?? "Add-on";
+    const qty  = l.quantity ? ` x${l.quantity}` : "";
+    const amt  = l.amount != null ? ` — ${cur} ${l.amount.toLocaleString("en-NG")}` : "";
+    return `  + ${name}${qty}${amt}`;
+  }).join("\n") + "\n";
+}
+
 /** Anti-ban: customer messages have a tighter per-recipient daily cap */
 const CUSTOMER_WHATSAPP_DAY_CAP = 1; // max 1 message per customer per event type per day
 
@@ -1518,15 +1532,8 @@ export async function sendOrderNewCustomerWhatsApp(
   const currency = order.currency ?? "NGN";
   const amount = typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0";
 
-  // Build addon lines for the text message
-  const addonsLine = (order.crossSellLines ?? []).length > 0
-    ? (order.crossSellLines!.map(l => {
-        const name = l.displayName ?? l.productName ?? "Add-on";
-        const qty  = l.quantity ? ` x${l.quantity}` : "";
-        const amt  = l.amount != null ? ` — ${currency} ${l.amount.toLocaleString("en-NG")}` : "";
-        return `  + ${name}${qty}${amt}`;
-      }).join("\n")) + "\n"
-    : "";
+  // Build addon lines for the text message using the shared helper
+  const addonsLine = buildAddonsLine(order, currency);
 
   // Stage 1: plain text first — lands in customer's main chat (not Message Requests).
   // Unknown senders who send attachments as the FIRST message get routed to spam.
@@ -1644,6 +1651,7 @@ export async function sendOrderNewRepWhatsApp(
   if (!settings?.triggers?.order_new_rep) return;
   if (!rep.phone?.trim()) return;
 
+  const repCurrency = order.currency ?? "NGN";
   await queueOrSendWhatsApp(
     orgId, "order_new_rep",
     {
@@ -1652,8 +1660,9 @@ export async function sendOrderNewRepWhatsApp(
       phone: order.phone ?? "—",
       product_name: order.productName ?? "—",
       package_name: order.packageName ?? "—",
+      addons_line: buildAddonsLine(order, repCurrency),
       amount: typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0",
-      currency: order.currency ?? "NGN",
+      currency: repCurrency,
       city: order.city ?? "—",
       state: order.state ?? "—",
       source: order.source ?? "—",
@@ -1686,12 +1695,15 @@ export async function sendOrderScheduledCustomerWhatsApp(
   if (!normalizedPhone) return null;
   if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_scheduled")) return null;
 
+  const schedCurrency = order.currency ?? "NGN";
   return queueOrSendWhatsApp(
     orgId, "order_scheduled",
     {
       order_id: order.id,
       customer: order.customer ?? "Customer",
       product_name: order.productName ?? "your order",
+      package_name: order.packageName ?? "",
+      addons_line: buildAddonsLine(order, schedCurrency),
       scheduled_date: order.scheduledDate ?? "soon"
     },
     targetPhone,
@@ -1716,12 +1728,17 @@ export async function sendOrderFailedCustomerWhatsApp(
   if (!normalizedPhone) return null;
   if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_failed")) return null;
 
+  const failedCurrency = order.currency ?? "NGN";
   return queueOrSendWhatsApp(
     orgId, "order_failed",
     {
       order_id: order.id,
       customer: order.customer ?? "Customer",
       product_name: order.productName ?? "your order",
+      package_name: order.packageName ?? "",
+      addons_line: buildAddonsLine(order, failedCurrency),
+      amount: typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0",
+      currency: failedCurrency,
       rep_contact: rep?.phone ?? "our team"
     },
     targetPhone,
@@ -1745,12 +1762,17 @@ export async function sendOrderDeliveredCustomerWhatsApp(
   if (!normalizedPhone) return null;
   if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_delivered")) return null;
 
+  const delivCurrency = order.currency ?? "NGN";
   return queueOrSendWhatsApp(
     orgId, "order_delivered",
     {
       order_id: order.id,
       customer: order.customer ?? "Customer",
-      product_name: order.productName ?? "your order"
+      product_name: order.productName ?? "your order",
+      package_name: order.packageName ?? "",
+      addons_line: buildAddonsLine(order, delivCurrency),
+      amount: typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0",
+      currency: delivCurrency
     },
     targetPhone,
     { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined }

@@ -21939,12 +21939,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const greeting = assignedSenderName
       ? `Hi ${order.customer}, this is ${assignedSenderName} from ${brandName}.`
       : `Hi ${order.customer}, ${brandName} here.`;
+    const addonLines = (order.crossSellLines ?? []).map(line => {
+      const name = crossSellLineDisplayName(line);
+      const qty  = line.quantity ? ` x${line.quantity}` : "";
+      return `  + ${name}${qty}`;
+    });
     return [
       greeting,
       "",
       `I'm reaching out about your order ${order.id}.`,
       `Product: ${productLabel}`,
       `Quantity: ${quantity} unit${quantity === 1 ? "" : "s"}`,
+      ...(addonLines.length > 0 ? ["Add-ons:", ...addonLines] : []),
       `Amount: ${formatProductMoney(order.amount, order.currency)}`,
       "",
       "Please reply here if you'd like us to confirm or help with the order."

@@ -882,18 +882,32 @@ export async function sendOrderStatusEmail(
 }
 
 // ── Customer: new order confirmation ─────────────────────
+type CrossSellLineEmail = { productName?: string | null; displayName?: string | null; quantity?: number | null; amount?: number | null };
+
+function buildAddonsEmailLine(lines: CrossSellLineEmail[] | null | undefined, currency: string): string {
+  if (!lines?.length) return "—";
+  return lines.map(l => {
+    const name = l.displayName ?? l.productName ?? "Add-on";
+    const qty  = l.quantity ? ` x${l.quantity}` : "";
+    const amt  = l.amount != null ? ` (${currency} ${l.amount.toLocaleString("en-NG")})` : "";
+    return `${name}${qty}${amt}`;
+  }).join(", ");
+}
+
 export async function sendNewOrderEmail(
   orgId: string,
   order: {
     id: string; customer: string; email?: string | null; phone: string;
     product_name: string; package_name?: string | null; amount: number; currency: string; source?: string;
+    cross_sell_lines?: CrossSellLineEmail[] | null;
   }
 ): Promise<void> {
   if (!order.email) return;
   const vars: Record<string, string> = {
     order_id: order.id, customer: order.customer, phone: order.phone,
     product_name: orderDisplayName(order), amount: String(order.amount),
-    currency: order.currency, source: order.source ?? "—"
+    currency: order.currency, source: order.source ?? "—",
+    addons: buildAddonsEmailLine(order.cross_sell_lines, order.currency)
   };
   await sendEmail(orgId, "order_new", vars, { email: order.email, name: order.customer });
 }
@@ -905,12 +919,14 @@ export async function sendInternalNewOrderEmail(
     id: string; customer: string; phone: string;
     product_name: string; package_name?: string | null; amount: number; currency: string;
     source?: string; rep_name: string;
+    cross_sell_lines?: CrossSellLineEmail[] | null;
   }
 ): Promise<void> {
   const vars: Record<string, string> = {
     order_id: order.id, customer: order.customer, phone: order.phone,
     product_name: orderDisplayName(order), amount: String(order.amount),
-    currency: order.currency, source: order.source ?? "—", rep_name: order.rep_name
+    currency: order.currency, source: order.source ?? "—", rep_name: order.rep_name,
+    addons: buildAddonsEmailLine(order.cross_sell_lines, order.currency)
   };
   await sendToStaff(orgId, "internal_order_new", vars, ["Owner", "Admin"], {
     actionLabel: "Open Order",

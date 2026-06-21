@@ -841,7 +841,8 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (r
   sendNewOrderEmail(req.user!.orgId, {
     id: data.id, customer: data.customer, email: data.email,
     phone: data.phone, product_name: data.product_name, package_name: data.package_name,
-    amount: data.amount, currency: data.currency, source: data.source
+    amount: data.amount, currency: data.currency, source: data.source,
+    cross_sell_lines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null
   });
   sendNewOrderSms(req.user!.orgId, {
     id: data.id,
@@ -920,7 +921,8 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (r
   sendInternalNewOrderEmail(req.user!.orgId, {
     id: data.id, customer: data.customer, phone: data.phone,
     product_name: data.product_name, package_name: data.package_name, amount: data.amount,
-    currency: data.currency, source: data.source, rep_name: req.user!.name
+    currency: data.currency, source: data.source, rep_name: req.user!.name,
+    cross_sell_lines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null
   });
 
   // Internal: notify assigned rep (only if someone else assigned the order)
@@ -1708,6 +1710,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       city: (data as any).city ?? null,
       state: (data as any).state ?? null,
       scheduledDate: data.scheduled_date ?? undefined,
+      crossSellLines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null,
       productImageUrl: null as string | null,
       productVideoUrl: null as string | null
     };

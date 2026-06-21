@@ -1219,7 +1219,8 @@ router.post("/", submitRateLimit, async (req, res) => {
   sendNewOrderEmail(product.org_id, {
     id: order.id, customer: order.customer, email: order.email,
     phone: order.phone, product_name: order.product_name, package_name: order.package_name,
-    amount: order.amount, currency: order.currency, source: order.source
+    amount: order.amount, currency: order.currency, source: order.source,
+    cross_sell_lines: Array.isArray((order as any).cross_sell_lines) ? (order as any).cross_sell_lines : null
   });
   sendNewOrderSms(product.org_id, {
     id: order.id,
@@ -1275,6 +1276,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     product_name: order.product_name, package_name: order.package_name, amount: order.amount,
     currency: order.currency,
     source: order.source,
+    cross_sell_lines: Array.isArray((order as any).cross_sell_lines) ? (order as any).cross_sell_lines : null,
     rep_name: publicOrderAssignmentMode === "manual_review"
       ? "Awaiting owner/admin assignment"
       : "Auto-assigned from public form"
