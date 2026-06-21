@@ -1251,7 +1251,10 @@ router.post("/", submitRateLimit, async (req, res) => {
     city: (order as any).city ?? null,
     state: (order as any).state ?? null,
     productImageUrl: (pkg as any)?.image_url ?? ((pkg as any)?.image_urls as string[] | null)?.[0] ?? null,
-    productVideoUrl: (pkg as any)?.video_url ?? null
+    productVideoUrl: (pkg as any)?.video_url ?? null,
+    crossSellLines: Array.isArray((order as any).cross_sell_lines)
+      ? (order as any).cross_sell_lines
+      : null
   };
   sendOrderNewCustomerWhatsApp(product.org_id, waOrderPayload).catch((err) =>
     logger.warn("wa order_new customer failed", { orderId: order.id, error: (err as Error).message })

@@ -69,7 +69,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: Record<WhatsAppTrigger, { body: string 
   },
   // Customer-facing order event templates
   order_new: {
-    body: "Dear {{customer}},\n\nThank you for your order. We have received it and it is now being processed.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\nAmount: {{currency}} {{amount}}\nDelivery to: {{city}}, {{state}}\n\nOur team will contact you shortly to confirm your delivery. For any enquiries, please reply to this message.\n\nWarm regards,\nProtohub Team"
+    body: "Dear {{customer}},\n\nThank you for your order. We have received it and it is now being processed.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\n{{addons_line}}Amount: {{currency}} {{amount}}\nDelivery to: {{city}}, {{state}}\n\nOur team will contact you shortly to confirm your delivery. For any enquiries, please reply to this message.\n\nWarm regards,\nProtohub Team"
   },
   order_new_rep: {
     body: "*New Order — Action Required*\n\nRef: #{{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nLocation: {{city}}, {{state}}\nProduct: {{product_name}} — {{package_name}}\nAmount: {{currency}} {{amount}}\nSource: {{source}}\n\nPlease call the customer to confirm the order and arrange delivery. Update the order status after contact."
@@ -1462,6 +1462,7 @@ type OrderEventPayload = {
   state?: string | null;
   scheduledDate?: string | null;
   assignedRepId?: string | null;
+  crossSellLines?: Array<{ productName?: string | null; displayName?: string | null; quantity?: number | null; amount?: number | null }> | null;
   // For media (product images / videos passed from the product catalogue)
   productImageUrl?: string | null;
   productVideoUrl?: string | null;
@@ -1517,6 +1518,16 @@ export async function sendOrderNewCustomerWhatsApp(
   const currency = order.currency ?? "NGN";
   const amount = typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0";
 
+  // Build addon lines for the text message
+  const addonsLine = (order.crossSellLines ?? []).length > 0
+    ? (order.crossSellLines!.map(l => {
+        const name = l.displayName ?? l.productName ?? "Add-on";
+        const qty  = l.quantity ? ` x${l.quantity}` : "";
+        const amt  = l.amount != null ? ` — ${currency} ${l.amount.toLocaleString("en-NG")}` : "";
+        return `  + ${name}${qty}${amt}`;
+      }).join("\n")) + "\n"
+    : "";
+
   // Stage 1: plain text first — lands in customer's main chat (not Message Requests).
   // Unknown senders who send attachments as the FIRST message get routed to spam.
   const textResult = await queueOrSendWhatsApp(
@@ -1527,6 +1538,7 @@ export async function sendOrderNewCustomerWhatsApp(
       phone: order.phone?.trim() || targetPhone,
       product_name: order.productName ?? "your order",
       package_name: order.packageName ?? "",
+      addons_line: addonsLine,
       amount,
       currency,
       city: order.city ?? "",
@@ -1562,7 +1574,12 @@ export async function sendOrderNewCustomerWhatsApp(
               currency: order.currency,
               city: order.city,
               state: order.state,
-              source: order.source
+              source: order.source,
+              crossSellLines: order.crossSellLines?.map(l => ({
+                productName: (l.displayName ?? l.productName) ?? undefined,
+                quantity: l.quantity ?? undefined,
+                amount: l.amount ?? undefined
+              })) ?? null
             });
           } catch (err) {
             logger.warn("wa order_new: pdf generation failed for follow-up", {
