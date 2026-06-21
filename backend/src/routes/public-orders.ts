@@ -1108,7 +1108,48 @@ router.post("/", submitRateLimit, async (req, res) => {
   }
 
   // 5. Mark linked abandoned cart as Converted (best-effort).
+  // Race-condition repair: the cart capture may have been deduplicated into a
+  // different cart ID before the order was submitted. If the submitted cartId
+  // doesn't exist, search for the surviving cart by phone and repair the link.
   if (d.cartId) {
+    let effectiveCartId = d.cartId;
+    const { data: cartExists } = await supabase
+      .from("abandoned_carts")
+      .select("id")
+      .eq("id", d.cartId)
+      .eq("org_id", product.org_id)
+      .maybeSingle();
+
+    if (!cartExists && d.phone) {
+      // Ghost cart — find the surviving merged cart by customer phone
+      const n = d.phone.replace(/\D/g, "");
+      const { data: phoneCart } = await supabase
+        .from("abandoned_carts")
+        .select("id")
+        .eq("org_id", product.org_id)
+        .eq("product_id", product.id)
+        .not("status", "eq", "Converted")
+        .or(`phone.eq.${d.phone.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`)
+        .order("last_activity", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (phoneCart) {
+        effectiveCartId = phoneCart.id;
+        // Repair the order's source_cart_id to point to the real cart
+        await supabase.from("orders")
+          .update({ source_cart_id: effectiveCartId })
+          .eq("id", order.id)
+          .eq("org_id", product.org_id)
+          .then(() => undefined, () => undefined);
+        logger.info("public-orders: repaired ghost cart link", {
+          orderId: order.id,
+          ghostCartId: d.cartId,
+          survivingCartId: effectiveCartId
+        });
+      }
+    }
+
     const submittedEmbedLabel = cleanEmbedLabel(d.embedLabel);
     const cartUpdate: Record<string, unknown> = {
       status: "Converted",
@@ -1120,14 +1161,16 @@ router.post("/", submitRateLimit, async (req, res) => {
     await supabase
       .from("abandoned_carts")
       .update(cartUpdate)
-      .eq("id", d.cartId)
+      .eq("id", effectiveCartId)
       .eq("org_id", product.org_id);
+
+    // effectiveCartId is used in place of d.cartId for journey events below
 
     const { error: journeyInsertError } = await supabase
       .from("cart_journey_events")
       .insert({
         org_id: product.org_id,
-        cart_id: d.cartId,
+        cart_id: effectiveCartId,
         product_id: product.id,
         package_id: pkg.id,
         state: d.state ?? null,
@@ -1143,7 +1186,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     if (journeyInsertError) {
       logger.warn("public-orders: failed to record order_submitted journey event", {
         orderId: order.id,
-        cartId: d.cartId,
+        cartId: effectiveCartId,
         error: journeyInsertError.message
       });
     }
