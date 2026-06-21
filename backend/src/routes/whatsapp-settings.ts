@@ -417,4 +417,24 @@ router.delete("/opt-outs/:phone", requireOwner, async (req, res) => {
   }
 });
 
+router.get("/upsell-stats", requireOwner, async (req, res) => {
+  const { data, error } = await supabase
+    .from("whatsapp_messages")
+    .select("status, created_at")
+    .eq("org_id", req.user!.orgId)
+    .eq("trigger", "order_upsell");
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+
+  const rows = data ?? [];
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const sent7d = rows.filter(r => now - new Date(r.created_at).getTime() < 7 * day).length;
+  const sent30d = rows.filter(r => now - new Date(r.created_at).getTime() < 30 * day).length;
+  const delivered = rows.filter(r => r.status === "delivered").length;
+  const failed = rows.filter(r => r.status === "failed").length;
+
+  res.json({ total: rows.length, sent7d, sent30d, delivered, failed });
+});
+
 export default router;

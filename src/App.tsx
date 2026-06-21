@@ -7273,6 +7273,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waUpsellDraft, setWaUpsellDraft] = useState<{name:string;price:string;strikePrice:string;imageUrl:string;productId:string;delayMinutes:number}>({ name:"",price:"",strikePrice:"",imageUrl:"",productId:"",delayMinutes:5 });
   const [waUpsellEditingId, setWaUpsellEditingId] = useState<string | null>(null);
   const [waUpsellAdding, setWaUpsellAdding] = useState(false);
+  const [waUpsellPreviewId, setWaUpsellPreviewId] = useState<string|null>(null);
+  const [waUpsellStats, setWaUpsellStats] = useState<{total:number;sent7d:number;sent30d:number;delivered:number;failed:number}|null>(null);
   const [waTab, setWaTab] = useState<"connection"|"automation"|"groups"|"activity">("connection");
   const [waConnecting, setWaConnecting] = useState(false);
   const [waDisconnecting, setWaDisconnecting] = useState(false);
@@ -8785,6 +8787,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       else clearTimeout(id);
     };
   }, [canSeeOrgAutomation]);
+
+  // Load upsell stats when Owner opens the automation tab
+  useEffect(() => {
+    if (activePage !== "WhatsApp" || currentRole !== "Owner") return;
+    whatsappSettingsApi.upsellStats().then(setWaUpsellStats).catch(() => {});
+  }, [activePage, currentRole]);
 
   // Auto-poll org automation account every 3s while it is pairing.
   const waOrgPairingStatus = whatsappStatus(waSettings);
@@ -50153,6 +50161,18 @@ ${waybillLineItems(w).length > 1
                   setWaUpsellAdding(true);
                 };
 
+                const templateBody = (waSettings.templates as any)?.order_upsell?.body ?? "Hi {{first_name}}! 🎉\n\nWould you like to add *{{upsell_name}}* to your order?\n{{strike_line}}Just *{{upsell_currency}} {{upsell_price}}* — ships in the same delivery.\n\nReply *YES* to add it or *NO* to skip. 😊";
+
+                const buildPreview = (u: any) => {
+                  const strike = u.strikePrice ? `~~NGN ${Number(u.strikePrice).toLocaleString("en-NG")}~~ → ` : "";
+                  return templateBody
+                    .replace(/\{\{first_name\}\}/g, "John")
+                    .replace(/\{\{upsell_name\}\}/g, u.name ?? "")
+                    .replace(/\{\{strike_line\}\}/g, strike ? `${strike}\n` : "")
+                    .replace(/\{\{upsell_currency\}\}/g, "NGN")
+                    .replace(/\{\{upsell_price\}\}/g, Number(u.price ?? 0).toLocaleString("en-NG"));
+                };
+
                 return (
                   <section className="rounded-2xl border border-rose-200 bg-white shadow-sm overflow-hidden">
                     {/* Header */}
@@ -50174,6 +50194,23 @@ ${waybillLineItems(w).length > 1
                       </div>
                     </div>
 
+                    {/* Stats bar */}
+                    {waUpsellStats && (
+                      <div className="grid grid-cols-4 divide-x divide-gray-100 border-b border-rose-100 bg-rose-50/20">
+                        {[
+                          { label: "Sent (7d)", value: waUpsellStats.sent7d },
+                          { label: "Sent (30d)", value: waUpsellStats.sent30d },
+                          { label: "Delivered", value: waUpsellStats.delivered },
+                          { label: "Failed", value: waUpsellStats.failed },
+                        ].map(s => (
+                          <div key={s.label} className="px-4 py-2.5 text-center">
+                            <p className="m-0 text-lg font-black text-gray-900">{s.value}</p>
+                            <p className="m-0 text-[10px] font-bold uppercase tracking-wider text-gray-400">{s.label}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     {/* Saved upsell list */}
                     <div className="divide-y divide-gray-50">
                       {upsellList.length === 0 && !waUpsellAdding && (
@@ -50184,31 +50221,47 @@ ${waybillLineItems(w).length > 1
                         </div>
                       )}
                       {upsellList.map((u: any) => (
-                        <div key={u.id} className={`flex items-center gap-3 px-5 py-3.5 ${u.enabled ? "bg-white" : "bg-gray-50/60"}`}>
-                          {/* Thumb */}
-                          {u.imageUrl ? (
-                            <img src={u.imageUrl} alt={u.name} className="h-12 w-12 shrink-0 rounded-xl object-cover border border-gray-100" onError={e => (e.currentTarget.style.display="none")} />
-                          ) : (
-                            <div className="h-12 w-12 shrink-0 rounded-xl bg-rose-50 flex items-center justify-center text-rose-300"><ShoppingBag className="h-5 w-5" /></div>
+                        <div key={u.id}>
+                          <div className={`flex items-center gap-3 px-5 py-3.5 ${u.enabled ? "bg-white" : "bg-gray-50/60"}`}>
+                            {/* Thumb */}
+                            {u.imageUrl ? (
+                              <img src={u.imageUrl} alt={u.name} className="h-12 w-12 shrink-0 rounded-xl object-cover border border-gray-100" onError={e => (e.currentTarget.style.display="none")} />
+                            ) : (
+                              <div className="h-12 w-12 shrink-0 rounded-xl bg-rose-50 flex items-center justify-center text-rose-300"><ShoppingBag className="h-5 w-5" /></div>
+                            )}
+                            {/* Info */}
+                            <div className="flex-1 min-w-0">
+                              <p className={`m-0 text-sm font-black truncate ${u.enabled ? "text-gray-900" : "text-gray-400"}`}>{u.name}</p>
+                              <p className="m-0 text-xs text-gray-500">
+                                {u.strikePrice && <s className="mr-1 text-gray-400">NGN {Number(u.strikePrice).toLocaleString("en-NG")}</s>}
+                                NGN {Number(u.price||0).toLocaleString("en-NG")} · {u.delayMinutes ?? 5}m delay
+                              </p>
+                            </div>
+                            {/* Actions */}
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button type="button" className={`!min-h-0 rounded-lg border px-2 py-1 text-[11px] font-bold transition-colors ${waUpsellPreviewId === u.id ? "border-rose-300 bg-rose-50 text-rose-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`} onClick={() => setWaUpsellPreviewId(waUpsellPreviewId === u.id ? null : u.id)}>Preview</button>
+                              <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50" onClick={() => startEdit(u)}>Edit</button>
+                              <button type="button" className="!min-h-0 rounded-lg border border-rose-100 px-2 py-1 text-[11px] font-bold text-rose-500 hover:bg-rose-50" onClick={() => deleteItem(u.id)}>Remove</button>
+                              <button type="button" role="switch" aria-checked={u.enabled} className="!min-h-0 p-0 focus:outline-none" onClick={() => toggleItem(u.id)}>
+                                <span className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ${u.enabled ? "bg-rose-500" : "bg-gray-300"}`}>
+                                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-300 ${u.enabled ? "translate-x-6" : "translate-x-1"}`} />
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+                          {/* Inline WhatsApp preview bubble */}
+                          {waUpsellPreviewId === u.id && (
+                            <div className="px-5 pb-4 pt-1 bg-[#f0fdf4]/60 border-t border-rose-50">
+                              <p className="m-0 mb-2 text-[10px] font-black uppercase tracking-wider text-gray-400">What the customer receives</p>
+                              <div className="flex gap-3 items-start">
+                                {u.imageUrl && <img src={u.imageUrl} alt={u.name} className="h-20 w-20 shrink-0 rounded-xl object-cover border border-gray-100 shadow-sm" onError={e=>(e.currentTarget.style.display="none")} />}
+                                <div className="max-w-xs rounded-2xl rounded-tl-sm bg-white px-3.5 py-2.5 shadow-sm border border-gray-100">
+                                  <p className="m-0 text-sm text-gray-900 whitespace-pre-wrap leading-relaxed">{buildPreview(u)}</p>
+                                  <p className="m-0 mt-1 text-[10px] text-gray-400 text-right">{(u.delayMinutes ?? 5)}m after order ✓✓</p>
+                                </div>
+                              </div>
+                            </div>
                           )}
-                          {/* Info */}
-                          <div className="flex-1 min-w-0">
-                            <p className={`m-0 text-sm font-black truncate ${u.enabled ? "text-gray-900" : "text-gray-400"}`}>{u.name}</p>
-                            <p className="m-0 text-xs text-gray-500">
-                              {u.strikePrice && <s className="mr-1 text-gray-400">NGN {Number(u.strikePrice).toLocaleString("en-NG")}</s>}
-                              NGN {Number(u.price||0).toLocaleString("en-NG")} · {u.delayMinutes ?? 5}m delay
-                            </p>
-                          </div>
-                          {/* Actions */}
-                          <div className="flex items-center gap-2 shrink-0">
-                            <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50" onClick={() => startEdit(u)}>Edit</button>
-                            <button type="button" className="!min-h-0 rounded-lg border border-rose-100 px-2 py-1 text-[11px] font-bold text-rose-500 hover:bg-rose-50" onClick={() => deleteItem(u.id)}>Remove</button>
-                            <button type="button" role="switch" aria-checked={u.enabled} className="!min-h-0 p-0 focus:outline-none" onClick={() => toggleItem(u.id)}>
-                              <span className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 ${u.enabled ? "bg-rose-500" : "bg-gray-300"}`}>
-                                <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-300 ${u.enabled ? "translate-x-6" : "translate-x-1"}`} />
-                              </span>
-                            </button>
-                          </div>
                         </div>
                       ))}
                     </div>

@@ -682,7 +682,8 @@ export const whatsappSettingsApi = {
   optOuts: () => get<any[]>("/api/whatsapp-settings/opt-outs"),
   addOptOut: (body: { phone: string; note?: string }) => post<any>("/api/whatsapp-settings/opt-outs", body),
   removeOptOut: (phone: string) => del<{ normalizedPhone: string }>(`/api/whatsapp-settings/opt-outs/${encodeURIComponent(phone)}`),
-  messages: (page = 1, limit = 10) => get<{ data: any[]; total: number; page: number; pageSize: number }>(`/api/whatsapp-settings/messages?page=${page}&limit=${limit}`)
+  messages: (page = 1, limit = 10) => get<{ data: any[]; total: number; page: number; pageSize: number }>(`/api/whatsapp-settings/messages?page=${page}&limit=${limit}`),
+  upsellStats: () => get<{ total: number; sent7d: number; sent30d: number; delivered: number; failed: number }>("/api/whatsapp-settings/upsell-stats")
 };
 
 export const whatsappUserAccountApi = {
