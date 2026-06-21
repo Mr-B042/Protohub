@@ -88,7 +88,7 @@ export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub
         .text("ADD-ONS", 28, rowY); rowY += 10;
       for (const line of order.crossSellLines) {
         addRow(
-          `  ${line.productName ?? "Add-on"} x${line.quantity ?? 1}`,
+          `  ${line.productName ?? "Add-on"} ${line.quantity ?? 1} pcs`,
           line.amount != null ? `${currency} ${line.amount.toLocaleString("en-NG")}` : "—"
         );
       }

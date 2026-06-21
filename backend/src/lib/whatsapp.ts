@@ -1484,7 +1484,7 @@ function buildAddonsLine(order: OrderEventPayload, currency?: string): string {
   const cur = currency ?? order.currency ?? "NGN";
   return lines.map(l => {
     const name = l.displayName ?? l.productName ?? "Add-on";
-    const qty  = l.quantity ? ` x${l.quantity}` : "";
+    const qty  = l.quantity ? ` ${l.quantity} pc${l.quantity === 1 ? "" : "s"}` : "";
     const amt  = l.amount != null ? ` — ${cur} ${l.amount.toLocaleString("en-NG")}` : "";
     return `  + ${name}${qty}${amt}`;
   }).join("\n") + "\n";

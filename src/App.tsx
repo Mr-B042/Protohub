@@ -5007,10 +5007,10 @@ const cartTrackingMonitorFor = (
   if (metaNeedsProtohubConfig && (!pixelId || !trackingKey)) {
     warnings.push("Protohub/Hybrid Meta mode needs both a pixel ID and tracking key to send server events.");
   }
-  if (trackingMode === "landing_page" && isSubmitted) {
-    warnings.push(redirectUrl
-      ? "Landing-page Meta mode means Protohub did not fire Purchase; verify the thank-you page sends Purchase."
-      : "Landing-page Meta mode needs a thank-you/redirect page to fire Purchase after submit.");
+  if (trackingMode === "landing_page" && isSubmitted && !redirectUrl) {
+    // Only warn when there's NO redirect/thank-you URL — that's the real gap.
+    // When redirectUrl is set the landing page is handling Meta as intended; no warning needed.
+    warnings.push("Landing-page Meta mode needs a thank-you/redirect page to fire Purchase after submit.");
   }
   if ((trackingMode === "protohub" || trackingMode === "hybrid") && !fbp && !fbc && !fbclid) {
     warnings.push("No browser click/session ID was captured. CAPI can still send, but match quality may be lower.");
@@ -9589,6 +9589,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [selectedCartId, setSelectedCartId] = useState("");
   const [expandedOrderCaptureDataId, setExpandedOrderCaptureDataId] = useState<string | null>(null);
   const [expandedCartCaptureDataId, setExpandedCartCaptureDataId] = useState<string | null>(null);
+  const [expandedTrackingMonitorId, setExpandedTrackingMonitorId] = useState<string | null>(null);
   const [whatsAppPicker, setWhatsAppPicker] = useState<null | {
     customerName: string;
     normalUrl: string;
@@ -21941,7 +21942,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       : `Hi ${order.customer}, ${brandName} here.`;
     const addonLines = (order.crossSellLines ?? []).map(line => {
       const name = crossSellLineDisplayName(line);
-      const qty  = line.quantity ? ` x${line.quantity}` : "";
+      const qty  = line.quantity ? ` ${line.quantity} pc${line.quantity === 1 ? "" : "s"}` : "";
       return `  + ${name}${qty}`;
     });
     return [
@@ -57723,25 +57724,36 @@ ${waybillLineItems(w).length > 1
 		                          : tone === "muted"
 		                            ? "bg-slate-400"
 		                            : "bg-emerald-500";
+                              const trackingExpanded = expandedTrackingMonitorId === selectedCart.id;
 		                      return (
-		                        <div className={`mt-3 rounded-2xl border p-4 shadow-sm ${shellClass}`}>
-		                          <div className="flex items-start gap-3">
-		                            <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ring-1 ${iconClass}`}>
+		                        <div className={`mt-3 rounded-2xl border shadow-sm ${shellClass}`}>
+                              {/* Collapsible header — click anywhere to toggle */}
+                              <button
+                                type="button"
+                                className="!min-h-0 w-full text-left p-4 flex items-center gap-3"
+                                onClick={() => setExpandedTrackingMonitorId(trackingExpanded ? null : selectedCart.id)}
+                              >
+		                            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ring-1 ${iconClass}`}>
 		                              {monitor.tone === "bad" ? <AlertTriangle className="h-5 w-5" /> : monitor.tone === "warn" ? <Info className="h-5 w-5" /> : <ShieldCheck className="h-5 w-5" />}
 		                            </div>
 		                            <div className="min-w-0 flex-1">
-		                              <div className="flex items-start justify-between gap-3 flex-wrap">
-		                                <div>
-		                                  <p className="m-0 text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">Tracking monitor</p>
-		                                  <h5 className="m-0 mt-1 text-base font-extrabold text-slate-950 dark:text-white">{monitor.title}</h5>
-		                                  <p className="m-0 mt-0.5 text-xs font-semibold text-slate-600 dark:text-slate-300">{monitor.summary}</p>
-		                                </div>
-		                                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-extrabold ${monitor.tone === "bad" ? "border-rose-200 bg-rose-100 text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/15 dark:text-rose-100" : monitor.tone === "warn" ? "border-amber-200 bg-amber-100 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-100" : "border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-100"}`}>
-		                                  <span className={`h-2 w-2 rounded-full ${dotClass(monitor.tone)}`} />
-		                                  {monitor.tone === "bad" ? "Repair" : monitor.tone === "warn" ? "Check" : "Healthy"}
-		                                </span>
-		                              </div>
-		                              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+		                              <p className="m-0 text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">Tracking monitor</p>
+		                              <h5 className="m-0 mt-0.5 text-base font-extrabold text-slate-950 dark:text-white">{monitor.title}</h5>
+		                            </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-extrabold ${monitor.tone === "bad" ? "border-rose-200 bg-rose-100 text-rose-800" : monitor.tone === "warn" ? "border-amber-200 bg-amber-100 text-amber-900" : "border-emerald-200 bg-emerald-100 text-emerald-800"}`}>
+                                    <span className={`h-2 w-2 rounded-full ${dotClass(monitor.tone)}`} />
+                                    {monitor.tone === "bad" ? "Repair" : monitor.tone === "warn" ? "Check" : "Healthy"}
+                                  </span>
+                                  <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${trackingExpanded ? "rotate-180" : ""}`} />
+                                </div>
+                              </button>
+
+                              {/* Expandable body */}
+                              {trackingExpanded && (
+                                <div className="px-4 pb-4 border-t border-black/5 pt-3">
+		                              <p className="m-0 mb-3 text-xs font-semibold text-slate-600">{monitor.summary}</p>
+		                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
 		                                {monitor.rows.map((row) => (
 		                                  <div key={row.label} className={`rounded-xl border px-3 py-2 ${itemClass(row.tone)}`}>
 		                                    <div className="flex items-center justify-between gap-2">
@@ -57754,15 +57766,15 @@ ${waybillLineItems(w).length > 1
 		                                ))}
 		                              </div>
 		                              {(monitor.issues.length > 0 || monitor.warnings.length > 0) && (
-		                                <div className="mt-3 rounded-xl border border-white/70 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-black/20">
-		                                  <p className="m-0 text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-700 dark:text-slate-200">What to fix</p>
-		                                  <ul className="m-0 mt-1 space-y-1 pl-4 text-xs font-semibold text-slate-700 dark:text-slate-200">
+		                                <div className="mt-3 rounded-xl border border-white/70 bg-white/70 px-3 py-2">
+		                                  <p className="m-0 text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-700">What to fix</p>
+		                                  <ul className="m-0 mt-1 space-y-1 pl-4 text-xs font-semibold text-slate-700">
 		                                    {[...monitor.issues, ...monitor.warnings].map((item) => <li key={item}>{item}</li>)}
 		                                  </ul>
 		                                </div>
 		                              )}
-		                            </div>
-		                          </div>
+                                </div>
+                              )}
 		                        </div>
 		                      );
 		                    })()}
