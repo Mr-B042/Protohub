@@ -28,6 +28,39 @@ router.get("/", async (req, res) => {
   res.json(data);
 });
 
+// ── GET /api/carts/by-label/:label ───────────────────────
+// Returns carts + linked order status for a specific embed_label.
+// Powers the link detail drill-down in Links & Tracking.
+router.get("/by-label/:label", async (req, res) => {
+  const label = String(req.params.label ?? "").trim();
+  if (!label) { res.status(400).json({ error: "Missing label." }); return; }
+
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: carts, error } = await supabase
+    .from("abandoned_carts")
+    .select("id, customer, phone, address, city, state, status, amount, currency, product_name, package_name, created_at, last_activity")
+    .eq("org_id", req.user!.orgId)
+    .eq("embed_label", label)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+
+  const cartIds = (carts ?? []).map((c: any) => c.id);
+  const { data: orders } = cartIds.length
+    ? await supabase.from("orders").select("id, source_cart_id, status, amount, created_at").eq("org_id", req.user!.orgId).in("source_cart_id", cartIds)
+    : { data: [] };
+
+  const orderByCart = Object.fromEntries((orders ?? []).map((o: any) => [o.source_cart_id, o]));
+
+  res.json((carts ?? []).map((c: any) => ({
+    ...c,
+    order: orderByCart[c.id] ?? null
+  })));
+});
+
 // ── POST /api/carts ──────────────────────────────────────
 // Upsert a draft from the embed order form. Called every time the
 // customer touches a field (the frontend debounces). Idempotent on `id`.

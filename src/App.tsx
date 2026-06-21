@@ -7358,6 +7358,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [linkCopiedId, setLinkCopiedId] = useState<string|null>(null);
   const [linkTraffic, setLinkTraffic] = useState<Record<string,{carts:number;orders:number;lastActivity:string|null}>>({});
   const [linkTrafficLoading, setLinkTrafficLoading] = useState(false);
+  const [linkDetailLabel, setLinkDetailLabel] = useState<string|null>(null);
+  const [linkDetailRows, setLinkDetailRows] = useState<any[]>([]);
+  const [linkDetailLoading, setLinkDetailLoading] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>("workspace");
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
@@ -50005,19 +50008,60 @@ ${waybillLineItems(w).length > 1
                             const isLive=ageSec<300;
                             const ageLabel=ageSec<60?"just now":ageSec<3600?`${Math.floor(ageSec/60)}m ago`:ageSec<86400?`${Math.floor(ageSec/3600)}h ago`:`${Math.floor(ageSec/86400)}d ago`;
                             const convRate=stat.carts>0?Math.round((stat.orders/stat.carts)*100):0;
+                            const isExpanded=linkDetailLabel===label;
+                            const openDetail=()=>{
+                              if(isExpanded){setLinkDetailLabel(null);return;}
+                              setLinkDetailLabel(label);
+                              setLinkDetailRows([]);
+                              setLinkDetailLoading(true);
+                              cartsApi.byLabel(label).then(setLinkDetailRows).catch(()=>{}).finally(()=>setLinkDetailLoading(false));
+                            };
                             return (
-                              <div key={label} className="grid grid-cols-[1fr_70px_70px_90px_36px] gap-2 items-center px-4 py-3 hover:bg-gray-50/60">
-                                <div className="min-w-0 flex items-center gap-1.5">
-                                  {isLive&&<span className="relative flex h-2 w-2 shrink-0"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"/><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"/></span>}
-                                  <p className="m-0 text-sm font-bold text-gray-900 truncate">{label}</p>
-                                </div>
-                                <p className="m-0 text-sm font-black text-gray-900 text-center">{stat.carts}</p>
-                                <div className="text-center"><p className="m-0 text-sm font-black text-gray-900">{stat.orders}</p><p className={`m-0 text-[10px] font-bold ${convRate>=60?"text-emerald-600":convRate>=30?"text-amber-600":"text-rose-500"}`}>{convRate}%</p></div>
-                                <p className="m-0 text-[11px] text-gray-500">{stat.lastActivity?ageLabel:"—"}</p>
-                                <div className="flex justify-end">
-                                  {variant?.id&&<button type="button" className="!min-h-0 rounded-lg border border-rose-100 p-1 text-rose-400 hover:bg-rose-50" title="Remove"
-                                    onClick={()=>showConfirm(`Remove link "${label}"?`,async()=>{await marketingLinkVariantsApi.delete(variant.id);setMarketingLinkVariants(p=>p.filter(v=>v.id!==variant.id));setLinkTraffic(p=>{const n={...p};delete n[label];return n;});showToast("Removed.");},{danger:true,confirmLabel:"Remove"})}><X className="h-3 w-3"/></button>}
-                                </div>
+                              <div key={label} className="divide-y divide-gray-50">
+                                <button type="button" className={`!min-h-0 w-full grid grid-cols-[1fr_70px_70px_90px_36px] gap-2 items-center px-4 py-3 text-left transition-colors ${isExpanded?"bg-blue-50/60":"hover:bg-gray-50/60"}`} onClick={openDetail}>
+                                  <div className="min-w-0 flex items-center gap-1.5">
+                                    {isLive&&<span className="relative flex h-2 w-2 shrink-0"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"/><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"/></span>}
+                                    <p className="m-0 text-sm font-bold text-gray-900 truncate">{label}</p>
+                                    <ChevronRight className={`h-3.5 w-3.5 text-gray-400 shrink-0 transition-transform ${isExpanded?"rotate-90":""}`}/>
+                                  </div>
+                                  <p className="m-0 text-sm font-black text-gray-900 text-center">{stat.carts}</p>
+                                  <div className="text-center"><p className="m-0 text-sm font-black text-gray-900">{stat.orders}</p><p className={`m-0 text-[10px] font-bold ${convRate>=60?"text-emerald-600":convRate>=30?"text-amber-600":"text-rose-500"}`}>{convRate}%</p></div>
+                                  <p className="m-0 text-[11px] text-gray-500 text-left">{stat.lastActivity?ageLabel:"—"}</p>
+                                  <div className="flex justify-end" onClick={e=>e.stopPropagation()}>
+                                    {variant?.id&&<button type="button" className="!min-h-0 rounded-lg border border-rose-100 p-1 text-rose-400 hover:bg-rose-50" title="Remove"
+                                      onClick={()=>showConfirm(`Remove link "${label}"?`,async()=>{await marketingLinkVariantsApi.delete(variant.id);setMarketingLinkVariants(p=>p.filter(v=>v.id!==variant.id));setLinkTraffic(p=>{const n={...p};delete n[label];return n;});if(linkDetailLabel===label)setLinkDetailLabel(null);showToast("Removed.");},{danger:true,confirmLabel:"Remove"})}><X className="h-3 w-3"/></button>}
+                                  </div>
+                                </button>
+                                {isExpanded&&(
+                                  <div className="bg-gray-50/80 px-4 py-3">
+                                    {linkDetailLoading&&<p className="m-0 text-xs text-gray-400 flex items-center gap-1.5"><RefreshCw className="h-3 w-3 animate-spin"/>Loading…</p>}
+                                    {!linkDetailLoading&&linkDetailRows.length===0&&<p className="m-0 text-xs text-gray-400">No carts found for this link in the last 30 days.</p>}
+                                    {!linkDetailLoading&&linkDetailRows.length>0&&(
+                                      <div className="space-y-0 rounded-xl border border-gray-200 bg-white overflow-hidden">
+                                        <div className="grid grid-cols-[1fr_120px_90px_80px] gap-2 px-3 py-2 bg-gray-50 border-b border-gray-100 text-[10px] font-black uppercase tracking-wider text-gray-400">
+                                          <span>Customer</span><span>Location</span><span>Status</span><span className="text-right">Amount</span>
+                                        </div>
+                                        {linkDetailRows.slice(0,20).map((row:any)=>{
+                                          const statusColor=row.order?.status==="Delivered"?"text-emerald-600":row.order?.status==="Cancelled"?"text-rose-500":row.order?"text-blue-600":row.status==="Converted"?"text-emerald-600":"text-amber-600";
+                                          const displayStatus=row.order?row.order.status:row.status;
+                                          return (
+                                            <div key={row.id} className="grid grid-cols-[1fr_120px_90px_80px] gap-2 items-center px-3 py-2.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/60 cursor-pointer"
+                                              onClick={()=>{if(row.order){setActivePage("Orders");setTimeout(()=>document.dispatchEvent(new CustomEvent("open-order",{detail:{id:row.order.id}})),200);}else{setActivePage("Abandoned Carts");}}}>
+                                              <div className="min-w-0">
+                                                <p className="m-0 text-sm font-bold text-gray-900 truncate">{row.customer||"Partial lead"}</p>
+                                                <p className="m-0 text-[11px] text-gray-400 truncate">{row.phone} · {formatMoment(row.created_at)}</p>
+                                              </div>
+                                              <p className="m-0 text-[11px] text-gray-500 truncate">{[row.city,row.state].filter(Boolean).join(", ")||"—"}</p>
+                                              <p className={`m-0 text-[11px] font-bold truncate ${statusColor}`}>{displayStatus}</p>
+                                              <p className="m-0 text-[11px] font-black text-gray-900 text-right">₦{Number(row.amount||0).toLocaleString("en-NG")}</p>
+                                            </div>
+                                          );
+                                        })}
+                                        {linkDetailRows.length>20&&<p className="m-0 px-3 py-2 text-[11px] text-gray-400">+{linkDetailRows.length-20} more — export for full list</p>}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             );
                           })}

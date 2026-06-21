@@ -797,6 +797,7 @@ export const cartsApi = {
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return get<any>(`/api/carts/live-pulse${suffix}`);
   },
+  byLabel: (label: string) => get<any[]>(`/api/carts/by-label/${encodeURIComponent(label)}`),
   changeDate: (id: string, body: { createdAt: string; reason: string }) => patch<any>(`/api/carts/${id}/date`, body),
   update: (id: string, body: unknown) => patch<any>(`/api/carts/${id}`, body),
   delete: (id: string) => del<void>(`/api/carts/${id}`),
