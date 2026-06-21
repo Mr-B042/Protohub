@@ -69,10 +69,10 @@ export const DEFAULT_WHATSAPP_TEMPLATES: Record<WhatsAppTrigger, { body: string 
   },
   // Customer-facing order event templates
   order_new: {
-    body: "Dear {{customer}},\n\nThank you for your order. We have received it and it is now being processed.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\n{{addons_line}}Amount: {{currency}} {{amount}}\nDelivery to: {{city}}, {{state}}\n\nOur team will contact you shortly to confirm your delivery. For any enquiries, please reply to this message.\n\nWarm regards,\nProtohub Team"
+    body: "Dear {{customer}},\n\nThank you for your order. We have received it and it is now being processed.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\nQuantity: {{quantity}}\n{{addons_line}}Amount: {{currency}} {{amount}}\nDelivery to: {{city}}, {{state}}\n\nOur team will contact you shortly to confirm your delivery. For any enquiries, please reply to this message.\n\nWarm regards,\nProtohub Team"
   },
   order_new_rep: {
-    body: "*New Order — Action Required*\n\nRef: #{{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nLocation: {{city}}, {{state}}\nProduct: {{product_name}} — {{package_name}}\n{{addons_line}}Amount: {{currency}} {{amount}}\nSource: {{source}}\n\nPlease call the customer to confirm the order and arrange delivery. Update the order status after contact."
+    body: "*New Order — Action Required*\n\nRef: #{{order_id}}\nCustomer: {{customer}}\nPhone: {{phone}}\nLocation: {{city}}, {{state}}\nProduct: {{product_name}} — {{package_name}}\nQuantity: {{quantity}}\n{{addons_line}}Amount: {{currency}} {{amount}}\nSource: {{source}}\n\nPlease call the customer to confirm the order and arrange delivery. Update the order status after contact."
   },
   order_scheduled: {
     body: "Dear {{customer}},\n\nYour delivery has been scheduled.\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\n{{addons_line}}Scheduled Date: {{scheduled_date}}\n\nPlease ensure you or a representative is available to receive the package on the scheduled date. Our delivery partner will contact you before arrival.\n\nFor any enquiries, please reply to this message.\n\nWarm regards,\nProtohub Team"
@@ -1545,6 +1545,7 @@ export async function sendOrderNewCustomerWhatsApp(
       phone: order.phone?.trim() || targetPhone,
       product_name: order.productName ?? "your order",
       package_name: order.packageName ?? "",
+      quantity: order.quantity != null ? `${order.quantity} pc${order.quantity === 1 ? "" : "s"}` : "—",
       addons_line: addonsLine,
       amount,
       currency,
@@ -1660,6 +1661,7 @@ export async function sendOrderNewRepWhatsApp(
       phone: order.phone ?? "—",
       product_name: order.productName ?? "—",
       package_name: order.packageName ?? "—",
+      quantity: order.quantity != null ? `${order.quantity} pc${order.quantity === 1 ? "" : "s"}` : "—",
       addons_line: buildAddonsLine(order, repCurrency),
       amount: typeof order.amount === "number" ? order.amount.toLocaleString("en-NG") : "0",
       currency: repCurrency,

@@ -21949,7 +21949,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "",
       `I'm reaching out about your order ${order.id}.`,
       `Product: ${productLabel}`,
-      `Quantity: ${quantity} unit${quantity === 1 ? "" : "s"}`,
+      `Quantity: ${quantity} pc${quantity === 1 ? "" : "s"}`,
       ...(addonLines.length > 0 ? ["Add-ons:", ...addonLines] : []),
       `Amount: ${formatProductMoney(order.amount, order.currency)}`,
       "",
