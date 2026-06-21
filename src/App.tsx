@@ -58108,12 +58108,14 @@ ${waybillLineItems(w).length > 1
 	                      </div>
 	                      <span className="text-[11px] font-bold text-gray-500 tabular-nums">{customerInfoDone}/{customerInfoTotal}</span>
 	                    </div>
-	                    {/* Auto-submit countdown — shown when 6/6 complete and last activity < 5 min ago */}
+	                    {/* Auto-submit countdown — dynamic 45s (fast) / 70s (slow) matching embed form logic */}
 	                    {customerInfoComplete && selectedCart.status !== "Converted" && (() => {
 	                      const lastMs = selectedCart.lastActivity ? new Date(selectedCart.lastActivity).getTime() : NaN;
 	                      if (!Number.isFinite(lastMs)) return null;
+	                      const createdMs = selectedCart.createdAt ? new Date(selectedCart.createdAt).getTime() : lastMs;
+	                      const fillSec = (lastMs - createdMs) / 1000;
+	                      const totalSec = fillSec < 90 ? 45 : 70;
 	                      const elapsedSec = Math.max(0, (Date.now() - lastMs) / 1000);
-	                      const totalSec = 5 * 60;
 	                      const leftSec = Math.max(0, totalSec - elapsedSec);
 	                      if (leftSec <= 0) return null;
 	                      const mins = Math.floor(leftSec / 60);
