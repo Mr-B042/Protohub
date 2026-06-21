@@ -50164,7 +50164,23 @@ ${waybillLineItems(w).length > 1
                             </label>
                           </div>
                           {waUpsellDraft.imageUrl && (
-                            <img src={waUpsellDraft.imageUrl} alt="upsell preview" className="mt-2 h-16 w-16 rounded-lg object-cover border border-gray-200" onError={e => (e.currentTarget.style.display="none")} />
+                            <div className="mt-3 flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                              <img
+                                src={waUpsellDraft.imageUrl}
+                                alt="upsell product preview"
+                                className="h-24 w-24 shrink-0 rounded-xl object-cover border border-gray-200 shadow-sm"
+                                onError={e => { e.currentTarget.style.display = "none"; (e.currentTarget.nextSibling as HTMLElement | null)?.setAttribute("style", "display:flex"); }}
+                              />
+                              <div className="hidden items-center justify-center h-24 w-24 shrink-0 rounded-xl border border-dashed border-gray-300 bg-white text-xs text-gray-400 font-bold text-center">
+                                Image failed to load
+                              </div>
+                              <div className="min-w-0">
+                                <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1">Image preview</p>
+                                <p className="m-0 text-xs text-gray-600 break-all">{waUpsellDraft.imageUrl}</p>
+                                <button type="button" className="!min-h-0 mt-2 text-[11px] text-rose-500 font-bold hover:underline"
+                                  onClick={() => setWaUpsellDraft(d => ({ ...d, imageUrl: "" }))}>Remove</button>
+                              </div>
+                            </div>
                           )}
                         </div>
 
