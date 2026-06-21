@@ -42,18 +42,28 @@ export async function runCartAutoSubmit(): Promise<void> {
   if (error) { logger.error("cart-auto-submit: query failed", { error: error.message }); return; }
   if (!carts?.length) return;
 
+  // Group by org to check each org's auto_submit_mode
+  const orgIds = [...new Set((carts as any[]).map((c: any) => c.org_id))];
+  const { data: embedRows } = await supabase
+    .from("embed_settings")
+    .select("org_id, auto_submit_mode")
+    .in("org_id", orgIds);
+  const orgMode = Object.fromEntries((embedRows ?? []).map((r: any) => [r.org_id, r.auto_submit_mode ?? "full"]));
+
   logger.info("cart-auto-submit: checking carts", { count: carts.length });
 
   for (const cart of carts) {
+    const mode = orgMode[(cart as any).org_id] ?? "full";
+    if (mode === "off") continue;
     try {
-      await processCart(cart);
+      await processCart(cart, mode);
     } catch (err) {
       logger.error("cart-auto-submit: cart failed", { cartId: cart.id, error: (err as Error).message });
     }
   }
 }
 
-async function processCart(cart: Record<string, any>): Promise<void> {
+async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "full"): Promise<void> {
   const orgId: string = cart.org_id;
   const cartId: string = cart.id;
 
@@ -140,6 +150,15 @@ async function processCart(cart: Record<string, any>): Promise<void> {
     status:           "New"
   };
 
+  // "cart" mode: just mark the cart as ready-to-convert without creating an order
+  if (mode === "cart") {
+    await supabase.from("abandoned_carts")
+      .update({ status: "In progress", last_activity: new Date().toISOString() })
+      .eq("id", cartId);
+    logger.info("cart-auto-submit: cart-mode — marked In progress", { cartId, customer: cart.customer });
+    return;
+  }
+
   const { data: order, error: orderErr } = await supabase
     .from("orders")
     .insert(orderPayload)
@@ -203,17 +222,28 @@ async function processCart(cart: Record<string, any>): Promise<void> {
   }, upsellDelay);
 
   // 8. Meta CAPI (best-effort)
+  // For server-side submits, the landing page pixel can't fire (no browser).
+  // Fall back to __default__ org config so CAPI always fires if credentials are set.
   try {
     const metaTrackingKey = capturePayload.metaTrackingKey ?? capturePayload.meta_tracking_key ?? null;
-    const { data: storedMetaConfig } = metaTrackingKey
+
+    // Try the cart's tracking key first, then fall back to org default
+    const { data: specificConfig } = metaTrackingKey
       ? await supabase.from("meta_capi_configs").select("*").eq("org_id", orgId).eq("tracking_key", metaTrackingKey).maybeSingle()
       : { data: null };
 
+    const { data: defaultConfig } = !specificConfig
+      ? await supabase.from("meta_capi_configs").select("*").eq("org_id", orgId).eq("tracking_key", "__default__").maybeSingle()
+      : { data: null };
+
+    const storedMetaConfig = specificConfig ?? defaultConfig ?? null;
+
+    // Force hybrid mode for server-side submits so CAPI always fires when credentials exist
     const metaConfig = resolveMetaTrackingConfig({
       productId: product.id,
-      trackingKey: metaTrackingKey,
+      trackingKey: storedMetaConfig?.tracking_key ?? metaTrackingKey,
       configOverride: storedMetaConfig,
-      modeOverride: capturePayload.trackingMode ?? capturePayload.metaTrackingMode ?? null,
+      modeOverride: storedMetaConfig ? "hybrid" : (capturePayload.trackingMode ?? capturePayload.metaTrackingMode ?? null),
       pixelIdOverride: capturePayload.metaPixelId ?? capturePayload.pixelId ?? null,
     });
 

@@ -319,7 +319,7 @@ type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
 type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed" | "order_rescheduled" | "order_assigned" | "order_follow_up"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string; recipientId?: string };
 type EmailProviderName = "resend" | "mailjet";
-type SettingsPanel = "workspace" | "email" | "sms";
+type SettingsPanel = "workspace" | "email" | "sms" | "meta";
 type DisplayDensity = "compact" | "comfortable";
 type RevenueCompareMode = "periods" | "statuses";
 type WorkingDayName = "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday";
@@ -7340,6 +7340,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [metaCapiConfigsLoading, setMetaCapiConfigsLoading] = useState(false);
   const [metaCapiSavingProductId, setMetaCapiSavingProductId] = useState<string | null>(null);
   const [metaCapiAccessTokenDrafts, setMetaCapiAccessTokenDrafts] = useState<Record<string, string>>({});
+  const [metaDefaultDraft, setMetaDefaultDraft] = useState({ pixelId: "", accessToken: "", thankYouUrl: "", testEventCode: "" });
+  const [metaDefaultSaving, setMetaDefaultSaving] = useState(false);
+  const [metaDefaultSaved, setMetaDefaultSaved] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>("workspace");
   const brandingHydratedRef = useRef(false);
   const brandingSyncedRef = useRef({ name: "", logoUrl: "" });
@@ -8132,6 +8135,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     resetIntervalMinutes?: number;
   } | null>(null);
   const [embedSettingsSaving, setEmbedSettingsSaving] = useState(false);
+  const [autoSubmitMode, setAutoSubmitMode] = useState<"full"|"cart"|"off">("full");
 
   // Cache-version auto-purge: compare org's cacheVersion to localStorage.
   // If mismatch (or missing), wipe every protohub.* key and reload so the UI
@@ -8388,6 +8392,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (typeof s.freeDeliverySlotLimit === "number") setFreeDeliverySlotLimit(String(s.freeDeliverySlotLimit));
       if (typeof s.freeDeliverySlotManualClaimed === "number") setFreeDeliverySlotManualClaimed(String(s.freeDeliverySlotManualClaimed));
       if (typeof s.freeDeliveryResetIntervalMinutes === "number") setFreeDeliveryResetIntervalMinutes(s.freeDeliveryResetIntervalMinutes);
+      if (s.autoSubmitMode === "full" || s.autoSubmitMode === "cart" || s.autoSubmitMode === "off") setAutoSubmitMode(s.autoSubmitMode);
     }).catch(() => { /* defaults stay */ });
   }, []);
 
@@ -8437,7 +8442,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   useEffect(() => {
     if (!auth.getAccessToken()) return;
-    if (activePage !== "Embed Form") return;
+    if (activePage !== "Embed Form" && activePage !== "Settings") return;
     if (!authUser?.id || !canManageMetaCapiSettings) {
       setMetaCapiConfigs([]);
       setMetaCapiConfigsLoading(false);
@@ -8447,7 +8452,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setMetaCapiConfigsLoading(true);
     metaCapiSettingsApi.list()
       .then((configs: MetaCapiConfigRecord[]) => {
-        if (!cancelled) setMetaCapiConfigs(Array.isArray(configs) ? configs : []);
+        if (!cancelled) {
+          setMetaCapiConfigs(Array.isArray(configs) ? configs : []);
+          // Pre-fill the Meta settings panel from the __default__ config if it exists
+          const def = (Array.isArray(configs) ? configs : []).find((c: MetaCapiConfigRecord) => c.trackingKey === "__default__");
+          if (def) setMetaDefaultDraft(d => ({ ...d, pixelId: def.pixelId ?? "", testEventCode: "" }));
+        }
       })
       .catch((err: any) => {
         if (!cancelled) showToast(`Failed to load Meta CAPI configs: ${err?.message ?? "please retry"}.`);
@@ -9185,7 +9195,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         free_delivery_slots_enabled:  freeDeliverySlotsEnabled,
         free_delivery_slot_limit:     normalizedSlotLimit,
         free_delivery_slot_manual_claimed: normalizedManualClaimed,
-        free_delivery_reset_interval_minutes: normalizedResetInterval
+        free_delivery_reset_interval_minutes: normalizedResetInterval,
+        auto_submit_mode: autoSubmitMode
       });
       setFormOrderSummaryTitle(normalizedSummaryTitle);
       setConfirmationText(normalizedConfirmationText);
@@ -50877,7 +50888,8 @@ ${waybillLineItems(w).length > 1
                     {[
                       { id: "workspace", label: "Workspace", hint: "Push, branding, app install, timezone, account" },
                       ...(canManageMessagingSettings ? [{ id: "email", label: "Email Delivery", hint: "Provider setup, templates, activity" }] : []),
-                      ...(canViewSmsHealth ? [{ id: "sms", label: "SMS Delivery", hint: canManageMessagingSettings ? "Balance, provider setup, templates, activity" : "Balance and SMS health only" }] : [])
+                      ...(canViewSmsHealth ? [{ id: "sms", label: "SMS Delivery", hint: canManageMessagingSettings ? "Balance, provider setup, templates, activity" : "Balance and SMS health only" }] : []),
+                      ...(currentRole === "Owner" ? [{ id: "meta", label: "Meta & Ads", hint: "Pixel ID, CAPI token, thank-you page URL" }] : [])
                     ].map((tab) => {
                       const active = settingsPanel === tab.id;
                       return (
@@ -52705,6 +52717,139 @@ ${waybillLineItems(w).length > 1
                 </div>
               </section>
               )}
+
+              {settingsPanel === "meta" && currentRole === "Owner" && (
+              <section className="space-y-4">
+                <div>
+                  <h2 className="text-base font-bold text-gray-800">Meta Pixel & Conversions API</h2>
+                  <p className="text-sm text-gray-500 mt-1">Set up once here — all order forms and server-side auto-submits use this automatically. Hybrid mode fires both the landing page pixel and CAPI so no purchase is missed.</p>
+                </div>
+
+                <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                  <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 text-blue-600"><BarChart3 className="h-4 w-4" /></span>
+                    <div>
+                      <p className="m-0 text-sm font-black text-gray-900">Default CAPI configuration</p>
+                      <p className="m-0 text-xs text-gray-500">Used for server-side auto-submits and as fallback when no tracking key is set on a link</p>
+                    </div>
+                    {metaDefaultSaved && <span className="ml-auto shrink-0 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-black text-emerald-700">✓ Saved</span>}
+                  </div>
+
+                  <div className="px-5 py-5 space-y-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Meta Pixel ID</p>
+                        <input
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"
+                          placeholder="e.g. 2171263370039172"
+                          value={metaDefaultDraft.pixelId}
+                          onChange={e => setMetaDefaultDraft(d => ({ ...d, pixelId: e.target.value.trim() }))}
+                        />
+                      </div>
+                      <div>
+                        <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Thank-you page URL (redirect after order)</p>
+                        <input
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+                          placeholder="https://yoursite.com/thank-you"
+                          value={metaDefaultDraft.thankYouUrl}
+                          onChange={e => setMetaDefaultDraft(d => ({ ...d, thankYouUrl: e.target.value.trim() }))}
+                        />
+                        <p className="m-0 mt-1 text-[11px] text-gray-400">Pixel on this page fires for manual submits. CAPI covers server-side auto-submits.</p>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Conversions API access token</p>
+                        <input
+                          type="password"
+                          autoComplete="off"
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"
+                          placeholder={metaCapiConfigs.some(c => c.trackingKey === "__default__" && c.hasAccessToken) ? "Token saved — paste new token to update" : "Paste token from Meta Events Manager → Conversions API"}
+                          value={metaDefaultDraft.accessToken}
+                          onChange={e => setMetaDefaultDraft(d => ({ ...d, accessToken: e.target.value }))}
+                        />
+                        <p className="m-0 mt-1 text-[11px] text-gray-400">Stored securely on the server. Never exposed to the browser. Get it from <strong>Meta Events Manager → your Pixel → Settings → Conversions API → Generate access token</strong>.</p>
+                      </div>
+                      <div>
+                        <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">Test event code <span className="font-normal normal-case text-gray-400">(optional — remove after testing)</span></p>
+                        <input
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"
+                          placeholder="TEST12345"
+                          value={metaDefaultDraft.testEventCode}
+                          onChange={e => setMetaDefaultDraft(d => ({ ...d, testEventCode: e.target.value.trim() }))}
+                        />
+                      </div>
+                      <div className="flex items-end">
+                        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 w-full">
+                          <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shrink-0" />
+                          <p className="m-0 text-xs font-black text-emerald-800">Hybrid mode — always on for this config</p>
+                          <p className="m-0 ml-auto text-[11px] text-emerald-600">Landing page pixel + CAPI</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Auto-submit mode toggle */}
+                    <div className="rounded-xl border border-gray-200 bg-gray-50/60 px-4 py-3.5">
+                      <p className="m-0 mb-3 text-[11px] font-black uppercase tracking-wider text-gray-500">Auto-submit mode</p>
+                      <div className="flex gap-2">
+                        {([
+                          { key: "full",  label: "Full",  desc: "Create order + fire WhatsApp + CAPI" },
+                          { key: "cart",  label: "Cart only", desc: "Keep as cart, don't create order" },
+                          { key: "off",   label: "Off",   desc: "Disable server-side auto-submit" }
+                        ] as const).map(opt => (
+                          <button key={opt.key} type="button"
+                            className={`!min-h-0 flex-1 rounded-xl border px-3 py-2.5 text-left transition-all ${autoSubmitMode === opt.key ? "border-blue-400 bg-blue-500 text-white shadow-sm" : "border-gray-200 bg-white text-gray-600 hover:border-gray-300"}`}
+                            onClick={() => { setAutoSubmitMode(opt.key); void embedSettingsApi.patch({ auto_submit_mode: opt.key }); }}>
+                            <p className="m-0 text-xs font-black">{opt.label}</p>
+                            <p className={`m-0 mt-0.5 text-[10px] leading-tight ${autoSubmitMode === opt.key ? "text-blue-100" : "text-gray-400"}`}>{opt.desc}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        type="button"
+                        className="!min-h-0 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50"
+                        disabled={metaDefaultSaving || !metaDefaultDraft.pixelId}
+                        onClick={async () => {
+                          if (!metaDefaultDraft.pixelId) { showToast("Enter your Pixel ID first."); return; }
+                          setMetaDefaultSaving(true);
+                          try {
+                            await metaCapiSettingsApi.save({
+                              trackingKey: "__default__",
+                              label: "Default (org-wide)",
+                              mode: "hybrid",
+                              pixelId: metaDefaultDraft.pixelId,
+                              accessToken: metaDefaultDraft.accessToken || undefined,
+                              active: true
+                            });
+                            setMetaDefaultSaved(true);
+                            setMetaDefaultDraft(d => ({ ...d, accessToken: "" }));
+                            showToast("✓ Meta CAPI configuration saved.");
+                            setTimeout(() => setMetaDefaultSaved(false), 4000);
+                          } catch (err: any) { showToast(err?.message ?? "Could not save — please retry."); }
+                          finally { setMetaDefaultSaving(false); }
+                        }}
+                      >
+                        {metaDefaultSaving ? "Saving…" : "Save configuration"}
+                      </button>
+                      {metaDefaultDraft.thankYouUrl && (
+                        <p className="m-0 text-xs text-gray-500">Add <code className="bg-gray-100 px-1 rounded text-[11px]">redirect_url={metaDefaultDraft.thankYouUrl}</code> to your embed link to redirect customers after order.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+                  <p className="m-0 text-xs font-black text-blue-800">How the two signals work together</p>
+                  <ul className="m-0 mt-1.5 space-y-1 pl-4 list-disc">
+                    <li className="text-xs text-blue-700"><strong>Customer submits on page:</strong> Redirected to thank-you URL → landing page pixel fires → CAPI fires</li>
+                    <li className="text-xs text-blue-700"><strong>Customer closes tab (auto-submit):</strong> Server creates order → CAPI fires directly → landing page pixel skipped (no browser)</li>
+                  </ul>
+                  <p className="m-0 mt-2 text-xs text-blue-600">With hybrid mode, Meta deduplication ensures each real purchase is counted exactly once even when both signals fire.</p>
+                </div>
+              </section>
+              )}
+
             </div>
           ) : activePage === "Inventory" ? (
             inventoryView === "combos" ? (
