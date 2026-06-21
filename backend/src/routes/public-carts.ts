@@ -197,6 +197,43 @@ router.post("/", captureRateLimit, async (req, res) => {
     return;
   }
 
+  // ── Phone-based deduplication ──────────────────────────────
+  // A customer who clears cookies or opens the form in a new session gets a
+  // fresh cart_id but is the same person. If they already have a recent
+  // non-Converted cart for the same product, merge into it instead of
+  // creating a duplicate.
+  if (d.phone?.trim()) {
+    const normalizedPhone = d.phone.replace(/\D/g, "");
+    const window48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const { data: phoneMatch } = await supabase
+      .from("abandoned_carts")
+      .select("id, status")
+      .eq("org_id", product.org_id)
+      .eq("product_id", d.productId)
+      .neq("id", d.id)
+      .not("status", "eq", "Converted")
+      .or(`phone.eq.${d.phone.trim()},phone.eq.0${normalizedPhone.slice(-10)},phone.eq.${normalizedPhone}`)
+      .gte("last_activity", window48h)
+      .order("last_activity", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (phoneMatch) {
+      // Merge new data into the existing cart and return its ID
+      const { data: merged } = await supabase
+        .from("abandoned_carts")
+        .update({ ...row, id: phoneMatch.id })
+        .eq("id", phoneMatch.id)
+        .eq("org_id", product.org_id)
+        .select()
+        .single();
+      if (merged) {
+        res.json({ ...merged, merged: true, originalId: d.id });
+        return;
+      }
+    }
+  }
+
   let insertQuery = supabase
     .from("abandoned_carts")
     .insert({ ...row, status: "Open abandoned" })
