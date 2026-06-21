@@ -200,50 +200,55 @@ router.post("/", captureRateLimit, async (req, res) => {
   }
 
   // ── Multi-signal deduplication ─────────────────────────────
-  // Three signals checked in priority order. If ANY matches an existing
-  // non-Converted cart for the same org+product in the last 7 days,
-  // merge into it instead of creating a duplicate.
+  // Checked in priority order. Merges are tracked so admin can always see
+  // which session triggered the merge and undo if wrong.
   {
     const window7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-    // Signal 1 — Phone (strongest: unique per customer)
-    const phoneSignal = d.phone?.trim() ? (() => {
-      const n = d.phone.replace(/\D/g, "");
-      return `phone.eq.${d.phone.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`;
-    })() : null;
-
-    // Signal 2 — Email
-    const emailSignal = d.email?.trim() ? `email.eq.${d.email.trim()}` : null;
-
-    // Signal 3 — IP address (same IP, same product, within 2 hours = likely same person)
     const clientIp = (req.headers["x-forwarded-for"] as string | undefined)
       ?.split(",")[0]?.trim() || (req as any).ip;
-    const ipWindow = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-
-    // Try phone + email together first, then fall back to IP alone
-    const orFilter = [phoneSignal, emailSignal].filter(Boolean).join(",");
 
     let matchId: string | null = null;
+    let dedupSignal: string | null = null;
 
-    if (orFilter) {
-      const { data: contactMatch } = await supabase
+    // Signal 1 — Phone (strongest)
+    if (d.phone?.trim()) {
+      const n = d.phone.replace(/\D/g, "");
+      const { data: m } = await supabase
         .from("abandoned_carts")
         .select("id")
         .eq("org_id", product.org_id)
         .eq("product_id", d.productId)
         .neq("id", d.id)
         .not("status", "eq", "Converted")
-        .or(orFilter)
+        .or(`phone.eq.${d.phone.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`)
         .gte("last_activity", window7d)
         .order("last_activity", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (contactMatch) matchId = contactMatch.id;
+      if (m) { matchId = m.id; dedupSignal = "phone"; }
     }
 
-    // IP fallback — only if no contact signal matched and IP is available
-    if (!matchId && clientIp && clientIp !== "::1" && clientIp !== "127.0.0.1") {
-      const { data: ipMatch } = await supabase
+    // Signal 2 — Email
+    if (!matchId && d.email?.trim()) {
+      const { data: m } = await supabase
+        .from("abandoned_carts")
+        .select("id")
+        .eq("org_id", product.org_id)
+        .eq("product_id", d.productId)
+        .neq("id", d.id)
+        .not("status", "eq", "Converted")
+        .eq("email", d.email.trim())
+        .gte("last_activity", window7d)
+        .order("last_activity", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (m) { matchId = m.id; dedupSignal = "email"; }
+    }
+
+    // Signal 3 — IP (conservative 2h window, skip shared/private IPs)
+    if (!matchId && clientIp && !["::1", "127.0.0.1", "::ffff:127.0.0.1"].includes(clientIp)) {
+      const ipWindow = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const { data: ipMatches } = await supabase
         .from("abandoned_carts")
         .select("id, capture_payload")
         .eq("org_id", product.org_id)
@@ -253,25 +258,38 @@ router.post("/", captureRateLimit, async (req, res) => {
         .gte("last_activity", ipWindow)
         .order("last_activity", { ascending: false })
         .limit(5);
-      // Only match on IP if we can confirm it via capture_payload metadata
-      const ipCartId = (ipMatch ?? []).find(c => {
-        const payload = c.capture_payload as Record<string, unknown> | null;
-        return payload?.clientIp === clientIp;
-      })?.id ?? null;
-      if (ipCartId) matchId = ipCartId;
+      const ipMatch = (ipMatches ?? []).find(c =>
+        (c.capture_payload as Record<string, unknown> | null)?.clientIp === clientIp
+      );
+      if (ipMatch) { matchId = ipMatch.id; dedupSignal = "ip"; }
     }
 
-    if (matchId) {
-      // Merge into the existing cart, enriching it with any new data
+    if (matchId && dedupSignal) {
+      // Safety: fetch the existing cart's current merged_from list before updating
+      const { data: existing } = await supabase
+        .from("abandoned_carts")
+        .select("dedup_merged_from")
+        .eq("id", matchId)
+        .single();
+      const mergedFrom: string[] = [
+        ...((existing?.dedup_merged_from as string[] | null) ?? []),
+        d.id  // record the ghost cart ID that was absorbed
+      ];
+
       const { data: merged } = await supabase
         .from("abandoned_carts")
-        .update({ ...row, id: matchId })
+        .update({
+          ...row,
+          id: matchId,
+          dedup_merged_from: mergedFrom,
+          dedup_signal: dedupSignal
+        })
         .eq("id", matchId)
         .eq("org_id", product.org_id)
         .select()
         .single();
       if (merged) {
-        res.json({ ...merged, merged: true, originalId: d.id });
+        res.json({ ...merged, merged: true, dedupSignal, originalId: d.id });
         return;
       }
     }

@@ -955,6 +955,9 @@ type AbandonedCartRecord = {
   outageCaptured?: boolean;
   outageCapturedAt?: string;
   capturePayload?: Record<string, any> | null;
+  // Dedup tracking — set when this cart absorbed a duplicate session
+  dedupMergedFrom?: string[] | null;
+  dedupSignal?: "phone" | "email" | "ip" | "localStorage" | null;
 };
 type ConvertedCartLinkRepairStatus =
   | "already_linked"
@@ -36857,6 +36860,14 @@ ${waybillLineItems(w).length > 1
                             <div className="flex flex-col gap-0.5">
                               <span className="font-semibold uppercase tracking-wide text-gray-400">Source</span>
                               <span className="text-gray-700">{cart.source}</span>
+                              {cart.dedupMergedFrom && cart.dedupMergedFrom.length > 0 && (
+                                <span
+                                  className="mt-1 inline-flex w-fit items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-black text-violet-700 cursor-help"
+                                  title={`Dedup (${cart.dedupSignal ?? "?"}): absorbed ${cart.dedupMergedFrom.length} duplicate session${cart.dedupMergedFrom.length !== 1 ? "s" : ""}. Ghost IDs: ${cart.dedupMergedFrom.join(", ")}`}
+                                >
+                                  <span>🔀 Deduped · {cart.dedupSignal ?? "auto"} · {cart.dedupMergedFrom.length}× merged</span>
+                                </span>
+                              )}
                               {embedLabel ? (
                                 <span className="mt-1 inline-flex w-fit max-w-full items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700" title={`Embed label: ${embedLabel}`}>
                                   <span className="truncate">Embed: {embedLabel}</span>
@@ -57602,6 +57613,11 @@ ${waybillLineItems(w).length > 1
 	                        <StatusBadge s={selectedCart.status} />
 	                        <span className="text-xs text-gray-500">{selectedCart.source}</span>
 	                        {stale > 1 && <span className="text-[11px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-bold">⚠ {Math.floor(stale)}d stale</span>}
+	                        {selectedCart.dedupMergedFrom && selectedCart.dedupMergedFrom.length > 0 && (
+	                          <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-black text-violet-700" title={`Absorbed ${selectedCart.dedupMergedFrom.length} duplicate session(s) via ${selectedCart.dedupSignal}. Ghost IDs: ${selectedCart.dedupMergedFrom.join(', ')}`}>
+	                            🔀 {selectedCart.dedupMergedFrom.length} session{selectedCart.dedupMergedFrom.length !== 1 ? 's' : ''} merged · {selectedCart.dedupSignal ?? 'auto'}
+	                          </span>
+	                        )}
 	                      </div>
 	                    </div>
 	                    {/* Quick contact */}
