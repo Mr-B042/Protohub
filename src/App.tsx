@@ -50143,8 +50143,30 @@ ${waybillLineItems(w).length > 1
                           <p className="m-0 mb-1.5 text-[10px] font-black uppercase tracking-wider text-gray-400">Product image <span className="text-gray-400 font-normal normal-case">(sent with the offer)</span></p>
                           <div className="flex gap-2">
                             <input className="flex-1 rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
-                              placeholder="Paste image URL or upload →"
-                              value={waUpsellDraft.imageUrl} onChange={e => setWaUpsellDraft(d => ({ ...d, imageUrl: e.target.value }))} />
+                              placeholder="Paste image URL, or Ctrl+V to paste image directly"
+                              value={waUpsellDraft.imageUrl}
+                              onChange={e => setWaUpsellDraft(d => ({ ...d, imageUrl: e.target.value }))}
+                              onPaste={async e => {
+                                const items = Array.from(e.clipboardData?.items ?? []);
+                                const imgItem = items.find(it => it.type.startsWith("image/"));
+                                if (!imgItem) return; // let normal URL paste happen
+                                e.preventDefault();
+                                const file = imgItem.getAsFile();
+                                if (!file) return;
+                                try {
+                                  const reader = new FileReader();
+                                  reader.onload = async re => {
+                                    const dataUrl = String(re.target?.result ?? "");
+                                    if (!dataUrl) return;
+                                    showToast("Uploading pasted image…");
+                                    const { url } = await productsApi.uploadPackageImage(dataUrl, `upsell-${Date.now()}.png`);
+                                    setWaUpsellDraft(d => ({ ...d, imageUrl: url }));
+                                    showToast("✓ Image uploaded from clipboard.");
+                                  };
+                                  reader.readAsDataURL(file);
+                                } catch { showToast("Could not upload pasted image — try URL instead."); }
+                              }}
+                            />
                             <label className="!min-h-0 inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-black text-rose-600 cursor-pointer hover:bg-rose-100 transition-colors shrink-0">
                               <Upload className="h-3.5 w-3.5" /> Upload
                               <input type="file" accept="image/*" className="hidden" onChange={async e => {
