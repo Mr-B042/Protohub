@@ -9257,6 +9257,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [publicOrderSubmitting, setPublicOrderSubmitting] = useState(false);
   const [abandonedDraftCartId, setAbandonedDraftCartId] = useState("");
   const publicOrderSubmittingRef = useRef(false);
+  const autoSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastInteractionRef = useRef<number>(Date.now());
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("All");
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushPermission, setPushPermission] = useState<NotificationPermission | "unsupported">("default");
@@ -28005,6 +28007,68 @@ ${waybillLineItems(w).length > 1
       setPublicOrderSubmitted({ orderId: createdOrderId, customer: orderFormName.trim() });
     }
   };
+
+  // ── Auto-submit: fire when form is 6/6 complete and customer goes idle for 5 min ──
+  useEffect(() => {
+    // Only active when a public product form is being filled (embed mode)
+    if (!publicProduct || publicOrderSubmitted || publicOrderSubmitting) return;
+
+    const nameOk    = Boolean(orderFormName.trim());
+    const phoneOk   = Boolean(orderFormPhone.trim()) && orderFormPhone.replace(/\D/g,"").length >= 7;
+    const waOk      = !showWhatsappField || !requireWhatsapp || Boolean(orderFormWhatsapp.trim());
+    const addrOk    = !addressRequired || Boolean(orderFormAddress.trim());
+    const cityOk    = Boolean(orderFormCity.trim());
+    const stateOk   = Boolean(orderFormState.trim());
+    const allFilled = nameOk && phoneOk && waOk && addrOk && cityOk && stateOk;
+
+    if (!allFilled) {
+      // Not complete — clear any running timer
+      if (autoSubmitTimerRef.current) {
+        clearTimeout(autoSubmitTimerRef.current);
+        autoSubmitTimerRef.current = null;
+      }
+      return;
+    }
+
+    // All fields filled — schedule auto-submit after 5 min of inactivity
+    const IDLE_MS = 5 * 60 * 1000;
+
+    const scheduleAutoSubmit = () => {
+      if (autoSubmitTimerRef.current) clearTimeout(autoSubmitTimerRef.current);
+      autoSubmitTimerRef.current = setTimeout(() => {
+        const idleSince = Date.now() - lastInteractionRef.current;
+        if (idleSince >= IDLE_MS && !publicOrderSubmittingRef.current) {
+          submitPublicOrder();
+        }
+      }, IDLE_MS);
+    };
+
+    const onInteraction = () => {
+      lastInteractionRef.current = Date.now();
+      scheduleAutoSubmit();
+    };
+
+    scheduleAutoSubmit();
+
+    window.addEventListener("mousemove", onInteraction, { passive: true });
+    window.addEventListener("keydown",   onInteraction, { passive: true });
+    window.addEventListener("touchstart",onInteraction, { passive: true });
+    window.addEventListener("scroll",    onInteraction, { passive: true });
+    window.addEventListener("click",     onInteraction, { passive: true });
+
+    return () => {
+      if (autoSubmitTimerRef.current) { clearTimeout(autoSubmitTimerRef.current); autoSubmitTimerRef.current = null; }
+      window.removeEventListener("mousemove",  onInteraction);
+      window.removeEventListener("keydown",    onInteraction);
+      window.removeEventListener("touchstart", onInteraction);
+      window.removeEventListener("scroll",     onInteraction);
+      window.removeEventListener("click",      onInteraction);
+    };
+  }, [
+    publicProduct, publicOrderSubmitted, publicOrderSubmitting,
+    orderFormName, orderFormPhone, orderFormWhatsapp, orderFormAddress, orderFormCity, orderFormState,
+    showWhatsappField, requireWhatsapp, addressRequired
+  ]);
 
   const openCreateTeamModal = () => {
     setNewTeamName("");
