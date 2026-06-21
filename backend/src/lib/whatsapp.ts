@@ -1813,7 +1813,38 @@ export async function sendOrderUpsellWhatsApp(
 
   // Read upsell product config from org settings
   const upsellCfg = (settings as any).upsell_config as UpsellConfig | null;
-  if (!upsellCfg?.productId || !upsellCfg?.packageId || !upsellCfg?.name) return;
+  if (!upsellCfg?.productId || !upsellCfg?.name) return;
+
+  // Don't upsell if the customer already has this product in their current order
+  // Check cross_sell_lines, package_components_snapshot, and the main product
+  const { data: orderRow } = await supabase
+    .from("orders")
+    .select("cross_sell_lines, product_id, package_id")
+    .eq("id", order.id)
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  if (orderRow) {
+    // Skip if the upsell product IS the main product they ordered
+    if (orderRow.product_id === upsellCfg.productId) {
+      logger.info("wa order_upsell: skipped — customer already ordered this product", {
+        orgId, orderId: order.id
+      });
+      return;
+    }
+    // Skip if the upsell product is already in their cross-sell add-ons
+    const existingLines = Array.isArray(orderRow.cross_sell_lines) ? orderRow.cross_sell_lines : [];
+    const alreadyHasIt = existingLines.some((line: any) =>
+      line.productId === upsellCfg.productId ||
+      line.product_id === upsellCfg.productId
+    );
+    if (alreadyHasIt) {
+      logger.info("wa order_upsell: skipped — product already in cross-sell lines", {
+        orgId, orderId: order.id
+      });
+      return;
+    }
+  }
 
   // Stock check — only send if the customer's state has stock for the upsell product
   const customerState = order.state?.trim();
