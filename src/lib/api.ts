@@ -596,7 +596,8 @@ export const marketingLinkVariantsApi = {
     return get<any[]>(`/api/marketing-link-variants${qs}`);
   },
   create: (body: unknown) => post<any>("/api/marketing-link-variants", body),
-  delete: (id: string) => del<void>(`/api/marketing-link-variants/${encodeURIComponent(id)}`)
+  delete: (id: string) => del<void>(`/api/marketing-link-variants/${encodeURIComponent(id)}`),
+  traffic: () => get<Record<string, { carts: number; orders: number; lastActivity: string | null }>>("/api/marketing-link-variants/traffic")
 };
 
 // ── Marketing Spend Ledger ───────────────────────────────

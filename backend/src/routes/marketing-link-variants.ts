@@ -173,4 +173,29 @@ router.delete("/:id", requireRole(...ALLOWED_ROLES), async (req, res) => {
   res.status(204).send();
 });
 
+// ── GET /api/marketing-link-variants/traffic ─────────────
+router.get("/traffic", requireRole(...ALLOWED_ROLES), async (req, res) => {
+  const orgId = req.user!.orgId;
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [{ data: carts }, { data: orders }] = await Promise.all([
+    supabase.from("abandoned_carts").select("embed_label, last_activity").eq("org_id", orgId).not("embed_label", "is", null).gte("created_at", since),
+    supabase.from("orders").select("embed_label").eq("org_id", orgId).not("embed_label", "is", null).gte("created_at", since)
+  ]);
+
+  const stats: Record<string, { carts: number; orders: number; lastActivity: string | null }> = {};
+  for (const c of (carts ?? [])) {
+    const k = c.embed_label as string;
+    if (!stats[k]) stats[k] = { carts: 0, orders: 0, lastActivity: null };
+    stats[k].carts++;
+    if (!stats[k].lastActivity || c.last_activity > stats[k].lastActivity!) stats[k].lastActivity = c.last_activity;
+  }
+  for (const o of (orders ?? [])) {
+    const k = o.embed_label as string;
+    if (!stats[k]) stats[k] = { carts: 0, orders: 0, lastActivity: null };
+    stats[k].orders++;
+  }
+  res.json(stats);
+});
+
 export default router;
