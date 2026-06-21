@@ -86,7 +86,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: Record<WhatsAppTrigger, { body: string 
     body: "Dear {{customer}},\n\nYour order has been successfully delivered. ✅\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\n{{addons_line}}Amount Paid: {{currency}} {{amount}}\n\nWe hope you are satisfied with your purchase. If you have any concerns about the product or delivery, please reply to this message and our team will assist you promptly.\n\nThank you for choosing us. We look forward to serving you again.\n\nWarm regards,\nProtohub Team"
   },
   order_upsell: {
-    body: "Hi {{first_name}}! 🎉\n\nThank you for ordering — we are preparing your delivery now.\n\nQuick question — would you like to add *{{upsell_name}}* to your order for just *{{upsell_currency}} {{upsell_price}}*?\n\nIt ships in the same delivery at no extra delivery cost.\n\nReply *YES* to add it or *NO* to skip. 😊"
+    body: "Hi {{first_name}}! 🎉\n\nThank you for ordering — we are preparing your delivery now.\n\nQuick question — would you like to add *{{upsell_name}}* to your order?\n{{strike_line}}Just *{{upsell_currency}} {{upsell_price}}* — ships in the same delivery.\n\nReply *YES* to add it or *NO* to skip. 😊"
   }
 };
 
@@ -1893,7 +1893,11 @@ export async function sendOrderUpsellWhatsApp(
           order_id: order.id,
           upsell_name: upsellCfg.name,
           upsell_price: upsellCfg.price.toLocaleString("en-NG"),
-          upsell_currency: currency
+          upsell_currency: currency,
+          // strike_line: shows crossed-out original price if configured, otherwise empty
+          strike_line: (upsellCfg as any).strikePrice
+            ? `~~${currency} ${Number((upsellCfg as any).strikePrice).toLocaleString("en-NG")}~~ → `
+            : ""
         },
         targetPhone,
         { orderId: order.id, audience: "customer", recipientName: firstName },

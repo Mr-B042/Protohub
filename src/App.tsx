@@ -7270,7 +7270,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waSettingsLoading, setWaSettingsLoading] = useState(false);
   const [waTriggerSaving, setWaTriggerSaving] = useState(false);
   const [waUpsellSaving, setWaUpsellSaving] = useState(false);
-  const [waUpsellDraft, setWaUpsellDraft] = useState<{name:string;price:string;imageUrl:string;productId:string;delayMinutes:number}>({ name:"",price:"",imageUrl:"",productId:"",delayMinutes:5 });
+  const [waUpsellDraft, setWaUpsellDraft] = useState<{name:string;price:string;strikePrice:string;imageUrl:string;productId:string;delayMinutes:number}>({ name:"",price:"",strikePrice:"",imageUrl:"",productId:"",delayMinutes:5 });
   const [waConnecting, setWaConnecting] = useState(false);
   const [waDisconnecting, setWaDisconnecting] = useState(false);
   const [waTestPhone, setWaTestPhone] = useState("");
@@ -8771,11 +8771,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const id = (window as any).requestIdleCallback
       ? (window as any).requestIdleCallback(() => {
           setWaSettingsLoading(true);
-          whatsappSettingsApi.get().then((s) => { setWaSettings(s); const u = s?.upsellConfig ?? (s as any)?.upsell_config ?? {}; setWaUpsellDraft({ name: u.name ?? "", price: u.price != null ? String(u.price) : "", imageUrl: u.imageUrl ?? "", productId: u.productId ?? "", delayMinutes: u.delayMinutes ?? 5 }); }).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
+          whatsappSettingsApi.get().then((s) => { setWaSettings(s); const u = s?.upsellConfig ?? (s as any)?.upsell_config ?? {}; setWaUpsellDraft({ name: u.name ?? "", price: u.price != null ? String(u.price) : "", strikePrice: u.strikePrice != null ? String(u.strikePrice) : "", imageUrl: u.imageUrl ?? "", productId: u.productId ?? "", delayMinutes: u.delayMinutes ?? 5 }); }).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
         }, { timeout: 3000 })
       : setTimeout(() => {
           setWaSettingsLoading(true);
-          whatsappSettingsApi.get().then((s) => { setWaSettings(s); const u = s?.upsellConfig ?? (s as any)?.upsell_config ?? {}; setWaUpsellDraft({ name: u.name ?? "", price: u.price != null ? String(u.price) : "", imageUrl: u.imageUrl ?? "", productId: u.productId ?? "", delayMinutes: u.delayMinutes ?? 5 }); }).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
+          whatsappSettingsApi.get().then((s) => { setWaSettings(s); const u = s?.upsellConfig ?? (s as any)?.upsell_config ?? {}; setWaUpsellDraft({ name: u.name ?? "", price: u.price != null ? String(u.price) : "", strikePrice: u.strikePrice != null ? String(u.strikePrice) : "", imageUrl: u.imageUrl ?? "", productId: u.productId ?? "", delayMinutes: u.delayMinutes ?? 5 }); }).catch(() => setWaSettings({})).finally(() => setWaSettingsLoading(false));
         }, 1500);
     return () => {
       if ((window as any).cancelIdleCallback) (window as any).cancelIdleCallback(id);
@@ -50071,10 +50071,12 @@ ${waybillLineItems(w).length > 1
                 const upsellEnabled = Boolean((waSettings.triggers as any)?.order_upsell);
                 const initDraft = () => ({
                   name: cfg.name ?? "", price: cfg.price != null ? String(cfg.price) : "",
+                  strikePrice: cfg.strikePrice != null ? String(cfg.strikePrice) : "",
                   imageUrl: cfg.imageUrl ?? "", productId: cfg.productId ?? "", delayMinutes: cfg.delayMinutes ?? 5
                 });
                 const isDirty = waUpsellDraft.name !== (cfg.name ?? "") ||
                   waUpsellDraft.price !== (cfg.price != null ? String(cfg.price) : "") ||
+                  waUpsellDraft.strikePrice !== (cfg.strikePrice != null ? String(cfg.strikePrice) : "") ||
                   waUpsellDraft.imageUrl !== (cfg.imageUrl ?? "") ||
                   waUpsellDraft.productId !== (cfg.productId ?? "") ||
                   waUpsellDraft.delayMinutes !== (cfg.delayMinutes ?? 5);
@@ -50082,7 +50084,7 @@ ${waybillLineItems(w).length > 1
                   if (!waUpsellDraft.name.trim() || !waUpsellDraft.price) { showToast("Add a name and price before saving."); return; }
                   setWaUpsellSaving(true);
                   try {
-                    const next = { name: waUpsellDraft.name.trim(), price: Number(waUpsellDraft.price), currency: "NGN", imageUrl: waUpsellDraft.imageUrl.trim() || null, productId: waUpsellDraft.productId.trim() || null, delayMinutes: waUpsellDraft.delayMinutes };
+                    const next = { name: waUpsellDraft.name.trim(), price: Number(waUpsellDraft.price), strikePrice: waUpsellDraft.strikePrice ? Number(waUpsellDraft.strikePrice) : null, currency: "NGN", imageUrl: waUpsellDraft.imageUrl.trim() || null, productId: waUpsellDraft.productId.trim() || null, delayMinutes: waUpsellDraft.delayMinutes };
                     const saved = await whatsappSettingsApi.save({ ...waSettings, upsell_config: next, triggers: waSettings.triggers, templates: waSettings.templates });
                     setWaSettings(saved);
                     showToast("✓ Upsell offer saved.");
@@ -50137,6 +50139,15 @@ ${waybillLineItems(w).length > 1
                             placeholder="e.g. 4900" type="number" min={0}
                             value={waUpsellDraft.price} onChange={e => setWaUpsellDraft(d => ({ ...d, price: e.target.value }))} />
                           {waUpsellDraft.price && <p className="m-0 mt-1 text-[11px] text-gray-400">= NGN {Number(waUpsellDraft.price||0).toLocaleString("en-NG")}</p>}
+                        </div>
+                        <div>
+                          <p className="m-0 mb-1.5 text-[10px] font-black uppercase tracking-wider text-gray-400">Original price <span className="text-gray-400 font-normal normal-case">(struck through — optional)</span></p>
+                          <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
+                            placeholder="e.g. 10000"
+                            type="number" min={0}
+                            value={waUpsellDraft.strikePrice}
+                            onChange={e => setWaUpsellDraft(d => ({ ...d, strikePrice: e.target.value }))} />
+                          {waUpsellDraft.strikePrice && <p className="m-0 mt-1 text-[11px] text-gray-400"><s>NGN {Number(waUpsellDraft.strikePrice||0).toLocaleString("en-NG")}</s> → NGN {Number(waUpsellDraft.price||0).toLocaleString("en-NG")}</p>}
                         </div>
 
                         {/* Product image — upload or URL */}
@@ -50253,7 +50264,18 @@ ${waybillLineItems(w).length > 1
                         <div className="rounded-xl border border-gray-100 bg-[#f0f2f5] p-3">
                           <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400 mb-2">WhatsApp preview</p>
                           <div className="bg-[#d9fdd3] rounded-2xl rounded-br-sm px-3.5 py-2.5 max-w-xs shadow-sm">
-                            <p className="m-0 text-sm text-gray-900 whitespace-pre-wrap leading-relaxed">{`Hi [John]! 🎉\n\nThank you for ordering — we are preparing your delivery now.\n\nQuick question — would you like to add *${waUpsellDraft.name}* to your order for just *NGN ${Number(waUpsellDraft.price||0).toLocaleString("en-NG")}*?\n\nIt ships in the same delivery.\n\nReply *YES* to add it or *NO* to skip. 😊`}</p>
+                            <p className="m-0 text-sm text-gray-900 whitespace-pre-wrap leading-relaxed">{[
+                              `Hi [John]! 🎉`,
+                              ``,
+                              `Thank you for ordering — we are preparing your delivery now.`,
+                              ``,
+                              `Quick question — would you like to add *${waUpsellDraft.name || "your product"}* to your order?`,
+                              waUpsellDraft.strikePrice
+                                ? `~~NGN ${Number(waUpsellDraft.strikePrice||0).toLocaleString("en-NG")}~~ → Just *NGN ${Number(waUpsellDraft.price||0).toLocaleString("en-NG")}* — ships in the same delivery.`
+                                : `Just *NGN ${Number(waUpsellDraft.price||0).toLocaleString("en-NG")}* — ships in the same delivery.`,
+                              ``,
+                              `Reply *YES* to add it or *NO* to skip. 😊`
+                            ].join("\n")}</p>
                             {waUpsellDraft.imageUrl && <p className="m-0 mt-1.5 text-[11px] text-emerald-700 font-bold">📷 + product image attached</p>}
                           </div>
                         </div>
