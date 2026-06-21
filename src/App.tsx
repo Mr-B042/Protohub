@@ -24874,52 +24874,60 @@ ${waybillLineItems(w).length > 1
             showToast(`Package saved, but cross-package copy failed: ${err?.message ?? "please retry"}.`);
           });
         }
-        // Auto-sync state gate to same-named packages in other sets (e.g. Default → Yoruba).
-        // Syncs BOTH the main package gate AND each companion's individual gate.
+        // Auto-sync stock gate across all packages in the product.
+        // 1. Same-named packages in other sets → copy main package gate + companion gates
+        // 2. ALL other packages → copy companion gates by productId (catches Smart Pack, Yoruba etc.)
         {
-          const normalisedSaveCompanions = normalisedCompanions; // companions as saved
-          const matchingPkgs = productSnapshot.packages.filter(p =>
-            p.name === selectedPackage.name && p.id !== selectedPackage.id
+          // Build a gate map from companions being saved (productId → gate settings)
+          const companionGateMap = new Map(
+            normalisedCompanions
+              .filter(c => c.productId)
+              .map(c => [c.productId, {
+                requiresStateStock: c.requiresStateStock ?? false,
+                stateFilterMode: (c.stateFilterMode ?? "all") as "all" | "allow" | "block",
+                stateRestrictions: c.stateRestrictions ?? []
+              }])
           );
-          if (matchingPkgs.length > 0) {
-            // Main package stock gate
-            const gatePayload: Record<string, unknown> = {
-              stateFilterMode: packageStateFilterMode,
-              stateRestrictions: packageStateFilterMode === "all" ? [] : packageStateRestrictions,
-              requiresStateStock: packageRequiresStateStock
-            };
 
-            // Companion-level stock gates: for each companion in the source package,
-            // find matching companions in the target (by productId) and sync their gate.
-            if (normalisedSaveCompanions.length > 0) {
-              await Promise.all(matchingPkgs.map(async (matchPkg) => {
-                const targetFull = productSnapshot.packages.find(p => p.id === matchPkg.id);
-                const targetCompanions: PackageCompanion[] = (targetFull as any)?.companionProducts ?? [];
-                if (targetCompanions.length === 0) {
-                  return productsApi.updatePackage(_pkgProdId, matchPkg.id, gatePayload);
-                }
-                // Merge gate from source companions into target companions (match by productId)
-                const sourceGateByProductId = new Map(
-                  normalisedSaveCompanions.map(c => [c.productId, {
-                    requiresStateStock: c.requiresStateStock ?? false,
-                    stateFilterMode: c.stateFilterMode ?? "all",
-                    stateRestrictions: c.stateRestrictions ?? []
-                  }])
-                );
-                const updatedCompanions = targetCompanions.map(tc => {
-                  const gate = sourceGateByProductId.get(tc.productId);
-                  if (!gate) return tc;
-                  return { ...tc, ...gate };
+          const mainGate = {
+            stateFilterMode: packageStateFilterMode,
+            stateRestrictions: packageStateFilterMode === "all" ? [] : packageStateRestrictions,
+            requiresStateStock: packageRequiresStateStock
+          };
+
+          // Fetch ALL packages fresh from server so companion_products are guaranteed populated
+          const freshPkgs: ProductPackage[] = await productsApi.listPackages(_pkgProdId).catch(() => []);
+
+          await Promise.all(
+            freshPkgs
+              .filter((p: ProductPackage) => p.id !== selectedPackage.id)
+              .map(async (p: ProductPackage) => {
+                const isMatchedByName = p.name === selectedPackage.name;
+                const companions: PackageCompanion[] = p.companionProducts ?? [];
+
+                // Check if any of this package's companions are in our gate map
+                const hasMatchingCompanion = companions.some(c => companionGateMap.has(c.productId));
+
+                if (!isMatchedByName && !hasMatchingCompanion) return; // nothing to sync
+
+                const updatedCompanions = companions.map(c => {
+                  const gate = companionGateMap.get(c.productId);
+                  return gate ? { ...c, ...gate } : c;
                 });
-                return productsApi.updatePackage(_pkgProdId, matchPkg.id, {
-                  ...gatePayload,
+
+                const payload: Record<string, unknown> = {
                   companionProducts: updatedCompanions
-                });
-              })).catch(() => {});
-            } else {
-              await Promise.all(matchingPkgs.map(p => productsApi.updatePackage(_pkgProdId, p.id, gatePayload))).catch(() => {});
-            }
-          }
+                };
+                // Only copy main package gate to same-named packages
+                if (isMatchedByName) {
+                  payload.stateFilterMode = mainGate.stateFilterMode;
+                  payload.stateRestrictions = mainGate.stateRestrictions;
+                  payload.requiresStateStock = mainGate.requiresStateStock;
+                }
+
+                return productsApi.updatePackage(_pkgProdId, p.id, payload);
+              })
+          ).catch(() => {});
         }
       }
       const saveWarnings = [
