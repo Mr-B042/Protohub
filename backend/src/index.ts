@@ -13,6 +13,7 @@ import { getOrgPushBranding } from "./lib/push-branding.js";
 import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
 import { processQueuedWhatsApp, syncDueFollowUpWhatsApp } from "./lib/whatsapp.js";
 import { startWhatsAppRuntime } from "./lib/whatsapp-runtime.js";
+import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
 import { supabase } from "./lib/supabase.js";
 import { processQueuedEmails, sendWeeklyReport } from "./lib/mailer.js";
 import { sendPushToRoles } from "./lib/push.js";
@@ -295,6 +296,16 @@ app.listen(PORT, () => {
     logger.info("whatsapp runtime disabled by env");
   }
 });
+
+// ── Server-side cart auto-submit — every 2 minutes ───────
+// Catches customers who closed the tab before the client-side countdown fired.
+// Only runs on complete carts (6/6 fields) idle for 2–15 min with no order yet.
+if (ENABLE_BACKGROUND_JOBS) {
+cron.schedule("*/2 * * * *", async () => {
+  try { await runCartAutoSubmit(); }
+  catch (e) { logger.error("cron: cart auto-submit crashed", { error: (e as Error).message }); }
+});
+}
 
 // ── SMS delivery-report sync — every 10 minutes ──────────
 if (ENABLE_BACKGROUND_JOBS) {
