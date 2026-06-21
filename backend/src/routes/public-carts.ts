@@ -119,10 +119,12 @@ router.post("/", captureRateLimit, async (req, res) => {
     source:       d.source ?? "Website",
     embed_label:  (d.embedLabel ?? "").trim().slice(0, 120) || null,
     preferred_delivery: d.preferredDelivery?.trim() || null,
-    capture_payload:
-      d.capturePayload && typeof d.capturePayload === "object" && !Array.isArray(d.capturePayload)
-        ? d.capturePayload
-        : {},
+    capture_payload: {
+      ...(d.capturePayload && typeof d.capturePayload === "object" && !Array.isArray(d.capturePayload)
+        ? d.capturePayload : {}),
+      // Store client IP for IP-based dedup signal
+      clientIp: (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() || (req as any).ip || null
+    },
     last_activity: new Date().toISOString()
   };
 
@@ -197,33 +199,74 @@ router.post("/", captureRateLimit, async (req, res) => {
     return;
   }
 
-  // ── Phone-based deduplication ──────────────────────────────
-  // A customer who clears cookies or opens the form in a new session gets a
-  // fresh cart_id but is the same person. If they already have a recent
-  // non-Converted cart for the same product, merge into it instead of
-  // creating a duplicate.
-  if (d.phone?.trim()) {
-    const normalizedPhone = d.phone.replace(/\D/g, "");
-    const window48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-    const { data: phoneMatch } = await supabase
-      .from("abandoned_carts")
-      .select("id, status")
-      .eq("org_id", product.org_id)
-      .eq("product_id", d.productId)
-      .neq("id", d.id)
-      .not("status", "eq", "Converted")
-      .or(`phone.eq.${d.phone.trim()},phone.eq.0${normalizedPhone.slice(-10)},phone.eq.${normalizedPhone}`)
-      .gte("last_activity", window48h)
-      .order("last_activity", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+  // ── Multi-signal deduplication ─────────────────────────────
+  // Three signals checked in priority order. If ANY matches an existing
+  // non-Converted cart for the same org+product in the last 7 days,
+  // merge into it instead of creating a duplicate.
+  {
+    const window7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    if (phoneMatch) {
-      // Merge new data into the existing cart and return its ID
+    // Signal 1 — Phone (strongest: unique per customer)
+    const phoneSignal = d.phone?.trim() ? (() => {
+      const n = d.phone.replace(/\D/g, "");
+      return `phone.eq.${d.phone.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`;
+    })() : null;
+
+    // Signal 2 — Email
+    const emailSignal = d.email?.trim() ? `email.eq.${d.email.trim()}` : null;
+
+    // Signal 3 — IP address (same IP, same product, within 2 hours = likely same person)
+    const clientIp = (req.headers["x-forwarded-for"] as string | undefined)
+      ?.split(",")[0]?.trim() || (req as any).ip;
+    const ipWindow = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
+    // Try phone + email together first, then fall back to IP alone
+    const orFilter = [phoneSignal, emailSignal].filter(Boolean).join(",");
+
+    let matchId: string | null = null;
+
+    if (orFilter) {
+      const { data: contactMatch } = await supabase
+        .from("abandoned_carts")
+        .select("id")
+        .eq("org_id", product.org_id)
+        .eq("product_id", d.productId)
+        .neq("id", d.id)
+        .not("status", "eq", "Converted")
+        .or(orFilter)
+        .gte("last_activity", window7d)
+        .order("last_activity", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (contactMatch) matchId = contactMatch.id;
+    }
+
+    // IP fallback — only if no contact signal matched and IP is available
+    if (!matchId && clientIp && clientIp !== "::1" && clientIp !== "127.0.0.1") {
+      const { data: ipMatch } = await supabase
+        .from("abandoned_carts")
+        .select("id, capture_payload")
+        .eq("org_id", product.org_id)
+        .eq("product_id", d.productId)
+        .neq("id", d.id)
+        .not("status", "eq", "Converted")
+        .gte("last_activity", ipWindow)
+        .order("last_activity", { ascending: false })
+        .limit(5);
+      // Only match on IP if we can confirm it via capture_payload metadata
+      const ipCartId = (ipMatch ?? []).find(c => {
+        const payload = c.capture_payload as Record<string, unknown> | null;
+        return payload?.clientIp === clientIp;
+      })?.id ?? null;
+      if (ipCartId) matchId = ipCartId;
+    }
+
+    if (matchId) {
+      // Merge into the existing cart, enriching it with any new data
       const { data: merged } = await supabase
         .from("abandoned_carts")
-        .update({ ...row, id: phoneMatch.id })
-        .eq("id", phoneMatch.id)
+        .update({ ...row, id: matchId })
+        .eq("id", matchId)
         .eq("org_id", product.org_id)
         .select()
         .single();

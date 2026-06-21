@@ -21633,8 +21633,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .filter(Boolean) as Array<{ productId: string; packageId?: string; name: string; detail: string; qty: number; total: number }>;
     const capturedAddOnTotal = capturedSelectedCrossSellLines.reduce((sum, line) => sum + Math.max(0, line.total || 0), 0);
 
+    // Persist cart ID in localStorage so the same customer gets the same cart
+    // even after clearing cookies or reopening the form in a new session.
+    const lsKey = `protohub_cart_${captureProduct.id}`;
+    const persistedCartId = (() => {
+      try { return localStorage.getItem(lsKey) || ""; } catch { return ""; }
+    })();
+    const resolvedCartId = abandonedDraftCartId || persistedCartId || makeCartId();
+    if (resolvedCartId !== abandonedDraftCartId) {
+      setAbandonedDraftCartId(resolvedCartId);
+    }
+    try { localStorage.setItem(lsKey, resolvedCartId); } catch { /* storage unavailable */ }
+
     const cartPatch: AbandonedCartRecord = {
-      id: abandonedDraftCartId || makeCartId(),
+      id: resolvedCartId,
       customer: orderFormName.trim() || "Partial lead",
       phone: orderFormPhone.trim() || sanitizePhoneDigitsInput(orderFormWhatsapp) || "No phone yet",
       whatsapp: sanitizePhoneDigitsInput(orderFormWhatsapp),
@@ -27868,6 +27880,8 @@ ${waybillLineItems(w).length > 1
       return;
     }
     markDraftCartConverted(createdOrderId);
+    // Clear the persisted cart ID so the next person on the same device starts fresh
+    try { if (publicProductId) localStorage.removeItem(`protohub_cart_${publicProductId}`); } catch { /* ignore */ }
     if (cartSyncTimerRef.current) {
       window.clearTimeout(cartSyncTimerRef.current);
       cartSyncTimerRef.current = null;
