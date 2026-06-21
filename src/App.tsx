@@ -58090,6 +58090,35 @@ ${waybillLineItems(w).length > 1
 	                      </div>
 	                      <span className="text-[11px] font-bold text-gray-500 tabular-nums">{customerInfoDone}/{customerInfoTotal}</span>
 	                    </div>
+	                    {/* Auto-submit countdown — shown when 6/6 complete and last activity < 5 min ago */}
+	                    {customerInfoComplete && selectedCart.status !== "Converted" && (() => {
+	                      const lastMs = selectedCart.lastActivity ? new Date(selectedCart.lastActivity).getTime() : NaN;
+	                      if (!Number.isFinite(lastMs)) return null;
+	                      const elapsedSec = Math.max(0, (Date.now() - lastMs) / 1000);
+	                      const totalSec = 5 * 60;
+	                      const leftSec = Math.max(0, totalSec - elapsedSec);
+	                      if (leftSec <= 0) return null;
+	                      const mins = Math.floor(leftSec / 60);
+	                      const secs = Math.floor(leftSec % 60);
+	                      const pct = leftSec / totalSec;
+	                      const r = 14;
+	                      const circ = 2 * Math.PI * r;
+	                      return (
+	                        <div className="mb-2 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+	                          <svg width="36" height="36" viewBox="0 0 36 36" className="shrink-0" style={{ transform:"rotate(-90deg)" }}>
+	                            <circle cx="18" cy="18" r={r} fill="none" stroke="#d1fae5" strokeWidth="3" />
+	                            <circle cx="18" cy="18" r={r} fill="none" stroke="#16a34a" strokeWidth="3"
+	                              strokeDasharray={circ}
+	                              strokeDashoffset={circ * (1 - pct)}
+	                              strokeLinecap="round" />
+	                          </svg>
+	                          <div className="min-w-0">
+	                            <p className="m-0 text-xs font-black text-emerald-800">Auto-submitting in {mins}:{String(secs).padStart(2,"0")}</p>
+	                            <p className="m-0 text-[11px] text-emerald-600">Form complete — order fires automatically if customer is idle</p>
+	                          </div>
+	                        </div>
+	                      );
+	                    })()}
 	                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
 	                      {customerInfoFields.map((f) => (
 	                        <div key={f.label}>
