@@ -420,6 +420,16 @@ router.post("/:id/events", captureRateLimit, async (req, res) => {
     return;
   }
 
+  // Keep last_activity fresh so the server-side auto-submit cron uses
+  // the real last moment the customer was active, not just the last cart capture.
+  if (existingCart) {
+    supabase.from("abandoned_carts")
+      .update({ last_activity: new Date().toISOString() })
+      .eq("id", cartId)
+      .eq("org_id", product.org_id)
+      .then(() => {});
+  }
+
   res.status(201).json(data);
 });
 
