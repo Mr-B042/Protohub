@@ -9260,6 +9260,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const autoSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSubmitTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastInteractionRef = useRef<number>(Date.now());
+  const autoSubmitFiredRef = useRef(false);
+  const firstFieldFilledAtRef = useRef<number | null>(null);
   const [autoSubmitSecondsLeft, setAutoSubmitSecondsLeft] = useState<number | null>(null);
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("All");
   const [pushSubscribed, setPushSubscribed] = useState(false);
@@ -27954,7 +27956,7 @@ ${waybillLineItems(w).length > 1
           referrer: publicReferrer || undefined,
           confirmationChecked: orderFormConfirmed,
           preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
-          formContext: Object.keys(publicFormContext).length ? publicFormContext : undefined,
+          formContext: { ...publicFormContext, ...(autoSubmitFiredRef.current ? { autoSubmitted: "true" } : {}) },
           company: publicHoneypot
         });
         createdOrderId = saved.id;
@@ -28010,16 +28012,21 @@ ${waybillLineItems(w).length > 1
     }
   };
 
-  // ── Auto-submit: fire when form is 6/6 complete and customer goes idle for 5 min ──
+  // ── Smart auto-submit: dynamic idle window based on how fast the customer filled the form ──
   useEffect(() => {
     if (!publicProduct || publicOrderSubmitted || publicOrderSubmitting) return;
 
-    const nameOk    = Boolean(orderFormName.trim());
-    const phoneOk   = Boolean(orderFormPhone.trim()) && orderFormPhone.replace(/\D/g,"").length >= 7;
-    const waOk      = !showWhatsappField || !requireWhatsapp || Boolean(orderFormWhatsapp.trim());
-    const addrOk    = !addressRequired || Boolean(orderFormAddress.trim());
-    const cityOk    = Boolean(orderFormCity.trim());
-    const stateOk   = Boolean(orderFormState.trim());
+    const anyFilled = Boolean(orderFormName.trim() || orderFormPhone.trim() || orderFormWhatsapp.trim() || orderFormAddress.trim() || orderFormCity.trim() || orderFormState.trim());
+    if (anyFilled && firstFieldFilledAtRef.current === null) {
+      firstFieldFilledAtRef.current = Date.now();
+    }
+
+    const nameOk  = Boolean(orderFormName.trim());
+    const phoneOk = Boolean(orderFormPhone.trim()) && orderFormPhone.replace(/\D/g,"").length >= 7;
+    const waOk    = !showWhatsappField || !requireWhatsapp || Boolean(orderFormWhatsapp.trim());
+    const addrOk  = !addressRequired || Boolean(orderFormAddress.trim());
+    const cityOk  = Boolean(orderFormCity.trim());
+    const stateOk = Boolean(orderFormState.trim());
     const allFilled = nameOk && phoneOk && waOk && addrOk && cityOk && stateOk;
 
     if (!allFilled) {
@@ -28029,11 +28036,12 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    const IDLE_MS = 5 * 60 * 1000;
+    // Dynamic idle window: fast filler (< 90s on form) → 45s idle, slow/hesitant → 70s idle
+    const fillDuration = firstFieldFilledAtRef.current ? (Date.now() - firstFieldFilledAtRef.current) / 1000 : 999;
+    const IDLE_MS = fillDuration < 90 ? 45_000 : 70_000;
 
     const startTicker = () => {
       if (autoSubmitTickRef.current) clearInterval(autoSubmitTickRef.current);
-      lastInteractionRef.current = Date.now();
       setAutoSubmitSecondsLeft(Math.round(IDLE_MS / 1000));
       autoSubmitTickRef.current = setInterval(() => {
         const elapsed = Date.now() - lastInteractionRef.current;
@@ -28050,6 +28058,7 @@ ${waybillLineItems(w).length > 1
         if (idleSince >= IDLE_MS && !publicOrderSubmittingRef.current) {
           if (autoSubmitTickRef.current) { clearInterval(autoSubmitTickRef.current); autoSubmitTickRef.current = null; }
           setAutoSubmitSecondsLeft(null);
+          autoSubmitFiredRef.current = true;
           submitPublicOrder();
         }
       }, IDLE_MS);
@@ -58021,6 +58030,10 @@ ${waybillLineItems(w).length > 1
 	              // fields the order form actually collects (Email/WhatsApp drop out if toggled off).
 	              const { fields: customerInfoFields, done: customerInfoDone, total: customerInfoTotal, complete: customerInfoComplete } =
 	                cartCustomerInfoCompletion(selectedCart, { showEmail: showEmailField, showWhatsapp: showWhatsappField });
+	              const cartWasAutoSubmitted = (() => {
+	                const fc = (selectedCart.capturePayload as any)?.formContext;
+	                return fc?.autoSubmitted === 'true' || fc?.autoSubmitted === true;
+	              })();
 	              return (
 	                <div className="px-6 py-5 flex flex-col gap-5">
 	                  {/* Header */}
@@ -58035,6 +58048,11 @@ ${waybillLineItems(w).length > 1
 	                        {selectedCart.dedupMergedFrom && selectedCart.dedupMergedFrom.length > 0 && (
 	                          <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-black text-violet-700" title={`Absorbed ${selectedCart.dedupMergedFrom.length} duplicate session(s) via ${selectedCart.dedupSignal}. Ghost IDs: ${selectedCart.dedupMergedFrom.join(', ')}`}>
 	                            🔀 {selectedCart.dedupMergedFrom.length} session{selectedCart.dedupMergedFrom.length !== 1 ? 's' : ''} merged · {selectedCart.dedupSignal ?? 'auto'}
+	                          </span>
+	                        )}
+	                        {cartWasAutoSubmitted && (
+	                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-700" title="This order was submitted automatically after the customer went idle with a complete form">
+	                            ⚡ Auto-submitted
 	                          </span>
 	                        )}
 	                      </div>
