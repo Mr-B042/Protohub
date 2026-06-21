@@ -27,7 +27,7 @@ import {
   sendOrderAssignedEmail
 } from "../lib/mailer.js";
 import { sendNewOrderSms } from "../lib/sms.js";
-import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp } from "../lib/whatsapp.js";
+import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "../lib/whatsapp.js";
 
 const router = Router();
 
@@ -1302,6 +1302,10 @@ router.post("/", submitRateLimit, async (req, res) => {
   };
   sendOrderNewCustomerWhatsApp(product.org_id, waOrderPayload).catch((err) =>
     logger.warn("wa order_new customer failed", { orderId: order.id, error: (err as Error).message })
+  );
+  // Post-order upsell — fires after configured delay (default 5 min), checks stock first
+  sendOrderUpsellWhatsApp(product.org_id, waOrderPayload).catch((err) =>
+    logger.warn("wa order_upsell failed", { orderId: order.id, error: (err as Error).message })
   );
   if (assignedRepId) {
     const repRow = await supabase.from("users").select("name, phone").eq("id", assignedRepId).single();

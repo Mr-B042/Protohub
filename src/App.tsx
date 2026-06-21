@@ -7269,6 +7269,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waSettings, setWaSettings] = useState<Record<string, any> | null>(null);
   const [waSettingsLoading, setWaSettingsLoading] = useState(false);
   const [waTriggerSaving, setWaTriggerSaving] = useState(false);
+  const [waUpsellSaving, setWaUpsellSaving] = useState(false);
   const [waConnecting, setWaConnecting] = useState(false);
   const [waDisconnecting, setWaDisconnecting] = useState(false);
   const [waTestPhone, setWaTestPhone] = useState("");
@@ -49986,6 +49987,12 @@ ${waybillLineItems(w).length > 1
                     icon: <BellRing className="h-4 w-4" />,
                     color: "text-gray-600", iconBg: "bg-gray-100"
                   },
+                  {
+                    key: "order_upsell", label: "Post-order upsell offer", to: "customer",
+                    desc: "Sends a personalised add-on offer ~5 min after order confirmation — only if the customer's state has stock. Configure the product below.",
+                    icon: <ShoppingBag className="h-4 w-4" />,
+                    color: "text-rose-600", iconBg: "bg-rose-50"
+                  },
                 ];
                 const onCount = TRIGGER_META.filter(({ key }) => Boolean(triggers[key])).length;
                 const total = TRIGGER_META.length;
@@ -50053,6 +50060,90 @@ ${waybillLineItems(w).length > 1
                         );
                       })}
                     </div>
+                  </section>
+                );
+              })()}
+
+              {/* ── Post-order upsell configuration ── */}
+              {currentRole === "Owner" && waSettings && Boolean((waSettings.triggers as any)?.order_upsell) && (() => {
+                const cfg = (waSettings.upsellConfig ?? waSettings.upsell_config ?? {}) as Record<string, any>;
+                const saveUpsellConfig = async (patch: Record<string, unknown>) => {
+                  setWaUpsellSaving(true);
+                  try {
+                    const next = { ...(cfg ?? {}), ...patch };
+                    const saved = await whatsappSettingsApi.save({ ...waSettings, upsell_config: next, triggers: waSettings.triggers, templates: waSettings.templates });
+                    setWaSettings(saved);
+                    showToast("Upsell config saved.");
+                  } catch { showToast("Could not save upsell config."); }
+                  finally { setWaUpsellSaving(false); }
+                };
+                return (
+                  <section className="rounded-2xl border border-rose-200 bg-rose-50/40 p-4 sm:p-5 shadow-sm">
+                    <div className="flex items-center gap-3 mb-4">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-100 text-rose-600"><ShoppingBag className="h-4 w-4" /></span>
+                      <div>
+                        <p className="m-0 text-sm font-black text-gray-900">Upsell product setup</p>
+                        <p className="m-0 text-xs text-gray-500">Configure what to offer customers 5 min after they order. Only sends if their state has stock.</p>
+                      </div>
+                      {waUpsellSaving && <RefreshCw className="h-4 w-4 animate-spin text-gray-400 ml-auto" />}
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Offer name (shown to customer)</p>
+                        <input
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-200"
+                          placeholder="e.g. 2pcs Cute Whale Soap Holder"
+                          defaultValue={cfg.name ?? ""}
+                          onBlur={e => e.target.value.trim() !== (cfg.name ?? "") && saveUpsellConfig({ name: e.target.value.trim() })}
+                        />
+                      </div>
+                      <div>
+                        <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Price</p>
+                        <input
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-200"
+                          placeholder="e.g. 4900"
+                          type="number"
+                          defaultValue={cfg.price ?? ""}
+                          onBlur={e => Number(e.target.value) !== (cfg.price ?? 0) && saveUpsellConfig({ price: Number(e.target.value), currency: "NGN" })}
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Product image URL (sent with the offer)</p>
+                        <input
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-200"
+                          placeholder="https://example.com/soap-holder.jpg"
+                          defaultValue={cfg.imageUrl ?? ""}
+                          onBlur={e => e.target.value.trim() !== (cfg.imageUrl ?? "") && saveUpsellConfig({ imageUrl: e.target.value.trim() || null })}
+                        />
+                      </div>
+                      <div>
+                        <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Product ID (for stock check)</p>
+                        <input
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-rose-200"
+                          placeholder="uuid of the product"
+                          defaultValue={cfg.productId ?? ""}
+                          onBlur={e => e.target.value.trim() !== (cfg.productId ?? "") && saveUpsellConfig({ productId: e.target.value.trim() })}
+                        />
+                      </div>
+                      <div>
+                        <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Delay after order (minutes)</p>
+                        <input
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-200"
+                          placeholder="5"
+                          type="number"
+                          min={1}
+                          max={60}
+                          defaultValue={cfg.delayMinutes ?? 5}
+                          onBlur={e => Number(e.target.value) !== (cfg.delayMinutes ?? 5) && saveUpsellConfig({ delayMinutes: Math.max(1, Math.min(60, Number(e.target.value))) })}
+                        />
+                      </div>
+                    </div>
+                    {cfg.name && cfg.price && (
+                      <div className="mt-3 rounded-xl border border-rose-200 bg-white p-3 text-xs text-gray-600">
+                        <p className="m-0 font-black text-gray-800 mb-1">Preview message:</p>
+                        <p className="m-0 whitespace-pre-wrap font-mono text-[11px] text-gray-600">{`Hi [FirstName]! 🎉\n\nThank you for ordering — we are preparing your delivery now.\n\nQuick question — would you like to add *${cfg.name}* to your order for just *NGN ${Number(cfg.price ?? 0).toLocaleString("en-NG")}*?\n\nIt ships in the same delivery at no extra delivery cost.\n\nReply *YES* to add it or *NO* to skip. 😊`}</p>
+                      </div>
+                    )}
                   </section>
                 );
               })()}

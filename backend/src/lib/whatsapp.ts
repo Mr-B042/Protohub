@@ -14,7 +14,8 @@ export type WhatsAppTrigger =
   | "order_new_rep"        // Rep: new order alert with customer details (assisted handling)
   | "order_scheduled"      // Customer: scheduled delivery date confirmed
   | "order_failed"         // Customer: delivery failed, contact rep
-  | "order_delivered";     // Customer: delivery confirmed, thank you
+  | "order_delivered"      // Customer: delivery confirmed, thank you
+  | "order_upsell";        // Customer: post-order add-on offer (sent ~5 min after confirmation)
 export type WhatsAppMessageEvent =
   | WhatsAppTrigger
   | "manual_test"
@@ -29,7 +30,8 @@ export const DEFAULT_WHATSAPP_TRIGGERS: Record<WhatsAppTrigger, boolean> = {
   order_new_rep: false,
   order_scheduled: false,
   order_failed: false,
-  order_delivered: false
+  order_delivered: false,
+  order_upsell: false
 };
 
 export const LEGACY_WHATSAPP_TEMPLATE_BODIES: Record<Extract<WhatsAppTrigger, "order_follow_up_rep" | "order_follow_up_manager">, string> = {
@@ -82,6 +84,9 @@ export const DEFAULT_WHATSAPP_TEMPLATES: Record<WhatsAppTrigger, { body: string 
   },
   order_delivered: {
     body: "Dear {{customer}},\n\nYour order has been successfully delivered. ✅\n\nOrder Details:\nRef: #{{order_id}}\nProduct: {{product_name}}\nPackage: {{package_name}}\n{{addons_line}}Amount Paid: {{currency}} {{amount}}\n\nWe hope you are satisfied with your purchase. If you have any concerns about the product or delivery, please reply to this message and our team will assist you promptly.\n\nThank you for choosing us. We look forward to serving you again.\n\nWarm regards,\nProtohub Team"
+  },
+  order_upsell: {
+    body: "Hi {{first_name}}! 🎉\n\nThank you for ordering — we are preparing your delivery now.\n\nQuick question — would you like to add *{{upsell_name}}* to your order for just *{{upsell_currency}} {{upsell_price}}*?\n\nIt ships in the same delivery at no extra delivery cost.\n\nReply *YES* to add it or *NO* to skip. 😊"
   }
 };
 
@@ -1779,4 +1784,96 @@ export async function sendOrderDeliveredCustomerWhatsApp(
     targetPhone,
     { orderId: order.id, audience: "customer", recipientName: order.customer ?? undefined }
   );
+}
+
+// ── Post-order upsell ────────────────────────────────────────────────────────
+type UpsellConfig = {
+  productId: string;
+  packageId: string;
+  name: string;
+  price: number;
+  currency: string;
+  imageUrl?: string | null;
+  delayMinutes?: number; // default 5
+};
+
+export async function sendOrderUpsellWhatsApp(
+  orgId: string,
+  order: OrderEventPayload
+): Promise<void> {
+  const settings = await loadSettings(orgId);
+  if (!isConnected(settings)) return;
+  if (!settings?.triggers?.order_upsell) return;
+
+  const targetPhone = customerWhatsAppTarget(order);
+  if (!targetPhone) return;
+  const normalizedPhone = normalizePhoneForWhatsApp(targetPhone);
+  if (!normalizedPhone) return;
+  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "order_upsell")) return;
+
+  // Read upsell product config from org settings
+  const upsellCfg = (settings as any).upsell_config as UpsellConfig | null;
+  if (!upsellCfg?.productId || !upsellCfg?.packageId || !upsellCfg?.name) return;
+
+  // Stock check — only send if the customer's state has stock for the upsell product
+  const customerState = order.state?.trim();
+  if (customerState) {
+    const { data: agentStock } = await supabase
+      .from("agent_location_inventory")
+      .select("quantity")
+      .eq("org_id", orgId)
+      .eq("product_id", upsellCfg.productId)
+      .gt("quantity", 0)
+      .limit(1)
+      .maybeSingle();
+
+    // Also check via agent coverage — find agents covering this state
+    if (!agentStock) {
+      const { data: agentLocations } = await supabase
+        .from("agent_locations")
+        .select("id, agent_locations_inventory(quantity)")
+        .eq("org_id", orgId)
+        .ilike("state", `%${customerState}%`)
+        .limit(10);
+
+      const hasStateStock = (agentLocations ?? []).some((loc: any) =>
+        (loc.agent_locations_inventory ?? []).some((inv: any) => inv.quantity > 0)
+      );
+      if (!hasStateStock) {
+        logger.info("wa order_upsell: skipped — no stock in customer state", {
+          orgId, orderId: order.id, state: customerState
+        });
+        return;
+      }
+    }
+  }
+
+  const currency = upsellCfg.currency ?? "NGN";
+  const firstName = (order.customer ?? "").split(" ")[0] || "there";
+  const delayMs = ((upsellCfg.delayMinutes ?? 5) * 60 * 1000);
+
+  // Send after configured delay (default 5 minutes after order confirmation)
+  setTimeout(async () => {
+    try {
+      await queueOrSendWhatsApp(
+        orgId, "order_upsell",
+        {
+          first_name: firstName,
+          order_id: order.id,
+          upsell_name: upsellCfg.name,
+          upsell_price: upsellCfg.price.toLocaleString("en-NG"),
+          upsell_currency: currency
+        },
+        targetPhone,
+        { orderId: order.id, audience: "customer", recipientName: firstName },
+        {
+          imageUrl: upsellCfg.imageUrl ?? undefined
+        }
+      );
+    } catch (err) {
+      logger.warn("wa order_upsell: send failed", {
+        orgId, orderId: order.id, error: (err as Error).message
+      });
+    }
+  }, delayMs);
 }
