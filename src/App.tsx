@@ -937,6 +937,7 @@ type AbandonedCartRecord = {
   phone: string;
   whatsapp?: string;
   email?: string;
+  address?: string;
   city?: string;
   state?: string;
   productId?: string;
@@ -4385,6 +4386,7 @@ const cartCustomerInfoFields = (cart: AbandonedCartRecord, cfg: CartInfoFormConf
   // WhatsApp is on by default; Email is off by default — only count when the form shows them.
   if (cfg.showWhatsapp !== false) list.push({ label: "WhatsApp", value: cart.whatsapp, done: Boolean((cart.whatsapp ?? "").trim()) });
   if (cfg.showEmail) list.push({ label: "Email", value: cart.email, done: Boolean((cart.email ?? "").trim()) });
+  list.push({ label: "Address", value: cart.address, done: Boolean((cart.address ?? "").trim()) });
   list.push({ label: "City",  value: cart.city,  done: Boolean((cart.city ?? "").trim()) });
   list.push({ label: "State", value: cart.state, done: Boolean((cart.state ?? "").trim()) });
   return list;
@@ -10189,6 +10191,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         phone:        c.phone ?? "",
         whatsapp:     c.whatsapp ?? undefined,
         email:        c.email ?? undefined,
+        address:      c.address ?? undefined,
         city:         c.city ?? undefined,
         state:        c.state ?? undefined,
         productId:    c.productId ?? c.product_id ?? undefined,
@@ -20678,6 +20681,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             phone:        c.phone ?? "",
             whatsapp:     c.whatsapp ?? undefined,
             email:        c.email ?? undefined,
+            address:      c.address ?? undefined,
             city:         c.city ?? undefined,
             state:        c.state ?? undefined,
             productId:    c.productId ?? c.product_id ?? undefined,
