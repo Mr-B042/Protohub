@@ -24853,6 +24853,22 @@ ${waybillLineItems(w).length > 1
             showToast(`Package saved, but cross-package copy failed: ${err?.message ?? "please retry"}.`);
           });
         }
+        // Sync state gate to matching packages in other sets if checkbox was ticked
+        if ((window as any).__syncStateGateToSets) {
+          (window as any).__syncStateGateToSets = false;
+          const matchingPkgs = productSnapshot.packages.filter(p =>
+            p.name === selectedPackage.name && p.id !== selectedPackage.id
+          );
+          if (matchingPkgs.length > 0) {
+            const gatePayload = {
+              stateFilterMode: packageStateFilterMode,
+              stateRestrictions: packageStateFilterMode === "all" ? [] : packageStateRestrictions,
+              requiresStateStock: packageRequiresStateStock
+            };
+            await Promise.all(matchingPkgs.map(p => productsApi.updatePackage(_pkgProdId, p.id, gatePayload)));
+            showToast(`State gate copied to ${matchingPkgs.length} matching package${matchingPkgs.length !== 1 ? "s" : ""}.`);
+          }
+        }
       }
       const saveWarnings = [
         skippedCompanionCount > 0
@@ -58423,6 +58439,36 @@ ${waybillLineItems(w).length > 1
                         Only show this package when active agents in the selected state have enough stock for the package components.
                       </span>
                     </label>
+                    {/* Sync state gate to matching packages in other sets (e.g. Default → Yoruba) */}
+                    {(() => {
+                      const otherSets = Array.from(new Set(
+                        (selectedProduct?.packages ?? [])
+                          .filter(p => p.id !== selectedPackage?.id && (p.packageSet ?? "Default") !== (selectedPackage?.packageSet ?? "Default"))
+                          .map(p => p.packageSet ?? "Default")
+                      ));
+                      const matchingInOtherSets = (selectedProduct?.packages ?? []).filter(p =>
+                        p.name === selectedPackage?.name &&
+                        p.id !== selectedPackage?.id
+                      );
+                      if (matchingInOtherSets.length === 0) return null;
+                      return (
+                        <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2.5 text-sm">
+                          <p className="m-0 text-[11px] font-black uppercase tracking-wider text-emerald-700 mb-1">Sync state gate to other sets</p>
+                          <p className="m-0 text-xs text-gray-600 mb-2">
+                            Found <strong>{matchingInOtherSets.length}</strong> package{matchingInOtherSets.length !== 1 ? "s" : ""} named "<strong>{selectedPackage?.name}</strong>" in other sets ({matchingInOtherSets.map(p => p.packageSet ?? "Default").join(", ")}). Save will copy the current state gate to them.
+                          </p>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 accent-emerald-600 rounded"
+                              checked={Boolean((window as any).__syncStateGateToSets)}
+                              onChange={e => { (window as any).__syncStateGateToSets = e.target.checked; }}
+                            />
+                            <span className="text-xs font-bold text-emerald-800">Copy state gate to {matchingInOtherSets.map(p => p.packageSet ?? "Default").join(", ")} on save</span>
+                          </label>
+                        </div>
+                      );
+                    })()}
                     <label className="flex items-start gap-3 rounded-lg border border-orange-100 bg-white px-3 py-3">
                       <input
                         type="checkbox"
