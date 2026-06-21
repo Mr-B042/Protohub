@@ -187,8 +187,8 @@ class WhatsAppDispatchError extends Error {
 const DEFAULT_WHATSAPP_PROVIDER: WhatsAppProvider = "baileys";
 const WHATSAPP_RETRY_BACKOFF_MINUTES = Math.max(2, Number(process.env.WHATSAPP_RETRY_BACKOFF_MINUTES ?? 10) || 10);
 const WHATSAPP_MAX_RETRY_ATTEMPTS = Math.max(0, Number(process.env.WHATSAPP_MAX_RETRY_ATTEMPTS ?? 4) || 4);
-const WHATSAPP_RATE_LIMIT_PER_MINUTE = Math.max(1, Number(process.env.WHATSAPP_RATE_LIMIT_PER_MINUTE ?? 20) || 20);
-const WHATSAPP_RATE_LIMIT_PER_DAY = Math.max(1, Number(process.env.WHATSAPP_RATE_LIMIT_PER_DAY ?? 300) || 300);
+const WHATSAPP_RATE_LIMIT_PER_MINUTE = Math.max(1, Number(process.env.WHATSAPP_RATE_LIMIT_PER_MINUTE ?? 4) || 4);
+const WHATSAPP_RATE_LIMIT_PER_DAY = Math.max(1, Number(process.env.WHATSAPP_RATE_LIMIT_PER_DAY ?? 150) || 150);
 const WHATSAPP_MANAGER_ESCALATION_DELAY_MINUTES = Math.max(5, Number(process.env.WHATSAPP_MANAGER_ESCALATION_DELAY_MINUTES ?? 30) || 30);
 const WHATSAPP_OWNER_ESCALATION_DELAY_MINUTES = Math.max(10, Number(process.env.WHATSAPP_OWNER_ESCALATION_DELAY_MINUTES ?? 60) || 60);
 
@@ -836,6 +836,9 @@ async function queueOrSendWhatsApp(
     ...baseLogPayload,
     status: "queued"
   });
+
+  // Human-like jitter: 1.5–4s random delay before each send to avoid robotic cadence detection
+  await new Promise(r => setTimeout(r, 1500 + Math.random() * 2500));
 
   try {
     const result = await deliverLoggedWhatsApp(orgId, settings, logId, normalizedPhone, messageBody, media);
