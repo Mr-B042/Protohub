@@ -7280,6 +7280,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // WhatsApp automation page state
   const [waSettings, setWaSettings] = useState<Record<string, any> | null>(null);
   const [waSettingsLoading, setWaSettingsLoading] = useState(false);
+  const [waCloudDraft, setWaCloudDraft] = useState<{ phoneNumberId: string; wabaId: string; accessToken: string }>({ phoneNumberId: "", wabaId: "", accessToken: "" });
+  const [waCloudSaving, setWaCloudSaving] = useState(false);
   const [waTriggerSaving, setWaTriggerSaving] = useState(false);
   const [waUpsellSaving, setWaUpsellSaving] = useState(false);
   const [waUpsellDraft, setWaUpsellDraft] = useState<{name:string;price:string;strikePrice:string;imageUrl:string;productId:string;delayMinutes:number}>({ name:"",price:"",strikePrice:"",imageUrl:"",productId:"",delayMinutes:5 });
@@ -8829,6 +8831,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (activePage !== "WhatsApp" || currentRole !== "Owner") return;
     whatsappSettingsApi.upsellStats().then(setWaUpsellStats).catch(() => {});
   }, [activePage, currentRole]);
+
+  // Keep the Cloud API draft in sync with saved settings.
+  useEffect(() => {
+    if (!waSettings) return;
+    setWaCloudDraft({
+      phoneNumberId: waSettings.cloudApiPhoneNumberId ?? waSettings.cloud_api_phone_number_id ?? "",
+      wabaId:        waSettings.cloudApiWabaId ?? waSettings.cloud_api_waba_id ?? "",
+      accessToken:   "" // never pre-fill the secret; placeholder shows if one is saved
+    });
+  }, [waSettings?.cloudApiPhoneNumberId, waSettings?.cloud_api_phone_number_id, waSettings?.cloudApiWabaId, waSettings?.cloud_api_waba_id]);
 
   // Auto-poll org automation account every 3s while it is pairing.
   const waOrgPairingStatus = whatsappStatus(waSettings);
@@ -50459,7 +50471,99 @@ ${waybillLineItems(w).length > 1
                 const orgConnected = orgStatus === "connected";
                 const orgPairing = orgStatus === "pairing" || orgStatus === "connecting";
                 const isOwner = currentRole === "Owner";
+                const provider = (waSettings?.provider ?? "baileys") as "baileys" | "cloud_api";
+                const cloudHasToken = Boolean(waSettings?.cloudApiHasToken ?? waSettings?.cloud_api_has_token);
+                const saveCloudSettings = async (nextProvider: "baileys" | "cloud_api", opts?: { saveCreds?: boolean }) => {
+                  if (!waSettings) return;
+                  setWaCloudSaving(true);
+                  try {
+                    const body: any = { ...waSettings, provider: nextProvider, triggers: waSettings.triggers, templates: waSettings.templates };
+                    if (opts?.saveCreds) {
+                      body.cloud_api_phone_number_id = waCloudDraft.phoneNumberId.trim();
+                      body.cloud_api_waba_id = waCloudDraft.wabaId.trim();
+                      if (waCloudDraft.accessToken.trim()) body.cloud_api_access_token = waCloudDraft.accessToken.trim();
+                    }
+                    const saved = await whatsappSettingsApi.save(body);
+                    setWaSettings(saved);
+                    showToast(opts?.saveCreds ? "✓ Cloud API settings saved." : `Switched to ${nextProvider === "cloud_api" ? "Meta Cloud API" : "Baileys"}.`);
+                  } catch (e: any) { showToast(e?.message ?? "Could not save — please retry."); }
+                  finally { setWaCloudSaving(false); }
+                };
                 return (
+                  <div className="space-y-3 sm:space-y-5">
+                    {/* Connection method selector */}
+                    {isOwner && (
+                      <section className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
+                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400 mb-3">Connection method</p>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <button type="button" onClick={() => saveCloudSettings("baileys")} disabled={waCloudSaving}
+                            className={`!min-h-0 text-left rounded-xl border-2 p-4 transition-all ${provider === "baileys" ? "border-[#25D366] bg-[#25D366]/5" : "border-gray-200 hover:border-gray-300"}`}>
+                            <div className="flex items-center gap-2">
+                              <MessageCircle className="h-4 w-4 text-[#25D366]" />
+                              <span className="text-sm font-black text-gray-900">Baileys (QR pairing)</span>
+                              {provider === "baileys" && <span className="ml-auto rounded-full bg-[#25D366] px-2 py-0.5 text-[10px] font-black text-white">Active</span>}
+                            </div>
+                            <p className="m-0 mt-1.5 text-[11px] text-gray-500">Free. Scan a QR with any WhatsApp. Higher ban risk for bulk sends. Sends any text + PDF.</p>
+                          </button>
+                          <button type="button" onClick={() => { if (cloudHasToken) saveCloudSettings("cloud_api"); else showToast("Add your Cloud API credentials below first, then Save."); }} disabled={waCloudSaving}
+                            className={`!min-h-0 text-left rounded-xl border-2 p-4 transition-all ${provider === "cloud_api" ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}>
+                            <div className="flex items-center gap-2">
+                              <BarChart3 className="h-4 w-4 text-blue-600" />
+                              <span className="text-sm font-black text-gray-900">Meta Cloud API (official)</span>
+                              {provider === "cloud_api" && <span className="ml-auto rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-black text-white">Active</span>}
+                            </div>
+                            <p className="m-0 mt-1.5 text-[11px] text-gray-500">Official. Zero ban risk. ~$0.005/msg after 1k free. Business-initiated sends need approved templates.</p>
+                          </button>
+                        </div>
+
+                        {/* Cloud API credentials form */}
+                        <div className="mt-4 border-t border-gray-100 pt-4 space-y-3">
+                          <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-400">Meta Cloud API credentials</p>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div>
+                              <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Phone Number ID</p>
+                              <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="1141770642361505" value={waCloudDraft.phoneNumberId} onChange={(e) => setWaCloudDraft((d) => ({ ...d, phoneNumberId: e.target.value.trim() }))} />
+                            </div>
+                            <div>
+                              <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">WhatsApp Business Account ID</p>
+                              <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="3037548463243817" value={waCloudDraft.wabaId} onChange={(e) => setWaCloudDraft((d) => ({ ...d, wabaId: e.target.value.trim() }))} />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <p className="m-0 mb-1 text-[10px] font-black uppercase tracking-wider text-gray-400">Access token {cloudHasToken && <span className="text-emerald-600 font-bold normal-case">· saved ✓</span>}</p>
+                              <input type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder={cloudHasToken ? "Token saved — paste a new one to replace" : "Paste your permanent access token"} value={waCloudDraft.accessToken} onChange={(e) => setWaCloudDraft((d) => ({ ...d, accessToken: e.target.value }))} />
+                              <p className="m-0 mt-1 text-[10px] text-gray-400">From Meta → WhatsApp → API Setup → Generate token. Use a permanent System User token for production.</p>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button type="button" className="!min-h-0 rounded-xl bg-blue-600 px-4 py-2 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50" disabled={waCloudSaving || !waCloudDraft.phoneNumberId.trim()} onClick={() => saveCloudSettings(provider, { saveCreds: true })}>
+                              {waCloudSaving ? "Saving…" : "Save Cloud API credentials"}
+                            </button>
+                            {provider === "cloud_api" && cloudHasToken && (
+                              <>
+                                <input className="!min-h-0 rounded-xl border border-gray-200 px-3 py-2 text-sm font-mono w-44 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="+234… test number" value={waTestPhone} onChange={(e) => setWaTestPhone(e.target.value)} />
+                                <button type="button" className="!min-h-0 rounded-xl border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50" disabled={waTestSending || !waTestPhone.trim()}
+                                  onClick={async () => {
+                                    setWaTestSending(true);
+                                    try { await whatsappSettingsApi.test(waTestPhone.trim()); showToast(`✓ Test sent via Cloud API. Check +${waTestPhone}.`); setWaTestPhone(""); }
+                                    catch (err: any) { showToast(`Test failed: ${err?.message ?? "check your token & number"}.`); }
+                                    finally { setWaTestSending(false); }
+                                  }}>
+                                  {waTestSending ? "Sending…" : "Send test"}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                          {provider === "cloud_api" && (
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                              <p className="m-0 text-[11px] font-bold text-amber-800">⚠ Template requirement</p>
+                              <p className="m-0 mt-0.5 text-[11px] text-amber-700">Order confirmations & upsells are business-initiated, so Meta requires <strong>pre-approved message templates</strong> for them. Free-form text only works within 24h of a customer's last message. Template support is the next step — for now Cloud API sends will use plain text where allowed.</p>
+                            </div>
+                          )}
+                        </div>
+                      </section>
+                    )}
+
+                  {provider !== "cloud_api" && (
                   <section className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
                     <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div>
@@ -50570,6 +50674,8 @@ ${waybillLineItems(w).length > 1
                       </div>
                     )}
                   </section>
+                  )}
+                  </div>
                 );
               })()}
 

@@ -96,11 +96,16 @@ const UpsellItemSchema = z.object({
 const SettingsSchema = z.object({
   enabled: z.boolean(),
   assistant_outcome_autofill_enabled: z.boolean().default(true),
-  provider: z.enum(["baileys"]).default("baileys"),
+  provider: z.enum(["baileys", "cloud_api"]).default("baileys"),
   triggers: z.record(z.boolean()),
   templates: z.record(TemplateSchema),
-  upsell_config: z.union([z.array(UpsellItemSchema), UpsellItemSchema]).nullable().optional()
+  upsell_config: z.union([z.array(UpsellItemSchema), UpsellItemSchema]).nullable().optional(),
+  cloud_api_phone_number_id: z.string().trim().max(60).optional().nullable(),
+  cloud_api_waba_id: z.string().trim().max(60).optional().nullable(),
+  cloud_api_access_token: z.string().trim().max(5000).optional().nullable()
 });
+
+const SECRET_MASK = "••••••••";
 
 const ConnectSchema = z.object({
   mode: z.enum(["qr", "pairing_code"]),
@@ -158,6 +163,8 @@ router.get("/", requireWhatsAppHealthViewer, async (req, res) => {
   }
   res.json({
     ...data,
+    cloud_api_access_token: data.cloud_api_access_token ? SECRET_MASK : "",
+    cloud_api_has_token: Boolean(data.cloud_api_access_token),
     assistant_outcome_autofill_enabled: data.assistant_outcome_autofill_enabled !== false,
     triggers: normalizeBooleanMap(data.triggers, { ...DEFAULT_WHATSAPP_TRIGGERS }),
     templates: normalizeTemplateMap(data.templates, { ...DEFAULT_WHATSAPP_TEMPLATES })
@@ -172,6 +179,14 @@ router.put("/", requireOwner, async (req, res) => {
   }
 
   const d = parsed.data;
+
+  // Load existing token so a masked submit doesn't wipe the saved secret.
+  const { data: existing } = await supabase
+    .from("whatsapp_settings")
+    .select("cloud_api_access_token")
+    .eq("org_id", req.user!.orgId)
+    .maybeSingle();
+
   const payload: Record<string, unknown> = {
     org_id: req.user!.orgId,
     enabled: d.enabled,
@@ -182,6 +197,15 @@ router.put("/", requireOwner, async (req, res) => {
     updated_at: new Date().toISOString()
   };
   if (d.upsell_config !== undefined) payload.upsell_config = d.upsell_config;
+  if (d.cloud_api_phone_number_id !== undefined) payload.cloud_api_phone_number_id = d.cloud_api_phone_number_id || null;
+  if (d.cloud_api_waba_id !== undefined) payload.cloud_api_waba_id = d.cloud_api_waba_id || null;
+  if (d.cloud_api_access_token !== undefined) {
+    const token = (d.cloud_api_access_token ?? "").trim();
+    // Empty or masked → keep existing token; otherwise store the new one.
+    if (token && token !== SECRET_MASK) payload.cloud_api_access_token = token;
+    else if (!token) payload.cloud_api_access_token = null;
+    // masked → leave existing untouched (don't set the key)
+  }
 
   const { data, error } = await supabase
     .from("whatsapp_settings")
@@ -196,10 +220,14 @@ router.put("/", requireOwner, async (req, res) => {
 
   res.json({
     ...data,
+    // Never leak the raw token to the client — present a mask when one is stored.
+    cloud_api_access_token: data.cloud_api_access_token ? SECRET_MASK : "",
+    cloud_api_has_token: Boolean(data.cloud_api_access_token),
     assistant_outcome_autofill_enabled: data.assistant_outcome_autofill_enabled !== false,
     triggers: normalizeBooleanMap(data.triggers, { ...DEFAULT_WHATSAPP_TRIGGERS }),
     templates: normalizeTemplateMap(data.templates, { ...DEFAULT_WHATSAPP_TEMPLATES })
   });
+  void existing;
 });
 
 router.post("/connect", requireOwner, async (req, res) => {

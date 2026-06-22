@@ -4,7 +4,7 @@ import { ensureWhatsAppReady, sendConnectedWhatsApp } from "./whatsapp-runtime.j
 import { isWithinWorkingSchedule, nextWorkingScheduleAt, type WorkingSchedule } from "./business-schedule.js";
 import { generateOrderReceiptPdf } from "./order-receipt-pdf.js";
 
-export type WhatsAppProvider = "baileys";
+export type WhatsAppProvider = "baileys" | "cloud_api";
 export type WhatsAppTrigger =
   | "order_follow_up_rep"
   | "order_follow_up_manager"
@@ -100,6 +100,9 @@ type WhatsAppSettings = {
   last_error?: string | null;
   triggers: Record<string, boolean>;
   templates: Record<string, { body: string }>;
+  cloud_api_phone_number_id?: string | null;
+  cloud_api_waba_id?: string | null;
+  cloud_api_access_token?: string | null;
 };
 
 type OrgWhatsAppPolicy = WorkingSchedule & {
@@ -411,7 +414,10 @@ async function loadSettings(orgId: string): Promise<WhatsAppSettings | null> {
     provider: (data.provider as WhatsAppProvider) ?? DEFAULT_WHATSAPP_PROVIDER,
     connection_status: (data.connection_status as WhatsAppSettings["connection_status"]) ?? "disconnected",
     triggers: normalizeBooleanMap(data.triggers, DEFAULT_WHATSAPP_TRIGGERS),
-    templates: normalizeTemplateMap(data.templates, DEFAULT_WHATSAPP_TEMPLATES)
+    templates: normalizeTemplateMap(data.templates, DEFAULT_WHATSAPP_TEMPLATES),
+    cloud_api_phone_number_id: (data as any).cloud_api_phone_number_id ?? null,
+    cloud_api_waba_id: (data as any).cloud_api_waba_id ?? null,
+    cloud_api_access_token: (data as any).cloud_api_access_token ?? null
   };
 }
 
@@ -432,12 +438,22 @@ async function loadOrgWhatsAppPolicy(orgId: string): Promise<OrgWhatsAppPolicy |
   };
 }
 
+// Cloud API has no persistent socket — it's "connected" whenever the
+// Phone Number ID + access token are configured and the org has WhatsApp enabled.
+function cloudApiConfigured(settings: WhatsAppSettings | null) {
+  return Boolean(settings?.cloud_api_phone_number_id?.trim() && settings?.cloud_api_access_token?.trim());
+}
+
 function isConnected(settings: WhatsAppSettings | null) {
-  return !!settings?.enabled && settings.connection_status === "connected";
+  if (!settings?.enabled) return false;
+  if (settings.provider === "cloud_api") return cloudApiConfigured(settings);
+  return settings.connection_status === "connected";
 }
 
 function canAttemptWhatsAppResume(settings: WhatsAppSettings | null) {
-  return !!settings?.enabled && settings.connection_status !== "disconnected";
+  if (!settings?.enabled) return false;
+  if (settings.provider === "cloud_api") return cloudApiConfigured(settings);
+  return settings.connection_status !== "disconnected";
 }
 
 function isWhatsAppAllowedNow(policy: OrgWhatsAppPolicy | null, at = new Date()) {
@@ -699,6 +715,67 @@ async function sendViaBaileys(
   }
 }
 
+const META_WA_GRAPH_VERSION = (process.env.META_WA_GRAPH_VERSION || process.env.META_GRAPH_VERSION || "v23.0").replace(/^\/+|\/+$/g, "");
+
+// Official Meta WhatsApp Cloud API sender.
+// Sends free-form text (works inside the 24h customer-service window) or an
+// image with caption. Business-initiated sends outside 24h require approved
+// templates — that path is handled separately by sendCloudApiTemplate.
+async function sendViaCloudApi(
+  settings: WhatsAppSettings,
+  phone: string,
+  body: string,
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
+): Promise<{ providerMessageId?: string; providerStatus?: string }> {
+  const phoneNumberId = settings.cloud_api_phone_number_id?.trim();
+  const token = settings.cloud_api_access_token?.trim();
+  if (!phoneNumberId || !token) {
+    throw new WhatsAppDispatchError("cloud_api", "Meta Cloud API is not configured — add the Phone Number ID and access token.");
+  }
+  const url = `https://graph.facebook.com/${META_WA_GRAPH_VERSION}/${phoneNumberId}/messages`;
+
+  let payload: Record<string, unknown>;
+  if (media?.imageUrl) {
+    payload = { messaging_product: "whatsapp", to: phone, type: "image", image: { link: media.imageUrl, caption: body } };
+  } else if (media?.videoUrl) {
+    payload = { messaging_product: "whatsapp", to: phone, type: "video", video: { link: media.videoUrl, caption: body } };
+  } else {
+    payload = { messaging_product: "whatsapp", to: phone, type: "text", text: { preview_url: true, body } };
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  } catch (err) {
+    throw new WhatsAppDispatchError("cloud_api", err instanceof Error ? err.message : "Cloud API request failed.");
+  }
+
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = json?.error?.message || json?.error?.error_user_msg || `Cloud API returned ${res.status}`;
+    throw new WhatsAppDispatchError("cloud_api", msg);
+  }
+  return { providerMessageId: json?.messages?.[0]?.id, providerStatus: "sent" };
+}
+
+// Dispatch through whichever provider the org has configured.
+async function sendViaProvider(
+  orgId: string,
+  settings: WhatsAppSettings,
+  phone: string,
+  body: string,
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
+): Promise<{ providerMessageId?: string; providerStatus?: string }> {
+  if (settings.provider === "cloud_api") {
+    return sendViaCloudApi(settings, phone, body, media);
+  }
+  return sendViaBaileys(orgId, settings, phone, body, media);
+}
+
 async function deliverLoggedWhatsApp(
   orgId: string,
   settings: WhatsAppSettings,
@@ -707,7 +784,7 @@ async function deliverLoggedWhatsApp(
   body: string,
   media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
 ) {
-  const result = await sendViaBaileys(orgId, settings, normalizedPhone, body, media);
+  const result = await sendViaProvider(orgId, settings, normalizedPhone, body, media);
   await updateWhatsAppLog(logId, {
     status: "sent",
     provider_message_id: result.providerMessageId ?? null,
@@ -1068,7 +1145,11 @@ export async function sendOwnerFollowUpReminderWhatsApp(
 export async function sendTestWhatsApp(orgId: string, phone: string) {
   const settings = await loadSettings(orgId);
   if (!settings) return { ok: false, error: "WhatsApp settings not configured yet." };
-  if (settings.connection_status === "disconnected") {
+  if (settings.provider === "cloud_api") {
+    if (!cloudApiConfigured(settings)) {
+      return { ok: false, error: "Add your Meta Phone Number ID and access token before testing." };
+    }
+  } else if (settings.connection_status === "disconnected") {
     return { ok: false, error: "Connect Baileys first before sending a WhatsApp test." };
   }
 
