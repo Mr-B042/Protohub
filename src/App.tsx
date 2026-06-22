@@ -17824,6 +17824,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Amounts cannot be negative");
       return;
     }
+    // Owner can bypass the reason; everyone else must justify the adjustment for the audit trail.
+    if (currentRole !== "Owner" && !manualBonusReasonText.trim()) {
+      showToast("A reason is required to adjust a bonus.");
+      return;
+    }
     const total = components.base + components.upgrade + components.crossSell + components.freeGift;
     const orderSnapshot = order;
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
@@ -63401,7 +63406,7 @@ ${waybillLineItems(w).length > 1
                     <span className="text-sm font-bold text-emerald-800">New total bonus</span>
                     <span className="text-lg font-extrabold text-emerald-700">₦{liveTotal.toLocaleString("en-NG")}</span>
                   </div>
-                  <label><span>Reason</span><textarea value={manualBonusReasonText} onChange={(e) => setManualBonusReasonText(e.target.value)} placeholder="Why are you adjusting this bonus?" /></label>
+                  <label><span>Reason {currentRole === "Owner" ? <span className="text-gray-400 font-normal normal-case">(optional — owner)</span> : <span className="text-rose-500">*</span>}</span><textarea value={manualBonusReasonText} onChange={(e) => setManualBonusReasonText(e.target.value)} placeholder={currentRole === "Owner" ? "Optional note for the record" : "Required — why are you adjusting this bonus?"} /></label>
                   <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => { clearManualBonus(order.id); closeModal(); }}>Clear & Restore Auto</button>
                     <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
