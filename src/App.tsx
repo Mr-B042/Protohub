@@ -14301,9 +14301,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       : {
           icon: TrendingUp,
           iconClassName: "bg-purple-50 text-purple-500",
-          title: "Revenue Opportunity",
-          helper: "Model the impact of a higher delivery conversion rate.",
-          body: ""
+          title: "Delivery Performance",
+          helper: "Your delivered orders and conversion rate this period.",
+          body: `${pfDelivered.length} delivered · ${pfDeliveryRateExact.toFixed(1)}% conversion`
         };
   const orderWorkspaceTitle = orderWorkspacePage === "Follow-up Queue"
     ? "Follow-up Queue"
@@ -35989,7 +35989,7 @@ ${waybillLineItems(w).length > 1
                     You can monitor performance here. Customer contact, assignment, fulfillment, and order edits stay with the sales/admin team.
                   </div>
                 </section>
-                ) : orderWorkspacePage === "Orders" ? (
+                ) : orderWorkspacePage === "Orders" && (currentRole === "Owner" || currentRole === "Admin") ? (
                 <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
                   <div className="flex items-start gap-3">
                     <span className="w-8 h-8 rounded-lg bg-purple-50 text-purple-500 flex items-center justify-center shrink-0"><TrendingUp className="w-4 h-4" /></span>
