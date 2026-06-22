@@ -6957,6 +6957,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartConversionFilter, setCartConversionFilter] = useState<CartConversionFilter>(() =>
     readPref<CartConversionFilter>("protohub.carts.conversionFilter", "All conversion paths", (raw) => raw as CartConversionFilter)
   );
+  const [cartSourceFilter, setCartSourceFilter] = useState<string>("All sources");
+  const [cartEmbedFilter, setCartEmbedFilter] = useState<string>("All forms");
   const [scheduleRange, setScheduleRange] = useState<ScheduleRange>(() =>
     readPref<ScheduleRange>("protohub.schedule.range", "Today", (raw) => raw as ScheduleRange)
   );
@@ -14382,8 +14384,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const matchesPeriod = isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange);
     const matchesProduct = matchesProductFilter(cart.productId, cart.productName, cartProductIds);
     const matchesViewer = viewerScopeRepId === null || cart.assignedRepId === viewerScopeRepId;
-    return matchesSearch && matchesStatus && matchesConversion && matchesPeriod && matchesProduct && matchesViewer;
+    const matchesSource = cartSourceFilter === "All sources" || (cart.source ?? "Website") === cartSourceFilter;
+    const matchesEmbed =
+      cartEmbedFilter === "All forms" ? true
+      : cartEmbedFilter === "No embed label" ? !embedLabel
+      : embedLabel === cartEmbedFilter;
+    return matchesSearch && matchesStatus && matchesConversion && matchesPeriod && matchesProduct && matchesViewer && matchesSource && matchesEmbed;
   });
+  // Distinct source + embed-label options, built from the carts that actually exist.
+  const cartSourceOptions = ["All sources", ...Array.from(new Set(abandonedCarts.map((c) => c.source ?? "Website"))).sort()];
+  const cartEmbedOptions = (() => {
+    const labels = new Set<string>();
+    let hasUnlabeled = false;
+    for (const cart of abandonedCarts) {
+      const label = cartEmbedLabelFor(cart, linkedOrderBySourceCartId.get(cart.id), abandonedCartJourneyMap[cart.id] ?? []);
+      if (label) labels.add(label); else hasUnlabeled = true;
+    }
+    return ["All forms", ...Array.from(labels).sort(), ...(hasUnlabeled ? ["No embed label"] : [])];
+  })();
   const abandonedCartRecoveryRows = filteredAbandonedCarts.map((cart) => {
     const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
     const conversionKind = abandonedCartConversionKindFor(linkedOrder);
@@ -20532,7 +20550,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     setCartsPage(1);
     setSelectedCartIds(new Set());
-  }, [cartSearch, cartStatus, cartConversionFilter, cartProductIds, cartsPeriod, cartsDateRange]);
+  }, [cartSearch, cartStatus, cartConversionFilter, cartSourceFilter, cartEmbedFilter, cartProductIds, cartsPeriod, cartsDateRange]);
 
   // ── Response-time tick (re-renders age badges every 60 s + on tab focus) ──
   const [responseTick, setResponseTick] = useState(0);
@@ -37162,6 +37180,22 @@ ${waybillLineItems(w).length > 1
                       onChange={(event) => setCartConversionFilter(event.target.value as CartConversionFilter)}
                     >
                       {cartConversionFilters.map((filter) => <option key={filter}>{filter}</option>)}
+                    </select>
+                    <select
+                      className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                      aria-label="Abandoned cart source"
+                      value={cartSourceFilter}
+                      onChange={(event) => setCartSourceFilter(event.target.value)}
+                    >
+                      {cartSourceOptions.map((source) => <option key={source}>{source}</option>)}
+                    </select>
+                    <select
+                      className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                      aria-label="Abandoned cart form / embed label"
+                      value={cartEmbedFilter}
+                      onChange={(event) => setCartEmbedFilter(event.target.value)}
+                    >
+                      {cartEmbedOptions.map((label) => <option key={label}>{label}</option>)}
                     </select>
                   </div>
                 </div>
