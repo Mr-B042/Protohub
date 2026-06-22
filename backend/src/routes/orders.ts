@@ -1869,6 +1869,7 @@ const POST_TERMINAL_FIELDS = new Set([
   "remittance_edit_opened_at",
   "bonus_paid", "bonusPaid",
   "manual_bonus_override", "manualBonusOverride",
+  "manual_bonus_components", "manualBonusComponents",
   "manual_bonus_reason", "manualBonusReason",
   "bonus_manually_adjusted", "bonusManuallyAdjusted",
   "call_outcome", "callOutcome",
@@ -1879,6 +1880,7 @@ const POST_TERMINAL_FIELDS = new Set([
 
 const MANUAL_BONUS_FIELDS = new Set([
   "manual_bonus_override", "manualBonusOverride",
+  "manual_bonus_components", "manualBonusComponents",
   "manual_bonus_reason", "manualBonusReason",
   "bonus_manually_adjusted", "bonusManuallyAdjusted",
 ]);
@@ -2139,6 +2141,7 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep"), asyn
     upsell_to_qty:             ["upsell_to_qty", "upsellToQty"],
     upsell_note:               ["upsell_note", "upsellNote"],
     manual_bonus_override:     ["manual_bonus_override", "manualBonusOverride"],
+    manual_bonus_components:   ["manual_bonus_components", "manualBonusComponents"],
     manual_bonus_reason:       ["manual_bonus_reason", "manualBonusReason"],
     bonus_manually_adjusted:   ["bonus_manually_adjusted", "bonusManuallyAdjusted"],
     bonus_paid:                ["bonus_paid", "bonusPaid"],

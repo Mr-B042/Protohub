@@ -873,6 +873,7 @@ type TrackedOrder = {
   freeGiftLines?: FreeGiftLine[];
   packageComponentsSnapshot?: OrderInventoryComponentSnapshot[];
   manualBonusOverride?: number;
+  manualBonusComponents?: { base?: number; upgrade?: number; crossSell?: number; freeGift?: number };
   manualBonusReason?: string;
   bonusManuallyAdjusted?: boolean;
   bonusPaid?: boolean;
@@ -9918,6 +9919,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [manualBonusTargetOrderId, setManualBonusTargetOrderId] = useState<string | null>(null);
   const [manualBonusAmount, setManualBonusAmount] = useState("");
   const [manualBonusReasonText, setManualBonusReasonText] = useState("");
+  const [manualBonusParts, setManualBonusParts] = useState<{ base: string; upgrade: string; crossSell: string; freeGift: string }>({ base: "", upgrade: "", crossSell: "", freeGift: "" });
   const [bonusBreakdownData, setBonusBreakdownData] = useState<BonusBreakdownData | null>(null);
   const [repPenalties, setRepPenalties] = useState<RepPenaltyRecord[]>([]);
   const [dataLoading, setDataLoading] = useState(() => {
@@ -10626,6 +10628,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setManualBonusTargetOrderId(selectedOrder.id);
     setManualBonusAmount(String(selectedOrder.manualBonusOverride ?? ""));
     setManualBonusReasonText(selectedOrder.manualBonusReason ?? "");
+    const p = projectedOrderBonus(selectedOrder);
+    const mc = selectedOrder.manualBonusComponents;
+    setManualBonusParts({
+      base:      String(mc?.base      ?? p.base      ?? 0),
+      upgrade:   String(mc?.upgrade   ?? p.upgrade   ?? 0),
+      crossSell: String(mc?.crossSell ?? p.crossSell ?? 0),
+      freeGift:  String(mc?.freeGift  ?? p.freeGift  ?? 0)
+    });
   }, [modal, selectedOrder]);
   useEffect(() => {
     if (modal !== "editProduct" || !selectedProductId) {
@@ -17240,6 +17250,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setManualBonusTargetOrderId(order.id);
     setManualBonusAmount(String(order.manualBonusOverride ?? ""));
     setManualBonusReasonText(order.manualBonusReason ?? "");
+    // Pre-fill each component: use existing manual adjustment if present, else the auto-computed value.
+    const p = projectedOrderBonus(order);
+    const mc = order.manualBonusComponents;
+    setManualBonusParts({
+      base:      String(mc?.base      ?? p.base      ?? 0),
+      upgrade:   String(mc?.upgrade   ?? p.upgrade   ?? 0),
+      crossSell: String(mc?.crossSell ?? p.crossSell ?? 0),
+      freeGift:  String(mc?.freeGift  ?? p.freeGift  ?? 0)
+    });
     setModal("manualBonus");
     if (isAdminOrderWorkspaceHash(hashRoute)) {
       syncHashRoute(adminOrderWorkspaceHash(`/${order.id}/manual-bonus`));
@@ -17794,27 +17813,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const saveManualBonus = () => {
     const order = trackedOrders.find((o) => o.id === manualBonusTargetOrderId);
     if (!order) return;
-    const amount = Number(manualBonusAmount);
-    if (Number.isNaN(amount) || amount < 0) {
-      showToast("Enter a valid amount");
+    const parse = (v: string) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+    const components = {
+      base:      parse(manualBonusParts.base),
+      upgrade:   parse(manualBonusParts.upgrade),
+      crossSell: parse(manualBonusParts.crossSell),
+      freeGift:  parse(manualBonusParts.freeGift)
+    };
+    if (Object.values(components).some((n) => n < 0)) {
+      showToast("Amounts cannot be negative");
       return;
     }
+    const total = components.base + components.upgrade + components.crossSell + components.freeGift;
     const orderSnapshot = order;
     setTrackedOrders((prev) => prev.map((o) => o.id === order.id ? {
       ...o,
-      manualBonusOverride: amount,
+      manualBonusComponents: components,
+      manualBonusOverride: total,
       manualBonusReason: manualBonusReasonText.trim(),
       bonusManuallyAdjusted: true
     } : o));
     closeModal();
-    showToast(`Bonus override set on ${order.id}`);
+    showToast(`Bonus adjusted on ${order.id} — ₦${total.toLocaleString("en-NG")}`);
     ordersApi.update(order.id, {
-      manual_bonus_override: amount,
+      manual_bonus_components: components,
+      manual_bonus_override: total,
       manual_bonus_reason: manualBonusReasonText.trim(),
       bonus_manually_adjusted: true
     }).catch((err: any) => {
       setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? orderSnapshot : item));
-      showToast(`Failed to save bonus override on ${order.id}: ${err?.message ?? "please retry"}.`);
+      showToast(`Failed to save bonus on ${order.id}: ${err?.message ?? "please retry"}.`);
     });
   };
 
@@ -17824,12 +17852,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setTrackedOrders((prev) => prev.map((o) => o.id === orderId ? {
       ...o,
       manualBonusOverride: undefined,
+      manualBonusComponents: undefined,
       manualBonusReason: undefined,
       bonusManuallyAdjusted: false
     } : o));
-    showToast("Manual bonus cleared");
+    showToast("Manual bonus cleared — auto rules restored");
     ordersApi.update(orderId, {
       manual_bonus_override: null,
+      manual_bonus_components: null,
       manual_bonus_reason: null,
       bonus_manually_adjusted: false
     }).catch((err: any) => {
@@ -17957,6 +17987,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     repWeeklyAOV: number,
     repWeeklyOrderCount: number
   ) {
+    if (order.bonusManuallyAdjusted && order.manualBonusComponents) {
+      const mc = order.manualBonusComponents;
+      const base = Number(mc.base ?? 0), upgrade = Number(mc.upgrade ?? 0), crossSell = Number(mc.crossSell ?? 0), freeGift = Number(mc.freeGift ?? 0);
+      const total = base + upgrade + crossSell + freeGift;
+      const components = [
+        { label: "Base (adjusted)", amount: base },
+        { label: "Upgrade (adjusted)", amount: upgrade },
+        { label: "Cross-sell (adjusted)", amount: crossSell },
+        { label: "Free gift (adjusted)", amount: freeGift }
+      ].filter((c) => c.amount !== 0);
+      return { base, upgrade, crossSell, freeGift, manual: 0, total, components };
+    }
     if (order.bonusManuallyAdjusted && typeof order.manualBonusOverride === "number") {
       return { base: 0, upgrade: 0, crossSell: 0, freeGift: 0, manual: order.manualBonusOverride, total: order.manualBonusOverride, components: [{ label: "Manual override", amount: order.manualBonusOverride }] };
     }
@@ -18047,7 +18089,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       rules.find((rule) => rule.quantity === qty)
         ?? rules.slice().sort((a, b) => Math.abs(a.quantity - qty) - Math.abs(b.quantity - qty))[0];
 
-    if (order.bonusManuallyAdjusted && typeof order.manualBonusOverride === "number") {
+    if (order.bonusManuallyAdjusted && order.manualBonusComponents) {
+      const mc = order.manualBonusComponents;
+      const reasonSuffix = order.manualBonusReason ? ` — ${order.manualBonusReason}` : "";
+      ([
+        ["Base", Number(mc.base ?? 0)],
+        ["Upgrade", Number(mc.upgrade ?? 0)],
+        ["Cross-sell", Number(mc.crossSell ?? 0)],
+        ["Free gift", Number(mc.freeGift ?? 0)]
+      ] as [string, number][]).filter(([, amt]) => amt !== 0).forEach(([label, amt]) => {
+        componentLines.push({
+          label: `${label} (manually adjusted)`,
+          amount: amt,
+          note: `Owner/admin set this component manually${reasonSuffix}`,
+          tone: amt > 0 ? "earned" : "blocked"
+        });
+      });
+    } else if (order.bonusManuallyAdjusted && typeof order.manualBonusOverride === "number") {
       componentLines.push({
         label: "Manual override",
         amount: order.manualBonusOverride,
@@ -18167,8 +18225,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // Projected bonus: what the rep would earn IF this order is delivered — ignores status check
   const projectedOrderBonus = (order: TrackedOrder) => {
+    if (order.bonusManuallyAdjusted && order.manualBonusComponents) {
+      const mc = order.manualBonusComponents;
+      const parts = [
+        { label: "Base", amount: Number(mc.base ?? 0) },
+        { label: "Upgrade", amount: Number(mc.upgrade ?? 0) },
+        { label: "Cross-sell", amount: Number(mc.crossSell ?? 0) },
+        { label: "Free gift", amount: Number(mc.freeGift ?? 0) }
+      ].filter((p) => p.amount !== 0);
+      const total = parts.reduce((s, p) => s + p.amount, 0);
+      return { total, base: Number(mc.base ?? 0), upgrade: Number(mc.upgrade ?? 0), crossSell: Number(mc.crossSell ?? 0), freeGift: Number(mc.freeGift ?? 0), components: parts.map((p) => ({ label: `${p.label} (adjusted)`, amount: p.amount })) };
+    }
     if (order.bonusManuallyAdjusted && typeof order.manualBonusOverride === "number") {
-      return { total: order.manualBonusOverride, components: [{ label: "Manual override", amount: order.manualBonusOverride }] };
+      return { total: order.manualBonusOverride, base: 0, upgrade: 0, crossSell: 0, freeGift: 0, components: [{ label: "Manual override", amount: order.manualBonusOverride }] };
     }
     const product = products.find((p) => p.id === order.productId);
     const cfg = productBonusConfig(product);
@@ -18203,7 +18272,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       freeGift = cfg.freeGiftBonus * order.freeGiftLines.length;
       components.push({ label: `Free gifts (${order.freeGiftLines.length})`, amount: freeGift });
     }
-    return { total: base + upgrade + crossSell + freeGift, components };
+    return { total: base + upgrade + crossSell + freeGift, base, upgrade, crossSell, freeGift, components };
   };
 
   // ===== Performance tiers (shared across State Performance & Product Profitability) =====
@@ -63296,16 +63365,48 @@ ${waybillLineItems(w).length > 1
             {modal === "manualBonus" && (() => {
               const order = trackedOrders.find((o) => o.id === manualBonusTargetOrderId);
               if (!order) return null;
+              const num = (v: string) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+              const liveTotal = num(manualBonusParts.base) + num(manualBonusParts.upgrade) + num(manualBonusParts.crossSell) + num(manualBonusParts.freeGift);
+              const auto = projectedOrderBonus(order);
+              const partFields: { key: keyof typeof manualBonusParts; label: string; autoVal: number }[] = [
+                { key: "base",      label: "Base",      autoVal: auto.base ?? 0 },
+                { key: "upgrade",   label: "Upgrade",   autoVal: auto.upgrade ?? 0 },
+                { key: "crossSell", label: "Cross-sell",autoVal: auto.crossSell ?? 0 },
+                { key: "freeGift",  label: "Free gift", autoVal: auto.freeGift ?? 0 }
+              ];
               return (
                 <div className="modal-form">
-                  <p className="text-xs text-gray-500">Override the computed bonus for <strong>{order.id}</strong>. Use this when the auto rules don't capture the correct amount.</p>
-                  <label><span>Manual bonus amount (₦)</span><input value={manualBonusAmount} onChange={(e) => setManualBonusAmount(e.target.value)} inputMode="decimal" placeholder="e.g. 1500" /></label>
-                  <label><span>Reason</span><textarea value={manualBonusReasonText} onChange={(e) => setManualBonusReasonText(e.target.value)} placeholder="Why are you overriding the bonus?" /></label>
+                  <p className="text-xs text-gray-500">Adjust each bonus line for <strong>{order.id}</strong> separately, or change just one. Each field is pre-filled with the auto-computed amount — edit what you need.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {partFields.map((f) => (
+                      <label key={f.key} className="flex flex-col gap-1">
+                        <span className="flex items-center justify-between">
+                          <span>{f.label} (₦)</span>
+                          {num(manualBonusParts[f.key]) !== f.autoVal && (
+                            <button type="button" className="!min-h-0 text-[10px] font-bold text-blue-600 hover:underline" onClick={() => setManualBonusParts((p) => ({ ...p, [f.key]: String(f.autoVal) }))}>
+                              reset to ₦{f.autoVal.toLocaleString("en-NG")}
+                            </button>
+                          )}
+                        </span>
+                        <input
+                          value={manualBonusParts[f.key]}
+                          onChange={(e) => setManualBonusParts((p) => ({ ...p, [f.key]: e.target.value }))}
+                          inputMode="decimal"
+                          placeholder="0"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2.5 mt-1">
+                    <span className="text-sm font-bold text-emerald-800">New total bonus</span>
+                    <span className="text-lg font-extrabold text-emerald-700">₦{liveTotal.toLocaleString("en-NG")}</span>
+                  </div>
+                  <label><span>Reason</span><textarea value={manualBonusReasonText} onChange={(e) => setManualBonusReasonText(e.target.value)} placeholder="Why are you adjusting this bonus?" /></label>
                   <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
-                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => { clearManualBonus(order.id); closeModal(); }}>Clear Override</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => { clearManualBonus(order.id); closeModal(); }}>Clear & Restore Auto</button>
                     <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
                       <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
-                      <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveManualBonus}>Save Override</button>
+                      <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8]" onClick={saveManualBonus}>Save Adjustment</button>
                     </div>
                   </div>
                 </div>
