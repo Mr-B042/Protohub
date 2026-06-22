@@ -33577,7 +33577,7 @@ ${waybillLineItems(w).length > 1
                       <h3 className="text-sm font-bold text-gray-900">{row.user.name}</h3>
                       <p className="text-xs text-gray-500 break-all">{row.user.email}</p>
                     </div>
-                    <span className="text-sm font-bold text-green-600">{formatMoney(row.revenue)}</span>
+                    {(currentRole === "Owner" || currentRole === "Admin") && <span className="text-sm font-bold text-green-600">{formatMoney(row.revenue)}</span>}
                   </div>
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     <div>
@@ -33598,7 +33598,7 @@ ${waybillLineItems(w).length > 1
                   <tr className="bg-gray-50 border-b border-gray-200 text-left">
                     <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Rank</th>
                     <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Sales Rep</th>
-                    <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Revenue</th>
+                    {(currentRole === "Owner" || currentRole === "Admin") && <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Revenue</th>}
                     <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">Delivered</th>
                     <th className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider text-right">Conversion</th>
                   </tr>
@@ -33611,7 +33611,7 @@ ${waybillLineItems(w).length > 1
                         <div className="font-bold text-gray-900">{row.user.name}</div>
                         <div className="text-xs text-gray-500">{row.user.email}</div>
                       </td>
-                      <td className="px-4 py-4 font-bold text-green-600">{formatMoney(row.revenue)}</td>
+                      {(currentRole === "Owner" || currentRole === "Admin") && <td className="px-4 py-4 font-bold text-green-600">{formatMoney(row.revenue)}</td>}
                       <td className="px-4 py-4 text-gray-700 font-medium">{row.delivered}</td>
                       <td className="px-4 py-4 text-right font-bold text-[#1F8FE0]">{row.conversion}%</td>
                     </tr>
