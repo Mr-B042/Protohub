@@ -1164,6 +1164,24 @@ router.post("/", submitRateLimit, async (req, res) => {
       .eq("id", effectiveCartId)
       .eq("org_id", product.org_id);
 
+    // Close sibling phantom carts: a single session can spawn several cart IDs
+    // (browser reloads, dedup re-keying). Mark any OTHER non-Converted cart with
+    // the same normalized phone, created within ±2h, as Converted too — otherwise
+    // it lingers as a phantom "Open abandoned" cart for a customer who ordered.
+    if (d.phone) {
+      const n = d.phone.replace(/\D/g, "");
+      const windowStart = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      await supabase
+        .from("abandoned_carts")
+        .update({ status: "Converted", last_activity: new Date().toISOString() })
+        .eq("org_id", product.org_id)
+        .neq("id", effectiveCartId)
+        .not("status", "eq", "Converted")
+        .or(`phone.eq.${d.phone.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`)
+        .gte("created_at", windowStart)
+        .then(() => undefined, () => undefined);
+    }
+
     // effectiveCartId is used in place of d.cartId for journey events below
 
     const { error: journeyInsertError } = await supabase
