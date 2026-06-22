@@ -136,12 +136,30 @@ router.post("/", captureRateLimit, async (req, res) => {
     .eq("id", d.id)
     .maybeSingle();
 
-  const { data: existingOrder } = await supabase
+  let { data: existingOrder } = await supabase
     .from("orders")
     .select("id")
     .eq("org_id", product.org_id)
     .eq("source_cart_id", d.id)
     .maybeSingle();
+
+  // Post-submit race: the embed form's debounced capture can fire AFTER the order
+  // was placed, under a fresh cart id. If a recent order already exists for this
+  // phone, treat this capture as converted instead of birthing a phantom open cart.
+  if (!existingOrder && d.phone) {
+    const n = d.phone.replace(/\D/g, "");
+    const recentWindow = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const { data: phoneOrder } = await supabase
+      .from("orders")
+      .select("id")
+      .eq("org_id", product.org_id)
+      .or(`phone.eq.${d.phone.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`)
+      .gte("created_at", recentWindow)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (phoneOrder) existingOrder = phoneOrder;
+  }
 
   if (existingOrder) {
     if (existing && existing.org_id === product.org_id && (existing.status !== "Converted" || row.embed_label)) {
