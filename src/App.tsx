@@ -37145,7 +37145,14 @@ ${waybillLineItems(w).length > 1
 
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" aria-label="Captured abandoned carts">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-4 border-b border-gray-200">
-                  <h2 className="text-base font-bold text-gray-900 m-0">Captured abandoned carts</h2>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-base font-bold text-gray-900 m-0">Captured abandoned carts</h2>
+                    <span className="inline-flex items-center rounded-full bg-blue-50 border border-blue-100 px-2.5 py-0.5 text-xs font-black text-blue-700">
+                      {filteredAbandonedCarts.length === abandonedCarts.length
+                        ? `${filteredAbandonedCarts.length} total`
+                        : `${filteredAbandonedCarts.length} of ${abandonedCarts.length}`}
+                    </span>
+                  </div>
                   <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 w-full sm:w-auto">
                     <label className="relative flex items-center w-full sm:w-auto">
                       <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
