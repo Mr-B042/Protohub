@@ -331,6 +331,46 @@ const buildConvertedCartLinkRepairReport = async (orgId: string) => {
     };
   });
 
+  // Phone fallback: a converted cart whose journey order id can't be verified may
+  // still belong to a customer who actually ordered — under a DIFFERENT cart id from
+  // the same session (multi-cart re-keying). The order isn't "missing", it just isn't
+  // the exact id the journey recorded. Match by normalized phone so these resolve
+  // instead of sitting forever as "needs review".
+  const normPhone = (p: string) => {
+    const digits = (p ?? "").replace(/\D/g, "");
+    return digits.length >= 10 ? digits.slice(-10) : digits;
+  };
+  const unresolved = rows.filter((r) =>
+    r.repairStatus === "manual_review:no_journey_order_id" ||
+    r.repairStatus === "manual_review:journey_order_missing"
+  );
+  if (unresolved.length > 0) {
+    const { data: phoneOrders } = await supabase
+      .from("orders")
+      .select(CART_LINK_ORDER_PREVIEW_SELECT)
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(5000);
+
+    const orderByPhone = new Map<string, any>();
+    for (const order of phoneOrders ?? []) {
+      const key = normPhone(typeof order.phone === "string" ? order.phone : "");
+      if (!key || orderByPhone.has(key)) continue; // first = most recent (ordered desc)
+      orderByPhone.set(key, order);
+    }
+
+    for (const row of unresolved) {
+      const match = orderByPhone.get(normPhone(row.phone));
+      if (!match) continue;
+      const matchSourceCart = sourceCartIdFromOrderRow(match);
+      row.repairStatus = "already_linked";
+      row.canApply = false;
+      row.order = orderPreviewFromRow(match);
+      row.alreadyLinkedOrderId = String(match.id);
+      row.manualReviewMessage = `Customer ordered as #${match.id}${matchSourceCart && matchSourceCart !== row.cartId ? ` (recorded under ${matchSourceCart})` : ""} — verified by phone, no action needed.`;
+    }
+  }
+
   return { rows, ...summarizeConvertedCartLinkRows(rows) };
 };
 
