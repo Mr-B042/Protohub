@@ -32675,12 +32675,37 @@ ${waybillLineItems(w).length > 1
                   <p className="text-xs text-gray-500 mt-0.5">Track what is already earned, what unlocks next, and which live order can move your bonus fastest.</p>
                 </div>
                 <div className="flex flex-col gap-2 sm:items-end">
-                  <div className="flex flex-col sm:items-end gap-0.5">
-                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                      {weekRangeLabel(repBonusWeekStart, repBonusWeekEnd)}
-                    </span>
-                    <span className="text-[11px] text-gray-400 italic">Bonus always tracks the current week — not the period filter above.</span>
-                  </div>
+                  {(() => {
+                    const shiftBonusWeek = (dir: -1 | 1) => {
+                      const d = new Date(`${repBonusWeekStart}T00:00:00`);
+                      d.setDate(d.getDate() + dir * 7);
+                      const key = formatDateKey(d);
+                      // Bonus reads repWorkspaceNavStart unless period is Custom — so clear Custom too.
+                      if (repWorkspacePeriod === "Custom") { setRepWorkspacePeriod("This Week"); setRepWorkspaceDateRange({ start: "", end: "" }); }
+                      setRepWorkspaceNavStart(key);
+                    };
+                    const goCurrentBonusWeek = () => {
+                      if (repWorkspacePeriod === "Custom") { setRepWorkspacePeriod("This Week"); setRepWorkspaceDateRange({ start: "", end: "" }); }
+                      setRepWorkspaceNavStart(getSundayKey());
+                    };
+                    const onCurrentWeek = repBonusWeekStart === getSundayKey();
+                    return (
+                      <div className="flex items-center gap-1.5">
+                        <button type="button" title="Previous week" className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" onClick={() => shiftBonusWeek(-1)}>
+                          <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+                        </button>
+                        <button type="button" title={onCurrentWeek ? "You're on the current week" : "Jump to current week"} disabled={onCurrentWeek}
+                          className={`!min-h-0 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${onCurrentWeek ? "text-gray-400 cursor-default" : "border border-gray-200 text-gray-700 hover:bg-gray-100"}`}
+                          onClick={goCurrentBonusWeek}>
+                          {weekRangeLabel(repBonusWeekStart, repBonusWeekEnd)}
+                        </button>
+                        <button type="button" title="Next week" className="!min-h-0 p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" onClick={() => shiftBonusWeek(1)}>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })()}
+                  <span className="text-[11px] text-gray-400 italic">Bonus is weekly — use the arrows to view another pay-week. The period filter above does not apply.</span>
                   {(currentRole === "Owner" || currentRole === "Admin") && (
                     <button
                       type="button"
