@@ -208,12 +208,13 @@ async function loadUserWhatsAppAccount(orgId: string, userId: string) {
   return data ?? null;
 }
 
-async function loadDefaultWhatsAppDestination(orgId: string, userId: string) {
+// Destinations are an ORG-SHARED setup now (admin/owner create, everyone dispatches
+// with them), so these loaders are scoped to the org, not the requesting user.
+async function loadDefaultWhatsAppDestination(orgId: string, _userId: string) {
   const { data, error } = await supabase
     .from("whatsapp_user_destinations")
     .select("*")
     .eq("org_id", orgId)
-    .eq("user_id", userId)
     .eq("active", true)
     .order("is_default", { ascending: false })
     .order("last_used_at", { ascending: false, nullsFirst: false })
@@ -224,13 +225,12 @@ async function loadDefaultWhatsAppDestination(orgId: string, userId: string) {
   return data as WhatsAppDestinationRow | null;
 }
 
-async function loadOwnedWhatsAppDestination(orgId: string, userId: string, destinationId: string) {
+async function loadOwnedWhatsAppDestination(orgId: string, _userId: string, destinationId: string) {
   const { data, error } = await supabase
     .from("whatsapp_user_destinations")
     .select("*")
     .eq("id", destinationId)
     .eq("org_id", orgId)
-    .eq("user_id", userId)
     .eq("active", true)
     .single();
   if (error) throw error;
@@ -1099,8 +1099,7 @@ router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "
           .from("whatsapp_user_destinations")
           .update({ last_used_at: new Date().toISOString() })
           .eq("id", savedDestination.id)
-          .eq("org_id", req.user!.orgId)
-          .eq("user_id", req.user!.id);
+          .eq("org_id", req.user!.orgId);
       }
       res.json({ dispatch, body, assisted: true });
       return;
@@ -1187,8 +1186,7 @@ router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "
         .from("whatsapp_user_destinations")
         .update({ last_used_at: new Date().toISOString() })
         .eq("id", savedDestination.id)
-        .eq("org_id", req.user!.orgId)
-        .eq("user_id", req.user!.id);
+        .eq("org_id", req.user!.orgId);
       res.json({ dispatch: updated, body, assisted: false });
     } catch (sendError) {
       const message = sendError instanceof Error ? sendError.message : "Direct WhatsApp send failed.";
