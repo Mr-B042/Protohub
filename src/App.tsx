@@ -35036,6 +35036,34 @@ ${waybillLineItems(w).length > 1
             const me = realManagedUser ?? (authUser ? { name: authUser.name, role: realRole } as Pick<ManagedUser, "name" | "role"> : null);
             const displayName = me?.name ?? "User";
             const displayRole = me?.role ?? "—";
+            const isOwnerChip = displayRole === "Owner";
+            if (isOwnerChip) {
+              // Elite owner/CEO treatment — gold gradient, crown, glow.
+              return (
+                <div className={`relative flex items-center rounded-2xl border border-amber-300/25 bg-gradient-to-br from-amber-500/12 via-amber-400/[0.06] to-transparent transition-colors hover:border-amber-300/40 ${collapsed ? "justify-center p-1.5" : "gap-3 p-2.5"}`}>
+                  <span className="pointer-events-none absolute -inset-px rounded-2xl shadow-[inset_0_1px_0_rgba(251,191,36,0.18)]" />
+                  <div className="relative shrink-0">
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-300 via-amber-400 to-yellow-600 flex items-center justify-center text-[#1a1207] text-xs font-black shadow-[0_0_14px_rgba(251,191,36,0.45)] ring-2 ring-amber-200/40">
+                      {userInitials(displayName)}
+                    </div>
+                    <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-gradient-to-br from-amber-300 to-yellow-600 ring-2 ring-[#0d1b29] shadow">
+                      <Crown className="h-2.5 w-2.5 text-[#1a1207]" />
+                    </span>
+                  </div>
+                  {!collapsed && (
+                    <div className="flex flex-col min-w-0">
+                      <span className="flex items-center gap-1.5 leading-tight">
+                        <span className="font-black text-sm text-white truncate">{displayName}</span>
+                        <Sparkles className="h-3 w-3 shrink-0 text-amber-300" />
+                      </span>
+                      <span className="mt-0.5 inline-flex w-fit items-center gap-1 rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-amber-300">
+                        CEO · Founder
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            }
             return (
               <div className={`flex items-center rounded-lg hover:bg-white/5 transition-colors ${collapsed ? "justify-center p-1.5" : "gap-3 p-2"}`}>
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#1F8FE0] to-blue-700 flex items-center justify-center text-white text-xs font-bold shrink-0">
