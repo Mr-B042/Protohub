@@ -620,6 +620,8 @@ export const metaCapiSettingsApi = {
   list: () => get<any[]>("/api/meta-capi-settings"),
   save: (body: unknown) => post<any>("/api/meta-capi-settings", body),
   toggle: (id: string, active: boolean) => patch<any>(`/api/meta-capi-settings/${encodeURIComponent(id)}/toggle`, { active }),
+  test: (body: { id?: string; trackingKey?: string; pixelId?: string; accessToken?: string; testEventCode?: string }) =>
+    post<{ ok: boolean; message: string; eventsReceived?: number }>("/api/meta-capi-settings/test", body),
   delete: (id: string) => del<{ ok: boolean }>(`/api/meta-capi-settings/${encodeURIComponent(id)}`)
 };
 

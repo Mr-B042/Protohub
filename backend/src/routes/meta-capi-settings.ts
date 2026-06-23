@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { testMetaCapiConnection } from "../lib/meta-capi.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -133,6 +134,40 @@ router.patch("/:id/toggle", async (req, res) => {
     .eq("id", id);
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ ok: true, active });
+});
+
+// ── POST /api/meta-capi-settings/test ───────────────────
+// Verify a config actually works by posting a test event to Meta. Accepts either a
+// saved config id (uses its stored token) or an inline pixelId + token.
+const TestSchema = z.object({
+  id: z.string().uuid().optional(),
+  trackingKey: z.string().optional(),
+  pixelId: z.string().trim().optional(),
+  accessToken: z.string().trim().optional(),
+  testEventCode: z.string().trim().optional()
+});
+router.post("/test", async (req, res) => {
+  const parsed = TestSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const d = parsed.data;
+
+  let pixelId = d.pixelId ?? "";
+  let accessToken = d.accessToken ?? "";
+  const testEventCode = d.testEventCode || undefined;
+
+  // If a saved config is referenced (or no inline token given), load its stored values.
+  if ((d.id || d.trackingKey) && (!accessToken || accessToken === SECRET_MASK)) {
+    let q = supabase.from("meta_capi_configs").select("pixel_id, access_token").eq("org_id", req.user!.orgId);
+    q = d.id ? q.eq("id", d.id) : q.eq("tracking_key", String(d.trackingKey));
+    const { data } = await q.maybeSingle();
+    if (data) {
+      pixelId = pixelId || data.pixel_id || "";
+      accessToken = data.access_token || "";
+    }
+  }
+
+  const result = await testMetaCapiConnection(pixelId, accessToken, testEventCode);
+  res.json(result);
 });
 
 // ── DELETE /api/meta-capi-settings/:id ──────────────────

@@ -7386,6 +7386,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [metaDefaultDraft, setMetaDefaultDraft] = useState({ pixelId: "", accessToken: "", thankYouUrl: "", testEventCode: "" });
   const [metaDefaultSaving, setMetaDefaultSaving] = useState(false);
   const [metaDefaultSaved, setMetaDefaultSaved] = useState(false);
+  const [metaDefaultTesting, setMetaDefaultTesting] = useState(false);
+  const [metaDefaultTestResult, setMetaDefaultTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [linksEditingId, setLinksEditingId] = useState<string|null>(null);
   const [linksAdding, setLinksAdding] = useState(false);
   const [linksSaving, setLinksSaving] = useState(false);
@@ -49997,7 +49999,7 @@ ${waybillLineItems(w).length > 1
                   <div className="space-y-4 max-w-3xl">
                     <div>
                       <h2 className="text-base font-bold text-gray-800">Meta Pixel & Conversions API</h2>
-                      <p className="text-sm text-gray-500 mt-1">Set up once — all order forms and server-side auto-submits use this. Hybrid mode fires both the landing page pixel and CAPI so no purchase is missed even if the customer closes the tab.</p>
+                      <p className="text-sm text-gray-500 mt-1">Set up once. Live customers fire the landing-page pixel only; this CAPI is the fallback used <strong>only when the customer leaves</strong> (server-side auto-submit, no browser/pixel). Exactly one Purchase event per order — never double-counted.</p>
                     </div>
                     <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
                       <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gray-50/50">
@@ -50031,7 +50033,7 @@ ${waybillLineItems(w).length > 1
                           <div className="flex items-end">
                             <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 w-full">
                               <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shrink-0"/>
-                              <p className="m-0 text-xs font-black text-emerald-800">Hybrid mode — landing page pixel + CAPI</p>
+                              <p className="m-0 text-xs font-black text-emerald-800">CAPI fallback — fires only when the customer leaves</p>
                             </div>
                           </div>
                         </div>
@@ -50054,24 +50056,46 @@ ${waybillLineItems(w).length > 1
                             ))}
                           </div>
                         </div>
-                        <button type="button" className="!min-h-0 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50"
-                          disabled={metaDefaultSaving||!metaDefaultDraft.pixelId}
-                          onClick={async()=>{
-                            if(!metaDefaultDraft.pixelId){showToast("Enter your Pixel ID first.");return;}
-                            setMetaDefaultSaving(true);
-                            try {
-                              await metaCapiSettingsApi.save({trackingKey:"__default__",label:"Default (org-wide)",mode:"hybrid",pixelId:metaDefaultDraft.pixelId,accessToken:metaDefaultDraft.accessToken||undefined,active:true});
-                              setMetaDefaultSaved(true);setMetaDefaultDraft(d=>({...d,accessToken:""}));showToast("✓ Saved.");setTimeout(()=>setMetaDefaultSaved(false),4000);
-                            } catch(e:any){showToast(e?.message??"Could not save.");}
-                            finally{setMetaDefaultSaving(false);}
-                          }}>{metaDefaultSaving?"Saving…":"Save configuration"}</button>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button type="button" className="!min-h-0 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-black text-white hover:bg-blue-700 disabled:opacity-50"
+                            disabled={metaDefaultSaving||!metaDefaultDraft.pixelId}
+                            onClick={async()=>{
+                              if(!metaDefaultDraft.pixelId){showToast("Enter your Pixel ID first.");return;}
+                              setMetaDefaultSaving(true);
+                              try {
+                                await metaCapiSettingsApi.save({trackingKey:"__default__",label:"Default (org-wide)",mode:"hybrid",pixelId:metaDefaultDraft.pixelId,accessToken:metaDefaultDraft.accessToken||undefined,active:true});
+                                setMetaDefaultSaved(true);setMetaDefaultDraft(d=>({...d,accessToken:""}));showToast("✓ Saved.");setTimeout(()=>setMetaDefaultSaved(false),4000);
+                              } catch(e:any){showToast(e?.message??"Could not save.");}
+                              finally{setMetaDefaultSaving(false);}
+                            }}>{metaDefaultSaving?"Saving…":"Save configuration"}</button>
+                          <button type="button" className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                            disabled={metaDefaultTesting||!metaDefaultDraft.pixelId}
+                            onClick={async()=>{
+                              setMetaDefaultTesting(true); setMetaDefaultTestResult(null);
+                              try {
+                                const r = await metaCapiSettingsApi.test({ trackingKey:"__default__", pixelId:metaDefaultDraft.pixelId, accessToken:metaDefaultDraft.accessToken||undefined, testEventCode:metaDefaultDraft.testEventCode||undefined });
+                                setMetaDefaultTestResult({ ok:r.ok, message:r.message });
+                                showToast(r.ok ? "✓ CAPI connection working." : `✗ ${r.message}`);
+                              } catch(e:any){ setMetaDefaultTestResult({ ok:false, message:e?.message??"Test failed." }); showToast(e?.message??"Test failed."); }
+                              finally{ setMetaDefaultTesting(false); }
+                            }}>{metaDefaultTesting?"Testing…":"Test connection"}</button>
+                        </div>
+                        {metaDefaultTestResult && (
+                          <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${metaDefaultTestResult.ok ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
+                            <span className="shrink-0 text-sm">{metaDefaultTestResult.ok ? "✅" : "⚠️"}</span>
+                            <p className={`m-0 text-xs font-bold ${metaDefaultTestResult.ok ? "text-emerald-800" : "text-rose-800"}`}>
+                              {metaDefaultTestResult.ok ? "Working — Meta accepted the test event. Your Pixel ID + token are valid." : `Not working: ${metaDefaultTestResult.message}`}
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-                      <p className="m-0 text-xs font-black text-blue-800">How the two signals work together</p>
+                      <p className="m-0 text-xs font-black text-blue-800">One Purchase per order — never double-counted</p>
                       <ul className="m-0 mt-1.5 space-y-1 pl-4 list-disc">
-                        <li className="text-xs text-blue-700"><strong>Customer submits on page:</strong> Redirect to thank-you URL → pixel fires → CAPI fires</li>
-                        <li className="text-xs text-blue-700"><strong>Customer closes tab (server auto-submit):</strong> Server creates order → CAPI fires → landing pixel skipped (no browser)</li>
+                        <li className="text-xs text-blue-700"><strong>Customer present</strong> (taps Order Now <em>or</em> idle countdown): redirect to thank-you URL → <strong>landing-page pixel fires only</strong>. CAPI stays off.</li>
+                        <li className="text-xs text-blue-700"><strong>Customer left</strong> (server auto-submit): no browser, so no pixel → <strong>CAPI fires only</strong>.</li>
+                        <li className="text-xs text-blue-700">Each path fires exactly one signal, so your Purchase count stays accurate.</li>
                       </ul>
                     </div>
                   </div>

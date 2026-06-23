@@ -186,6 +186,45 @@ function markDuplicate(pixelId: string | undefined, eventId: string, eventName: 
   return false;
 }
 
+// Verify a Pixel ID + access token actually work by posting a minimal test event to
+// Meta's CAPI. Returns Meta's verdict so the UI can show "working / not working".
+export async function testMetaCapiConnection(
+  pixelId: string,
+  accessToken: string,
+  testEventCode?: string
+): Promise<{ ok: boolean; message: string; eventsReceived?: number }> {
+  if (!pixelId || !accessToken) {
+    return { ok: false, message: "Pixel ID and access token are both required." };
+  }
+  const payload: Record<string, unknown> = {
+    data: [{
+      event_name: "Lead",
+      event_time: Math.floor(Date.now() / 1000),
+      event_id: `protohub_capi_verify_${Date.now()}`,
+      action_source: "website",
+      event_source_url: "https://protohub.app/capi-verify",
+      user_data: { client_user_agent: "Protohub CAPI Verify", ph: sha256("0000000000") }
+    }]
+  };
+  if (testEventCode) payload.test_event_code = testEventCode;
+  const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(pixelId)}/events?access_token=${encodeURIComponent(accessToken)}`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const json: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = json?.error?.message || json?.error?.error_user_msg || `Meta returned HTTP ${res.status}`;
+      return { ok: false, message: msg };
+    }
+    return { ok: true, message: "Connected — Meta accepted the test event.", eventsReceived: Number(json?.events_received ?? 0) };
+  } catch (error: any) {
+    return { ok: false, message: error?.message ?? "Could not reach Meta." };
+  }
+}
+
 export async function sendMetaCapiPurchase(args: SendMetaPurchaseArgs): Promise<MetaCapiSendResult> {
   if (args.config.mode === "off" || args.config.mode === "landing_page") {
     return { status: "off" };
