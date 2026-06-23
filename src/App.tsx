@@ -22416,8 +22416,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setWaDispatchModal(null);
       waUserRefresh();
       if (result.assisted) {
+        // WhatsApp has no deep-link that opens a specific group with text, so we
+        // copy the order to the clipboard as a fallback — the rep picks the group
+        // and the text is either pre-filled or one paste away.
+        try { await navigator.clipboard?.writeText(result.body || waDispatchModal.body); } catch { /* clipboard may be blocked */ }
         openWhatsAppSharePicker(result.body || waDispatchModal.body, `WhatsApp group for ${waDispatchModal.order.id}`);
-        showToast("Dispatch logged. Choose the right WhatsApp group to send.");
+        showToast("Order copied ✓ — WhatsApp is opening. Pick the group, then paste if the text isn't already there.");
       } else {
         showToast("Order sent to WhatsApp destination.");
       }
