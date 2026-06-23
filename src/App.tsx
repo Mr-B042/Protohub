@@ -37452,6 +37452,11 @@ ${waybillLineItems(w).length > 1
                               <div className="flex flex-col gap-1">
                                 <span className={`status-pill status-${slugify(cart.status)}`}>{cart.status}</span>
                                 {conversionMarker && <span className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${conversionMarker.pillClass}`}>{conversionMarker.label}</span>}
+                                {linkedOrder && orderWasAutoSubmitted(linkedOrder) && (
+                                  <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700" title="Converted automatically by the auto-submit engine — the customer did not tap Order Now">
+                                    <Zap className="h-2.5 w-2.5" /> Auto-submitted
+                                  </span>
+                                )}
                                 {conversionStatusLabel && <span className="text-[11px] font-medium text-gray-500">{conversionStatusLabel}</span>}
                               </div>
                             </td>
