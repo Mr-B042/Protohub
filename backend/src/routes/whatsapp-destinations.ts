@@ -51,24 +51,25 @@ function destinationPayload(orgId: string, userId: string, data: z.infer<typeof 
   return payload;
 }
 
-async function clearOtherDefaults(orgId: string, userId: string, exceptId?: string) {
+async function clearOtherDefaults(orgId: string, _userId: string, exceptId?: string) {
+  // Default is org-wide now (shared setup), so clear across the whole org.
   let query = supabase
     .from("whatsapp_user_destinations")
     .update({ is_default: false })
-    .eq("org_id", orgId)
-    .eq("user_id", userId);
+    .eq("org_id", orgId);
   if (exceptId) query = query.neq("id", exceptId);
   const { error } = await query;
   if (error) throw error;
 }
 
+// Org-wide shared setup: every member sees the same group + agent destinations the
+// admin/owner created. Only Owner/Admin can add/edit/delete (gated on the mutations).
 router.get("/", async (req, res) => {
   const includeInactive = ["1", "true", "yes"].includes(String(req.query.includeInactive ?? "").toLowerCase());
   let query = supabase
     .from("whatsapp_user_destinations")
-    .select("*")
+    .select("*, agent:agents!whatsapp_user_destinations_assigned_agent_id_fkey(id, name, zone, primary_base_state)")
     .eq("org_id", req.user!.orgId)
-    .eq("user_id", req.user!.id)
     .order("is_default", { ascending: false })
     .order("last_used_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
@@ -82,7 +83,7 @@ router.get("/", async (req, res) => {
   res.json({ destinations: data ?? [] });
 });
 
-router.post("/", async (req, res) => {
+router.post("/", requireRole("Owner", "Admin"), async (req, res) => {
   const parsed = DestinationSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -104,7 +105,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-router.patch("/:id", async (req, res) => {
+router.patch("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   const parsed = PatchDestinationSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -112,13 +113,13 @@ router.patch("/:id", async (req, res) => {
   }
 
   try {
-    if (parsed.data.isDefault) await clearOtherDefaults(req.user!.orgId, req.user!.id, req.params.id);
+    // Owner/Admin may edit ANY org destination (shared setup), not just their own.
+    if (parsed.data.isDefault) await clearOtherDefaults(req.user!.orgId, req.user!.id, String(req.params.id));
     const { data, error } = await supabase
       .from("whatsapp_user_destinations")
       .update(destinationPayload(req.user!.orgId, req.user!.id, parsed.data))
       .eq("id", req.params.id)
       .eq("org_id", req.user!.orgId)
-      .eq("user_id", req.user!.id)
       .select()
       .single();
 
@@ -129,13 +130,12 @@ router.patch("/:id", async (req, res) => {
   }
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   const { error } = await supabase
     .from("whatsapp_user_destinations")
     .delete()
     .eq("id", req.params.id)
-    .eq("org_id", req.user!.orgId)
-    .eq("user_id", req.user!.id);
+    .eq("org_id", req.user!.orgId);
 
   if (error) {
     res.status(500).json({ error: error.message });

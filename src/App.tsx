@@ -51470,9 +51470,11 @@ ${waybillLineItems(w).length > 1
                           <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Saved destinations</p>
                           <h2 className="m-0 mt-0.5 text-lg font-black text-gray-900">{activeDestinations.length} destination{activeDestinations.length === 1 ? "" : "s"}</h2>
                         </div>
-                        <button className="!min-h-0 rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-black text-blue-700 hover:bg-blue-50" onClick={waLoadGroups} disabled={!userConnected || waUserGroupsLoading}>
-                          {waUserGroupsLoading ? "Importing..." : "Import groups"}
-                        </button>
+                        {isOwnerOrAdmin && (
+                          <button className="!min-h-0 rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-black text-blue-700 hover:bg-blue-50" onClick={waLoadGroups} disabled={!userConnected || waUserGroupsLoading}>
+                            {waUserGroupsLoading ? "Importing..." : "Import groups"}
+                          </button>
+                        )}
                       </div>
                       {/* Horizontal scrollable cards */}
                       <div className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory -mx-1 px-1">
@@ -51576,7 +51578,8 @@ ${waybillLineItems(w).length > 1
                                   </div>
                                 )}
 
-                                {/* ── Actions footer ── */}
+                                {/* ── Actions footer (Owner/Admin only — shared setup) ── */}
+                                {isOwnerOrAdmin && (
                                 <div className="flex items-center justify-between gap-2 px-4 py-3 bg-gray-50 border-t border-gray-100">
                                   <div className="flex gap-2">
                                     {!destination.isDefault && (
@@ -51589,6 +51592,7 @@ ${waybillLineItems(w).length > 1
                                     Delete
                                   </button>
                                 </div>
+                                )}
                               </div>
                             );
                           })}
@@ -51596,6 +51600,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                     </article>
 
+                    {isOwnerOrAdmin && (
                     <aside className="space-y-5 lg:order-2">
                       <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Add destination</p>
@@ -51618,6 +51623,7 @@ ${waybillLineItems(w).length > 1
                         </div>
                       </article>
                     </aside>
+                    )}
 
                     {waUserGroups.length > 0 && (
                       <article className="rounded-2xl border border-blue-100 bg-blue-50/60 p-5">
