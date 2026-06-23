@@ -4410,6 +4410,26 @@ const orderAutoSubmitSource = (order: { formContext?: Record<string, unknown> | 
   if (!orderWasAutoSubmitted(order)) return null;
   return order.formContext?.autoSubmitSource === "server" ? "server" : "form";
 };
+
+// A "returned" conversion: the customer first touched the form, left, and came back
+// later (a meaningful gap between cart creation and order submission). Distinct from
+// auto-submit. Used to badge two-visit recoveries in the list.
+const RETURN_GAP_MIN_MS = 30 * 60 * 1000; // 30 minutes
+const conversionReturnGapMs = (cartCreatedAt?: string | null, orderCreatedAt?: string | null): number | null => {
+  if (!cartCreatedAt || !orderCreatedAt) return null;
+  const c = new Date(cartCreatedAt).getTime();
+  const o = new Date(orderCreatedAt).getTime();
+  if (!Number.isFinite(c) || !Number.isFinite(o)) return null;
+  const gap = o - c;
+  return gap >= RETURN_GAP_MIN_MS ? gap : null;
+};
+const formatReturnGap = (ms: number): string => {
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = mins / 60;
+  if (hrs < 24) return `${Math.round(hrs)}h`;
+  return `${Math.round(hrs / 24)}d`;
+};
 const cartCustomerInfoCompletion = (cart: AbandonedCartRecord, cfg: CartInfoFormConfig = {}) => {
   const fields = cartCustomerInfoFields(cart, cfg);
   const done = fields.filter((f) => f.done).length;
@@ -14372,6 +14392,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     addJourneyRecoveredOrderLinks(next, abandonedCartJourneyMap, trackedOrderById);
     return next;
   }, [abandonedCartJourneyMap, trackedOrderById, trackedOrders]);
+  // Reverse lookup: order's source cart id → the cart (for returned-conversion timing).
+  const cartBySourceId = useMemo(() => {
+    const map = new Map<string, AbandonedCartRecord>();
+    for (const cart of abandonedCarts) map.set(cart.id, cart);
+    return map;
+  }, [abandonedCarts]);
   const filteredAbandonedCarts = abandonedCarts.filter((cart) => {
     const search = cartSearch.trim().toLowerCase();
     const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
@@ -36244,11 +36270,20 @@ ${waybillLineItems(w).length > 1
                                 <span className="inline-flex items-center rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-sky-700 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset] dark:border-sky-400/25 dark:bg-sky-400/12 dark:text-sky-100">
                                   Order #{order.id}
                                 </span>
-                                {orderWasAutoSubmitted(order) && (
+                                {orderWasAutoSubmitted(order) ? (
                                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200" title="Auto-submitted — not tapped by the customer">
                                     <Zap className="h-2.5 w-2.5" /> Auto
                                   </span>
-                                )}
+                                ) : (() => {
+                                  const srcCart = order.sourceCartId ? cartBySourceId.get(order.sourceCartId) : undefined;
+                                  const gap = srcCart ? conversionReturnGapMs(srcCart.createdAt, order.createdAt ?? order.date) : null;
+                                  if (gap == null) return null;
+                                  return (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-indigo-700" title={`Returned customer — came back ${formatReturnGap(gap)} later to complete`}>
+                                      ↩ Returned
+                                    </span>
+                                  );
+                                })()}
                               </span>
                               <h3 className={`mt-4 mb-0 text-[24px] font-black leading-7 tracking-[-0.04em] break-words ${orderTitleTextClass}`}>
                                 {isMarketerOrderView ? marketerLeadLabel(order) : order.customer || "Unnamed customer"}
@@ -36428,11 +36463,20 @@ ${waybillLineItems(w).length > 1
                               )}
                               <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">
                                 {order.id}
-                                {orderWasAutoSubmitted(order) && (
+                                {orderWasAutoSubmitted(order) ? (
                                   <span className="mt-1 flex w-fit items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200" title={`Auto-submitted by the ${orderAutoSubmitSource(order) === "server" ? "server (customer left with a complete form)" : "form idle-countdown"} — not tapped by the customer`}>
                                     <Zap className="h-2.5 w-2.5" /> Auto
                                   </span>
-                                )}
+                                ) : (() => {
+                                  const srcCart = order.sourceCartId ? cartBySourceId.get(order.sourceCartId) : undefined;
+                                  const gap = srcCart ? conversionReturnGapMs(srcCart.createdAt, order.createdAt ?? order.date) : null;
+                                  if (gap == null) return null;
+                                  return (
+                                    <span className="mt-1 flex w-fit items-center gap-1 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-indigo-700" title={`Returned customer — abandoned the form, came back ${formatReturnGap(gap)} later and completed it themselves`}>
+                                      ↩ Returned
+                                    </span>
+                                  );
+                                })()}
                               </td>
                               <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{isMarketerOrderView ? marketerLeadLabel(order) : order.customer}</td>
                               {showOrderAssignmentColumn && (
@@ -37457,6 +37501,15 @@ ${waybillLineItems(w).length > 1
                                     <Zap className="h-2.5 w-2.5" /> Auto-submitted
                                   </span>
                                 )}
+                                {cart.status === "Converted" && linkedOrder && !orderWasAutoSubmitted(linkedOrder) && (() => {
+                                  const gap = conversionReturnGapMs(cart.createdAt, linkedOrder.createdAt ?? linkedOrder.date);
+                                  if (gap == null) return null;
+                                  return (
+                                    <span className="inline-flex w-fit items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-indigo-700" title={`Customer abandoned the form, then came back ${formatReturnGap(gap)} later and completed it themselves — not auto-submitted`}>
+                                      ↩ Returned {formatReturnGap(gap)} later
+                                    </span>
+                                  );
+                                })()}
                                 {conversionStatusLabel && <span className="text-[11px] font-medium text-gray-500">{conversionStatusLabel}</span>}
                               </div>
                             </td>
