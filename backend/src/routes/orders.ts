@@ -208,6 +208,21 @@ async function loadUserWhatsAppAccount(orgId: string, userId: string) {
   return data ?? null;
 }
 
+// Shared dispatch: every rep's direct send routes through the ONE connected account in
+// the org (the admin/owner who scanned the QR and is in the groups), so reps don't each
+// need to connect their own WhatsApp. Falls back to the actor if none is connected.
+async function resolveOrgDispatchAccountUserId(orgId: string, fallbackUserId: string): Promise<string> {
+  const { data } = await supabase
+    .from("whatsapp_user_accounts")
+    .select("user_id")
+    .eq("org_id", orgId)
+    .eq("connection_status", "connected")
+    .order("last_connected_at", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.user_id ?? fallbackUserId;
+}
+
 // Destinations are an ORG-SHARED setup now (admin/owner create, everyone dispatches
 // with them), so these loaders are scoped to the org, not the requesting user.
 async function loadDefaultWhatsAppDestination(orgId: string, _userId: string) {
@@ -1007,8 +1022,11 @@ router.get("/:id/whatsapp-dispatch/preview", requireRole("Owner", "Admin", "Mana
       return;
     }
 
+    // Direct send routes through the org's ONE shared connected account (the admin/owner
+    // who scanned the QR), so reps see Direct send enabled even without connecting their own.
+    const dispatchUserId = await resolveOrgDispatchAccountUserId(req.user!.orgId, req.user!.id);
     const [account, defaultDestination] = await Promise.all([
-      loadUserWhatsAppAccount(req.user!.orgId, req.user!.id),
+      loadUserWhatsAppAccount(req.user!.orgId, dispatchUserId),
       loadDefaultWhatsAppDestination(req.user!.orgId, req.user!.id)
     ]);
     const recipient = defaultDestination ? destinationRecipient(defaultDestination) : { recipientJid: "", recipientPhone: null, directTarget: "" };
@@ -1022,9 +1040,9 @@ router.get("/:id/whatsapp-dispatch/preview", requireRole("Owner", "Admin", "Mana
     const directBlockedReason = canDirect
       ? null
       : account?.connection_status !== "connected"
-        ? "Connect your WhatsApp before using direct send."
+        ? "No connected WhatsApp account yet — ask the admin/owner to connect one in WhatsApp settings."
         : !account?.risk_acknowledged_at
-          ? "Acknowledge the WhatsApp direct-send risk before using direct send."
+          ? "The admin/owner must acknowledge the WhatsApp direct-send risk first."
           : !defaultDestination
             ? "Save a destination first, or use assisted send."
             : defaultDestination.destination_type === "manual_group"
@@ -1125,14 +1143,16 @@ router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "
       return;
     }
 
-    const account = await loadUserWhatsAppAccount(req.user!.orgId, req.user!.id);
+    // Route through the org's shared connected account (not the rep's own).
+    const dispatchUserId = await resolveOrgDispatchAccountUserId(req.user!.orgId, req.user!.id);
+    const account = await loadUserWhatsAppAccount(req.user!.orgId, dispatchUserId);
     if (account?.connection_status !== "connected") {
       const dispatch = await insertWhatsAppDispatchLog({
         ...baseLog,
         status: "blocked",
-        error_message: "Your WhatsApp is not connected."
+        error_message: "No connected WhatsApp account for the org."
       });
-      res.status(400).json({ error: "Connect your WhatsApp before direct sending.", dispatch });
+      res.status(400).json({ error: "No connected WhatsApp account yet — ask the admin/owner to connect one in WhatsApp settings.", dispatch });
       return;
     }
     if (!account?.risk_acknowledged_at) {
@@ -1145,7 +1165,9 @@ router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "
       return;
     }
 
-    const rateLimitReason = await checkDirectWhatsAppRateLimit(req.user!.orgId, req.user!.id);
+    // Rate-limit the shared SENDING number (not the actor) so the org's one account
+    // is protected from bulk-send bans.
+    const rateLimitReason = await checkDirectWhatsAppRateLimit(req.user!.orgId, dispatchUserId);
     if (rateLimitReason) {
       const dispatch = await insertWhatsAppDispatchLog({
         ...baseLog,
@@ -1175,7 +1197,7 @@ router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "
     });
 
     try {
-      const result = await sendConnectedUserWhatsAppToJid(req.user!.orgId, req.user!.id, recipient.directTarget, body);
+      const result = await sendConnectedUserWhatsAppToJid(req.user!.orgId, dispatchUserId, recipient.directTarget, body);
       const updated = await updateWhatsAppDispatchLog(String(dispatch.id), {
         status: "sent",
         provider_message_id: result.providerMessageId ?? null,

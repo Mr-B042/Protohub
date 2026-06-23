@@ -56027,16 +56027,17 @@ ${waybillLineItems(w).length > 1
         const destination = waDestinations.find((item) => item.id === waDispatchModal.destinationId) ?? null;
         const destinationType = destination?.destinationType ?? "manual_group";
         const directTarget = destinationType === "group" ? destination?.groupJid : destinationType === "phone" ? destination?.phone : "";
-        const directReady = !!waDispatchModal.canDirect && !!destination && !!directTarget && whatsappRiskAcknowledged(waUserAccount);
+        // Direct send routes through the org's ONE shared connected account, so readiness
+        // comes from the backend preview (canDirect already verifies that account is
+        // connected + risk-acknowledged) — NOT the rep's own WhatsApp connection.
+        const directReady = !!waDispatchModal.canDirect && !!destination && !!directTarget;
         const directReason = !waDispatchModal.canDirect
-          ? (waDispatchModal.directBlockedReason || "Connect your WhatsApp and acknowledge direct-send risk first.")
+          ? (waDispatchModal.directBlockedReason || "No connected WhatsApp account yet — ask the admin/owner to connect one in WhatsApp settings.")
           : !destination
             ? "Choose a saved destination first."
             : !directTarget
               ? "This destination is assisted-send only. Import a group or add a phone for direct send."
-              : !whatsappRiskAcknowledged(waUserAccount)
-                ? "Acknowledge the direct-send risk on the WhatsApp page first."
-                : "";
+              : "";
         return (
           <div className="fixed inset-0 z-[73] flex items-end justify-center bg-black/55 p-3 dark:bg-[rgba(3,7,18,0.86)] sm:items-center sm:p-4">
             <section className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-[#0f1822]" role="dialog" aria-modal="true" aria-labelledby="whatsapp-dispatch-title">
@@ -56291,10 +56292,10 @@ ${waybillLineItems(w).length > 1
                           className={`!min-h-0 rounded-xl border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${waDispatchModal.sendMode === "direct" ? "border-blue-300 bg-blue-50 text-blue-800" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:bg-[#111f2d] dark:text-slate-200"}`}
                           onClick={() => setWaDispatchModal((current) => current ? { ...current, sendMode: "direct" } : current)}
                           disabled={!directReady}
-                          title={directReady ? "Send from your connected WhatsApp" : directReason}
+                          title={directReady ? "Posts straight into the group from the org's connected WhatsApp" : directReason}
                         >
                           <span className="block text-sm font-black">Direct send</span>
-                          <span className="mt-1 block text-xs font-semibold opacity-75">{directReady ? "Uses your connected WhatsApp account." : directReason}</span>
+                          <span className="mt-1 block text-xs font-semibold opacity-75">{directReady ? "Posts into the group from the org's connected WhatsApp." : directReason}</span>
                         </button>
                       </div>
                     </div>
