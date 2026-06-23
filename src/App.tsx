@@ -14392,12 +14392,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     addJourneyRecoveredOrderLinks(next, abandonedCartJourneyMap, trackedOrderById);
     return next;
   }, [abandonedCartJourneyMap, trackedOrderById, trackedOrders]);
-  // Reverse lookup: order's source cart id → the cart (for returned-conversion timing).
-  const cartBySourceId = useMemo(() => {
-    const map = new Map<string, AbandonedCartRecord>();
-    for (const cart of abandonedCarts) map.set(cart.id, cart);
-    return map;
-  }, [abandonedCarts]);
   const filteredAbandonedCarts = abandonedCarts.filter((cart) => {
     const search = cartSearch.trim().toLowerCase();
     const linkedOrder = linkedOrderBySourceCartId.get(cart.id);
@@ -36266,24 +36260,8 @@ ${waybillLineItems(w).length > 1
 
                           <div className="relative flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <span className="inline-flex items-center gap-2 flex-wrap">
-                                <span className="inline-flex items-center rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-sky-700 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset] dark:border-sky-400/25 dark:bg-sky-400/12 dark:text-sky-100">
-                                  Order #{order.id}
-                                </span>
-                                {orderWasAutoSubmitted(order) ? (
-                                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200" title="Auto-submitted — not tapped by the customer">
-                                    <Zap className="h-2.5 w-2.5" /> Auto
-                                  </span>
-                                ) : (() => {
-                                  const srcCart = order.sourceCartId ? cartBySourceId.get(order.sourceCartId) : undefined;
-                                  const gap = srcCart ? conversionReturnGapMs(srcCart.createdAt, order.createdAt ?? order.date) : null;
-                                  if (gap == null) return null;
-                                  return (
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-indigo-700" title={`Returned customer — came back ${formatReturnGap(gap)} later to complete`}>
-                                      ↩ Returned
-                                    </span>
-                                  );
-                                })()}
+                              <span className="inline-flex items-center rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-sky-700 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset] dark:border-sky-400/25 dark:bg-sky-400/12 dark:text-sky-100">
+                                Order #{order.id}
                               </span>
                               <h3 className={`mt-4 mb-0 text-[24px] font-black leading-7 tracking-[-0.04em] break-words ${orderTitleTextClass}`}>
                                 {isMarketerOrderView ? marketerLeadLabel(order) : order.customer || "Unnamed customer"}
@@ -36463,20 +36441,6 @@ ${waybillLineItems(w).length > 1
                               )}
                               <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">
                                 {order.id}
-                                {orderWasAutoSubmitted(order) ? (
-                                  <span className="mt-1 flex w-fit items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200" title={`Auto-submitted by the ${orderAutoSubmitSource(order) === "server" ? "server (customer left with a complete form)" : "form idle-countdown"} — not tapped by the customer`}>
-                                    <Zap className="h-2.5 w-2.5" /> Auto
-                                  </span>
-                                ) : (() => {
-                                  const srcCart = order.sourceCartId ? cartBySourceId.get(order.sourceCartId) : undefined;
-                                  const gap = srcCart ? conversionReturnGapMs(srcCart.createdAt, order.createdAt ?? order.date) : null;
-                                  if (gap == null) return null;
-                                  return (
-                                    <span className="mt-1 flex w-fit items-center gap-1 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-indigo-700" title={`Returned customer — abandoned the form, came back ${formatReturnGap(gap)} later and completed it themselves`}>
-                                      ↩ Returned
-                                    </span>
-                                  );
-                                })()}
                               </td>
                               <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{isMarketerOrderView ? marketerLeadLabel(order) : order.customer}</td>
                               {showOrderAssignmentColumn && (
@@ -37496,11 +37460,18 @@ ${waybillLineItems(w).length > 1
                               <div className="flex flex-col gap-1">
                                 <span className={`status-pill status-${slugify(cart.status)}`}>{cart.status}</span>
                                 {conversionMarker && <span className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${conversionMarker.pillClass}`}>{conversionMarker.label}</span>}
-                                {linkedOrder && orderWasAutoSubmitted(linkedOrder) && (
-                                  <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700" title="Converted automatically by the auto-submit engine — the customer did not tap Order Now">
-                                    <Zap className="h-2.5 w-2.5" /> Auto-submitted
-                                  </span>
-                                )}
+                                {linkedOrder && orderWasAutoSubmitted(linkedOrder) && (() => {
+                                  const isServer = orderAutoSubmitSource(linkedOrder) === "server";
+                                  return isServer ? (
+                                    <span className="inline-flex w-fit items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-rose-700" title="Auto-submitted by the server — the customer LEFT (closed the tab) with a complete form, and the 2-min cron placed the order on their behalf">
+                                      <Zap className="h-2.5 w-2.5" /> Auto · customer left
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700" title="Auto-submitted in-form — the customer was still on the page but went idle with a complete form, and the countdown submitted it">
+                                      <Zap className="h-2.5 w-2.5" /> Auto · idle in form
+                                    </span>
+                                  );
+                                })()}
                                 {cart.status === "Converted" && linkedOrder && !orderWasAutoSubmitted(linkedOrder) && (() => {
                                   const gap = conversionReturnGapMs(cart.createdAt, linkedOrder.createdAt ?? linkedOrder.date);
                                   if (gap == null) return null;
@@ -58040,13 +58011,7 @@ ${waybillLineItems(w).length > 1
 	              <div className="px-6 py-5 flex flex-col gap-4">
 	                <section className="flex items-start justify-between gap-3 bg-gray-50 rounded-xl p-4">
 	                  <div>
-	                    <span className="inline-flex items-center gap-2">{selectedOrder.id}
-	                      {orderWasAutoSubmitted(selectedOrder) && (
-	                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700" title={`Auto-submitted by the ${orderAutoSubmitSource(selectedOrder) === "server" ? "server (customer left with a complete form)" : "form idle-countdown"} — not tapped by the customer`}>
-	                          <Zap className="h-2.5 w-2.5" /> Auto-submitted
-	                        </span>
-	                      )}
-	                    </span>
+	                    <span>{selectedOrder.id}</span>
 	                    <h3 className="text-base font-bold text-gray-900 mt-0.5">{selectedOrder.customer}</h3>
 	                    <p>{selectedOrder.phone} · {selectedOrder.location ?? orderLocationFromFields(selectedOrder.city ?? "", selectedOrder.state ?? "")}</p>
 	                  </div>
