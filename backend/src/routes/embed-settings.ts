@@ -32,7 +32,9 @@ const DEFAULTS = {
   free_delivery_slots_enabled:  false,
   free_delivery_slot_limit:     15,
   free_delivery_slot_manual_claimed: 0,
-  free_delivery_reset_interval_minutes: 1440
+  free_delivery_reset_interval_minutes: 1440,
+  auto_submit_mode:             "full" as "full" | "cart" | "off",
+  client_idle_autosubmit_enabled: true
 };
 
 // Reads either the org row or returns defaults — used by both auth + public GET.
@@ -83,7 +85,9 @@ const SettingsSchema = z.object({
   free_delivery_slots_enabled:  z.boolean().optional(),
   free_delivery_slot_limit:     z.number().int().min(1).max(500).optional(),
   free_delivery_slot_manual_claimed: z.number().int().min(0).max(500).optional(),
-  free_delivery_reset_interval_minutes: z.number().int().min(10).max(10080).optional()
+  free_delivery_reset_interval_minutes: z.number().int().min(10).max(10080).optional(),
+  auto_submit_mode:             z.enum(["full", "cart", "off"]).optional(),
+  client_idle_autosubmit_enabled: z.boolean().optional()
 });
 
 router.patch("/", requireRole("Owner", "Admin"), async (req, res) => {

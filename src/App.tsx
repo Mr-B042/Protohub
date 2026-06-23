@@ -10323,6 +10323,54 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [modal, selectedCartId, abandonedCarts]);
+
+  // Live merge-refresh for the Abandoned Carts page. Realtime is blocked by RLS +
+  // custom JWT, so we gently re-fetch every 12s and MERGE — only rows that actually
+  // changed update (React keys keep the table stable: no reload, no flicker, no
+  // scroll jump). Pauses when the tab is hidden.
+  useEffect(() => {
+    if (activePage !== "Abandoned Carts") return;
+    let cancelled = false;
+    const mapRow = (c: any): AbandonedCartRecord => ({
+      id: c.id, customer: c.customer ?? "", phone: c.phone ?? "",
+      whatsapp: c.whatsapp ?? undefined, email: c.email ?? undefined, address: c.address ?? undefined,
+      city: c.city ?? undefined, state: c.state ?? undefined,
+      productId: c.productId ?? c.product_id ?? undefined, packageId: c.packageId ?? c.package_id ?? undefined,
+      productName: c.productName ?? c.product_name ?? "", packageName: c.packageName ?? c.package_name ?? "",
+      amount: Number(c.amount ?? 0), currency: c.currency ?? "NGN",
+      source: c.source ?? "Website", status: c.status ?? "Open abandoned",
+      assignedRepId: c.assignedRepId ?? c.assigned_rep_id ?? undefined,
+      lastActivity: c.lastActivity ?? c.last_activity ?? c.createdAt ?? c.created_at ?? "",
+      createdAt: c.createdAt ?? c.created_at ?? "",
+      embedLabel: c.embedLabel ?? c.embed_label ?? undefined,
+      capturePayload: c.capturePayload ?? c.capture_payload ?? undefined,
+      dedupMergedFrom: c.dedupMergedFrom ?? c.dedup_merged_from ?? undefined,
+      dedupSignal: c.dedupSignal ?? c.dedup_signal ?? undefined,
+    } as AbandonedCartRecord);
+    const pull = () => {
+      if (document.hidden) return;
+      void cartsApi.list().then((rows) => {
+        if (cancelled || !Array.isArray(rows)) return;
+        const fresh = rows.map(mapRow);
+        setAbandonedCarts((prev) => {
+          // Only update if something genuinely changed, to avoid needless renders.
+          if (prev.length === fresh.length) {
+            const prevById = new Map(prev.map((c) => [c.id, c]));
+            let changed = false;
+            for (const f of fresh) {
+              const p = prevById.get(f.id);
+              if (!p || p.status !== f.status || p.lastActivity !== f.lastActivity || p.customer !== f.customer || p.assignedRepId !== f.assignedRepId) { changed = true; break; }
+            }
+            if (!changed) return prev;
+          }
+          return fresh;
+        });
+      }).catch(() => {});
+    };
+    const handle = window.setInterval(pull, 12000);
+    return () => { cancelled = true; window.clearInterval(handle); };
+  }, [activePage]);
+
   useEffect(() => {
     if (modal !== "orderDetails" || !selectedOrder?.sourceCartId || !isOwnerOrAdmin) {
       setSelectedOrderJourneyLoading(false);
