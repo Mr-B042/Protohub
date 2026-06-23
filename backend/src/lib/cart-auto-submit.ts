@@ -76,19 +76,32 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     .maybeSingle();
   if (existingOrder) return;
 
-  // 2. Load product + package
+  // 2. Load product (NOTE: packages live in the product_packages table, NOT a column
+  //    on products — selecting a non-existent `packages` column previously errored the
+  //    whole query and silently aborted every auto-submit).
   const { data: product } = await supabase
     .from("products")
-    .select("id, org_id, name, active, packages")
+    .select("id, org_id, name, active")
     .eq("id", cart.product_id)
     .eq("org_id", orgId)
     .maybeSingle();
   if (!product || product.active === false) return;
 
-  // Packages live on the product row as jsonb array
-  const packages: any[] = Array.isArray(product.packages) ? product.packages : [];
-  const pkg = packages.find((p: any) => p.id === cart.package_id);
-  if (!pkg) return;
+  // Load the chosen package from product_packages for quantity/price. The cart already
+  // stores package_name, amount and currency, so we only need quantity (and price as fallback).
+  const { data: pkgRow } = await supabase
+    .from("product_packages")
+    .select("id, quantity, price")
+    .eq("id", cart.package_id)
+    .maybeSingle();
+  if (!pkgRow) return;
+  const pkg = {
+    id: pkgRow.id,
+    name: cart.package_name ?? "",
+    quantity: pkgRow.quantity ?? 1,
+    price: Number(pkgRow.price ?? cart.amount ?? 0),
+    currency: cart.currency ?? "NGN"
+  };
 
   // 3. Round-robin assign
   let assignedRepId: string | null = null;
