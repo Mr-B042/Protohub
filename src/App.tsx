@@ -8197,6 +8197,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   } | null>(null);
   const [embedSettingsSaving, setEmbedSettingsSaving] = useState(false);
   const [autoSubmitMode, setAutoSubmitMode] = useState<"full"|"cart"|"off">("full");
+  const [clientIdleAutosubmitEnabled, setClientIdleAutosubmitEnabled] = useState(true);
 
   // Cache-version auto-purge: compare org's cacheVersion to localStorage.
   // If mismatch (or missing), wipe every protohub.* key and reload so the UI
@@ -8454,6 +8455,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (typeof s.freeDeliverySlotManualClaimed === "number") setFreeDeliverySlotManualClaimed(String(s.freeDeliverySlotManualClaimed));
       if (typeof s.freeDeliveryResetIntervalMinutes === "number") setFreeDeliveryResetIntervalMinutes(s.freeDeliveryResetIntervalMinutes);
       if (s.autoSubmitMode === "full" || s.autoSubmitMode === "cart" || s.autoSubmitMode === "off") setAutoSubmitMode(s.autoSubmitMode);
+      if (typeof s.clientIdleAutosubmitEnabled === "boolean") setClientIdleAutosubmitEnabled(s.clientIdleAutosubmitEnabled);
     }).catch(() => { /* defaults stay */ });
   }, []);
 
@@ -20690,6 +20692,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           if (typeof s.freeDeliverySlotLimit === "number") setFreeDeliverySlotLimit(String(s.freeDeliverySlotLimit));
           if (typeof s.freeDeliverySlotManualClaimed === "number") setFreeDeliverySlotManualClaimed(String(s.freeDeliverySlotManualClaimed));
           if (typeof s.freeDeliveryResetIntervalMinutes === "number") setFreeDeliveryResetIntervalMinutes(s.freeDeliveryResetIntervalMinutes);
+          if (typeof s.clientIdleAutosubmitEnabled === "boolean") setClientIdleAutosubmitEnabled(s.clientIdleAutosubmitEnabled);
         }).catch(() => { /* defaults stay */ });
       }
     }).catch(() => {
@@ -28263,6 +28266,7 @@ ${waybillLineItems(w).length > 1
   // ── Smart auto-submit: dynamic idle window based on how fast the customer filled the form ──
   useEffect(() => {
     if (!publicProduct || publicOrderSubmitted || publicOrderSubmitting) return;
+    if (!clientIdleAutosubmitEnabled) return; // owner turned the in-form idle countdown off
 
     const anyFilled = Boolean(orderFormName.trim() || orderFormPhone.trim() || orderFormWhatsapp.trim() || orderFormAddress.trim() || orderFormCity.trim() || orderFormState.trim());
     if (anyFilled && firstFieldFilledAtRef.current === null) {
@@ -28370,7 +28374,7 @@ ${waybillLineItems(w).length > 1
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [
-    publicProduct, publicOrderSubmitted, publicOrderSubmitting,
+    publicProduct, publicOrderSubmitted, publicOrderSubmitting, clientIdleAutosubmitEnabled,
     orderFormName, orderFormPhone, orderFormWhatsapp, orderFormAddress, orderFormCity, orderFormState,
     showWhatsappField, requireWhatsapp, addressRequired
   ]);
@@ -50118,6 +50122,19 @@ ${waybillLineItems(w).length > 1
                             {metaDefaultTtTestResult && <span className={`text-xs font-bold ${metaDefaultTtTestResult.ok?"text-emerald-700":"text-rose-700"}`}>{metaDefaultTtTestResult.ok?"✓ Working":`⚠ ${metaDefaultTtTestResult.message}`}</span>}
                           </div>
                           <p className="m-0 text-[10px] text-gray-400">Fires <strong>CompletePayment</strong> with the TikTok click ID (ttclid) when a TikTok customer leaves and the server auto-submits — same no-double-count rule as Meta (present customers use the landing-page TikTok pixel).</p>
+                        </div>
+                        {/* In-form idle auto-submit toggle (client-side countdown) */}
+                        <div className="rounded-xl border border-gray-200 bg-gray-50/60 px-4 py-3.5 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">In-form idle auto-submit</p>
+                            <p className="m-0 mt-0.5 text-[11px] text-gray-400">The 45–70s countdown inside the form — submits when a present customer fills everything then goes idle. Turn off to only submit on tap / server-side.</p>
+                          </div>
+                          <button type="button" role="switch" aria-checked={clientIdleAutosubmitEnabled} className="!min-h-0 p-0 shrink-0"
+                            onClick={()=>{ const next=!clientIdleAutosubmitEnabled; setClientIdleAutosubmitEnabled(next); void embedSettingsApi.patch({client_idle_autosubmit_enabled:next}); showToast(next?"In-form idle auto-submit ON":"In-form idle auto-submit OFF"); }}>
+                            <span className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${clientIdleAutosubmitEnabled?"bg-[#1F8FE0]":"bg-gray-300"}`}>
+                              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${clientIdleAutosubmitEnabled?"translate-x-6":"translate-x-1"}`}/>
+                            </span>
+                          </button>
                         </div>
                         {/* Server-side auto-submit mode */}
                         <div className="rounded-xl border border-gray-200 bg-gray-50/60 px-4 py-3.5">
