@@ -10,7 +10,9 @@ router.use(requireRole("Owner"));
 const SECRET_MASK = "••••••••";
 
 const ConfigSchema = z.object({
-  trackingKey:     z.string().trim().min(2).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9_.:\-]*$/),
+  // Leading char may be a letter, digit, or underscore — the latter for the reserved
+  // org-wide sentinel key "__default__" used by server-side auto-submits.
+  trackingKey:     z.string().trim().min(2).max(120).regex(/^[A-Za-z0-9_][A-Za-z0-9_.:\-]*$/),
   label:           z.string().trim().min(1).max(200),
   mode:            z.enum(["protohub", "hybrid", "landing_page", "off"]).default("hybrid"),
   pixelId:         z.string().trim().min(5).max(80),
