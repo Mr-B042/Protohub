@@ -525,56 +525,63 @@ const applyLocationInventoryDelta = async (
 router.get("/", async (req, res) => {
   const { status, source, search, page = "1", limit = "25", repId, since, updatedSince, dateFrom, dateTo } = req.query;
   const pageNum  = Math.max(1, parseInt(page as string, 10));
-  const pageSize = Math.min(2000, parseInt(limit as string, 10));
-  const from = (pageNum - 1) * pageSize;
-  const to   = from + pageSize - 1;
+  // Allow large bulk loads (the UI fetches all orders for client-side filtering).
+  // Raised from 2000 so growing orgs don't silently lose their oldest orders.
+  const pageSize = Math.min(50000, Math.max(1, parseInt(limit as string, 10)));
+  const windowFrom = (pageNum - 1) * pageSize;
 
   // updatedSince polling needs the result sorted by updated_at so the client
   // can read result.data[0].updated_at as the next high-water mark. Default
   // listing keeps newest-by-created_at order for the UI table.
   const sortColumn = updatedSince ? "updated_at" : "created_at";
 
-  let query = supabase
-    .from("orders")
-    .select("*", { count: "exact" })
-    .eq("org_id", req.user!.orgId)
-    .order(sortColumn, { ascending: false })
-    .range(from, to);
-
   // Use effectiveUserId/Role in spy mode so the Owner sees the spied user's orders.
   const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
   const scopeId   = req.user!.effectiveUserId   ?? req.user!.id;
 
-  // Sales Reps see assigned orders; Marketers see only attributed traffic.
-  if (scopeRole === "Marketer") {
-    query = applyOrderMarketingScope(query, req.user!.marketingAttributionTags, scopeId);
-  } else if (scopeRole === "Sales Rep") {
-    query = query.eq("assigned_rep_id", scopeId);
-  } else if (repId) {
-    query = query.eq("assigned_rep_id", repId as string);
-  }
+  // Fresh filtered query per sub-batch (Supabase caps one response at 1000 rows,
+  // so a large pageSize must be fetched in 1000-row chunks or the oldest drop).
+  const buildQuery = (rFrom: number, rTo: number) => {
+    let query = supabase
+      .from("orders")
+      .select("*", { count: "exact" })
+      .eq("org_id", req.user!.orgId)
+      .order(sortColumn, { ascending: false })
+      .range(rFrom, rTo);
+    if (scopeRole === "Marketer") {
+      query = applyOrderMarketingScope(query, req.user!.marketingAttributionTags, scopeId);
+    } else if (scopeRole === "Sales Rep") {
+      query = query.eq("assigned_rep_id", scopeId);
+    } else if (repId) {
+      query = query.eq("assigned_rep_id", repId as string);
+    }
+    if (status && status !== "All Orders") query = query.eq("status", status);
+    if (source && source !== "All Sources") query = query.eq("source", source);
+    if (search) {
+      const safe = (search as string).replace(/[.,()"\\%_]/g, (ch) => `\\${ch}`);
+      query = query.or(`customer.ilike.%${safe}%,phone.ilike.%${safe}%,id.ilike.%${safe}%`);
+    }
+    if (since) query = query.gt("created_at", since as string);
+    if (updatedSince) query = query.gt("updated_at", updatedSince as string);
+    if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00.000Z`);
+    if (dateTo)   query = query.lte("created_at", `${dateTo}T23:59:59.999Z`);
+    return query;
+  };
 
-  if (status && status !== "All Orders") query = query.eq("status", status);
-  if (source && source !== "All Sources") query = query.eq("source", source);
-  if (search) {
-    // Escape PostgREST filter special characters to prevent filter injection
-    const safe = (search as string).replace(/[.,()"\\%_]/g, (ch) => `\\${ch}`);
-    query = query.or(`customer.ilike.%${safe}%,phone.ilike.%${safe}%,id.ilike.%${safe}%`);
+  const SUPA_MAX = 1000;
+  const rows: any[] = [];
+  let total = 0;
+  for (let offset = 0; offset < pageSize; offset += SUPA_MAX) {
+    const rFrom = windowFrom + offset;
+    const rTo = Math.min(windowFrom + pageSize, rFrom + SUPA_MAX) - 1;
+    const { data, error, count } = await buildQuery(rFrom, rTo);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (typeof count === "number") total = count;
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < SUPA_MAX) break; // last page reached
   }
-  // since=ISO8601 — orders created after this timestamp (initial new-order polling).
-  if (since) query = query.gt("created_at", since as string);
-  // updatedSince=ISO8601 — orders changed after this timestamp. Catches status
-  // updates and edits that don't bump created_at, so collaborating reps see
-  // each other's changes within the poll interval instead of waiting for a
-  // full reload. orders.updated_at is auto-bumped by the set_updated_at trigger.
-  if (updatedSince) query = query.gt("updated_at", updatedSince as string);
-  // dateFrom / dateTo — server-side date range filter (YYYY-MM-DD)
-  if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00.000Z`);
-  if (dateTo)   query = query.lte("created_at", `${dateTo}T23:59:59.999Z`);
-
-  const { data, error, count } = await query;
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json({ data, total: count ?? 0, page: pageNum, pageSize });
+  res.json({ data: rows, total, page: pageNum, pageSize });
 });
 
 // ── POST /api/orders ──────────────────────────────────────

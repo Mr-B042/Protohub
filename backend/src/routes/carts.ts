@@ -11,21 +11,33 @@ const router = Router();
 router.use(requireAuth);
 
 // ── GET /api/carts ───────────────────────────────────────
+// Returns ALL carts for the org. Supabase caps a single select at 1000 rows, so we
+// page with .range() until exhausted — otherwise the oldest carts silently drop once
+// the org crosses 1000, breaking link-repair and the returned-conversion badges.
 router.get("/", async (req, res) => {
-  let query = supabase
-    .from("abandoned_carts")
-    .select("*")
-    .eq("org_id", req.user!.orgId)
-    .order("created_at", { ascending: false });
-  // Sales Reps see assigned carts; Marketers see only attributed cart traffic.
-  if (req.user!.role === "Marketer") {
-    query = applyCartMarketingScope(query, req.user!.marketingAttributionTags, req.user!.id);
-  } else if (req.user!.role === "Sales Rep") {
-    query = query.eq("assigned_rep_id", req.user!.id);
+  const PAGE = 1000;
+  const SAFETY_CAP = 50_000; // hard ceiling so a runaway never loads unbounded memory
+  const all: any[] = [];
+  for (let from = 0; from < SAFETY_CAP; from += PAGE) {
+    let query = supabase
+      .from("abandoned_carts")
+      .select("*")
+      .eq("org_id", req.user!.orgId)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE - 1);
+    // Sales Reps see assigned carts; Marketers see only attributed cart traffic.
+    if (req.user!.role === "Marketer") {
+      query = applyCartMarketingScope(query, req.user!.marketingAttributionTags, req.user!.id);
+    } else if (req.user!.role === "Sales Rep") {
+      query = query.eq("assigned_rep_id", req.user!.id);
+    }
+    const { data, error } = await query;
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    const batch = data ?? [];
+    all.push(...batch);
+    if (batch.length < PAGE) break; // last page reached
   }
-  const { data, error } = await query;
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json(data);
+  res.json(all);
 });
 
 // ── GET /api/carts/by-label/:label ───────────────────────
