@@ -7396,6 +7396,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [linkCopiedId, setLinkCopiedId] = useState<string|null>(null);
   const [linkTestingId, setLinkTestingId] = useState<string|null>(null);
   const [linkTestResults, setLinkTestResults] = useState<Record<string,{ok:boolean;message:string}>>({});
+  const [linkPreviewId, setLinkPreviewId] = useState<string|null>(null);
   const [linkTraffic, setLinkTraffic] = useState<Record<string,{carts:number;orders:number;lastActivity:string|null}>>({});
   const [linkTrafficLoading, setLinkTrafficLoading] = useState(false);
   const [linkDetailLabel, setLinkDetailLabel] = useState<string|null>(null);
@@ -50200,6 +50201,7 @@ ${waybillLineItems(w).length > 1
                                 <p className="m-0 mt-0.5 text-[11px] text-gray-400 truncate">Pixel {c.pixelId} · key: {c.trackingKey}{prod?` · ${prod.name}`:""}</p>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
+                                <button type="button" className={`!min-h-0 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition-colors ${linkPreviewId===c.id?"border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]":"border-gray-200 text-gray-600 hover:bg-gray-50"}`} onClick={()=>setLinkPreviewId(linkPreviewId===c.id?null:c.id)}>Preview</button>
                                 <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-50" disabled={linkTestingId===c.id||!c.hasAccessToken}
                                   onClick={async()=>{
                                     setLinkTestingId(c.id);
@@ -50214,6 +50216,39 @@ ${waybillLineItems(w).length > 1
                                 </button>
                               </div>
                             </div>
+                            {linkPreviewId===c.id&&(
+                              <div className="border-t border-gray-100 bg-gray-50/50 px-4 py-3">
+                                <p className="m-0 mb-2 text-[10px] font-black uppercase tracking-wider text-gray-400">Saved configuration</p>
+                                <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2 text-xs">
+                                  {[
+                                    ["Label", c.label],
+                                    ["Tracking key", c.trackingKey],
+                                    ["Meta Pixel ID", c.pixelId || "—"],
+                                    ["CAPI token", c.hasAccessToken ? "•••••••• saved" : "not set"],
+                                    ["Tracking mode", modeLabel[c.mode] ?? c.mode],
+                                    ["Product", prod?.name ?? "—"],
+                                    ["Thank-you / redirect", c.redirectUrl || "—"],
+                                    ["Landing page", c.landingPageUrl || "—"],
+                                    ["UTM source", c.utmSource || "—"],
+                                    ["UTM medium", c.utmMedium || "—"],
+                                    ["UTM campaign", c.utmCampaign || "—"],
+                                    ["Test event code", c.testEventCode || "—"],
+                                    ["Status", c.active ? "Active" : "Off"],
+                                  ].map(([k,v])=>(
+                                    <div key={k} className="min-w-0">
+                                      <p className="m-0 text-[10px] font-bold uppercase tracking-wider text-gray-400">{k}</p>
+                                      <p className="m-0 text-gray-800 break-words font-medium">{v}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                                {c.landingPageUrl&&c.productId&&(
+                                  <div className="mt-3">
+                                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1">Full embed URL</p>
+                                    <p className="m-0 text-[11px] text-gray-600 break-all font-mono bg-white border border-gray-200 rounded-lg px-2.5 py-2">{embedUrl}</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                             {c.redirectUrl&&<div className="px-4 py-2.5 text-xs text-gray-400">→ <a href={c.redirectUrl} target="_blank" rel="noreferrer" className="text-[#1F8FE0] hover:underline truncate">{c.redirectUrl}</a></div>}
                             {c.landingPageUrl&&c.productId&&(
                               <div className="border-t border-gray-100 bg-gray-50/60 px-4 py-2.5 flex items-center gap-2">
