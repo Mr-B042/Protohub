@@ -188,7 +188,7 @@ type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatch
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type OrderScheduleFilter = "All schedule marks" | "Scheduled Delivered" | "Scheduled Late" | "Scheduled Pending";
 type OrderSource = "All Sources" | "TikTok" | "Facebook" | "Instagram" | "Messenger" | "Audience Network" | "Threads" | "WhatsApp" | "Website" | "Direct";
-type OrderLocation = "All Locations" | "Lagos" | "Abuja" | "Port Harcourt" | "Ibadan";
+type OrderLocation = string; // "All Locations" or any state present in the orders
 type CartStatus = "All statuses" | "Open abandoned" | "In progress" | "Abandoned" | "Assigned" | "Contacted" | "Converted" | "No response" | "Not interested";
 type CartConversionFilter = "All conversion paths" | "Recovered by Team" | "Recovered Delivered" | "Recovered Pending" | "Recovered Failed / Cancelled" | "Customer Finished Later";
 type DeliveryAgent = string;
@@ -14197,6 +14197,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (orderWorkspacePage === "Closed Orders") return CLOSED_ORDER_STATUSES.has(statusForOrder(order));
     return true;
   };
+  // Location filter options — built from the actual states present in orders, so the
+  // dropdown is complete (not the old hard-coded 4 cities).
+  const orderLocationOptions = useMemo(() => {
+    const states = new Set<string>();
+    for (const o of trackedOrders) {
+      const s = (o.state ?? "").trim();
+      if (s) states.add(s);
+    }
+    return ["All Locations", ...Array.from(states).sort((a, b) => a.localeCompare(b))];
+  }, [trackedOrders]);
   const filteredOrderRows = periodOrders.filter((order) => {
     const status = order.status ?? "New";
     const source = order.source ?? orderSourceFromUtm(order.utmSource);
@@ -14231,7 +14241,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             ? scheduleMarker?.label === "Scheduled · Late"
             : scheduleOpenStatuses.includes(status as (typeof scheduleOpenStatuses)[number]) && Boolean(scheduleMarker);
     const matchesSource = orderSource === "All Sources" || source === orderSource;
-    const matchesLocation = orderLocation === "All Locations" || location === orderLocation;
+    const matchesLocation = orderLocation === "All Locations"
+      || (order.state ?? "").trim() === orderLocation
+      || location === orderLocation; // fall back to composite for legacy/no-state rows
     const matchesProduct = matchesProductFilter(order.productId, order.productName, orderProductIds);
     const matchesAssigner = matchesOrderAssignmentScope(order);
     const matchesWorkspace = matchesOrderWorkspacePage(order);
@@ -36228,7 +36240,7 @@ ${waybillLineItems(w).length > 1
                     {orderSources.map((s) => <option key={s}>{s}</option>)}
                   </select>
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order location" value={orderLocation} onChange={(e) => setOrderLocation(e.target.value as OrderLocation)}>
-                    {orderLocations.map((l) => <option key={l}>{l}</option>)}
+                    {orderLocationOptions.map((l) => <option key={l}>{l}</option>)}
                   </select>
                   {canFilterOrdersByAssigner && (
                     <select
