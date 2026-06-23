@@ -7394,6 +7394,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const emptyLinkDraft = () => ({ label:"", pixelId:"", accessToken:"", redirectUrl:"", landingPageUrl:"", utmSource:"facebook", utmMedium:"paid_social", utmCampaign:"", testEventCode:"", mode:"hybrid" as EmbedMetaTrackingMode, productId:"" });
   const [linkDraft, setLinkDraft] = useState(emptyLinkDraft());
   const [linkCopiedId, setLinkCopiedId] = useState<string|null>(null);
+  const [linkTestingId, setLinkTestingId] = useState<string|null>(null);
+  const [linkTestResults, setLinkTestResults] = useState<Record<string,{ok:boolean;message:string}>>({});
   const [linkTraffic, setLinkTraffic] = useState<Record<string,{carts:number;orders:number;lastActivity:string|null}>>({});
   const [linkTrafficLoading, setLinkTrafficLoading] = useState(false);
   const [linkDetailLabel, setLinkDetailLabel] = useState<string|null>(null);
@@ -50104,7 +50106,9 @@ ${waybillLineItems(w).length > 1
 
               {/* ── Links & Tracking tab ── */}
               {embedTab === "Links & Tracking" && currentRole === "Owner" && (() => {
-                const visibleConfigs = metaCapiConfigs.filter(c => c.trackingKey !== "__default__");
+                // Show every saved config — the org-wide Default first, then campaign links.
+                const visibleConfigs = [...metaCapiConfigs].sort((a, b) =>
+                  a.trackingKey === "__default__" ? -1 : b.trackingKey === "__default__" ? 1 : a.label.localeCompare(b.label));
                 const buildEmbedUrl = (c: MetaCapiConfigRecord) => {
                   const base = c.landingPageUrl?.trim() || "";
                   const prod = products.find(p => p.id === c.productId);
@@ -50187,13 +50191,22 @@ ${waybillLineItems(w).length > 1
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <p className="m-0 text-sm font-black text-gray-900 truncate">{c.label}</p>
+                                  {c.trackingKey==="__default__"&&<span className="shrink-0 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-black text-indigo-700">Default · org-wide</span>}
                                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${modeColors[c.mode]??"bg-gray-100 text-gray-500"}`}>{modeLabel[c.mode]??c.mode}</span>
                                   {c.hasAccessToken&&<span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">CAPI ✓</span>}
                                   {c.testEventCode&&<span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700">Test mode</span>}
+                                  {linkTestResults[c.id]&&<span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${linkTestResults[c.id].ok?"bg-emerald-100 text-emerald-700":"bg-rose-100 text-rose-700"}`} title={linkTestResults[c.id].message}>{linkTestResults[c.id].ok?"✓ Working":"⚠ Not working"}</span>}
                                 </div>
                                 <p className="m-0 mt-0.5 text-[11px] text-gray-400 truncate">Pixel {c.pixelId} · key: {c.trackingKey}{prod?` · ${prod.name}`:""}</p>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
+                                <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-50" disabled={linkTestingId===c.id||!c.hasAccessToken}
+                                  onClick={async()=>{
+                                    setLinkTestingId(c.id);
+                                    try { const r=await metaCapiSettingsApi.test({id:c.id}); setLinkTestResults(p=>({...p,[c.id]:{ok:r.ok,message:r.message}})); showToast(r.ok?"✓ CAPI working.":`✗ ${r.message}`); }
+                                    catch(e:any){ setLinkTestResults(p=>({...p,[c.id]:{ok:false,message:e?.message??"Test failed."}})); }
+                                    finally{ setLinkTestingId(null); }
+                                  }}>{linkTestingId===c.id?"Testing…":"Test"}</button>
                                 <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50" onClick={()=>startEdit(c)}>Edit</button>
                                 <button type="button" className="!min-h-0 rounded-lg border border-rose-100 px-2.5 py-1 text-[11px] font-bold text-rose-500 hover:bg-rose-50" onClick={()=>showConfirm(`Remove "${c.label}"?`,async()=>{await metaCapiSettingsApi.delete(c.id);setMetaCapiConfigs(p=>p.filter(x=>x.id!==c.id));showToast("Removed.");},{danger:true,confirmLabel:"Remove"})}>Remove</button>
                                 <button type="button" role="switch" aria-checked={c.active} className="!min-h-0 p-0" onClick={async()=>{await metaCapiSettingsApi.toggle(c.id,!c.active);setMetaCapiConfigs(p=>p.map(x=>x.id===c.id?{...x,active:!c.active}:x));}}>
