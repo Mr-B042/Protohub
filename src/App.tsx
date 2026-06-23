@@ -50785,23 +50785,36 @@ ${waybillLineItems(w).length > 1
                     {/* Connection method selector */}
                     {isOwner && (
                       <section className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-sm">
-                        <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400 mb-3">Connection method</p>
+                        <div className="flex items-center justify-between gap-2 mb-3">
+                          <p className="m-0 text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Connection method</p>
+                          <span className="text-[11px] font-semibold text-[#1F8FE0]">Tap a card to switch ↓</span>
+                        </div>
                         <div className="grid gap-3 sm:grid-cols-2">
                           <button type="button" onClick={() => saveCloudSettings("baileys")} disabled={waCloudSaving}
-                            className={`!min-h-0 text-left rounded-xl border-2 p-4 transition-all ${provider === "baileys" ? "border-[#25D366] bg-[#25D366]/5" : "border-gray-200 hover:border-gray-300"}`}>
+                            className={`group !min-h-0 cursor-pointer text-left rounded-xl border-2 p-4 transition-all hover:shadow-md disabled:cursor-not-allowed ${provider === "baileys" ? "border-[#25D366] bg-[#25D366]/5 ring-2 ring-[#25D366]/20" : "border-gray-200 hover:border-[#25D366]/60 hover:bg-[#25D366]/[0.03]"}`}>
                             <div className="flex items-center gap-2">
+                              <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${provider === "baileys" ? "border-[#25D366] bg-[#25D366]" : "border-gray-300 group-hover:border-[#25D366]"}`}>
+                                {provider === "baileys" && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                              </span>
                               <MessageCircle className="h-4 w-4 text-[#25D366]" />
                               <span className="text-sm font-black text-gray-900">Baileys (QR pairing)</span>
-                              {provider === "baileys" && <span className="ml-auto rounded-full bg-[#25D366] px-2 py-0.5 text-[10px] font-black text-white">Active</span>}
+                              {provider === "baileys"
+                                ? <span className="ml-auto rounded-full bg-[#25D366] px-2 py-0.5 text-[10px] font-black text-white">Active</span>
+                                : <span className="ml-auto text-[10px] font-bold text-gray-400 group-hover:text-[#25D366]">Tap to use</span>}
                             </div>
                             <p className="m-0 mt-1.5 text-[11px] text-gray-500">Free. Scan a QR with any WhatsApp. Higher ban risk for bulk sends. Sends any text + PDF.</p>
                           </button>
                           <button type="button" onClick={() => { if (cloudHasToken) saveCloudSettings("cloud_api"); else showToast("Add your Cloud API credentials below first, then Save."); }} disabled={waCloudSaving}
-                            className={`!min-h-0 text-left rounded-xl border-2 p-4 transition-all ${provider === "cloud_api" ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}>
+                            className={`group !min-h-0 cursor-pointer text-left rounded-xl border-2 p-4 transition-all hover:shadow-md disabled:cursor-not-allowed ${provider === "cloud_api" ? "border-blue-500 bg-blue-50 ring-2 ring-blue-500/20" : "border-gray-200 hover:border-blue-400/70 hover:bg-blue-50/50"}`}>
                             <div className="flex items-center gap-2">
+                              <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${provider === "cloud_api" ? "border-blue-500 bg-blue-500" : "border-gray-300 group-hover:border-blue-400"}`}>
+                                {provider === "cloud_api" && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                              </span>
                               <BarChart3 className="h-4 w-4 text-blue-600" />
                               <span className="text-sm font-black text-gray-900">Meta Cloud API (official)</span>
-                              {provider === "cloud_api" && <span className="ml-auto rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-black text-white">Active</span>}
+                              {provider === "cloud_api"
+                                ? <span className="ml-auto rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-black text-white">Active</span>
+                                : <span className="ml-auto text-[10px] font-bold text-gray-400 group-hover:text-blue-500">{cloudHasToken ? "Tap to use" : "Add token below"}</span>}
                             </div>
                             <p className="m-0 mt-1.5 text-[11px] text-gray-500">Official. Zero ban risk. ~$0.005/msg after 1k free. Business-initiated sends need approved templates.</p>
                           </button>
