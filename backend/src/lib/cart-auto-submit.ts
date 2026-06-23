@@ -16,6 +16,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "./whatsapp.js";
 import { resolveMetaTrackingConfig, sendMetaCapiPurchase } from "./meta-capi.js";
+import { sendTikTokConversion } from "./tiktok-events.js";
 
 const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
 const MAX_IDLE_MS = 15 * 60 * 1000;  // give up after 15 min
@@ -284,5 +285,32 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
       packageName: pkg.name,
       quantity: pkg.quantity ?? 1
     }).catch(() => {});
-  } catch { /* CAPI failure never blocks */ }
+
+    // TikTok Events API — fire for TikTok-sourced orders (customer left, no pixel).
+    // Uses the same config row's TikTok credentials + the captured ttclid.
+    const ttclid = capturePayload.ttclid ?? formContext.ttclid ?? null;
+    const isTikTok = source === "TikTok"
+      || String(capturePayload.utm_source ?? capturePayload.utmSource ?? "").toLowerCase() === "tiktok"
+      || Boolean(ttclid);
+    if (isTikTok && storedMetaConfig?.tiktok_pixel_id && storedMetaConfig?.tiktok_access_token) {
+      void sendTikTokConversion({
+        config: { pixelId: storedMetaConfig.tiktok_pixel_id, accessToken: storedMetaConfig.tiktok_access_token, testEventCode: storedMetaConfig.test_event_code ?? null },
+        eventId: `protohub_purchase_${order.id}`,
+        eventSourceUrl: capturePayload.landingUrl ?? null,
+        clientIp: null,
+        userAgent: null,
+        phone: cart.phone,
+        email: null,
+        ttclid,
+        value: amount,
+        currency: cart.currency ?? "NGN",
+        orderId: String(order.id),
+        productId: product.id,
+        productName: product.name,
+        packageId: pkg.id,
+        packageName: pkg.name,
+        quantity: pkg.quantity ?? 1
+      }).catch(() => {});
+    }
+  } catch { /* tracking failure never blocks */ }
 }

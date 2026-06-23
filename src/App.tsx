@@ -7383,7 +7383,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [metaCapiConfigsLoading, setMetaCapiConfigsLoading] = useState(false);
   const [metaCapiSavingProductId, setMetaCapiSavingProductId] = useState<string | null>(null);
   const [metaCapiAccessTokenDrafts, setMetaCapiAccessTokenDrafts] = useState<Record<string, string>>({});
-  const [metaDefaultDraft, setMetaDefaultDraft] = useState({ pixelId: "", accessToken: "", thankYouUrl: "", testEventCode: "" });
+  const [metaDefaultDraft, setMetaDefaultDraft] = useState({ pixelId: "", accessToken: "", thankYouUrl: "", testEventCode: "", tiktokPixelId: "", tiktokAccessToken: "" });
+  const [metaDefaultTtTesting, setMetaDefaultTtTesting] = useState(false);
+  const [metaDefaultTtTestResult, setMetaDefaultTtTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [metaDefaultSaving, setMetaDefaultSaving] = useState(false);
   const [metaDefaultSaved, setMetaDefaultSaved] = useState(false);
   const [metaDefaultTesting, setMetaDefaultTesting] = useState(false);
@@ -8518,7 +8520,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           setMetaCapiConfigs(Array.isArray(configs) ? configs : []);
           // Pre-fill the Meta settings panel from the __default__ config if it exists
           const def = (Array.isArray(configs) ? configs : []).find((c: MetaCapiConfigRecord) => c.trackingKey === "__default__");
-          if (def) setMetaDefaultDraft(d => ({ ...d, pixelId: def.pixelId ?? "", testEventCode: "" }));
+          if (def) setMetaDefaultDraft(d => ({ ...d, pixelId: def.pixelId ?? "", tiktokPixelId: (def as any).tiktokPixelId ?? "", testEventCode: "" }));
         }
       })
       .catch((err: any) => {
@@ -50040,6 +50042,35 @@ ${waybillLineItems(w).length > 1
                             </div>
                           </div>
                         </div>
+                        {/* TikTok Events API */}
+                        <div className="rounded-xl border border-gray-200 bg-gray-50/40 px-4 py-3.5 space-y-3">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-black text-white text-[10px] font-black">TT</span>
+                            <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-600">TikTok Events API <span className="font-normal normal-case text-gray-400">— for TikTok ad orders</span></p>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div>
+                              <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">TikTok Pixel ID</p>
+                              <input className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-300" placeholder="e.g. CABCDEF01ABC..." value={metaDefaultDraft.tiktokPixelId} onChange={e=>setMetaDefaultDraft(d=>({...d,tiktokPixelId:e.target.value.trim()}))} />
+                            </div>
+                            <div>
+                              <p className="m-0 mb-1.5 text-[11px] font-black uppercase tracking-wider text-gray-400">TikTok Events API access token</p>
+                              <input type="password" autoComplete="off" className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-300" placeholder={(metaCapiConfigs.find(c=>c.trackingKey==="__default__") as any)?.hasTiktokAccessToken?"Token saved — paste to replace":"Paste from TikTok Events Manager"} value={metaDefaultDraft.tiktokAccessToken} onChange={e=>setMetaDefaultDraft(d=>({...d,tiktokAccessToken:e.target.value}))} />
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button type="button" className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                              disabled={metaDefaultTtTesting||!metaDefaultDraft.tiktokPixelId}
+                              onClick={async()=>{
+                                setMetaDefaultTtTesting(true); setMetaDefaultTtTestResult(null);
+                                try { const r=await metaCapiSettingsApi.testTiktok({trackingKey:"__default__",pixelId:metaDefaultDraft.tiktokPixelId,accessToken:metaDefaultDraft.tiktokAccessToken||undefined}); setMetaDefaultTtTestResult({ok:r.ok,message:r.message}); showToast(r.ok?"✓ TikTok connection working.":`✗ ${r.message}`); }
+                                catch(e:any){ setMetaDefaultTtTestResult({ok:false,message:e?.message??"Test failed."}); }
+                                finally{ setMetaDefaultTtTesting(false); }
+                              }}>{metaDefaultTtTesting?"Testing…":"Test TikTok connection"}</button>
+                            {metaDefaultTtTestResult && <span className={`text-xs font-bold ${metaDefaultTtTestResult.ok?"text-emerald-700":"text-rose-700"}`}>{metaDefaultTtTestResult.ok?"✓ Working":`⚠ ${metaDefaultTtTestResult.message}`}</span>}
+                          </div>
+                          <p className="m-0 text-[10px] text-gray-400">Fires <strong>CompletePayment</strong> with the TikTok click ID (ttclid) when a TikTok customer leaves and the server auto-submits — same no-double-count rule as Meta (present customers use the landing-page TikTok pixel).</p>
+                        </div>
                         {/* Server-side auto-submit mode */}
                         <div className="rounded-xl border border-gray-200 bg-gray-50/60 px-4 py-3.5">
                           <p className="m-0 mb-0.5 text-[11px] font-black uppercase tracking-wider text-gray-500">Server-side auto-submit mode</p>
@@ -50066,7 +50097,7 @@ ${waybillLineItems(w).length > 1
                               if(!metaDefaultDraft.pixelId){showToast("Enter your Pixel ID first.");return;}
                               setMetaDefaultSaving(true);
                               try {
-                                await metaCapiSettingsApi.save({trackingKey:"__default__",label:"Default (org-wide)",mode:"hybrid",pixelId:metaDefaultDraft.pixelId,accessToken:metaDefaultDraft.accessToken||undefined,active:true});
+                                await metaCapiSettingsApi.save({trackingKey:"__default__",label:"Default (org-wide)",mode:"hybrid",pixelId:metaDefaultDraft.pixelId,accessToken:metaDefaultDraft.accessToken||undefined,tiktokPixelId:metaDefaultDraft.tiktokPixelId||undefined,tiktokAccessToken:metaDefaultDraft.tiktokAccessToken||undefined,active:true});
                                 setMetaDefaultSaved(true);setMetaDefaultDraft(d=>({...d,accessToken:""}));showToast("✓ Saved.");setTimeout(()=>setMetaDefaultSaved(false),4000);
                               } catch(e:any){showToast(e?.message??"Could not save.");}
                               finally{setMetaDefaultSaving(false);}

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { testMetaCapiConnection } from "../lib/meta-capi.js";
+import { testTikTokConnection } from "../lib/tiktok-events.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -16,8 +17,10 @@ const ConfigSchema = z.object({
   trackingKey:     z.string().trim().min(2).max(120).regex(/^[A-Za-z0-9_][A-Za-z0-9_.:\-]*$/),
   label:           z.string().trim().min(1).max(200),
   mode:            z.enum(["protohub", "hybrid", "landing_page", "off"]).default("hybrid"),
-  pixelId:         z.string().trim().min(5).max(80),
+  pixelId:         z.string().trim().max(80).optional().default(""),
   accessToken:     z.string().trim().max(5000).optional().default(""),
+  tiktokPixelId:     z.string().trim().max(80).optional().default(""),
+  tiktokAccessToken: z.string().trim().max(5000).optional().default(""),
   redirectUrl:     z.string().trim().max(2000).optional().default(""),
   landingPageUrl:  z.string().trim().max(2000).optional().default(""),
   productId:       z.string().uuid().optional().nullable(),
@@ -38,9 +41,12 @@ function presentConfig(row: Record<string, any>) {
     trackingKey:    row.tracking_key,
     label:          row.label,
     mode:           row.mode,
-    pixelId:        row.pixel_id,
+    pixelId:        row.pixel_id ?? "",
     accessToken:    row.access_token ? SECRET_MASK : "",
     hasAccessToken: Boolean(row.access_token),
+    tiktokPixelId:        row.tiktok_pixel_id ?? "",
+    tiktokAccessToken:    row.tiktok_access_token ? SECRET_MASK : "",
+    hasTiktokAccessToken: Boolean(row.tiktok_access_token),
     redirectUrl:    row.redirect_url ?? "",
     landingPageUrl: row.landing_page_url ?? "",
     productId:      row.product_id ?? null,
@@ -79,7 +85,7 @@ router.post("/", async (req, res) => {
 
   const { data: existing } = await supabase
     .from("meta_capi_configs")
-    .select("id, access_token")
+    .select("id, access_token, tiktok_access_token")
     .eq("org_id", req.user!.orgId)
     .eq("tracking_key", trackingKey)
     .maybeSingle();
@@ -88,9 +94,10 @@ router.post("/", async (req, res) => {
   if (!accessToken || accessToken === SECRET_MASK) {
     accessToken = existing?.access_token ?? "";
   }
-  if (!accessToken && trackingKey !== "__default__" && (d.mode === "protohub" || d.mode === "hybrid")) {
-    res.status(400).json({ error: "Paste the Meta CAPI access token before saving." });
-    return;
+  // Preserve the saved TikTok token when the field is blank or masked.
+  let tiktokAccessToken = (d.tiktokAccessToken ?? "").trim();
+  if (!tiktokAccessToken || tiktokAccessToken === SECRET_MASK) {
+    tiktokAccessToken = existing?.tiktok_access_token ?? "";
   }
 
   const payload: Record<string, unknown> = {
@@ -99,8 +106,9 @@ router.post("/", async (req, res) => {
     tracking_key:     trackingKey,
     label:            d.label,
     mode:             d.mode,
-    pixel_id:         d.pixelId,
+    pixel_id:         d.pixelId || null,
     active:           d.active,
+    tiktok_pixel_id:  d.tiktokPixelId || null,
     redirect_url:     d.redirectUrl || null,
     landing_page_url: d.landingPageUrl || null,
     product_id:       d.productId ?? null,
@@ -112,6 +120,7 @@ router.post("/", async (req, res) => {
     updated_at:       new Date().toISOString()
   };
   if (accessToken) payload.access_token = accessToken;
+  if (tiktokAccessToken) payload.tiktok_access_token = tiktokAccessToken;
 
   const { data, error } = await supabase
     .from("meta_capi_configs")
@@ -167,6 +176,30 @@ router.post("/test", async (req, res) => {
   }
 
   const result = await testMetaCapiConnection(pixelId, accessToken, testEventCode);
+  res.json(result);
+});
+
+// ── POST /api/meta-capi-settings/test-tiktok ────────────
+router.post("/test-tiktok", async (req, res) => {
+  const parsed = TestSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const d = parsed.data;
+
+  let pixelId = d.pixelId ?? "";
+  let accessToken = d.accessToken ?? "";
+  const testEventCode = d.testEventCode || undefined;
+
+  if ((d.id || d.trackingKey) && (!accessToken || accessToken === SECRET_MASK)) {
+    let q = supabase.from("meta_capi_configs").select("tiktok_pixel_id, tiktok_access_token").eq("org_id", req.user!.orgId);
+    q = d.id ? q.eq("id", d.id) : q.eq("tracking_key", String(d.trackingKey));
+    const { data } = await q.maybeSingle();
+    if (data) {
+      pixelId = pixelId || data.tiktok_pixel_id || "";
+      accessToken = data.tiktok_access_token || "";
+    }
+  }
+
+  const result = await testTikTokConnection(pixelId, accessToken, testEventCode);
   res.json(result);
 });
 
