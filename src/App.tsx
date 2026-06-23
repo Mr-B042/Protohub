@@ -4399,6 +4399,17 @@ const cartCustomerInfoFields = (cart: AbandonedCartRecord, cfg: CartInfoFormConf
   list.push({ label: "State", value: cart.state, done: Boolean((cart.state ?? "").trim()) });
   return list;
 };
+
+// True when an order was placed by the auto-submit engine (idle countdown or server cron)
+// rather than the customer tapping "Order Now". Source: formContext.autoSubmitted.
+const orderWasAutoSubmitted = (order: { formContext?: Record<string, unknown> | null }): boolean => {
+  const fc = order.formContext;
+  return Boolean(fc && (fc.autoSubmitted === "true" || fc.autoSubmitted === true));
+};
+const orderAutoSubmitSource = (order: { formContext?: Record<string, unknown> | null }): "server" | "form" | null => {
+  if (!orderWasAutoSubmitted(order)) return null;
+  return order.formContext?.autoSubmitSource === "server" ? "server" : "form";
+};
 const cartCustomerInfoCompletion = (cart: AbandonedCartRecord, cfg: CartInfoFormConfig = {}) => {
   const fields = cartCustomerInfoFields(cart, cfg);
   const done = fields.filter((f) => f.done).length;
@@ -36229,8 +36240,15 @@ ${waybillLineItems(w).length > 1
 
                           <div className="relative flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <span className="inline-flex items-center rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-sky-700 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset] dark:border-sky-400/25 dark:bg-sky-400/12 dark:text-sky-100">
-                                Order #{order.id}
+                              <span className="inline-flex items-center gap-2 flex-wrap">
+                                <span className="inline-flex items-center rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-sky-700 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset] dark:border-sky-400/25 dark:bg-sky-400/12 dark:text-sky-100">
+                                  Order #{order.id}
+                                </span>
+                                {orderWasAutoSubmitted(order) && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200" title="Auto-submitted — not tapped by the customer">
+                                    <Zap className="h-2.5 w-2.5" /> Auto
+                                  </span>
+                                )}
                               </span>
                               <h3 className={`mt-4 mb-0 text-[24px] font-black leading-7 tracking-[-0.04em] break-words ${orderTitleTextClass}`}>
                                 {isMarketerOrderView ? marketerLeadLabel(order) : order.customer || "Unnamed customer"}
@@ -36408,7 +36426,14 @@ ${waybillLineItems(w).length > 1
                                   />
                                 </td>
                               )}
-                              <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">{order.id}</td>
+                              <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">
+                                {order.id}
+                                {orderWasAutoSubmitted(order) && (
+                                  <span className="mt-1 flex w-fit items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-200" title={`Auto-submitted by the ${orderAutoSubmitSource(order) === "server" ? "server (customer left with a complete form)" : "form idle-countdown"} — not tapped by the customer`}>
+                                    <Zap className="h-2.5 w-2.5" /> Auto
+                                  </span>
+                                )}
+                              </td>
                               <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{isMarketerOrderView ? marketerLeadLabel(order) : order.customer}</td>
                               {showOrderAssignmentColumn && (
                                 <td className="px-4 py-3.5 whitespace-nowrap">{renderOrderAssigneeBadge(order, "table")}</td>
@@ -57957,7 +57982,13 @@ ${waybillLineItems(w).length > 1
 	              <div className="px-6 py-5 flex flex-col gap-4">
 	                <section className="flex items-start justify-between gap-3 bg-gray-50 rounded-xl p-4">
 	                  <div>
-	                    <span>{selectedOrder.id}</span>
+	                    <span className="inline-flex items-center gap-2">{selectedOrder.id}
+	                      {orderWasAutoSubmitted(selectedOrder) && (
+	                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700" title={`Auto-submitted by the ${orderAutoSubmitSource(selectedOrder) === "server" ? "server (customer left with a complete form)" : "form idle-countdown"} — not tapped by the customer`}>
+	                          <Zap className="h-2.5 w-2.5" /> Auto-submitted
+	                        </span>
+	                      )}
+	                    </span>
 	                    <h3 className="text-base font-bold text-gray-900 mt-0.5">{selectedOrder.customer}</h3>
 	                    <p>{selectedOrder.phone} · {selectedOrder.location ?? orderLocationFromFields(selectedOrder.city ?? "", selectedOrder.state ?? "")}</p>
 	                  </div>
