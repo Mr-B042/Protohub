@@ -4439,7 +4439,9 @@ html.public-order-embed-active,
 html.public-order-embed-active body {
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior-y: contain;
+  /* The form grows to its full iframe height. Let a swipe at its edge chain
+     naturally to the Elementor/WordPress page rather than trapping it here. */
+  overscroll-behavior-y: auto;
   touch-action: pan-y;
 }
 
