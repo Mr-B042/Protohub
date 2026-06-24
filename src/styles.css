@@ -7705,6 +7705,34 @@ tbody tr:hover {
   }
 }
 
+/* The dashboard has a fixed mobile header and drawer. Make the content panel
+   the single scroll root on touch devices; otherwise Chrome can alternate
+   between scrolling the document and the flex child, which makes vertical
+   swipes feel stuck. */
+@media (max-width: 1023px) {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  .app-shell {
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+
+  .app-main-scroll {
+    min-height: 0;
+    height: 100dvh;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+}
+
 /* =============================================================
    Dark mode utility overrides
    ----
