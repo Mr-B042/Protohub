@@ -203,12 +203,16 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  /* Stop the browser's pull-to-refresh / overscroll bounce from firing when an
+     inner scroll area is already at the top (the "scroll up → page yanks down"). */
+  overscroll-behavior-y: contain;
 }
 
 body {
   margin: 0;
   min-width: 0;
   overflow-x: hidden;
+  overscroll-behavior-y: contain;
   font-family: inherit;
 }
 

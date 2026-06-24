@@ -35262,7 +35262,7 @@ ${waybillLineItems(w).length > 1
         )}
 
         {/* Page Content Scrollable Area */}
-        <main ref={mainScrollRef} className={`flex-1 min-h-0 overflow-y-auto px-4 pt-16 pb-2 sm:pb-3 lg:p-8 ${isSpying ? "!pt-[6.25rem] lg:!pt-8" : ""}`}>
+        <main ref={mainScrollRef} className={`flex-1 min-h-0 overscroll-y-contain overflow-y-auto px-4 pt-16 pb-2 sm:pb-3 lg:p-8 ${isSpying ? "!pt-[6.25rem] lg:!pt-8" : ""}`}>
           <div className="flex flex-col gap-4 sm:gap-6 pb-4 sm:pb-6 lg:pb-8">
           {activePage === "Dashboard" ? (
             <>
