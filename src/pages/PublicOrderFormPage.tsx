@@ -2077,6 +2077,54 @@ export default function PublicOrderFormPage() {
     };
   }, [params, publicOrderSubmitted, publicUpsellOffer, loading, orderFormCrossSells.length, orderFormPackageId, orderFormState]);
 
+  // Some page builders keep an iframe's touch gesture inside the embedded
+  // document but do not move its scroll root. Make a one-finger vertical swipe
+  // scroll the order form itself. This only runs inside an iframe; direct form
+  // links retain the browser's normal touch scrolling.
+  useEffect(() => {
+    if (typeof window === "undefined" || window.parent === window) return;
+
+    let previousTouchY: number | null = null;
+    const resetTouch = () => {
+      previousTouchY = null;
+    };
+    const onTouchStart = (event: TouchEvent) => {
+      previousTouchY = event.touches.length === 1 ? event.touches[0].clientY : null;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 1 || previousTouchY === null) {
+        resetTouch();
+        return;
+      }
+
+      const touchY = event.touches[0].clientY;
+      const deltaY = previousTouchY - touchY;
+      previousTouchY = touchY;
+      if (Math.abs(deltaY) < 1) return;
+
+      const scrollRoot = document.scrollingElement as HTMLElement | null;
+      if (!scrollRoot) return;
+
+      const maxScrollTop = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+      const nextScrollTop = Math.min(maxScrollTop, Math.max(0, scrollRoot.scrollTop + deltaY));
+      if (nextScrollTop === scrollRoot.scrollTop) return;
+
+      scrollRoot.scrollTop = nextScrollTop;
+      if (event.cancelable) event.preventDefault();
+    };
+
+    document.addEventListener("touchstart", onTouchStart, { passive: true });
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    document.addEventListener("touchend", resetTouch, { passive: true });
+    document.addEventListener("touchcancel", resetTouch, { passive: true });
+    return () => {
+      document.removeEventListener("touchstart", onTouchStart);
+      document.removeEventListener("touchmove", onTouchMove);
+      document.removeEventListener("touchend", resetTouch);
+      document.removeEventListener("touchcancel", resetTouch);
+    };
+  }, []);
+
   useEffect(() => {
     if (!publicProductId) {
       setProducts([]);
