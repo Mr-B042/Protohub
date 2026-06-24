@@ -2077,14 +2077,32 @@ export default function PublicOrderFormPage() {
     };
   }, [params, publicOrderSubmitted, publicUpsellOffer, loading, orderFormCrossSells.length, orderFormPackageId, orderFormState]);
 
-  // Some page builders keep an iframe's touch gesture inside the embedded
-  // document but do not move its scroll root. Make a one-finger vertical swipe
-  // scroll the order form itself. This only runs inside an iframe; direct form
-  // links retain the browser's normal touch scrolling.
+  // The order form grows to its full height inside Elementor. Wheel and touch
+  // gestures still land in the iframe though, so relay them to the parent page
+  // whenever this document has no remaining scroll range of its own.
   useEffect(() => {
     if (typeof window === "undefined" || window.parent === window) return;
 
     let previousTouchY: number | null = null;
+    const relayParentScroll = (deltaY: number) => {
+      if (!Number.isFinite(deltaY) || Math.abs(deltaY) < 1) return;
+      try {
+        window.parent.postMessage({ type: "ordo-scroll-parent", deltaY }, "*");
+      } catch {
+        // Ignore parent-window messaging errors.
+      }
+    };
+    const scrollWithinForm = (deltaY: number) => {
+      const scrollRoot = document.scrollingElement as HTMLElement | null;
+      if (!scrollRoot) return false;
+
+      const maxScrollTop = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+      const nextScrollTop = Math.min(maxScrollTop, Math.max(0, scrollRoot.scrollTop + deltaY));
+      if (nextScrollTop === scrollRoot.scrollTop) return false;
+
+      scrollRoot.scrollTop = nextScrollTop;
+      return true;
+    };
     const resetTouch = () => {
       previousTouchY = null;
     };
@@ -2102,24 +2120,25 @@ export default function PublicOrderFormPage() {
       previousTouchY = touchY;
       if (Math.abs(deltaY) < 1) return;
 
-      const scrollRoot = document.scrollingElement as HTMLElement | null;
-      if (!scrollRoot) return;
-
-      const maxScrollTop = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
-      const nextScrollTop = Math.min(maxScrollTop, Math.max(0, scrollRoot.scrollTop + deltaY));
-      if (nextScrollTop === scrollRoot.scrollTop) return;
-
-      scrollRoot.scrollTop = nextScrollTop;
+      if (!scrollWithinForm(deltaY)) relayParentScroll(deltaY);
+      if (event.cancelable) event.preventDefault();
+    };
+    const onWheel = (event: WheelEvent) => {
+      const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
+      const deltaY = event.deltaY * scale;
+      if (!scrollWithinForm(deltaY)) relayParentScroll(deltaY);
       if (event.cancelable) event.preventDefault();
     };
 
     document.addEventListener("touchstart", onTouchStart, { passive: true });
     document.addEventListener("touchmove", onTouchMove, { passive: false });
+    document.addEventListener("wheel", onWheel, { passive: false });
     document.addEventListener("touchend", resetTouch, { passive: true });
     document.addEventListener("touchcancel", resetTouch, { passive: true });
     return () => {
       document.removeEventListener("touchstart", onTouchStart);
       document.removeEventListener("touchmove", onTouchMove);
+      document.removeEventListener("wheel", onWheel);
       document.removeEventListener("touchend", resetTouch);
       document.removeEventListener("touchcancel", resetTouch);
     };
