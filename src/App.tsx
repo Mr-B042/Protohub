@@ -1712,6 +1712,11 @@ const repChangeStatuses: Exclude<OrderStatus, "All Orders" | "New">[] = ["Confir
 const statusChangeActions: OrderStatusAction[] = [...repChangeStatuses, "Reschedule"];
 const repCallOutcomeOptions = [
   "Confirmed",
+  "Ready",
+  "Unreachable",
+  "Callback",
+  "Rejected",
+  "No Coverage",
   "No Answer",
   "Wrong Number",
   "Refused",
@@ -1724,14 +1729,14 @@ const repCallOutcomeOptions = [
 ] as const;
 const repCallOutcomesByStatus: Record<OrderStatusAction, readonly (typeof repCallOutcomeOptions)[number][]> = {
   "New": [],
-  "Confirmed": ["Confirmed"],
+  "Confirmed": ["Ready", "Confirmed"],
   "In Process": ["Confirmed"],
   "Dispatched": [],
   "Delivered": [],
   "Cancelled": ["Refused"],
-  "Postponed": ["No Answer", "Not Picking", "Not Ready", "Will Call Back", "Scheduled Callback", "Not Reached", "Travelled"],
-  "Failed": ["Wrong Number"],
-  "Reschedule": ["Will Call Back", "Scheduled Callback", "Not Ready", "Travelled"]
+  "Postponed": ["Unreachable", "Callback", "No Answer", "Not Picking", "Not Ready", "Will Call Back", "Scheduled Callback", "Not Reached", "Travelled"],
+  "Failed": ["Rejected", "No Coverage", "Wrong Number"],
+  "Reschedule": ["Callback", "Will Call Back", "Scheduled Callback", "Not Ready", "Travelled"]
 };
 const repCallOutcomeStatusHelper: Partial<Record<OrderStatusAction, string>> = {
   "Confirmed": "Pick the matching call result for this confirmed order.",
@@ -1741,6 +1746,29 @@ const repCallOutcomeStatusHelper: Partial<Record<OrderStatusAction, string>> = {
   "Failed": "Mark the main failure reason so the team can spot it quickly.",
   "Reschedule": "Choose the follow-up reason, then pick the new date and time below."
 };
+// One-tap common results: each sets the pipeline status AND the call result together,
+// so reps stop typing the same dispositions into notes. Grouped by what the order
+// becomes — 🟢 alive/positive, 🟡 still working (network/busy), 🔴 didn't deliver.
+const repQuickOutcomes: { label: string; status: OrderStatusAction; outcome: string; idle: string; active: string }[] = [
+  { label: "Ready", status: "Confirmed", outcome: "Ready",
+    idle: "border-emerald-200 bg-emerald-50/60 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100",
+    active: "border-emerald-400 bg-emerald-100 text-emerald-900 dark:border-emerald-400/55 dark:bg-emerald-500/25 dark:text-emerald-50" },
+  { label: "Unreachable", status: "Postponed", outcome: "Unreachable",
+    idle: "border-amber-200 bg-amber-50/60 text-amber-900 hover:bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100",
+    active: "border-amber-400 bg-amber-100 text-amber-950 dark:border-amber-400/55 dark:bg-amber-500/25 dark:text-amber-50" },
+  { label: "Callback", status: "Postponed", outcome: "Callback",
+    idle: "border-amber-200 bg-amber-50/60 text-amber-900 hover:bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100",
+    active: "border-amber-400 bg-amber-100 text-amber-950 dark:border-amber-400/55 dark:bg-amber-500/25 dark:text-amber-50" },
+  { label: "Rejected", status: "Failed", outcome: "Rejected",
+    idle: "border-red-200 bg-red-50/60 text-red-800 hover:bg-red-50 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-100",
+    active: "border-red-400 bg-red-100 text-red-900 dark:border-red-400/55 dark:bg-red-500/25 dark:text-red-50" },
+  { label: "No Coverage", status: "Failed", outcome: "No Coverage",
+    idle: "border-red-200 bg-red-50/60 text-red-800 hover:bg-red-50 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-100",
+    active: "border-red-400 bg-red-100 text-red-900 dark:border-red-400/55 dark:bg-red-500/25 dark:text-red-50" },
+  { label: "Wrong Number", status: "Failed", outcome: "Wrong Number",
+    idle: "border-red-200 bg-red-50/60 text-red-800 hover:bg-red-50 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-100",
+    active: "border-red-400 bg-red-100 text-red-900 dark:border-red-400/55 dark:bg-red-500/25 dark:text-red-50" }
+];
 type FollowUpAttemptPattern = {
   label: string;
   group: FollowUpOutcomeGroup;
@@ -58390,6 +58418,29 @@ ${waybillLineItems(w).length > 1
                     const showEmptyOutcomeState = availableOutcomes.length === 0 && callOutcomeDraft !== "__custom__";
                     return (
                       <>
+                        <div className={`${orderPanelMutedClass} rounded-xl p-4`}>
+                          <p className={`text-sm font-semibold m-0 ${orderTitleTextClass}`}>Quick result — tap one</p>
+                          <p className={`text-xs m-0 mt-1 ${orderMutedTextClass}`}>Sets the status and the call result together — no need to type it in notes.</p>
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            {repQuickOutcomes.map((quick) => {
+                              const isActive = statusChangeDraft === quick.status && callOutcomeDraft === quick.outcome;
+                              return (
+                                <button
+                                  key={quick.label}
+                                  type="button"
+                                  className={`!min-h-0 px-3.5 py-2 rounded-full border text-xs font-bold transition-colors ${isActive ? quick.active : quick.idle}`}
+                                  onClick={() => {
+                                    setStatusChangeDraft(quick.status);
+                                    setCallOutcomeDraft(quick.outcome);
+                                    setCallOutcomeCustom("");
+                                  }}
+                                >
+                                  {quick.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
 	                <label><span>Current Status</span><input value={selectedOrder.status ?? "New"} readOnly /></label>
                         <label>
                           <span>New Status *</span>
