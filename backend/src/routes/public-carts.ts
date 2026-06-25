@@ -76,6 +76,45 @@ const JourneyEventSchema = z.object({
   metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional()
 });
 
+// ── Multi-ad touchpoints ──────────────────────────────────
+// One cart = one ad session. When duplicate carts (same phone+product across
+// separate ad clicks) are merged, each visit's ad snapshot is preserved here so
+// the team can see a lead came back through a different ad/campaign/price.
+type CartTouchpoint = {
+  at: string; cartId: string; source: string | null;
+  utmSource: string | null; utmCampaign: string | null; utmContent: string | null; utmTerm: string | null;
+  utmId: string | null; fbclid: string | null; fbc: string | null; fbp: string | null; adId: string | null;
+  clientIp: string | null; packageName: string | null; amount: number | null;
+};
+const tpStr = (v: unknown): string | null =>
+  typeof v === "string" ? (v.trim() || null) : v == null ? null : String(v);
+function touchpointFromPayload(
+  cartId: string, at: string, payload: unknown,
+  extra?: { source?: string | null; packageName?: string | null; amount?: number | null }
+): CartTouchpoint {
+  const cp = (payload && typeof payload === "object" && !Array.isArray(payload)) ? payload as Record<string, any> : {};
+  const ctx = (cp.formContext && typeof cp.formContext === "object" && !Array.isArray(cp.formContext)) ? cp.formContext as Record<string, any> : {};
+  return {
+    at, cartId,
+    source: tpStr(extra?.source),
+    utmSource: tpStr(cp.utmSource), utmCampaign: tpStr(cp.utmCampaign), utmContent: tpStr(cp.utmContent), utmTerm: tpStr(cp.utmTerm),
+    utmId: tpStr(ctx.utmId), fbclid: tpStr(ctx.fbclid), fbc: tpStr(ctx.fbc), fbp: tpStr(ctx.fbp), adId: tpStr(ctx.adId),
+    clientIp: tpStr(cp.clientIp ?? ctx.clientIp),
+    packageName: tpStr(extra?.packageName ?? cp.packageName),
+    amount: typeof extra?.amount === "number" ? extra.amount : null
+  };
+}
+// Combine touchpoint lists, unique by cartId, sorted oldest→newest.
+function mergeTouchpoints(...lists: (CartTouchpoint[] | null | undefined)[]): CartTouchpoint[] {
+  const byCart = new Map<string, CartTouchpoint>();
+  for (const list of lists) {
+    for (const tp of (Array.isArray(list) ? list : [])) {
+      if (tp && typeof tp.cartId === "string" && !byCart.has(tp.cartId)) byCart.set(tp.cartId, tp);
+    }
+  }
+  return Array.from(byCart.values()).sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+}
+
 // ── POST /api/public/carts ────────────────────────────────
 // Captures a partially-filled embed-form draft.
 // Org context derives from the product's org. No authentication.
@@ -132,7 +171,7 @@ router.post("/", captureRateLimit, async (req, res) => {
   // (i.e., the same product chain). Prevents cross-org id collisions.
   const { data: existing } = await supabase
     .from("abandoned_carts")
-    .select("id, org_id, status")
+    .select("id, org_id, status, created_at, touchpoints, capture_payload")
     .eq("id", d.id)
     .maybeSingle();
 
@@ -213,6 +252,50 @@ router.post("/", captureRateLimit, async (req, res) => {
       ({ data, error } = await updateQuery);
     }
     if (error) { res.status(500).json({ error: error.message }); return; }
+
+    // ── Late-phone dedupe (the gap that birthed duplicate carts) ──────────
+    // The cart is usually first created with "No phone yet" / a half-typed number,
+    // so the insert-time dedupe finds nothing. Once the FULL phone lands here (via
+    // update), collapse any OLDER open cart for the same phone+product into THIS
+    // one — keeping the active session's cart, preserving every ad touch.
+    const digits = (d.phone ?? "").replace(/\D/g, "");
+    if (data && digits.length >= 10) {
+      const window7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { data: dupes } = await supabase
+        .from("abandoned_carts")
+        .select("id, created_at, capture_payload, touchpoints, source, package_name, amount")
+        .eq("org_id", product.org_id)
+        .eq("product_id", d.productId)
+        .neq("id", d.id)
+        .not("status", "eq", "Converted")
+        .is("merged_into", null)
+        .lt("created_at", (data as any).created_at)  // only absorb OLDER carts → no ping-pong
+        .or(`phone.eq.${d.phone.trim()},phone.eq.0${digits.slice(-10)},phone.eq.${digits},phone.eq.234${digits.slice(-10)}`)
+        .gte("last_activity", window7d)
+        .limit(10);
+      if (dupes && dupes.length) {
+        const ownTouch = touchpointFromPayload(d.id, (data as any).created_at ?? new Date().toISOString(), (data as any).capture_payload, { source: row.source, packageName: row.package_name, amount: row.amount });
+        const absorbedTouches = dupes.map((c: any) =>
+          touchpointFromPayload(c.id, c.created_at ?? new Date().toISOString(), c.capture_payload, { source: c.source, packageName: c.package_name, amount: c.amount })
+        );
+        const touchpoints = mergeTouchpoints(
+          (data as any).touchpoints, [ownTouch], absorbedTouches,
+          ...dupes.map((c: any) => c.touchpoints as CartTouchpoint[] | null)
+        );
+        const mergedFrom = [
+          ...((((data as any).dedup_merged_from as string[] | null) ?? [])),
+          ...dupes.map((c: any) => c.id)
+        ];
+        await supabase.from("abandoned_carts")
+          .update({ touchpoints, dedup_merged_from: mergedFrom, dedup_signal: "phone" })
+          .eq("id", d.id).eq("org_id", product.org_id);
+        await supabase.from("abandoned_carts")
+          .update({ merged_into: d.id })
+          .in("id", dupes.map((c: any) => c.id)).eq("org_id", product.org_id);
+        (data as any).touchpoints = touchpoints;
+      }
+    }
+
     res.json(data);
     return;
   }
@@ -238,6 +321,7 @@ router.post("/", captureRateLimit, async (req, res) => {
         .eq("product_id", d.productId)
         .neq("id", d.id)
         .not("status", "eq", "Converted")
+        .is("merged_into", null)
         .or(`phone.eq.${d.phone.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`)
         .gte("last_activity", window7d)
         .order("last_activity", { ascending: false })
@@ -255,6 +339,7 @@ router.post("/", captureRateLimit, async (req, res) => {
         .eq("product_id", d.productId)
         .neq("id", d.id)
         .not("status", "eq", "Converted")
+        .is("merged_into", null)
         .eq("email", d.email.trim())
         .gte("last_activity", window7d)
         .order("last_activity", { ascending: false })
@@ -273,6 +358,7 @@ router.post("/", captureRateLimit, async (req, res) => {
         .eq("product_id", d.productId)
         .neq("id", d.id)
         .not("status", "eq", "Converted")
+        .is("merged_into", null)
         .gte("last_activity", ipWindow)
         .order("last_activity", { ascending: false })
         .limit(5);
@@ -283,16 +369,20 @@ router.post("/", captureRateLimit, async (req, res) => {
     }
 
     if (matchId && dedupSignal) {
-      // Safety: fetch the existing cart's current merged_from list before updating
+      // Safety: fetch the existing cart's merged_from + ORIGINAL attribution before
+      // the ...row update overwrites capture_payload, so we keep its own ad touch.
       const { data: existing } = await supabase
         .from("abandoned_carts")
-        .select("dedup_merged_from")
+        .select("dedup_merged_from, touchpoints, capture_payload, created_at, source, package_name, amount")
         .eq("id", matchId)
         .single();
       const mergedFrom: string[] = [
         ...((existing?.dedup_merged_from as string[] | null) ?? []),
         d.id  // record the ghost cart ID that was absorbed
       ];
+      const survivorTouch = touchpointFromPayload(matchId, (existing as any)?.created_at ?? new Date().toISOString(), (existing as any)?.capture_payload, { source: (existing as any)?.source, packageName: (existing as any)?.package_name, amount: (existing as any)?.amount });
+      const ghostTouch = touchpointFromPayload(d.id, new Date().toISOString(), row.capture_payload, { source: row.source, packageName: row.package_name, amount: row.amount });
+      const touchpoints = mergeTouchpoints((existing as any)?.touchpoints, [survivorTouch, ghostTouch]);
 
       const { data: merged } = await supabase
         .from("abandoned_carts")
@@ -300,7 +390,8 @@ router.post("/", captureRateLimit, async (req, res) => {
           ...row,
           id: matchId,
           dedup_merged_from: mergedFrom,
-          dedup_signal: dedupSignal
+          dedup_signal: dedupSignal,
+          touchpoints
         })
         .eq("id", matchId)
         .eq("org_id", product.org_id)

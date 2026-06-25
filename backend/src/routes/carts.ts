@@ -23,6 +23,7 @@ router.get("/", async (req, res) => {
       .from("abandoned_carts")
       .select("*")
       .eq("org_id", req.user!.orgId)
+      .is("merged_into", null)  // hide carts absorbed into another (the "Merged" state)
       .order("created_at", { ascending: false })
       .range(from, from + PAGE - 1);
     // Sales Reps see assigned carts; Marketers see only attributed cart traffic.
