@@ -81,10 +81,12 @@ const checks = [
   },
   {
     name: "Global mobile topbar and content offset",
-    why: "Admin mobile pages need the restored fixed topbar and matching content offset from Dashboard through Settings.",
+    why: "Admin pages need the restored fixed topbar, desktop sidebar-aware topbar offset, and matching content offset from Dashboard through Settings.",
     required: [
       "app-topbar fixed inset-x-0 top-0 z-30",
-      "lg:static lg:z-auto",
+      "lg:left-[72px]",
+      "lg:left-[280px]",
+      "lg:pt-[5.5rem]",
       "overflow-y-auto px-4 pt-16 pb-2"
     ]
   },
