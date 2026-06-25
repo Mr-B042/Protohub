@@ -154,6 +154,11 @@ export function formatOrderForWhatsAppDispatch(order: WhatsAppDispatchOrderRow) 
   const productName = cleanText(order.product_name);
   const packageName = cleanText(order.package_name);
   const mainPackageDispatch = preferredPackageLine(productName, packageName, positiveNumber(order.quantity, 1));
+  // Break down what's inside the main package (components + free gifts) the same way
+  // cross-sell add-ons are itemised, so the group sees the full contents — not just
+  // the package name + price.
+  const mainPackageDetail = componentDetail(order.package_components_snapshot);
+  const mainPackageLabel = hasMultiplePricedPackages ? "Preferred Package 1" : "Preferred Package";
 
   const lines = [
     `Full Name:  ${cleanText(order.customer) || "—"}`,
@@ -162,9 +167,7 @@ export function formatOrderForWhatsAppDispatch(order: WhatsAppDispatchOrderRow) 
     `State: ${cleanText(order.state) || "—"}`,
     `City:  ${cleanText(order.city) || "—"}`,
     `Full Delivery: ${fullDeliveryLabel}`,
-    hasMultiplePricedPackages
-      ? `Preferred Package 1: ${mainPackageDispatch} = ${formatMoney(mainOfferTotal, order.currency)}`
-      : `Preferred Package: ${mainPackageDispatch} = ${formatMoney(mainOfferTotal, order.currency)}`
+    `${mainPackageLabel}: ${mainPackageDispatch}${mainPackageDetail ? `\nItems: ${mainPackageDetail}` : ""} = ${formatMoney(mainOfferTotal, order.currency)}`
   ];
 
   crossSellLines.forEach((line, index) => {
