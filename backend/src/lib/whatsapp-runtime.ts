@@ -2554,6 +2554,11 @@ export async function listUserWhatsAppGroups(orgId: string, userId: string) {
   }).sort((a, b) => a.subject.localeCompare(b.subject));
 }
 
+// Last dispatch time per connected account (in-memory; runtime is single-process),
+// used to space out group sends so a rep clearing a batch doesn't burst.
+const lastGroupSendAt = new Map<string, number>();
+const GROUP_SEND_MIN_GAP_MS = 2500;
+
 export async function sendConnectedUserWhatsAppToJid(orgId: string, userId: string, destination: string, body: string) {
   const socket = await ensureUserWhatsAppReady(orgId, userId);
   if (!socket) {
@@ -2567,6 +2572,19 @@ export async function sendConnectedUserWhatsAppToJid(orgId: string, userId: stri
   if (!jid.endsWith("@g.us") && !jid.endsWith("@s.whatsapp.net")) {
     throw new Error("Choose a WhatsApp group or phone destination before direct sending.");
   }
+
+  // Anti-ban spacing: enforce a minimum gap since this account's last send, then add
+  // random jitter — so back-to-back order dispatches into the group don't form a bot
+  // burst pattern (previously this path sent instantly; the per-minute cap was the
+  // only brake). Mirrors the jitter already on customer messages.
+  const acctKey = `${orgId}:${userId}`;
+  const sinceLast = Date.now() - (lastGroupSendAt.get(acctKey) ?? 0);
+  if (sinceLast < GROUP_SEND_MIN_GAP_MS) {
+    await new Promise((resolve) => setTimeout(resolve, GROUP_SEND_MIN_GAP_MS - sinceLast));
+  }
+  const jitterMs = 800 + Math.floor(Math.random() * 1700);
+  await new Promise((resolve) => setTimeout(resolve, jitterMs));
+  lastGroupSendAt.set(acctKey, Date.now());
 
   const sent = await socket.sendMessage(jid, { text: body });
   return {

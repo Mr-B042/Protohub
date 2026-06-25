@@ -97,7 +97,7 @@ const numericAmount = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 const roundMoney = (value: number) => Math.round(value * 100) / 100;
-const directWhatsAppPerMinuteLimit = Math.max(1, Number(process.env.WHATSAPP_USER_DIRECT_RATE_LIMIT_PER_MINUTE ?? 5) || 5);
+const directWhatsAppPerMinuteLimit = Math.max(1, Number(process.env.WHATSAPP_USER_DIRECT_RATE_LIMIT_PER_MINUTE ?? 3) || 3);
 const directWhatsAppDailyLimit = Math.max(1, Number(process.env.WHATSAPP_USER_DIRECT_RATE_LIMIT_PER_DAY ?? 80) || 80);
 const hasOwn = (record: Record<string, unknown>, key: string) =>
   Object.prototype.hasOwnProperty.call(record, key);
