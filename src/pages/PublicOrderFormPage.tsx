@@ -244,7 +244,13 @@ const PUBLIC_ORDER_VALIDATION_ORDER: PublicOrderFieldKey[] = [
   "commitment"
 ];
 
-const sanitizePhoneDigitsInput = (value: string) => value.replace(/\D/g, "").slice(0, 15);
+const sanitizePhoneDigitsInput = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 15);
+  // Auto-fix a stray leading digit before a Nigerian 0-number (e.g. a customer typing
+  // "1" then 08065440878 → "108065440878"). Drop the junk digit so it's never stored /
+  // sent to a dead WhatsApp number. Only triggers on the exact 12-digit malformed shape.
+  return digits.length === 12 && /^\d0[789]\d{9}$/.test(digits) ? digits.slice(1) : digits;
+};
 
 type PendingUpsellOffer = {
   orderId: string;
@@ -4398,7 +4404,7 @@ export default function PublicOrderFormPage() {
                       name="tel"
                       value={orderFormPhone}
                       onChange={(event) => {
-                        setOrderFormPhone(event.target.value.replace(/[^\d\s\-]/g, ""));
+                        setOrderFormPhone(sanitizePhoneDigitsInput(event.target.value));
                         clearFieldError("phone");
                       }}
                       placeholder="Your Phone Number *"
