@@ -2305,7 +2305,10 @@ export async function startWhatsAppRuntime() {
     .from("whatsapp_settings")
     .select("org_id, enabled, connection_status, pairing_mode, pairing_phone")
     .eq("enabled", true)
-    .in("connection_status", ["pairing", "connected", "errored"]);
+    // Include "connecting": a deploy/conflict leaves accounts stranded there, and the
+    // old list skipped them — so they never auto-recovered. Restore them too (stored
+    // creds reconnect without a re-scan).
+    .in("connection_status", ["pairing", "connecting", "connected", "errored"]);
 
   if (error) {
     logger.warn("whatsapp runtime bootstrap failed", { error: error.message });
@@ -2325,7 +2328,10 @@ export async function startWhatsAppRuntime() {
     .from("whatsapp_user_accounts")
     .select("org_id, user_id, enabled, connection_status, pairing_mode, pairing_phone")
     .eq("enabled", true)
-    .in("connection_status", ["pairing", "connected", "errored"]);
+    // Include "connecting": a deploy/conflict leaves accounts stranded there, and the
+    // old list skipped them — so they never auto-recovered. Restore them too (stored
+    // creds reconnect without a re-scan).
+    .in("connection_status", ["pairing", "connecting", "connected", "errored"]);
 
   if (userError) {
     logger.warn("user whatsapp runtime bootstrap failed", { error: userError.message });
