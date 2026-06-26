@@ -21,4 +21,6 @@ google-services.json
 *.apk
 *.aab
 *.keystore
+# Exception: the public download APK is intentionally served from the app domain
+!public/protohub.apk
 *.jks
