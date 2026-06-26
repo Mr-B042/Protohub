@@ -251,6 +251,12 @@ function normalizePhoneForWhatsApp(phone: string): string | null {
   if (!digits.startsWith("0") && digits.length === 10) {
     return `234${digits}`;
   }
+  // Stray leading digit before a Nigerian 0-number (e.g. a customer typed "1" then
+  // "08065440878" → "108065440878"). Drop the junk digit + leading 0 → 234 + 10 digits.
+  // Without this it fell into the international catch-all below and went to a dead JID.
+  if (digits.length === 12 && /^0[789]\d{9}$/.test(digits.slice(1))) {
+    return `234${digits.slice(2)}`;
+  }
   if (!digits.startsWith("0") && digits.length >= 11 && digits.length <= 15) {
     return digits;
   }
