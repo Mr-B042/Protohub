@@ -295,7 +295,7 @@ router.post("/refresh", async (req, res) => {
 // localStorage when an Owner/Admin has bumped the version.
 router.get("/me", requireAuth, async (req, res) => {
   touchUserPresence(req.user!.id).catch(() => {});
-  const orgSelectLegacy = "cache_version, name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end";
+  const orgSelectLegacy = "cache_version, name, logo_url, android_app_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end";
   const orgSelectBase = `${orgSelectLegacy}, smart_stock_lookback_days, smart_stock_dormant_days, smart_stock_critical_days_cover, smart_stock_watch_days_cover, smart_stock_low_threshold`;
   const orgSelectWithAdTracking = `${orgSelectBase}, ad_tracking_campaign_labels, ad_tracking_creative_labels`;
   let org: Record<string, unknown> | null = null;
@@ -336,7 +336,7 @@ router.get("/me", requireAuth, async (req, res) => {
   const response: Record<string, unknown> = {
     user: req.user,
     cacheVersion: org?.cache_version ?? 0,
-    branding: { name: org?.name ?? "", logoUrl: org?.logo_url ?? "" },
+    branding: { name: org?.name ?? "", logoUrl: org?.logo_url ?? "", androidAppUrl: org?.android_app_url ?? "" },
     payroll: {
       topPerformerBonusEnabled: !!org?.top_performer_bonus_enabled,
       topPerformerBonusAmount: Number(org?.top_performer_bonus_amount ?? 0)
@@ -382,6 +382,7 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
   const updates: Record<string, unknown> = {};
   if (typeof req.body.name === "string") updates.name = req.body.name.trim();
   if (typeof req.body.logoUrl === "string") updates.logo_url = req.body.logoUrl;
+  if (typeof req.body.androidAppUrl === "string") updates.android_app_url = req.body.androidAppUrl.trim() || null;
   if (typeof req.body.topPerformerBonusEnabled === "boolean") updates.top_performer_bonus_enabled = req.body.topPerformerBonusEnabled;
   if (typeof req.body.topPerformerBonusAmount === "number") updates.top_performer_bonus_amount = req.body.topPerformerBonusAmount;
   if (typeof req.body.timezone === "string" && req.body.timezone.trim()) updates.timezone = req.body.timezone.trim();
@@ -401,7 +402,7 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
   if (typeof req.body.workingDayStart === "string" && req.body.workingDayStart.trim()) updates.working_day_start = req.body.workingDayStart.trim();
   if (typeof req.body.workingDayEnd === "string" && req.body.workingDayEnd.trim()) updates.working_day_end = req.body.workingDayEnd.trim();
   if (!Object.keys(updates).length) { res.status(400).json({ error: "No fields to update." }); return; }
-  const orgSettingsSelect = "name, logo_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end";
+  const orgSettingsSelect = "name, logo_url, android_app_url, top_performer_bonus_enabled, top_performer_bonus_amount, timezone, admin_cart_notifications, working_schedule_enabled, working_days, working_day_start, working_day_end";
   let { data, error } = await supabase
     .from("organizations")
     .update(updates)
@@ -431,6 +432,7 @@ router.patch("/org-branding", requireAuth, async (req, res) => {
   const response: Record<string, unknown> = {
     name: data?.name ?? "",
     logoUrl: data?.logo_url ?? "",
+    androidAppUrl: data?.android_app_url ?? "",
     topPerformerBonusEnabled: !!data?.top_performer_bonus_enabled,
     topPerformerBonusAmount: Number(data?.top_performer_bonus_amount ?? 0),
     timezone: data?.timezone ?? "Africa/Lagos",
