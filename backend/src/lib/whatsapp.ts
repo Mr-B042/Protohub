@@ -1552,6 +1552,9 @@ type OrderEventPayload = {
   scheduledDate?: string | null;
   assignedRepId?: string | null;
   crossSellLines?: Array<{ productName?: string | null; displayName?: string | null; quantity?: number | null; amount?: number | null }> | null;
+  // The main package's included items (components + free gifts) — so the order
+  // breakdown lists what's inside the package, not just its name.
+  packageComponentsSnapshot?: Array<{ productName?: string | null; quantity?: number | null; isFreeGift?: boolean | null; hiddenFromCustomer?: boolean | null }> | null;
   // For media (product images / videos passed from the product catalogue)
   productImageUrl?: string | null;
   productVideoUrl?: string | null;
@@ -1568,15 +1571,24 @@ const customerWhatsAppTarget = (order: Pick<OrderEventPayload, "phone" | "whatsa
 // Build the addon lines string for template interpolation.
 // Returns empty string when no addons so the template line collapses cleanly.
 function buildAddonsLine(order: OrderEventPayload, currency?: string): string {
-  const lines = order.crossSellLines ?? [];
-  if (!lines.length) return "";
   const cur = currency ?? order.currency ?? "NGN";
-  return lines.map(l => {
+  const parts: string[] = [];
+  // What's inside the main package (components + free gifts), customer-visible only.
+  for (const c of (order.packageComponentsSnapshot ?? [])) {
+    if (c?.hiddenFromCustomer) continue;
+    const name = (c?.productName ?? "").trim();
+    if (!name) continue;
+    const qty = Math.max(1, Math.round(Number(c?.quantity ?? 1) || 1));
+    parts.push(`  + ${c?.isFreeGift ? "FREE " : ""}${qty} pc${qty === 1 ? "" : "s"} of ${name}`);
+  }
+  // Cross-sell add-ons (priced).
+  for (const l of (order.crossSellLines ?? [])) {
     const name = l.displayName ?? l.productName ?? "Add-on";
     const qty  = l.quantity ? ` ${l.quantity} pc${l.quantity === 1 ? "" : "s"}` : "";
     const amt  = l.amount != null ? ` — ${cur} ${l.amount.toLocaleString("en-NG")}` : "";
-    return `  + ${name}${qty}${amt}`;
-  }).join("\n") + "\n";
+    parts.push(`  + ${name}${qty}${amt}`);
+  }
+  return parts.length ? parts.join("\n") + "\n" : "";
 }
 
 /** Anti-ban: customer messages have a tighter per-recipient daily cap */

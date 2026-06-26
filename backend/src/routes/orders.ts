@@ -899,6 +899,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (r
     city: (data as any).city ?? null,
     state: (data as any).state ?? null,
     crossSellLines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null,
+    packageComponentsSnapshot: Array.isArray((data as any).package_components_snapshot) ? (data as any).package_components_snapshot : null,
     productImageUrl: null as string | null,
     productVideoUrl: null as string | null
   };
@@ -1746,6 +1747,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       state: (data as any).state ?? null,
       scheduledDate: data.scheduled_date ?? undefined,
       crossSellLines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null,
+      packageComponentsSnapshot: Array.isArray((data as any).package_components_snapshot) ? (data as any).package_components_snapshot : null,
       productImageUrl: null as string | null,
       productVideoUrl: null as string | null
     };

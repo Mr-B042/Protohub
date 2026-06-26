@@ -1316,6 +1316,9 @@ router.post("/", submitRateLimit, async (req, res) => {
     productVideoUrl: (pkg as any)?.video_url ?? null,
     crossSellLines: Array.isArray((order as any).cross_sell_lines)
       ? (order as any).cross_sell_lines
+      : null,
+    packageComponentsSnapshot: Array.isArray((order as any).package_components_snapshot)
+      ? (order as any).package_components_snapshot
       : null
   };
   sendOrderNewCustomerWhatsApp(product.org_id, waOrderPayload).catch((err) =>
