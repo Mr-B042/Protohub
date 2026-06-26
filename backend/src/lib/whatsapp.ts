@@ -1688,7 +1688,8 @@ export async function sendOrderNewCustomerWhatsApp(
                 productName: (l.displayName ?? l.productName) ?? undefined,
                 quantity: l.quantity ?? undefined,
                 amount: l.amount ?? undefined
-              })) ?? null
+              })) ?? null,
+              packageComponentsSnapshot: order.packageComponentsSnapshot ?? null
             });
           } catch (err) {
             logger.warn("wa order_new: pdf generation failed for follow-up", {

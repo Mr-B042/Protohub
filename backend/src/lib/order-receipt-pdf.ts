@@ -14,6 +14,7 @@ type ReceiptOrder = {
   source?: string | null;
   scheduledDate?: string | null;
   crossSellLines?: Array<{ productName?: string; quantity?: number; amount?: number }> | null;
+  packageComponentsSnapshot?: Array<{ productName?: string | null; quantity?: number | null; isFreeGift?: boolean | null; hiddenFromCustomer?: boolean | null }> | null;
 };
 
 export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub"): Promise<Buffer> {
@@ -80,6 +81,18 @@ export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub
     }
     if (order.source)       addRow("Channel", order.source);
     if (order.scheduledDate) addRow("Delivery date", order.scheduledDate);
+
+    // What's inside the package (components + free gifts), customer-visible only.
+    const includes = (order.packageComponentsSnapshot ?? []).filter(c => c && !c.hiddenFromCustomer && (c.productName ?? "").trim());
+    if (includes.length) {
+      rowY += 4;
+      doc.fillColor(MUTED).fontSize(7).font("Helvetica-Bold")
+        .text("PACKAGE INCLUDES", 28, rowY); rowY += 10;
+      for (const c of includes) {
+        const qty = Math.max(1, Math.round(Number(c.quantity ?? 1) || 1));
+        addRow(`  ${c.productName} ${qty} pcs`, c.isFreeGift ? "FREE" : "Included");
+      }
+    }
 
     // Cross-sell / add-ons
     if (order.crossSellLines?.length) {
