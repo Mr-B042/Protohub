@@ -2,9 +2,16 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { isPerUserWhatsAppDispatch } from "../lib/whatsapp-dispatch-mode.js";
 
 const router = Router();
 router.use(requireAuth);
+
+// Shared mode = only Owner/Admin manage the org's destinations. Per-user mode =
+// every member manages their OWN. Returns 403 (shared) for non-admins.
+function canManageDestinations(role: string, perUser: boolean): boolean {
+  return perUser || role === "Owner" || role === "Admin";
+}
 
 const BaseDestinationSchema = z.object({
   label: z.string().trim().min(1).max(120),
@@ -51,12 +58,13 @@ function destinationPayload(orgId: string, userId: string, data: z.infer<typeof 
   return payload;
 }
 
-async function clearOtherDefaults(orgId: string, _userId: string, exceptId?: string) {
-  // Default is org-wide now (shared setup), so clear across the whole org.
+async function clearOtherDefaults(orgId: string, userId: string, perUser: boolean, exceptId?: string) {
+  // Shared mode: default is org-wide. Per-user mode: clear only the member's own.
   let query = supabase
     .from("whatsapp_user_destinations")
     .update({ is_default: false })
     .eq("org_id", orgId);
+  if (perUser) query = query.eq("user_id", userId);
   if (exceptId) query = query.neq("id", exceptId);
   const { error } = await query;
   if (error) throw error;
@@ -65,11 +73,14 @@ async function clearOtherDefaults(orgId: string, _userId: string, exceptId?: str
 // Org-wide shared setup: every member sees the same group + agent destinations the
 // admin/owner created. Only Owner/Admin can add/edit/delete (gated on the mutations).
 router.get("/", async (req, res) => {
+  const perUser = await isPerUserWhatsAppDispatch(req.user!.orgId);
   const includeInactive = ["1", "true", "yes"].includes(String(req.query.includeInactive ?? "").toLowerCase());
   let query = supabase
     .from("whatsapp_user_destinations")
     .select("*, agent:agents!whatsapp_user_destinations_assigned_agent_id_fkey(id, name, zone, primary_base_state)")
-    .eq("org_id", req.user!.orgId)
+    .eq("org_id", req.user!.orgId);
+  if (perUser) query = query.eq("user_id", req.user!.id);  // per-user: only your own setup
+  query = query
     .order("is_default", { ascending: false })
     .order("last_used_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
@@ -80,10 +91,15 @@ router.get("/", async (req, res) => {
     res.status(500).json({ error: error.message });
     return;
   }
-  res.json({ destinations: data ?? [] });
+  res.json({ destinations: data ?? [], perUserDispatch: perUser });
 });
 
-router.post("/", requireRole("Owner", "Admin"), async (req, res) => {
+router.post("/", async (req, res) => {
+  const perUser = await isPerUserWhatsAppDispatch(req.user!.orgId);
+  if (!canManageDestinations(req.user!.role, perUser)) {
+    res.status(403).json({ error: "Only the owner/admin manages the shared WhatsApp setup." });
+    return;
+  }
   const parsed = DestinationSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -91,7 +107,7 @@ router.post("/", requireRole("Owner", "Admin"), async (req, res) => {
   }
 
   try {
-    if (parsed.data.isDefault) await clearOtherDefaults(req.user!.orgId, req.user!.id);
+    if (parsed.data.isDefault) await clearOtherDefaults(req.user!.orgId, req.user!.id, perUser);
     const { data, error } = await supabase
       .from("whatsapp_user_destinations")
       .insert(destinationPayload(req.user!.orgId, req.user!.id, parsed.data))
@@ -105,7 +121,12 @@ router.post("/", requireRole("Owner", "Admin"), async (req, res) => {
   }
 });
 
-router.patch("/:id", requireRole("Owner", "Admin"), async (req, res) => {
+router.patch("/:id", async (req, res) => {
+  const perUser = await isPerUserWhatsAppDispatch(req.user!.orgId);
+  if (!canManageDestinations(req.user!.role, perUser)) {
+    res.status(403).json({ error: "Only the owner/admin manages the shared WhatsApp setup." });
+    return;
+  }
   const parsed = PatchDestinationSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -113,15 +134,14 @@ router.patch("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   }
 
   try {
-    // Owner/Admin may edit ANY org destination (shared setup), not just their own.
-    if (parsed.data.isDefault) await clearOtherDefaults(req.user!.orgId, req.user!.id, String(req.params.id));
-    const { data, error } = await supabase
+    if (parsed.data.isDefault) await clearOtherDefaults(req.user!.orgId, req.user!.id, perUser, String(req.params.id));
+    let updateQuery = supabase
       .from("whatsapp_user_destinations")
       .update(destinationPayload(req.user!.orgId, req.user!.id, parsed.data))
       .eq("id", req.params.id)
-      .eq("org_id", req.user!.orgId)
-      .select()
-      .single();
+      .eq("org_id", req.user!.orgId);
+    if (perUser) updateQuery = updateQuery.eq("user_id", req.user!.id);  // per-user: only your own
+    const { data, error } = await updateQuery.select().single();
 
     if (error) throw error;
     res.json(data);
@@ -130,12 +150,19 @@ router.patch("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   }
 });
 
-router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
-  const { error } = await supabase
+router.delete("/:id", async (req, res) => {
+  const perUser = await isPerUserWhatsAppDispatch(req.user!.orgId);
+  if (!canManageDestinations(req.user!.role, perUser)) {
+    res.status(403).json({ error: "Only the owner/admin manages the shared WhatsApp setup." });
+    return;
+  }
+  let delQuery = supabase
     .from("whatsapp_user_destinations")
     .delete()
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId);
+  if (perUser) delQuery = delQuery.eq("user_id", req.user!.id);  // per-user: only your own
+  const { error } = await delQuery;
 
   if (error) {
     res.status(500).json({ error: error.message });

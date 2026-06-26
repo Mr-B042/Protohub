@@ -8,6 +8,7 @@ import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, s
 import { FOLLOW_UP_RECOVERY_BUCKETS } from "../lib/follow-up-outcomes.js";
 import { buildPackageComponentSnapshot, orderInventoryLinesFromRow, primaryInventoryProductId, type OrderInventoryLine } from "../lib/order-inventory.js";
 import { formatOrderForWhatsAppDispatch, type WhatsAppDispatchOrderRow } from "../lib/order-whatsapp-dispatch.js";
+import { isPerUserWhatsAppDispatch } from "../lib/whatsapp-dispatch-mode.js";
 import { logger } from "../lib/logger.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -211,7 +212,8 @@ async function loadUserWhatsAppAccount(orgId: string, userId: string) {
 // Shared dispatch: every rep's direct send routes through the ONE connected account in
 // the org (the admin/owner who scanned the QR and is in the groups), so reps don't each
 // need to connect their own WhatsApp. Falls back to the actor if none is connected.
-async function resolveOrgDispatchAccountUserId(orgId: string, fallbackUserId: string): Promise<string> {
+async function resolveOrgDispatchAccountUserId(orgId: string, fallbackUserId: string, perUser = false): Promise<string> {
+  if (perUser) return fallbackUserId;  // per-user mode: dispatch from the actor's OWN account
   const { data } = await supabase
     .from("whatsapp_user_accounts")
     .select("user_id")
@@ -225,12 +227,14 @@ async function resolveOrgDispatchAccountUserId(orgId: string, fallbackUserId: st
 
 // Destinations are an ORG-SHARED setup now (admin/owner create, everyone dispatches
 // with them), so these loaders are scoped to the org, not the requesting user.
-async function loadDefaultWhatsAppDestination(orgId: string, _userId: string) {
-  const { data, error } = await supabase
+async function loadDefaultWhatsAppDestination(orgId: string, userId: string, perUser = false) {
+  let query = supabase
     .from("whatsapp_user_destinations")
     .select("*")
     .eq("org_id", orgId)
-    .eq("active", true)
+    .eq("active", true);
+  if (perUser) query = query.eq("user_id", userId);  // per-user mode: each member's own setup
+  const { data, error } = await query
     .order("is_default", { ascending: false })
     .order("last_used_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
@@ -240,14 +244,15 @@ async function loadDefaultWhatsAppDestination(orgId: string, _userId: string) {
   return data as WhatsAppDestinationRow | null;
 }
 
-async function loadOwnedWhatsAppDestination(orgId: string, _userId: string, destinationId: string) {
-  const { data, error } = await supabase
+async function loadOwnedWhatsAppDestination(orgId: string, userId: string, destinationId: string, perUser = false) {
+  let query = supabase
     .from("whatsapp_user_destinations")
     .select("*")
     .eq("id", destinationId)
     .eq("org_id", orgId)
-    .eq("active", true)
-    .single();
+    .eq("active", true);
+  if (perUser) query = query.eq("user_id", userId);
+  const { data, error } = await query.single();
   if (error) throw error;
   return data as WhatsAppDestinationRow;
 }
@@ -1022,12 +1027,14 @@ router.get("/:id/whatsapp-dispatch/preview", requireRole("Owner", "Admin", "Mana
       return;
     }
 
-    // Direct send routes through the org's ONE shared connected account (the admin/owner
-    // who scanned the QR), so reps see Direct send enabled even without connecting their own.
-    const dispatchUserId = await resolveOrgDispatchAccountUserId(req.user!.orgId, req.user!.id);
+    // Shared mode: Direct send routes through the org's ONE connected account (admin/owner)
+    // so reps see Direct enabled without connecting their own. Per-user mode: it routes
+    // through the actor's OWN account + their own destinations.
+    const perUser = await isPerUserWhatsAppDispatch(req.user!.orgId);
+    const dispatchUserId = await resolveOrgDispatchAccountUserId(req.user!.orgId, req.user!.id, perUser);
     const [account, defaultDestination] = await Promise.all([
       loadUserWhatsAppAccount(req.user!.orgId, dispatchUserId),
-      loadDefaultWhatsAppDestination(req.user!.orgId, req.user!.id)
+      loadDefaultWhatsAppDestination(req.user!.orgId, req.user!.id, perUser)
     ]);
     const recipient = defaultDestination ? destinationRecipient(defaultDestination) : { recipientJid: "", recipientPhone: null, directTarget: "" };
     const canDirect = !!(
@@ -1082,8 +1089,9 @@ router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "
       return;
     }
 
+    const perUser = await isPerUserWhatsAppDispatch(req.user!.orgId);
     const savedDestination = parsed.data.destinationId
-      ? await loadOwnedWhatsAppDestination(req.user!.orgId, req.user!.id, parsed.data.destinationId)
+      ? await loadOwnedWhatsAppDestination(req.user!.orgId, req.user!.id, parsed.data.destinationId, perUser)
       : null;
     const destination = resolveDispatchDestination(parsed.data, savedDestination);
     const recipient = destinationRecipient(destination);
@@ -1143,8 +1151,8 @@ router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "
       return;
     }
 
-    // Route through the org's shared connected account (not the rep's own).
-    const dispatchUserId = await resolveOrgDispatchAccountUserId(req.user!.orgId, req.user!.id);
+    // Shared mode → org's connected account; per-user mode → the actor's own.
+    const dispatchUserId = await resolveOrgDispatchAccountUserId(req.user!.orgId, req.user!.id, perUser);
     const account = await loadUserWhatsAppAccount(req.user!.orgId, dispatchUserId);
     if (account?.connection_status !== "connected") {
       const dispatch = await insertWhatsAppDispatchLog({

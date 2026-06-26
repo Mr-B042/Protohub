@@ -60,6 +60,7 @@ function defaultSettings(orgId: string) {
     org_id: orgId,
     enabled: false,
     assistant_outcome_autofill_enabled: true,
+    per_user_dispatch: false,
     provider: "baileys",
     connection_status: "disconnected",
     connected_phone: "",
@@ -96,6 +97,7 @@ const UpsellItemSchema = z.object({
 const SettingsSchema = z.object({
   enabled: z.boolean(),
   assistant_outcome_autofill_enabled: z.boolean().default(true),
+  per_user_dispatch: z.boolean().optional(),
   provider: z.enum(["baileys", "cloud_api"]).default("baileys"),
   triggers: z.record(z.boolean()),
   templates: z.record(TemplateSchema),
@@ -196,6 +198,7 @@ router.put("/", requireOwner, async (req, res) => {
     templates: normalizeTemplateMap(d.templates, { ...DEFAULT_WHATSAPP_TEMPLATES }),
     updated_at: new Date().toISOString()
   };
+  if (d.per_user_dispatch !== undefined) payload.per_user_dispatch = d.per_user_dispatch;
   if (d.upsell_config !== undefined) payload.upsell_config = d.upsell_config;
   if (d.cloud_api_phone_number_id !== undefined) payload.cloud_api_phone_number_id = d.cloud_api_phone_number_id || null;
   if (d.cloud_api_waba_id !== undefined) payload.cloud_api_waba_id = d.cloud_api_waba_id || null;
