@@ -8679,10 +8679,12 @@ article.public-order-card.public-form-clean .public-order-submit-button:disabled
   align-items: center;
   gap: 20px;
 }
-.public-form-layout:has(.public-form-clean) .public-form-clean { width: 100%; max-width: 640px; margin: 0 auto; }
+/* Fill the embed container (Elementor box / iframe) instead of capping at 640px and
+   leaving space when the box is wider — the box width is the merchant's chosen width. */
+.public-form-layout:has(.public-form-clean) .public-form-clean { width: 100%; max-width: 100%; margin: 0 auto; }
 .public-form-layout:has(.public-form-clean) .public-order-summary-rail {
   width: 100%;
-  max-width: 640px;
+  max-width: 100%;
   position: static !important;
 }
 @media (max-width: 768px) { article.public-order-card.public-form-clean { padding: 16px; } }
