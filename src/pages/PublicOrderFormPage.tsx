@@ -2029,14 +2029,14 @@ export default function PublicOrderFormPage() {
   useEffect(() => {
     if (!params) return;
     const measureHeight = () => {
-      const content = document.querySelector<HTMLElement>(".public-order-page");
-      if (content) {
-        const rect = content.getBoundingClientRect();
-        return Math.ceil(rect.top + rect.height + 16);
-      }
       const body = document.body;
       const html = document.documentElement;
+      const content = document.querySelector<HTMLElement>(".public-order-page");
+      const contentBottom = content ? content.getBoundingClientRect().bottom + 16 : 0;
+      // Use the MAX of the content bottom and the document/scroll heights so we never
+      // under-report (which would clip the iframe in the embed).
       return Math.ceil(Math.max(
+        contentBottom,
         body?.scrollHeight ?? 0,
         body?.offsetHeight ?? 0,
         html.scrollHeight,
@@ -2055,13 +2055,24 @@ export default function PublicOrderFormPage() {
       send();
       window.requestAnimationFrame(send);
     };
-    const timers = [80, 180, 350, 700, 1200, 2000, 3500, 5000].map((delay) => window.setTimeout(send, delay));
+    const timers = [80, 180, 350, 700, 1200, 2000, 3500, 5000, 8000].map((delay) => window.setTimeout(send, delay));
     const ro = new ResizeObserver(send);
     const requestResize = (event: MessageEvent) => {
       if (event.data?.type === "ordo-request-resize") schedule();
     };
+    // Observe the CONTENT element, not just the viewport — documentElement's box is
+    // the viewport and never fires on content growth (image loads, taller packages).
+    const content = document.querySelector<HTMLElement>(".public-order-page");
+    if (content) ro.observe(content);
     ro.observe(document.documentElement);
     if (document.body) ro.observe(document.body);
+    // Re-measure when images finish loading — they expand the form after first paint.
+    const onImgLoad = () => schedule();
+    const imgs = Array.from(document.images);
+    imgs.forEach((img) => { if (!img.complete) img.addEventListener("load", onImgLoad); });
+    // Catch dynamically-added content (new package cards, upsell, etc.).
+    const mo = new MutationObserver(() => schedule());
+    if (document.body) mo.observe(document.body, { childList: true, subtree: true });
     window.addEventListener("load", schedule);
     window.addEventListener("resize", schedule);
     window.addEventListener("orientationchange", schedule);
@@ -2069,6 +2080,8 @@ export default function PublicOrderFormPage() {
     schedule();
     return () => {
       ro.disconnect();
+      mo.disconnect();
+      imgs.forEach((img) => img.removeEventListener("load", onImgLoad));
       timers.forEach((timer) => window.clearTimeout(timer));
       window.removeEventListener("load", schedule);
       window.removeEventListener("resize", schedule);
