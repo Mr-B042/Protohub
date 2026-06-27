@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { getFollowUpBoard, runFollowUpClose } from "../lib/follow-up-kpi.js";
+import { getFollowUpBoard, getFollowUpGrid, runFollowUpClose } from "../lib/follow-up-kpi.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -18,6 +18,23 @@ router.get("/board", async (req, res) => {
   try {
     const board = await getFollowUpBoard(req.user!.orgId, repId, date);
     res.json(board);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── GET /api/follow-up-kpi/grid ──────────────────────────
+// Day-by-day log grid (orders × the week's working days). Sales Reps see their own;
+// Owner/Admin/Manager may scope to a rep via ?repId=. ?weekStart=YYYY-MM-DD (Monday)
+// for older weeks; defaults to the current week.
+router.get("/grid", async (req, res) => {
+  const role = req.user!.role;
+  const isPrivileged = role === "Owner" || role === "Admin" || role === "Manager";
+  const repId = isPrivileged ? (typeof req.query.repId === "string" ? req.query.repId : null) : req.user!.id;
+  const weekStart = typeof req.query.weekStart === "string" ? req.query.weekStart : undefined;
+  try {
+    const grid = await getFollowUpGrid(req.user!.orgId, repId, weekStart);
+    res.json(grid);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
