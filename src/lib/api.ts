@@ -96,6 +96,16 @@ function extractErrorMessage(payload: any, fallback: string) {
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+// These routes are part of starting/recovering a session, so a 401 from them
+// is the actual form error (for example "Invalid email or password"), not a
+// stale dashboard session that should refresh/reload the app.
+const SESSION_START_ENDPOINTS = new Set([
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/reset-password",
+  "/api/auth/refresh"
+]);
+
 // ── Spy mode: the app sets this when the Owner is viewing-as another user ──
 let _spyUserId: string | null = null;
 export function setApiSpyUserId(userId: string | null) {
@@ -111,6 +121,7 @@ async function request<T>(
   transientAttempt = 0
 ): Promise<T> {
   const token = auth.getAccessToken();
+  const isSessionStartEndpoint = SESSION_START_ENDPOINTS.has(path);
   let res: Response;
   try {
     res = await fetchWithApiFailover(path, {
@@ -118,7 +129,7 @@ async function request<T>(
       cache: "no-store", // never read from or write to HTTP cache
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(token && !isSessionStartEndpoint ? { Authorization: `Bearer ${token}` } : {}),
         ...(_spyUserId ? { "X-Spy-User-Id": _spyUserId } : {})
       },
       body: body !== undefined ? JSON.stringify(body) : undefined
@@ -137,7 +148,7 @@ async function request<T>(
   }
 
   // Auto-refresh on 401 (token expired)
-  if (res.status === 401 && !retried) {
+  if (res.status === 401 && !retried && !isSessionStartEndpoint) {
     const refreshed = await tryRefresh();
     if (refreshed) return request<T>(method, path, body, true, transientAttempt);
     auth.clear();
