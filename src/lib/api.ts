@@ -421,6 +421,20 @@ export const ordersApi = {
   logContactAttempt: (id: string, body: unknown) => post<any>(`/api/orders/${id}/contact-attempts`, body)
 };
 
+// ── Follow-up KPI: daily logging scoreboard + miss review ────
+export const followUpKpiApi = {
+  board: (params?: { repId?: string; date?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.repId) qs.set("repId", params.repId);
+    if (params?.date) qs.set("date", params.date);
+    const s = qs.toString();
+    return get<any>(`/api/follow-up-kpi/board${s ? `?${s}` : ""}`);
+  },
+  misses: (state: string = "pending") => get<any[]>(`/api/follow-up-kpi/misses?state=${encodeURIComponent(state)}`),
+  approveMiss: (id: string) => post<any>(`/api/follow-up-kpi/misses/${id}/approve`, {}),
+  waiveMiss: (id: string) => post<any>(`/api/follow-up-kpi/misses/${id}/waive`, {})
+};
+
 // ── Batch unit-economics ─────────────────────────────────
 export const batchesApi = {
   list: () => get<any[]>("/api/batches"),
