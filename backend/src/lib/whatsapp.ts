@@ -1971,10 +1971,10 @@ export async function sendOrderUpsellWhatsApp(
   const customerState = order.state?.trim();
   if (customerState && upsellCfgFull.productId) {
     const { data: agentStock } = await supabase
-      .from("agent_location_inventory").select("quantity")
+      .from("agent_location_stock").select("quantity")
       .eq("org_id", orgId).eq("product_id", upsellCfgFull.productId).gt("quantity", 0).limit(1).maybeSingle();
     if (!agentStock) {
-      logger.info("wa order_upsell: skipped — no stock in customer state", { orgId, orderId: order.id, state: customerState });
+      logger.info("wa order_upsell: skipped — no agent stock for upsell product", { orgId, orderId: order.id, state: customerState });
       return;
     }
   }
