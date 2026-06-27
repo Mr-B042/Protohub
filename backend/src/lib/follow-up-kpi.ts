@@ -229,3 +229,148 @@ export async function runFollowUpCloseAllOrgs(dateKey?: string): Promise<void> {
     }
   }
 }
+
+// ── Day-by-day log grid (Google-Sheets style) ─────────────
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function mondayOfWeek(dateKey: string): string {
+  const dow = dowOf(dateKey);
+  const back = dow === 0 ? 6 : dow - 1;
+  const d = new Date(`${dateKey}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - back);
+  return d.toISOString().slice(0, 10);
+}
+function addDays(dateKey: string, n: number): string {
+  const d = new Date(`${dateKey}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+export type FollowUpGridCell = {
+  state: "logged" | "missed" | "today";
+  outcome?: string | null;
+  channels?: string[];
+  calls?: number;
+  attempts?: number;
+  reached?: boolean;
+};
+export type FollowUpGrid = {
+  weekStart: string;
+  isCurrentWeek: boolean;
+  days: Array<{ key: string; label: string; isToday: boolean }>;
+  summary: { attendedToday: number; dueToday: number; unattendedToday: number; workingDayToday: boolean };
+  rows: Array<{
+    orderId: string;
+    customer: string | null;
+    phone: string | null;
+    repId: string | null;
+    repName: string | null;
+    status: string;
+    createdKey: string;
+    cells: Record<string, FollowUpGridCell>;
+  }>;
+};
+
+// Orders as rows, the week's working days (Mon–Sat) as columns, each cell the day's
+// log: logged (outcome + channels), missed (recorded penalty), or today (due, fill in).
+export async function getFollowUpGrid(orgId: string, repId?: string | null, weekStartKey?: string): Promise<FollowUpGrid> {
+  const todayKey = lagosDateKey(new Date());
+  const weekStart = weekStartKey ?? mondayOfWeek(todayKey);
+  const days = Array.from({ length: 6 }, (_, i) => {
+    const key = addDays(weekStart, i);
+    return { key, label: `${WEEKDAY_SHORT[dowOf(key)]} ${Number(key.slice(8, 10))}`, isToday: key === todayKey };
+  });
+  const isCurrentWeek = weekStart === mondayOfWeek(todayKey);
+
+  const board = await getFollowUpBoard(orgId, repId, todayKey);
+  const summary = {
+    attendedToday: board.attendedCount,
+    dueToday: board.dueCount,
+    unattendedToday: board.unattendedCount,
+    workingDayToday: board.workingDay
+  };
+
+  let orderQuery = supabase
+    .from("orders")
+    .select("id, assigned_rep_id, customer, phone, status, created_at, next_follow_up_at, scheduled_at, scheduled_date")
+    .eq("org_id", orgId)
+    .in("status", IN_SCOPE_STATUSES as unknown as string[])
+    .not("assigned_rep_id", "is", null);
+  if (repId) orderQuery = orderQuery.eq("assigned_rep_id", repId);
+  const { data: orders } = await orderQuery;
+  const orderRows = (orders ?? []) as Array<{
+    id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
+    status: string; created_at: string; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
+  }>;
+  if (orderRows.length === 0) return { weekStart, isCurrentWeek, days, summary, rows: [] };
+  const orderIds = orderRows.map((o) => o.id);
+
+  const repIds = Array.from(new Set(orderRows.map((o) => o.assigned_rep_id).filter(Boolean))) as string[];
+  const repNameById = new Map<string, string>();
+  if (repIds.length) {
+    const { data: reps } = await supabase.from("users").select("id, name").in("id", repIds);
+    for (const r of (reps ?? []) as Array<{ id: string; name: string }>) repNameById.set(r.id, r.name);
+  }
+
+  // Attempts within the week, grouped per order+day (latest outcome wins).
+  const { data: attempts } = await supabase
+    .from("order_contact_attempts")
+    .select("order_id, channel, channels, customer_reached, outcome_code, attempted_at")
+    .eq("org_id", orgId)
+    .in("order_id", orderIds)
+    .gte("attempted_at", lagosStartOfDayUtc(weekStart))
+    .lt("attempted_at", lagosStartOfDayUtc(addDays(weekStart, 6)))
+    .order("attempted_at", { ascending: true });
+  const byOrderDay = new Map<string, { attempts: number; calls: number; channels: Set<string>; reached: boolean; outcome: string | null }>();
+  for (const a of (attempts ?? []) as Array<{ order_id: string; channel: string | null; channels: string[] | null; customer_reached: boolean | null; outcome_code: string | null; attempted_at: string }>) {
+    const k = `${a.order_id}|${lagosDateKey(a.attempted_at)}`;
+    const e = byOrderDay.get(k) ?? { attempts: 0, calls: 0, channels: new Set<string>(), reached: false, outcome: null };
+    e.attempts++;
+    const chans = Array.isArray(a.channels) && a.channels.length ? a.channels : (a.channel ? [a.channel] : []);
+    for (const c of chans) e.channels.add(c);
+    if (chans.includes("call")) e.calls++;
+    if (a.customer_reached) e.reached = true;
+    if (a.outcome_code) e.outcome = a.outcome_code; // ascending → last (latest) wins
+    byOrderDay.set(k, e);
+  }
+
+  // Recorded misses (the authoritative red cells).
+  const { data: misses } = await supabase
+    .from("follow_up_misses")
+    .select("order_id, miss_date")
+    .eq("org_id", orgId)
+    .in("order_id", orderIds)
+    .gte("miss_date", weekStart)
+    .lte("miss_date", addDays(weekStart, 5));
+  const missSet = new Set((misses ?? []).map((m) => `${m.order_id}|${m.miss_date}`));
+
+  const todayObligation = new Map(board.obligations.map((o) => [o.orderId, o]));
+
+  const rows = orderRows.map((o) => {
+    const createdKey = lagosDateKey(o.created_at);
+    const cells: Record<string, FollowUpGridCell> = {};
+    const todayOb = todayObligation.get(o.id);
+    for (const d of days) {
+      const k = `${o.id}|${d.key}`;
+      const logged = byOrderDay.get(k);
+      if (logged) {
+        cells[d.key] = { state: "logged", outcome: logged.outcome, channels: Array.from(logged.channels), calls: logged.calls, attempts: logged.attempts, reached: logged.reached };
+      } else if (missSet.has(k)) {
+        cells[d.key] = { state: "missed" };
+      } else if (d.isToday && todayOb && !todayOb.paused && !todayOb.exempt && !todayOb.attended) {
+        cells[d.key] = { state: "today" };
+      }
+    }
+    return {
+      orderId: o.id,
+      customer: o.customer,
+      phone: o.phone,
+      repId: o.assigned_rep_id,
+      repName: o.assigned_rep_id ? repNameById.get(o.assigned_rep_id) ?? null : null,
+      status: o.status,
+      createdKey,
+      cells
+    };
+  });
+
+  return { weekStart, isCurrentWeek, days, summary, rows };
+}

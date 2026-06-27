@@ -430,6 +430,13 @@ export const followUpKpiApi = {
     const s = qs.toString();
     return get<any>(`/api/follow-up-kpi/board${s ? `?${s}` : ""}`);
   },
+  grid: (params?: { repId?: string; weekStart?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.repId) qs.set("repId", params.repId);
+    if (params?.weekStart) qs.set("weekStart", params.weekStart);
+    const s = qs.toString();
+    return get<any>(`/api/follow-up-kpi/grid${s ? `?${s}` : ""}`);
+  },
   misses: (state: string = "pending") => get<any[]>(`/api/follow-up-kpi/misses?state=${encodeURIComponent(state)}`),
   approveMiss: (id: string) => post<any>(`/api/follow-up-kpi/misses/${id}/approve`, {}),
   waiveMiss: (id: string) => post<any>(`/api/follow-up-kpi/misses/${id}/waive`, {})
