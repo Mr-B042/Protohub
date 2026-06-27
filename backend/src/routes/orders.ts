@@ -2639,6 +2639,9 @@ router.get("/:id/contact-attempts", async (req, res) => {
 const ContactAttemptSchema = z.object({
   taskId: z.string().uuid().optional().nullable(),
   channel: z.enum(["call", "whatsapp", "sms", "manual"]).default("call"),
+  // Multi-channel ticks the rep actually tried this attempt (Call / SMS / WhatsApp
+  // text / WhatsApp Beep). The single `channel` above stays as the primary.
+  channels: z.array(z.enum(["call", "sms", "whatsapp_text", "whatsapp_beep"])).max(4).optional(),
   attemptType: z.enum(["scheduled_callback", "fresh_follow_up", "delivery_confirmation", "payment_follow_up", "waybill_follow_up"]).default("scheduled_callback"),
   outcomeCode: z.string().trim().min(1).max(120),
   recoveryBucket: z.enum(FOLLOW_UP_RECOVERY_BUCKETS).optional().nullable(),
@@ -2676,6 +2679,7 @@ router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "S
       repId: req.user!.role === "Sales Rep" ? req.user!.id : (order.assigned_rep_id ?? req.user!.id),
       actorName: req.user!.name,
       channel: parsed.data.channel,
+      channels: parsed.data.channels ?? [],
       attemptType: parsed.data.attemptType,
       outcomeCode: parsed.data.outcomeCode,
       recoveryBucket: parsed.data.recoveryBucket ?? null,
