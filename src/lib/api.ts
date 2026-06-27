@@ -437,6 +437,7 @@ export const followUpKpiApi = {
     const s = qs.toString();
     return get<any>(`/api/follow-up-kpi/grid${s ? `?${s}` : ""}`);
   },
+  log: (body: { orderId: string; text: string; channels: string[]; promisedDate?: string | null }) => post<any>("/api/follow-up-kpi/log", body),
   misses: (state: string = "pending") => get<any[]>(`/api/follow-up-kpi/misses?state=${encodeURIComponent(state)}`),
   approveMiss: (id: string) => post<any>(`/api/follow-up-kpi/misses/${id}/approve`, {}),
   waiveMiss: (id: string) => post<any>(`/api/follow-up-kpi/misses/${id}/waive`, {})

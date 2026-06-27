@@ -230,6 +230,56 @@ export async function runFollowUpCloseAllOrgs(dateKey?: string): Promise<void> {
   }
 }
 
+// Log a follow-up from the Daily Log grid. Appends a dated line to the order's
+// `call_outcome` (the single running log everyone already reads — order details,
+// WhatsApp, reports) AND records a structured attempt (so the grid's per-day cells
+// + reporting work). An optional promised date sets next_follow_up_at, which pauses
+// the daily obligation until that day, then resurfaces the order.
+export async function logFollowUpEntry(
+  orgId: string,
+  orderId: string,
+  repId: string | null,
+  text: string,
+  channels: string[],
+  promisedDate?: string | null
+): Promise<{ ok: true }> {
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, assigned_rep_id, call_outcome, follow_up_attempt_count")
+    .eq("org_id", orgId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (!order) throw new Error("Order not found.");
+
+  const todayKey = lagosDateKey(new Date());
+  const entry = `${todayKey.slice(8, 10)}/${todayKey.slice(5, 7)}: ${text}`;
+  const existing = ((order as { call_outcome?: string | null }).call_outcome ?? "").trim();
+  const newCallOutcome = existing ? `${existing}\n${entry}` : entry;
+  const primary = channels.includes("call") ? "call" : channels.includes("sms") ? "sms" : channels.some((c) => c.startsWith("whatsapp")) ? "whatsapp" : "manual";
+  const nowIso = new Date().toISOString();
+
+  await supabase.from("order_contact_attempts").insert({
+    org_id: orgId,
+    order_id: orderId,
+    rep_id: repId ?? (order as { assigned_rep_id?: string | null }).assigned_rep_id ?? null,
+    attempted_at: nowIso,
+    channel: primary,
+    channels,
+    attempt_type: "fresh_follow_up",
+    outcome_code: text
+  });
+
+  const update: Record<string, unknown> = {
+    call_outcome: newCallOutcome,
+    last_contact_attempt_at: nowIso,
+    last_contact_attempt_outcome: text,
+    follow_up_attempt_count: (Number((order as { follow_up_attempt_count?: number }).follow_up_attempt_count) || 0) + 1
+  };
+  if (promisedDate) update.next_follow_up_at = `${promisedDate}T09:00:00+01:00`;
+  await supabase.from("orders").update(update).eq("org_id", orgId).eq("id", orderId);
+  return { ok: true };
+}
+
 // ── Day-by-day log grid (Google-Sheets style) ─────────────
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function mondayOfWeek(dateKey: string): string {
@@ -267,6 +317,8 @@ export type FollowUpGrid = {
     amount: number | null;
     currency: string | null;
     location: string | null;
+    callOutcome: string | null;
+    nextFollowUpAt: string | null;
     repId: string | null;
     repName: string | null;
     status: string;
@@ -296,7 +348,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
 
   let orderQuery = supabase
     .from("orders")
-    .select("id, assigned_rep_id, customer, phone, status, created_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location")
+    .select("id, assigned_rep_id, customer, phone, status, created_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location, call_outcome")
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
     .not("assigned_rep_id", "is", null);
@@ -306,6 +358,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
     status: string; created_at: string; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
     product_name: string | null; package_name: string | null; amount: number | null; currency: string | null; location: string | null;
+    call_outcome: string | null;
   }>;
   if (orderRows.length === 0) return { weekStart, isCurrentWeek, days, summary, rows: [] };
   const orderIds = orderRows.map((o) => o.id);
@@ -375,6 +428,8 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
       amount: o.amount,
       currency: o.currency,
       location: o.location,
+      callOutcome: o.call_outcome,
+      nextFollowUpAt: o.next_follow_up_at,
       repId: o.assigned_rep_id,
       repName: o.assigned_rep_id ? repNameById.get(o.assigned_rep_id) ?? null : null,
       status: o.status,
