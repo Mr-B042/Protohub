@@ -262,6 +262,11 @@ export type FollowUpGrid = {
     orderId: string;
     customer: string | null;
     phone: string | null;
+    productName: string | null;
+    packageName: string | null;
+    amount: number | null;
+    currency: string | null;
+    location: string | null;
     repId: string | null;
     repName: string | null;
     status: string;
@@ -291,7 +296,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
 
   let orderQuery = supabase
     .from("orders")
-    .select("id, assigned_rep_id, customer, phone, status, created_at, next_follow_up_at, scheduled_at, scheduled_date")
+    .select("id, assigned_rep_id, customer, phone, status, created_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location")
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
     .not("assigned_rep_id", "is", null);
@@ -300,6 +305,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
   const orderRows = (orders ?? []) as Array<{
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
     status: string; created_at: string; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
+    product_name: string | null; package_name: string | null; amount: number | null; currency: string | null; location: string | null;
   }>;
   if (orderRows.length === 0) return { weekStart, isCurrentWeek, days, summary, rows: [] };
   const orderIds = orderRows.map((o) => o.id);
@@ -364,6 +370,11 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
       orderId: o.id,
       customer: o.customer,
       phone: o.phone,
+      productName: o.product_name,
+      packageName: o.package_name,
+      amount: o.amount,
+      currency: o.currency,
+      location: o.location,
       repId: o.assigned_rep_id,
       repName: o.assigned_rep_id ? repNameById.get(o.assigned_rep_id) ?? null : null,
       status: o.status,
