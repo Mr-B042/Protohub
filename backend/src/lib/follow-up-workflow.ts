@@ -127,6 +127,7 @@ type RecordAttemptInput = {
   repId?: string | null;
   actorName: string;
   channel: ContactAttemptChannel;
+  channels?: string[];
   attemptType: ContactAttemptType;
   outcomeCode: string;
   recoveryBucket?: FollowUpRecoveryBucket | null;
@@ -545,6 +546,7 @@ export const recordContactAttemptAndNextAction = async (input: RecordAttemptInpu
       manager_id: ownership.managerId,
       attempted_at: new Date().toISOString(),
       channel: input.channel,
+      channels: input.channels ?? [],
       attempt_type: input.attemptType,
       outcome_code: outcome.outcomeCode,
       outcome_group: outcome.outcomeGroup,

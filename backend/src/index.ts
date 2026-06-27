@@ -14,6 +14,7 @@ import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsD
 import { processQueuedWhatsApp, syncDueFollowUpWhatsApp } from "./lib/whatsapp.js";
 import { startWhatsAppRuntime } from "./lib/whatsapp-runtime.js";
 import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
+import { runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
 import { supabase } from "./lib/supabase.js";
 import { processQueuedEmails, sendWeeklyReport } from "./lib/mailer.js";
 import { sendPushToRoles } from "./lib/push.js";
@@ -56,6 +57,7 @@ import publicEmbedSettingsRoutes from "./routes/public-embed-settings.js";
 import payStructureRoutes  from "./routes/pay-structures.js";
 import salesTeamRoutes     from "./routes/sales-teams.js";
 import penaltyRoutes       from "./routes/penalties.js";
+import followUpKpiRoutes   from "./routes/follow-up-kpi.js";
 import pushRoutes          from "./routes/push.js";
 import userRoutes          from "./routes/users.js";
 import marketingLinkVariantRoutes from "./routes/marketing-link-variants.js";
@@ -265,6 +267,7 @@ app.use("/api/carts",           cartRoutes);
 app.use("/api/pay-structures",  payStructureRoutes);
 app.use("/api/sales-teams",     salesTeamRoutes);
 app.use("/api/penalties",       penaltyRoutes);
+app.use("/api/follow-up-kpi",   followUpKpiRoutes);
 app.use("/api/push",            pushRoutes);
 app.use("/api/users",           userRoutes);
 app.use("/api/marketing-link-variants", marketingLinkVariantRoutes);
@@ -304,6 +307,17 @@ if (ENABLE_BACKGROUND_JOBS) {
 cron.schedule("*/2 * * * *", async () => {
   try { await runCartAutoSubmit(); }
   catch (e) { logger.error("cron: cart auto-submit crashed", { error: (e as Error).message }); }
+});
+}
+
+// ── Follow-up KPI nightly close — 22:00 Africa/Lagos (21:00 UTC) ──
+// After the working day ends, record a pending ₦50 miss for every due-but-
+// unattended follow-up. Sundays are skipped inside the job.
+if (ENABLE_BACKGROUND_JOBS) {
+cron.schedule("0 21 * * *", async () => {
+  logger.info("cron: follow-up KPI nightly close");
+  try { await runFollowUpCloseAllOrgs(); }
+  catch (e) { logger.error("cron: follow-up KPI close crashed", { error: (e as Error).message }); }
 });
 }
 
