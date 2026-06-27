@@ -53,6 +53,20 @@ function lagosMinutesOfDay(input: string | Date): number {
   return lagos.getUTCHours() * 60 + lagos.getUTCMinutes();
 }
 
+// "Chase mode": an unreachable order (buyer_health watch/at_risk) must be tried in
+// THREE same-day slots — morning / afternoon / evening — each through all channels,
+// stopping once the customer is reached (a "progress" outcome). Each missed required
+// slot is its own ₦50 (strict). A reachable order just needs one log a day.
+const FOLLOW_UP_SLOTS = ["morning", "afternoon", "evening"] as const;
+export type FollowUpSlot = typeof FOLLOW_UP_SLOTS[number];
+const CHASE_HEALTH = new Set(["watch", "at_risk"]);
+function lagosHourOf(iso: string): number {
+  return new Date(new Date(iso).getTime() + LAGOS_OFFSET_MS).getUTCHours();
+}
+function slotOfHour(h: number): FollowUpSlot {
+  return h < 12 ? "morning" : h < 16 ? "afternoon" : "evening";
+}
+
 export type FollowUpObligation = {
   orderId: string;
   repId: string | null;
@@ -71,6 +85,10 @@ export type FollowUpObligation = {
   channelsToday: string[];
   customerReachedToday: boolean;
   attended: boolean;
+  chase: boolean;            // unreachable → 3 same-day slots
+  slots: Record<FollowUpSlot, "done" | "todo" | "na"> | null;
+  owedSlots: string[];       // what's still owed today (slot names, or ["day"] for normal)
+  owedCount: number;
 };
 
 export type FollowUpBoard = {
@@ -80,16 +98,17 @@ export type FollowUpBoard = {
   dueCount: number;
   attendedCount: number;
   unattendedCount: number;
+  atRiskAmount: number;
 };
 
 async function computeBoard(orgId: string, dateKey: string, repId?: string | null): Promise<FollowUpBoard> {
   if (!isWorkingDay(dateKey)) {
-    return { date: dateKey, workingDay: false, obligations: [], dueCount: 0, attendedCount: 0, unattendedCount: 0 };
+    return { date: dateKey, workingDay: false, obligations: [], dueCount: 0, attendedCount: 0, unattendedCount: 0, atRiskAmount: 0 };
   }
 
   let orderQuery = supabase
     .from("orders")
-    .select("id, assigned_rep_id, customer, phone, status, created_at, next_follow_up_at, scheduled_at, scheduled_date")
+    .select("id, assigned_rep_id, customer, phone, status, created_at, next_follow_up_at, scheduled_at, scheduled_date, buyer_health")
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
     .not("assigned_rep_id", "is", null);
@@ -98,9 +117,10 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
   const orderRows = (orders ?? []) as Array<{
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
     status: string; created_at: string; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
+    buyer_health: string | null;
   }>;
   if (orderRows.length === 0) {
-    return { date: dateKey, workingDay: true, obligations: [], dueCount: 0, attendedCount: 0, unattendedCount: 0 };
+    return { date: dateKey, workingDay: true, obligations: [], dueCount: 0, attendedCount: 0, unattendedCount: 0, atRiskAmount: 0 };
   }
   const orderIds = orderRows.map((o) => o.id);
 
@@ -112,22 +132,27 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     for (const r of (reps ?? []) as Array<{ id: string; name: string }>) repNameById.set(r.id, r.name);
   }
 
-  // Today's attempts, grouped per order.
+  // Today's attempts, grouped per order — incl. which same-day slots are done and
+  // which slots reached the customer (a "progress" outcome stops the chase).
   const startUtc = lagosStartOfDayUtc(dateKey);
   const { data: todayAttempts } = await supabase
     .from("order_contact_attempts")
-    .select("order_id, channel, channels, customer_reached")
+    .select("order_id, channel, channels, customer_reached, outcome_group, attempted_at")
     .eq("org_id", orgId)
     .in("order_id", orderIds)
     .gte("attempted_at", startUtc);
-  const todayByOrder = new Map<string, { attempts: number; calls: number; channels: Set<string>; reached: boolean }>();
-  for (const a of (todayAttempts ?? []) as Array<{ order_id: string; channel: string | null; channels: string[] | null; customer_reached: boolean | null }>) {
-    const e = todayByOrder.get(a.order_id) ?? { attempts: 0, calls: 0, channels: new Set<string>(), reached: false };
+  type TodayAgg = { attempts: number; calls: number; channels: Set<string>; reached: boolean; slotsDone: Set<FollowUpSlot>; positiveSlots: Set<FollowUpSlot> };
+  const todayByOrder = new Map<string, TodayAgg>();
+  for (const a of (todayAttempts ?? []) as Array<{ order_id: string; channel: string | null; channels: string[] | null; customer_reached: boolean | null; outcome_group: string | null; attempted_at: string }>) {
+    const e = todayByOrder.get(a.order_id) ?? { attempts: 0, calls: 0, channels: new Set<string>(), reached: false, slotsDone: new Set<FollowUpSlot>(), positiveSlots: new Set<FollowUpSlot>() };
     e.attempts++;
     const chans = Array.isArray(a.channels) && a.channels.length ? a.channels : (a.channel ? [a.channel] : []);
     for (const c of chans) e.channels.add(c);
     if (chans.includes("call")) e.calls++;
     if (a.customer_reached) e.reached = true;
+    const slot = slotOfHour(lagosHourOf(a.attempted_at));
+    e.slotsDone.add(slot);
+    if (a.outcome_group === "progress") e.positiveSlots.add(slot);
     todayByOrder.set(a.order_id, e);
   }
 
@@ -156,7 +181,27 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     const requiredCalls = latestGroupByOrder.get(o.id) === UNREACHABLE_OUTCOME_GROUP ? REQUIRED_CALLS_WHEN_UNREACHABLE : 1;
     const attemptsToday = t?.attempts ?? 0;
     const callsToday = t?.calls ?? 0;
-    const attended = (paused || exempt) ? true : (requiredCalls > 1 ? callsToday >= requiredCalls : attemptsToday >= 1);
+
+    // Chase = unreachable order (3 same-day slots). Otherwise one log a day.
+    const chase = !paused && !exempt && CHASE_HEALTH.has(o.buyer_health ?? "");
+    let slots: Record<FollowUpSlot, "done" | "todo" | "na"> | null = null;
+    let owedSlots: string[] = [];
+    if (paused || exempt) {
+      // not due today → nothing owed
+    } else if (chase) {
+      const done = t?.slotsDone ?? new Set<FollowUpSlot>();
+      const positive = t?.positiveSlots ?? new Set<FollowUpSlot>();
+      slots = { morning: "todo", afternoon: "todo", evening: "todo" };
+      let reached = false;
+      for (const s of FOLLOW_UP_SLOTS) {
+        if (reached) { slots[s] = "na"; continue; } // customer reached earlier → no more slots required
+        if (done.has(s)) { slots[s] = "done"; if (positive.has(s)) reached = true; }
+        else { slots[s] = "todo"; owedSlots.push(s); }
+      }
+    } else {
+      if (attemptsToday < 1) owedSlots = ["day"];
+    }
+    const attended = (paused || exempt) ? true : owedSlots.length === 0;
     return {
       orderId: o.id,
       repId: o.assigned_rep_id,
@@ -173,19 +218,25 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
       callsToday,
       channelsToday: t ? Array.from(t.channels) : [],
       customerReachedToday: t?.reached ?? false,
-      attended
+      attended,
+      chase,
+      slots,
+      owedSlots,
+      owedCount: owedSlots.length
     };
   });
 
   const due = obligations.filter((o) => !o.paused && !o.exempt);
   const attendedCount = due.filter((o) => o.attended).length;
+  const atRiskAmount = due.reduce((sum, o) => sum + o.owedCount, 0) * FOLLOW_UP_MISS_AMOUNT;
   return {
     date: dateKey,
     workingDay: true,
     obligations,
     dueCount: due.length,
     attendedCount,
-    unattendedCount: due.length - attendedCount
+    unattendedCount: due.length - attendedCount,
+    atRiskAmount
   };
 }
 
@@ -200,22 +251,26 @@ export async function runFollowUpClose(orgId: string, dateKey?: string): Promise
   if (!isWorkingDay(key)) return { recorded: 0 };
   if (key < FOLLOW_UP_KPI_START_DATE) return { recorded: 0 }; // before go-live → never charged
   const board = await computeBoard(orgId, key);
-  const misses = board.obligations.filter((o) => !o.paused && !o.exempt && !o.attended && o.repId);
-  if (misses.length === 0) return { recorded: 0 };
-  const rows = misses.map((o) => ({
-    org_id: orgId,
-    order_id: o.orderId,
-    rep_id: o.repId,
-    rep_name: o.repName,
-    miss_date: key,
-    day_number: o.dayNumber,
-    reason: o.attemptsToday > 0 ? "insufficient_calls" : "no_log",
-    amount: FOLLOW_UP_MISS_AMOUNT,
-    state: "pending"
-  }));
+  // One miss row per owed slot. Chase orders can owe up to 3 (morning/afternoon/
+  // evening); a normal order owes one "day". Slot is part of the unique key.
+  const rows = board.obligations
+    .filter((o) => !o.paused && !o.exempt && o.repId && o.owedSlots.length > 0)
+    .flatMap((o) => o.owedSlots.map((slot) => ({
+      org_id: orgId,
+      order_id: o.orderId,
+      rep_id: o.repId,
+      rep_name: o.repName,
+      miss_date: key,
+      day_number: o.dayNumber,
+      slot,
+      reason: slot === "day" ? (o.attemptsToday > 0 ? "insufficient_calls" : "no_log") : `missed_${slot}`,
+      amount: FOLLOW_UP_MISS_AMOUNT,
+      state: "pending"
+    })));
+  if (rows.length === 0) return { recorded: 0 };
   const { error } = await supabase
     .from("follow_up_misses")
-    .upsert(rows, { onConflict: "order_id,miss_date", ignoreDuplicates: true });
+    .upsert(rows, { onConflict: "order_id,miss_date,slot", ignoreDuplicates: true });
   if (error) {
     logger.warn("follow-up close upsert failed", { orgId, date: key, error: error.message });
     return { recorded: 0 };
@@ -345,7 +400,7 @@ export type FollowUpGrid = {
   penaltyActive: boolean;
   missAmount: number;
   days: Array<{ key: string; label: string; isToday: boolean }>;
-  summary: { attendedToday: number; dueToday: number; unattendedToday: number; workingDayToday: boolean };
+  summary: { attendedToday: number; dueToday: number; unattendedToday: number; workingDayToday: boolean; atRiskAmount: number };
   rows: Array<{
     orderId: string;
     customer: string | null;
@@ -358,6 +413,8 @@ export type FollowUpGrid = {
     callOutcome: string | null;
     nextFollowUpAt: string | null;
     buyerHealth: string | null;
+    todayChase: boolean;
+    todaySlots: Record<FollowUpSlot, "done" | "todo" | "na"> | null;
     repId: string | null;
     repName: string | null;
     status: string;
@@ -382,7 +439,8 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     attendedToday: board.attendedCount,
     dueToday: board.dueCount,
     unattendedToday: board.unattendedCount,
-    workingDayToday: board.workingDay
+    workingDayToday: board.workingDay,
+    atRiskAmount: board.atRiskAmount
   };
 
   let orderQuery = supabase
@@ -471,6 +529,8 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
       callOutcome: o.call_outcome,
       nextFollowUpAt: o.next_follow_up_at,
       buyerHealth: o.buyer_health,
+      todayChase: todayOb?.chase ?? false,
+      todaySlots: todayOb?.slots ?? null,
       repId: o.assigned_rep_id,
       repName: o.assigned_rep_id ? repNameById.get(o.assigned_rep_id) ?? null : null,
       status: o.status,
