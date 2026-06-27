@@ -17,6 +17,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
+import { resolveDedicatedHandlerId } from "../lib/order-assignment.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
 import { resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
@@ -584,7 +585,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   const productSelectBase = "id, org_id, name, active, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions";
   let productResult = await supabase
     .from("products")
-    .select(`id, org_id, name, active, public_order_assignment_mode, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions`)
+    .select(`id, org_id, name, active, public_order_assignment_mode, dedicated_handler_user_id, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions`)
     .eq("id", pkg.product_id)
     .maybeSingle();
   if (productResult.error && isMissingProductAssignmentModeColumnError(productResult.error)) {
@@ -992,31 +993,41 @@ router.post("/", submitRateLimit, async (req, res) => {
   }
 
   let assignedRepId: string | null = null;
+  let assignedByLabel: string | null = null;
 
   // Held orders are never auto-assigned — they wait, parked, for a human.
   if (publicOrderAssignmentMode === "auto_assign" && !reviewHold) {
-    // Round-robin assign to the sales rep with the lowest position, then
-    // advance that rep to max+1 so the next order goes to the next rep.
-    const { data: reps } = await supabase
-      .from("users")
-      .select("id, round_robin_position")
-      .eq("org_id", product.org_id)
-      .eq("active", true)
-      // Paused-from-rotation reps are skipped by auto-assign (but keep their
-      // login — `active` is untouched). Source of truth for the round-robin.
-      .eq("round_robin_excluded", false)
-      .eq("role", "Sales Rep")
-      .order("round_robin_position", { ascending: true, nullsFirst: false });
+    // A product can pin all its orders to one dedicated handler (rep or admin),
+    // overriding the round-robin. Falls back to round-robin if not set / inactive.
+    const dedicatedHandlerId = await resolveDedicatedHandlerId(product.org_id, (product as { dedicated_handler_user_id?: string | null }).dedicated_handler_user_id);
+    if (dedicatedHandlerId) {
+      assignedRepId = dedicatedHandlerId;
+      assignedByLabel = "Dedicated handler";
+    } else {
+      // Round-robin assign to the sales rep with the lowest position, then
+      // advance that rep to max+1 so the next order goes to the next rep.
+      const { data: reps } = await supabase
+        .from("users")
+        .select("id, round_robin_position")
+        .eq("org_id", product.org_id)
+        .eq("active", true)
+        // Paused-from-rotation reps are skipped by auto-assign (but keep their
+        // login — `active` is untouched). Source of truth for the round-robin.
+        .eq("round_robin_excluded", false)
+        .eq("role", "Sales Rep")
+        .order("round_robin_position", { ascending: true, nullsFirst: false });
 
-    const rep = (reps ?? [])[0] ?? null;
-    assignedRepId = rep?.id ?? null;
+      const rep = (reps ?? [])[0] ?? null;
+      assignedRepId = rep?.id ?? null;
 
-    if (rep) {
-      const maxPos = (reps ?? []).reduce((m, r) => Math.max(m, r.round_robin_position ?? 0), 0);
-      supabase.from("users")
-        .update({ round_robin_position: maxPos + 1 })
-        .eq("id", rep.id)
-        .then(() => {});  // fire-and-forget
+      if (rep) {
+        assignedByLabel = "Round-robin";
+        const maxPos = (reps ?? []).reduce((m, r) => Math.max(m, r.round_robin_position ?? 0), 0);
+        supabase.from("users")
+          .update({ round_robin_position: maxPos + 1 })
+          .eq("id", rep.id)
+          .then(() => {});  // fire-and-forget
+      }
     }
   }
 
@@ -1048,7 +1059,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     location,
     assigned_rep_id:   assignedRepId,
     assigned_by_user_id: null,
-    assigned_by_name_snapshot: assignedRepId ? "Round-robin" : null,
+    assigned_by_name_snapshot: assignedByLabel,
     utm_source:        d.utmSource ?? null,
     utm_campaign:      d.utmCampaign ?? null,
     utm_medium:        d.utmMedium ?? null,
