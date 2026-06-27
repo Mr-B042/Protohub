@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { getFollowUpBoard, getFollowUpGrid, logFollowUpEntry, runFollowUpClose } from "../lib/follow-up-kpi.js";
+import { FOLLOW_UP_KPI_START_DATE, getFollowUpBoard, getFollowUpGrid, logFollowUpEntry, runFollowUpClose } from "../lib/follow-up-kpi.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -83,6 +83,7 @@ router.get("/misses", requireRole("Owner", "Admin"), async (req, res) => {
     .from("follow_up_misses")
     .select("*")
     .eq("org_id", req.user!.orgId)
+    .gte("miss_date", FOLLOW_UP_KPI_START_DATE) // never surface pre-go-live misses
     .order("miss_date", { ascending: false })
     .order("rep_name", { ascending: true });
   if (state !== "all") query = query.eq("state", state);

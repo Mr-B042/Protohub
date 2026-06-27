@@ -438,7 +438,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     .select("order_id, miss_date")
     .eq("org_id", orgId)
     .in("order_id", orderIds)
-    .gte("miss_date", weekStart)
+    .gte("miss_date", weekStart > FOLLOW_UP_KPI_START_DATE ? weekStart : FOLLOW_UP_KPI_START_DATE)
     .lte("miss_date", addDays(weekStart, 5));
   const missSet = new Set((misses ?? []).map((m) => `${m.order_id}|${m.miss_date}`));
 
