@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { getFollowUpBoard, getFollowUpGrid, runFollowUpClose } from "../lib/follow-up-kpi.js";
+import { getFollowUpBoard, getFollowUpGrid, logFollowUpEntry, runFollowUpClose } from "../lib/follow-up-kpi.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -37,6 +37,36 @@ router.get("/grid", async (req, res) => {
     res.json(grid);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── POST /api/follow-up-kpi/log ──────────────────────────
+// Grid cell logging: append a dated line to the order's call_outcome + record a
+// structured attempt + optional promised date (auto-schedules the next follow-up).
+router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+  const orderId = typeof req.body?.orderId === "string" ? req.body.orderId : "";
+  const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+  const channels = Array.isArray(req.body?.channels) ? req.body.channels.filter((c: unknown) => typeof c === "string") : [];
+  const promisedDate = typeof req.body?.promisedDate === "string" && req.body.promisedDate ? req.body.promisedDate : null;
+  if (!orderId || !text) { res.status(400).json({ error: "Order and a note are required." }); return; }
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, assigned_rep_id")
+    .eq("id", orderId)
+    .eq("org_id", req.user!.orgId)
+    .maybeSingle();
+  if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+  if (req.user!.role === "Sales Rep" && order.assigned_rep_id !== req.user!.id) {
+    res.status(403).json({ error: "You can only log follow-ups on your own orders." });
+    return;
+  }
+  try {
+    const repId = req.user!.role === "Sales Rep" ? req.user!.id : (order.assigned_rep_id ?? req.user!.id);
+    await logFollowUpEntry(req.user!.orgId, orderId, repId, text, channels, promisedDate);
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
   }
 });
 
