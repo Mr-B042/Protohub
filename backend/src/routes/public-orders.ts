@@ -17,7 +17,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
-import { resolveDedicatedHandlerId } from "../lib/order-assignment.js";
+import { assignOrderRep, dedicatedHandlerIdsOf } from "../lib/order-assignment.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
 import { resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
@@ -585,7 +585,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   const productSelectBase = "id, org_id, name, active, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions";
   let productResult = await supabase
     .from("products")
-    .select(`id, org_id, name, active, public_order_assignment_mode, dedicated_handler_user_id, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions`)
+    .select(`id, org_id, name, active, public_order_assignment_mode, dedicated_handler_user_id, dedicated_handler_user_ids, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions`)
     .eq("id", pkg.product_id)
     .maybeSingle();
   if (productResult.error && isMissingProductAssignmentModeColumnError(productResult.error)) {
@@ -997,38 +997,12 @@ router.post("/", submitRateLimit, async (req, res) => {
 
   // Held orders are never auto-assigned — they wait, parked, for a human.
   if (publicOrderAssignmentMode === "auto_assign" && !reviewHold) {
-    // A product can pin all its orders to one dedicated handler (rep or admin),
-    // overriding the round-robin. Falls back to round-robin if not set / inactive.
-    const dedicatedHandlerId = await resolveDedicatedHandlerId(product.org_id, (product as { dedicated_handler_user_id?: string | null }).dedicated_handler_user_id);
-    if (dedicatedHandlerId) {
-      assignedRepId = dedicatedHandlerId;
-      assignedByLabel = "Dedicated handler";
-    } else {
-      // Round-robin assign to the sales rep with the lowest position, then
-      // advance that rep to max+1 so the next order goes to the next rep.
-      const { data: reps } = await supabase
-        .from("users")
-        .select("id, round_robin_position")
-        .eq("org_id", product.org_id)
-        .eq("active", true)
-        // Paused-from-rotation reps are skipped by auto-assign (but keep their
-        // login — `active` is untouched). Source of truth for the round-robin.
-        .eq("round_robin_excluded", false)
-        .eq("role", "Sales Rep")
-        .order("round_robin_position", { ascending: true, nullsFirst: false });
-
-      const rep = (reps ?? [])[0] ?? null;
-      assignedRepId = rep?.id ?? null;
-
-      if (rep) {
-        assignedByLabel = "Round-robin";
-        const maxPos = (reps ?? []).reduce((m, r) => Math.max(m, r.round_robin_position ?? 0), 0);
-        supabase.from("users")
-          .update({ round_robin_position: maxPos + 1 })
-          .eq("id", rep.id)
-          .then(() => {});  // fire-and-forget
-      }
-    }
+    // A product can restrict its orders to a set of dedicated handlers (round-robin
+    // among just them); otherwise it's the global round-robin. Falls back to the
+    // global rotation if the pinned set has nobody assignable.
+    const assignment = await assignOrderRep(product.org_id, dedicatedHandlerIdsOf(product as any));
+    assignedRepId = assignment.assignedRepId;
+    assignedByLabel = assignment.assignedByLabel;
   }
 
   const source = sourceFromUtm(d.utmSource);
