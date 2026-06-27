@@ -241,7 +241,9 @@ export async function logFollowUpEntry(
   repId: string | null,
   text: string,
   channels: string[],
-  promisedDate?: string | null
+  promisedDate?: string | null,
+  recoveryBucket?: string | null,
+  outcomeGroup?: string | null
 ): Promise<{ ok: true }> {
   const { data: order } = await supabase
     .from("orders")
@@ -266,7 +268,9 @@ export async function logFollowUpEntry(
     channel: primary,
     channels,
     attempt_type: "fresh_follow_up",
-    outcome_code: text
+    outcome_code: text,
+    recovery_bucket: recoveryBucket ?? null,
+    outcome_group: outcomeGroup ?? null
   });
 
   const update: Record<string, unknown> = {
@@ -276,6 +280,29 @@ export async function logFollowUpEntry(
     follow_up_attempt_count: (Number((order as { follow_up_attempt_count?: number }).follow_up_attempt_count) || 0) + 1
   };
   if (promisedDate) update.next_follow_up_at = `${promisedDate}T09:00:00+01:00`;
+
+  // #3 Auto-flag reachability from the tag. Count consecutive "unreachable" outcomes
+  // (most recent first, incl. the one just logged) → at_risk at 3+. Progress resets.
+  if (outcomeGroup === "unreachable") {
+    const { data: recent } = await supabase
+      .from("order_contact_attempts")
+      .select("outcome_group")
+      .eq("org_id", orgId)
+      .eq("order_id", orderId)
+      .order("attempted_at", { ascending: false })
+      .limit(12);
+    let streak = 0;
+    for (const a of (recent ?? []) as Array<{ outcome_group: string | null }>) {
+      if (a.outcome_group === "unreachable") streak++;
+      else break;
+    }
+    update.buyer_health = streak >= 3 ? "at_risk" : "watch";
+  } else if (outcomeGroup === "progress") {
+    update.buyer_health = "healthy";
+  } else if (outcomeGroup === "closed_loss") {
+    update.buyer_health = "not_serious_candidate";
+  }
+
   await supabase.from("orders").update(update).eq("org_id", orgId).eq("id", orderId);
   return { ok: true };
 }
@@ -319,6 +346,7 @@ export type FollowUpGrid = {
     location: string | null;
     callOutcome: string | null;
     nextFollowUpAt: string | null;
+    buyerHealth: string | null;
     repId: string | null;
     repName: string | null;
     status: string;
@@ -348,7 +376,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
 
   let orderQuery = supabase
     .from("orders")
-    .select("id, assigned_rep_id, customer, phone, status, created_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location, call_outcome")
+    .select("id, assigned_rep_id, customer, phone, status, created_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location, call_outcome, buyer_health")
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
     .not("assigned_rep_id", "is", null);
@@ -358,7 +386,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
     status: string; created_at: string; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
     product_name: string | null; package_name: string | null; amount: number | null; currency: string | null; location: string | null;
-    call_outcome: string | null;
+    call_outcome: string | null; buyer_health: string | null;
   }>;
   if (orderRows.length === 0) return { weekStart, isCurrentWeek, days, summary, rows: [] };
   const orderIds = orderRows.map((o) => o.id);
@@ -430,6 +458,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
       location: o.location,
       callOutcome: o.call_outcome,
       nextFollowUpAt: o.next_follow_up_at,
+      buyerHealth: o.buyer_health,
       repId: o.assigned_rep_id,
       repName: o.assigned_rep_id ? repNameById.get(o.assigned_rep_id) ?? null : null,
       status: o.status,
