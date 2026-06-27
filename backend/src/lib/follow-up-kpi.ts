@@ -243,7 +243,8 @@ export async function logFollowUpEntry(
   channels: string[],
   promisedDate?: string | null,
   recoveryBucket?: string | null,
-  outcomeGroup?: string | null
+  outcomeGroup?: string | null,
+  promisedTime?: string | null
 ): Promise<{ ok: true }> {
   const { data: order } = await supabase
     .from("orders")
@@ -279,7 +280,10 @@ export async function logFollowUpEntry(
     last_contact_attempt_outcome: text,
     follow_up_attempt_count: (Number((order as { follow_up_attempt_count?: number }).follow_up_attempt_count) || 0) + 1
   };
-  if (promisedDate) update.next_follow_up_at = `${promisedDate}T09:00:00+01:00`;
+  if (promisedDate) {
+    const t = promisedTime && /^\d{2}:\d{2}$/.test(promisedTime) ? promisedTime : "09:00";
+    update.next_follow_up_at = `${promisedDate}T${t}:00+01:00`;
+  }
 
   // #3 Auto-flag reachability from the tag. Count consecutive "unreachable" outcomes
   // (most recent first, incl. the one just logged) → at_risk at 3+. Progress resets.
