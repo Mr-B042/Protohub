@@ -192,6 +192,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   // 7. WhatsApp notifications (fire-and-forget)
   const orderForWa = {
     id: order.id,
+    productId: product.id,
     customer: cart.customer,
     phone: cart.phone,
     whatsapp: cart.whatsapp ?? cart.phone,
