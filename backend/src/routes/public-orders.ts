@@ -1286,6 +1286,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   // Both fire-and-forget; errors are logged internally and never block the response.
   const waOrderPayload = {
     id: order.id,
+    productId: (order as any).product_id ?? null,
     customer: order.customer,
     phone: order.phone,
     whatsapp: (order as any).whatsapp ?? null,

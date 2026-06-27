@@ -710,7 +710,7 @@ async function sendViaBaileys(
   settings: WhatsAppSettings,
   phone: string,
   body: string,
-  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string; extraImageUrls?: string[] }
 ): Promise<{ providerMessageId?: string; providerStatus?: string }> {
   try {
     await ensureWhatsAppReady(orgId);
@@ -731,7 +731,7 @@ async function sendViaCloudApi(
   settings: WhatsAppSettings,
   phone: string,
   body: string,
-  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string; extraImageUrls?: string[] }
 ): Promise<{ providerMessageId?: string; providerStatus?: string }> {
   const phoneNumberId = settings.cloud_api_phone_number_id?.trim();
   const token = settings.cloud_api_access_token?.trim();
@@ -774,7 +774,7 @@ async function sendViaProvider(
   settings: WhatsAppSettings,
   phone: string,
   body: string,
-  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string; extraImageUrls?: string[] }
 ): Promise<{ providerMessageId?: string; providerStatus?: string }> {
   if (settings.provider === "cloud_api") {
     return sendViaCloudApi(settings, phone, body, media);
@@ -788,7 +788,7 @@ async function deliverLoggedWhatsApp(
   logId: string | null,
   normalizedPhone: string,
   body: string,
-  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string; extraImageUrls?: string[] }
 ) {
   const result = await sendViaProvider(orgId, settings, normalizedPhone, body, media);
   await updateWhatsAppLog(logId, {
@@ -814,7 +814,7 @@ async function queueOrSendWhatsApp(
   vars: Record<string, string>,
   recipientPhone: string,
   options: SendWhatsAppOptions = {},
-  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string; extraImageUrls?: string[] }
 ): Promise<QueueOrSendWhatsAppResult | null> {
   const settings = await loadSettings(orgId);
   if (!settings) return null;
@@ -1544,6 +1544,7 @@ export async function processQueuedWhatsApp(limit = 100) {
 
 type OrderEventPayload = {
   id: string;
+  productId?: string | null;
   customer?: string | null;
   phone?: string | null;
   whatsapp?: string | null;
@@ -1595,6 +1596,21 @@ function buildAddonsLine(order: OrderEventPayload, currency?: string): string {
     parts.push(`  + ${name}${qty}${amt}`);
   }
   return parts.length ? parts.join("\n") + "\n" : "";
+}
+
+// A product can carry a "real footage" image sent as an EXTRA photo in the
+// new-order confirmation (after the invoice + catalog image). One per product,
+// so it applies to all of its packages. Returns the URL only if set.
+async function resolveProductFootageImage(orgId: string, productId?: string | null): Promise<string | null> {
+  if (!productId) return null;
+  const { data } = await supabase
+    .from("products")
+    .select("whatsapp_footage_image_url")
+    .eq("id", productId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  const url = (data as { whatsapp_footage_image_url?: string | null } | null)?.whatsapp_footage_image_url;
+  return typeof url === "string" && url.trim() ? url.trim() : null;
 }
 
 /** Anti-ban: customer messages have a tighter per-recipient daily cap */
@@ -1668,10 +1684,12 @@ export async function sendOrderNewCustomerWhatsApp(
     }
   );
 
-  // Stage 2: after a 3s delay, send PDF receipt + product image/video.
-  // Now that the text established the thread, media messages go straight through.
+  // Stage 2: after a 3s delay, send PDF receipt + product image/video + any
+  // real-footage photos. Now that the text established the thread, media messages
+  // go straight through.
   if (textResult && !textResult.deferred) {
-    const hasMedia = order.productImageUrl || order.productVideoUrl;
+    const footageImageUrl = await resolveProductFootageImage(orgId, order.productId);
+    const hasMedia = order.productImageUrl || order.productVideoUrl || footageImageUrl;
     const shouldSendPdf = true; // always send receipt
     if (hasMedia || shouldSendPdf) {
       setTimeout(async () => {
@@ -1729,6 +1747,7 @@ export async function sendOrderNewCustomerWhatsApp(
               {
                 imageUrl: order.productImageUrl ?? undefined,
                 videoUrl: order.productVideoUrl ?? undefined,
+                extraImageUrls: footageImageUrl ? [footageImageUrl] : undefined,
                 pdfBuffer,
                 pdfFileName: `Order-Receipt-${order.id}.pdf`
               }

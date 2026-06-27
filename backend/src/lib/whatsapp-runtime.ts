@@ -2471,7 +2471,7 @@ export async function sendConnectedWhatsApp(
   orgId: string,
   normalizedPhone: string,
   body: string,
-  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string }
+  media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string; extraImageUrls?: string[] }
 ) {
   const socket = await ensureWhatsAppReady(orgId);
   if (!socket) {
@@ -2508,6 +2508,13 @@ export async function sendConnectedWhatsApp(
     } else if (media.imageUrl?.trim()) {
       await new Promise((r) => setTimeout(r, 600));
       await socket.sendMessage(jid, { image: { url: media.imageUrl.trim() } } as any).catch(() => {});
+    }
+    // Extra images (e.g. real-footage photos) sent one after another, jittered.
+    for (const extra of media.extraImageUrls ?? []) {
+      const url = extra?.trim();
+      if (!url) continue;
+      await new Promise((r) => setTimeout(r, 700));
+      await socket.sendMessage(jid, { image: { url } } as any).catch(() => {});
     }
   } else if (media?.videoUrl?.trim()) {
     try {

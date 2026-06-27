@@ -888,6 +888,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (r
   // WhatsApp automation: new order confirmation to customer + rep
   const waNewOrderPayload = {
     id: data.id,
+    productId: (data as any).product_id ?? null,
     customer: data.customer,
     phone: data.phone,
     whatsapp: data.whatsapp ?? null,
@@ -2845,6 +2846,7 @@ router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, r
   try {
     const result = await sendOrderNewCustomerWhatsApp(req.user!.orgId, {
       id: order.id,
+      productId: (order as any).product_id ?? null,
       customer: order.customer,
       phone: order.phone,
       whatsapp: order.whatsapp ?? null,
