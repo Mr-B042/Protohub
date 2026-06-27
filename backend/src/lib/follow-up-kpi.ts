@@ -5,6 +5,9 @@ import { logger } from "./logger.js";
 // Follow-up Queue page). Delivered / Cancelled / Failed are terminal — no obligation.
 const IN_SCOPE_STATUSES = ["New", "Confirmed", "Postponed"] as const;
 export const FOLLOW_UP_MISS_AMOUNT = 50;
+// Go-live: the ₦50 miss penalty only applies from this working day on. Days before
+// it (the backlog that existed when the system launched) are never charged.
+export const FOLLOW_UP_KPI_START_DATE = "2026-06-29"; // Monday
 // When the customer's last outcome is "unreachable" they must be called this many
 // times in the day for the order to count as attended.
 const REQUIRED_CALLS_WHEN_UNREACHABLE = 3;
@@ -195,6 +198,7 @@ export async function getFollowUpBoard(orgId: string, repId?: string | null, dat
 export async function runFollowUpClose(orgId: string, dateKey?: string): Promise<{ recorded: number }> {
   const key = dateKey ?? lagosDateKey(new Date());
   if (!isWorkingDay(key)) return { recorded: 0 };
+  if (key < FOLLOW_UP_KPI_START_DATE) return { recorded: 0 }; // before go-live → never charged
   const board = await computeBoard(orgId, key);
   const misses = board.obligations.filter((o) => !o.paused && !o.exempt && !o.attended && o.repId);
   if (misses.length === 0) return { recorded: 0 };
@@ -337,6 +341,9 @@ export type FollowUpGridCell = {
 export type FollowUpGrid = {
   weekStart: string;
   isCurrentWeek: boolean;
+  penaltyStartDate: string;
+  penaltyActive: boolean;
+  missAmount: number;
   days: Array<{ key: string; label: string; isToday: boolean }>;
   summary: { attendedToday: number; dueToday: number; unattendedToday: number; workingDayToday: boolean };
   rows: Array<{
@@ -392,7 +399,8 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     product_name: string | null; package_name: string | null; amount: number | null; currency: string | null; location: string | null;
     call_outcome: string | null; buyer_health: string | null;
   }>;
-  if (orderRows.length === 0) return { weekStart, isCurrentWeek, days, summary, rows: [] };
+  const penaltyMeta = { penaltyStartDate: FOLLOW_UP_KPI_START_DATE, penaltyActive: todayKey >= FOLLOW_UP_KPI_START_DATE, missAmount: FOLLOW_UP_MISS_AMOUNT };
+  if (orderRows.length === 0) return { weekStart, isCurrentWeek, ...penaltyMeta, days, summary, rows: [] };
   const orderIds = orderRows.map((o) => o.id);
 
   const repIds = Array.from(new Set(orderRows.map((o) => o.assigned_rep_id).filter(Boolean))) as string[];
@@ -471,5 +479,5 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     };
   });
 
-  return { weekStart, isCurrentWeek, days, summary, rows };
+  return { weekStart, isCurrentWeek, ...penaltyMeta, days, summary, rows };
 }
