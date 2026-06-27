@@ -17,7 +17,7 @@ import { logger } from "./logger.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "./whatsapp.js";
 import { resolveMetaTrackingConfig, sendMetaCapiPurchase } from "./meta-capi.js";
 import { sendTikTokConversion } from "./tiktok-events.js";
-import { resolveDedicatedHandlerId } from "./order-assignment.js";
+import { assignOrderRep, dedicatedHandlerIdsOf } from "./order-assignment.js";
 
 const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
 const MAX_IDLE_MS = 15 * 60 * 1000;  // give up after 15 min
@@ -83,7 +83,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   //    whole query and silently aborted every auto-submit).
   const { data: product } = await supabase
     .from("products")
-    .select("id, org_id, name, active, dedicated_handler_user_id")
+    .select("id, org_id, name, active, dedicated_handler_user_id, dedicated_handler_user_ids")
     .eq("id", cart.product_id)
     .eq("org_id", orgId)
     .maybeSingle();
@@ -105,31 +105,11 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     currency: cart.currency ?? "NGN"
   };
 
-  // 3. Assign — a product's dedicated handler overrides the round-robin.
-  let assignedRepId: string | null = null;
-  let assignedByLabel: string | null = null;
-  const dedicatedHandlerId = await resolveDedicatedHandlerId(orgId, (product as { dedicated_handler_user_id?: string | null }).dedicated_handler_user_id);
-  if (dedicatedHandlerId) {
-    assignedRepId = dedicatedHandlerId;
-    assignedByLabel = "Dedicated handler";
-  } else {
-    const { data: reps } = await supabase
-      .from("users")
-      .select("id, round_robin_position")
-      .eq("org_id", orgId)
-      .eq("active", true)
-      .eq("round_robin_excluded", false)
-      .eq("role", "Sales Rep")
-      .order("round_robin_position", { ascending: true, nullsFirst: false });
-
-    const rep = (reps ?? [])[0] ?? null;
-    if (rep) {
-      assignedRepId = rep.id;
-      assignedByLabel = "Round-robin";
-      const maxPos = (reps ?? []).reduce((m: number, r: any) => Math.max(m, r.round_robin_position ?? 0), 0);
-      supabase.from("users").update({ round_robin_position: maxPos + 1 }).eq("id", rep.id).then(() => {});
-    }
-  }
+  // 3. Assign — a product can restrict its orders to a set of dedicated handlers
+  //    (round-robin among just them); otherwise the global round-robin.
+  const assignment = await assignOrderRep(orgId, dedicatedHandlerIdsOf(product as any));
+  const assignedRepId: string | null = assignment.assignedRepId;
+  const assignedByLabel: string | null = assignment.assignedByLabel;
 
   // 4. Build order payload
   const capturePayload = (cart.capture_payload ?? {}) as Record<string, any>;
