@@ -48,6 +48,10 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async
   const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
   const channels = Array.isArray(req.body?.channels) ? req.body.channels.filter((c: unknown) => typeof c === "string") : [];
   const promisedDate = typeof req.body?.promisedDate === "string" && req.body.promisedDate ? req.body.promisedDate : null;
+  const VALID_BUCKETS = ["ready_now", "call_tomorrow", "call_in_2_3_days", "salary_wait", "spouse_approval", "wants_discount", "asked_for_whatsapp", "no_answer", "switched_off", "line_busy", "not_interested", "wrong_number", "out_of_coverage"];
+  const VALID_GROUPS = ["progress", "recoverable", "unreachable", "closed_loss", "other"];
+  const recoveryBucket = typeof req.body?.recoveryBucket === "string" && VALID_BUCKETS.includes(req.body.recoveryBucket) ? req.body.recoveryBucket : null;
+  const outcomeGroup = typeof req.body?.outcomeGroup === "string" && VALID_GROUPS.includes(req.body.outcomeGroup) ? req.body.outcomeGroup : null;
   if (!orderId || !text) { res.status(400).json({ error: "Order and a note are required." }); return; }
 
   const { data: order } = await supabase
@@ -63,7 +67,7 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async
   }
   try {
     const repId = req.user!.role === "Sales Rep" ? req.user!.id : (order.assigned_rep_id ?? req.user!.id);
-    await logFollowUpEntry(req.user!.orgId, orderId, repId, text, channels, promisedDate);
+    await logFollowUpEntry(req.user!.orgId, orderId, repId, text, channels, promisedDate, recoveryBucket, outcomeGroup);
     res.status(201).json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
