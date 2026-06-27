@@ -7,6 +7,24 @@ interface Props {
 }
 
 type Mode = "login" | "register" | "forgot";
+const LOGIN_TIMEOUT_MS = 15000;
+
+async function withLoginTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Login is taking too long. Please check your connection and try again.")),
+          LOGIN_TIMEOUT_MS
+        );
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 function passwordStrength(pw: string): { label: string; pct: number; color: string } {
   if (!pw) return { label: "", pct: 0, color: "" };
@@ -70,7 +88,7 @@ export function LoginScreen({ onLogin }: Props) {
     e.preventDefault();
     setError(""); setLoading(true);
     try {
-      const data = await authApi.login(email, password);
+      const data = await withLoginTimeout(authApi.login(email, password));
       auth.save(data.accessToken, data.refreshToken, {
         id:    data.user.id,
         orgId: data.user.orgId,

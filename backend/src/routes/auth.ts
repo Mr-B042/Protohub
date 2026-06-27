@@ -219,6 +219,22 @@ const LoginSchema = z.object({
   password: z.string().min(1)
 });
 
+const AUTH_LOGIN_TIMEOUT_MS = Math.max(3000, Number(process.env.AUTH_LOGIN_TIMEOUT_MS ?? 10000) || 10000);
+
+async function withLoginTimeout<T>(promise: PromiseLike<T>, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} timed out`)), AUTH_LOGIN_TIMEOUT_MS);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 router.post("/login", async (req, res) => {
   const parsed = LoginSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -227,7 +243,23 @@ router.post("/login", async (req, res) => {
   }
   const { email, password } = parsed.data;
 
-  const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
+  let signInResult: Awaited<ReturnType<typeof supabaseAuth.auth.signInWithPassword>>;
+  try {
+    // Password sign-in is a public Supabase Auth flow. Use the anon client when
+    // configured; service-role clients are for admin/server operations and can
+    // behave poorly with end-user session flows in production.
+    const authClient = supabaseAnon ?? supabaseAuth;
+    signInResult = await withLoginTimeout(
+      authClient.auth.signInWithPassword({ email, password }),
+      "Supabase password sign-in"
+    );
+  } catch (err: any) {
+    logger.error("login auth request failed", { email, error: err?.message ?? String(err) });
+    res.status(504).json({ error: "Login service is taking too long. Please retry in a moment." });
+    return;
+  }
+
+  const { data, error } = signInResult;
   if (error || !data.session) {
     logger.warn("login failed", { email, reason: error?.message ?? "no session" });
     // Record failed attempt (fire-and-forget, never blocks login flow)
@@ -238,11 +270,29 @@ router.post("/login", async (req, res) => {
   }
 
   // Fetch profile to return role etc.
-  const { data: profile } = await supabase
-    .from("users")
-    .select("id, org_id, name, role, active, marketing_attribution_tags")
-    .eq("id", data.user.id)
-    .single();
+  let profile: {
+    id: string;
+    org_id: string;
+    name: string;
+    role: string;
+    active: boolean;
+    marketing_attribution_tags?: unknown;
+  } | null = null;
+  try {
+    const profileResult = await withLoginTimeout(
+      supabase
+        .from("users")
+        .select("id, org_id, name, role, active, marketing_attribution_tags")
+        .eq("id", data.user.id)
+        .single(),
+      "User profile lookup"
+    );
+    profile = profileResult.data;
+  } catch (err: any) {
+    logger.error("login profile lookup failed", { userId: data.user.id, email, error: err?.message ?? String(err) });
+    res.status(504).json({ error: "Login profile lookup is taking too long. Please retry in a moment." });
+    return;
+  }
 
   if (!profile) {
     res.status(500).json({ error: "User profile not found. Please contact support." });
