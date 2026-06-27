@@ -39,6 +39,17 @@ function lagosStartOfDayUtc(dateKey: string): string {
   return new Date(`${dateKey}T00:00:00.000+01:00`).toISOString();
 }
 
+// Working hours 08:30–17:00 (Africa/Lagos). A new order that arrives OUTSIDE these
+// hours isn't charged for its arrival day — the rep had no working window to act on
+// it. From the next working day the obligation applies normally.
+const WORK_START_MIN = 8 * 60 + 30; // 08:30
+const WORK_END_MIN = 17 * 60;       // 17:00
+function lagosMinutesOfDay(input: string | Date): number {
+  const d = typeof input === "string" ? new Date(input) : input;
+  const lagos = new Date(d.getTime() + LAGOS_OFFSET_MS);
+  return lagos.getUTCHours() * 60 + lagos.getUTCMinutes();
+}
+
 export type FollowUpObligation = {
   orderId: string;
   repId: string | null;
@@ -49,6 +60,8 @@ export type FollowUpObligation = {
   dayNumber: number;
   paused: boolean;           // scheduled/postponed to a future date
   scheduledFor: string | null;
+  exempt: boolean;           // new order that arrived outside working hours today
+
   requiredCalls: number;     // 3 when the customer is unreachable, else 1
   attemptsToday: number;
   callsToday: number;
@@ -128,15 +141,19 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
   }
 
   const obligations: FollowUpObligation[] = orderRows.map((o) => {
-    const dayNumber = workingDayNumber(lagosDateKey(o.created_at), dateKey);
+    const createdKey = lagosDateKey(o.created_at);
+    const dayNumber = workingDayNumber(createdKey, dateKey);
     const plannedRaw = o.next_follow_up_at ?? o.scheduled_at ?? (o.scheduled_date ? `${o.scheduled_date}T12:00:00+01:00` : null);
     const plannedKey = plannedRaw ? lagosDateKey(plannedRaw) : null;
     const paused = !!plannedKey && plannedKey > dateKey;
+    // Grace: an order created today, outside working hours, isn't due/charged today.
+    const createdMins = lagosMinutesOfDay(o.created_at);
+    const exempt = createdKey === dateKey && (createdMins < WORK_START_MIN || createdMins >= WORK_END_MIN);
     const t = todayByOrder.get(o.id);
     const requiredCalls = latestGroupByOrder.get(o.id) === UNREACHABLE_OUTCOME_GROUP ? REQUIRED_CALLS_WHEN_UNREACHABLE : 1;
     const attemptsToday = t?.attempts ?? 0;
     const callsToday = t?.calls ?? 0;
-    const attended = paused ? true : (requiredCalls > 1 ? callsToday >= requiredCalls : attemptsToday >= 1);
+    const attended = (paused || exempt) ? true : (requiredCalls > 1 ? callsToday >= requiredCalls : attemptsToday >= 1);
     return {
       orderId: o.id,
       repId: o.assigned_rep_id,
@@ -147,6 +164,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
       dayNumber,
       paused,
       scheduledFor: plannedKey,
+      exempt,
       requiredCalls,
       attemptsToday,
       callsToday,
@@ -156,7 +174,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     };
   });
 
-  const due = obligations.filter((o) => !o.paused);
+  const due = obligations.filter((o) => !o.paused && !o.exempt);
   const attendedCount = due.filter((o) => o.attended).length;
   return {
     date: dateKey,
@@ -178,7 +196,7 @@ export async function runFollowUpClose(orgId: string, dateKey?: string): Promise
   const key = dateKey ?? lagosDateKey(new Date());
   if (!isWorkingDay(key)) return { recorded: 0 };
   const board = await computeBoard(orgId, key);
-  const misses = board.obligations.filter((o) => !o.paused && !o.attended && o.repId);
+  const misses = board.obligations.filter((o) => !o.paused && !o.exempt && !o.attended && o.repId);
   if (misses.length === 0) return { recorded: 0 };
   const rows = misses.map((o) => ({
     org_id: orgId,
