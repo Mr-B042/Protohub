@@ -338,6 +338,8 @@ const DEFAULT_SETTINGS: PublicEmbedSettings = {
 
 const PUBLIC_PRODUCT_CACHE_TTL_MS = 10 * 60 * 1000;
 const PUBLIC_SETTINGS_CACHE_TTL_MS = 10 * 60 * 1000;
+const PUBLIC_CACHE_SCHEMA_VERSION = 2;
+const PUBLIC_STALE_CACHE_MAX_AGE_MS = 60 * 60 * 1000;
 const PUBLIC_PRODUCT_FETCH_ATTEMPTS = 8;
 const PUBLIC_PRODUCT_RETRY_DELAY_MS = 1200;
 const PUBLIC_OUTAGE_QUEUE_KEY = "protohub.publicOrderOutageQueue";
@@ -371,10 +373,6 @@ function readCachedValue<T>(key: string, maxAgeMs: number): T | null {
   return snapshot.value ?? null;
 }
 
-function readCachedValueAnyAge<T>(key: string): T | null {
-  return readCachedSnapshot<T>(key)?.value ?? null;
-}
-
 function writeCachedValue<T>(key: string, value: T) {
   if (typeof window === "undefined") return;
   try {
@@ -385,11 +383,11 @@ function writeCachedValue<T>(key: string, value: T) {
 }
 
 function publicProductCacheKey(productId: string) {
-  return `protohub.publicProduct.${productId}`;
+  return `protohub.publicProduct.v${PUBLIC_CACHE_SCHEMA_VERSION}.${productId}`;
 }
 
 function publicSettingsCacheKey(orgId: string) {
-  return `protohub.publicEmbedSettings.${orgId}`;
+  return `protohub.publicEmbedSettings.v${PUBLIC_CACHE_SCHEMA_VERSION}.${orgId}`;
 }
 
 function readQueuedPublicOrders() {
@@ -1236,8 +1234,9 @@ export default function PublicOrderFormPage() {
       )
     : null;
   const staleProductBundle = !cachedProductBundle && publicProductId
-    ? readCachedValueAnyAge<{ products: PublicProduct[]; orgId: string | null }>(
-        publicProductCacheKey(publicProductId)
+    ? readCachedValue<{ products: PublicProduct[]; orgId: string | null }>(
+        publicProductCacheKey(publicProductId),
+        PUBLIC_STALE_CACHE_MAX_AGE_MS
       )
     : null;
   const bootProductBundle = cachedProductBundle ?? staleProductBundle;
@@ -1248,13 +1247,23 @@ export default function PublicOrderFormPage() {
       )
     : null;
   const staleSettings = !cachedSettings && bootProductBundle?.orgId
-    ? readCachedValueAnyAge<PublicEmbedSettings>(publicSettingsCacheKey(bootProductBundle.orgId))
+    ? readCachedValue<PublicEmbedSettings>(
+        publicSettingsCacheKey(bootProductBundle.orgId),
+        PUBLIC_STALE_CACHE_MAX_AGE_MS
+      )
     : null;
   const bootSettings = cachedSettings ?? staleSettings;
 
   const [products, setProducts] = useState<PublicProduct[]>(() => bootProductBundle?.products ?? []);
   const [settings, setSettings] = useState<PublicEmbedSettings>(() => ({ ...DEFAULT_SETTINGS, ...(bootSettings ?? {}) }));
   const [loading, setLoading] = useState(Boolean(publicProductId) && !(bootProductBundle?.products?.length));
+  const [productCacheStatus, setProductCacheStatus] = useState<"empty" | "fresh_cache" | "stale_cache" | "live">(
+    () => cachedProductBundle ? "fresh_cache" : staleProductBundle ? "stale_cache" : "empty"
+  );
+  const [settingsCacheStatus, setSettingsCacheStatus] = useState<"empty" | "fresh_cache" | "stale_cache" | "live">(
+    () => cachedSettings ? "fresh_cache" : staleSettings ? "stale_cache" : "empty"
+  );
+  const [lastLiveProductRefreshAt, setLastLiveProductRefreshAt] = useState<number | null>(null);
   const [showLoading, setShowLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState("");
@@ -1369,8 +1378,14 @@ export default function PublicOrderFormPage() {
   const buildPublicFormContext = useCallback((contextEvent: string): PublicFormHiddenContext => ({
     ...buildPublicFormHiddenContext(params),
     contextEvent: safeHiddenContextValue(contextEvent, 80),
-    secondsSinceOpen: Math.max(0, Math.round((Date.now() - formOpenedAtRef.current) / 1000))
-  }), [params]);
+    secondsSinceOpen: Math.max(0, Math.round((Date.now() - formOpenedAtRef.current) / 1000)),
+    cacheSchemaVersion: PUBLIC_CACHE_SCHEMA_VERSION,
+    productCacheStatus,
+    settingsCacheStatus,
+    liveProductRefreshedSecondsAgo: lastLiveProductRefreshAt
+      ? Math.max(0, Math.round((Date.now() - lastLiveProductRefreshAt) / 1000))
+      : null
+  }), [lastLiveProductRefreshAt, params, productCacheStatus, settingsCacheStatus]);
   const getMetaEventId = useCallback((kind: "Lead" | "Purchase", seed?: string) => {
     const key = `${kind}:${seed || "current"}`;
     if (metaEventIdsRef.current[key]) return metaEventIdsRef.current[key];
@@ -2110,7 +2125,10 @@ export default function PublicOrderFormPage() {
       PUBLIC_PRODUCT_CACHE_TTL_MS
     );
     const staleBundle = !freshBundle
-      ? readCachedValueAnyAge<{ products: PublicProduct[]; orgId: string | null }>(publicProductCacheKey(publicProductId))
+      ? readCachedValue<{ products: PublicProduct[]; orgId: string | null }>(
+          publicProductCacheKey(publicProductId),
+          PUBLIC_STALE_CACHE_MAX_AGE_MS
+        )
       : null;
     const bootBundle = freshBundle ?? staleBundle;
     const cachedBundleProducts = bootBundle?.products ?? [];
@@ -2119,13 +2137,19 @@ export default function PublicOrderFormPage() {
       ? readCachedValue<PublicEmbedSettings>(publicSettingsCacheKey(cachedOrgId), PUBLIC_SETTINGS_CACHE_TTL_MS)
       : null;
     const staleOrgSettings = !freshOrgSettings && cachedOrgId
-      ? readCachedValueAnyAge<PublicEmbedSettings>(publicSettingsCacheKey(cachedOrgId))
+      ? readCachedValue<PublicEmbedSettings>(
+          publicSettingsCacheKey(cachedOrgId),
+          PUBLIC_STALE_CACHE_MAX_AGE_MS
+        )
       : null;
     const cachedOrgSettings = freshOrgSettings ?? staleOrgSettings;
 
     let cancelled = false;
     setProducts(cachedBundleProducts);
     setSettings({ ...DEFAULT_SETTINGS, ...(cachedOrgSettings ?? {}) });
+    setProductCacheStatus(freshBundle ? "fresh_cache" : staleBundle ? "stale_cache" : "empty");
+    setSettingsCacheStatus(freshOrgSettings ? "fresh_cache" : staleOrgSettings ? "stale_cache" : "empty");
+    setLastLiveProductRefreshAt(null);
     setLoading(cachedBundleProducts.length === 0);
     setLoadError(null);
     setPublicOrderSubmitted(null);
@@ -2189,6 +2213,8 @@ export default function PublicOrderFormPage() {
 
       const merged = [resolvedProduct, ...relatedProducts] as PublicProduct[];
       setProducts(merged);
+      setProductCacheStatus("live");
+      setLastLiveProductRefreshAt(Date.now());
       writeCachedValue(publicProductCacheKey(publicProductId), {
         products: merged,
         orgId: resolvedProduct.orgId ?? null,
@@ -2200,6 +2226,7 @@ export default function PublicOrderFormPage() {
           .then((next) => {
             if (cancelled || !next) return;
             setSettings((prev) => ({ ...prev, ...next }));
+            setSettingsCacheStatus("live");
             writeCachedValue(publicSettingsCacheKey(orgId), next as PublicEmbedSettings);
           })
           .catch(() => {
@@ -2937,7 +2964,7 @@ export default function PublicOrderFormPage() {
 
   function shouldCapturePublicOrderOutage(error: any) {
     const status = typeof error?.status === "number" ? error.status : null;
-    if (status == null || status === 0 || status === 408 || status === 429 || status === 502 || status === 503 || status === 504) {
+    if (status == null || status === 0 || status === 408 || status === 429 || status >= 500) {
       return true;
     }
     const message = String(error?.message ?? "").toLowerCase();
@@ -2947,11 +2974,86 @@ export default function PublicOrderFormPage() {
       || message.includes("unable to reach the server");
   }
 
+  function isStalePublicOrderFailure(error: any) {
+    if (error?.staleFormRecovery === true) return true;
+    const status = typeof error?.status === "number" ? error.status : null;
+    if (status !== 400 && status !== 404 && status !== 409) return false;
+    const message = String(error?.message ?? "").toLowerCase();
+    return message.includes("package not available")
+      || message.includes("not available on this order form")
+      || message.includes("no longer available")
+      || message.includes("not available in your selected state")
+      || message.includes("could not confirm package availability")
+      || message.includes("refresh and choose")
+      || message.includes("choose another package")
+      || message.includes("choose the single set")
+      || message.includes("order form changed");
+  }
+
+  function shouldRecoverPublicOrderSubmission(error: any) {
+    return shouldCapturePublicOrderOutage(error) || isStalePublicOrderFailure(error);
+  }
+
+  function publicOrderRecoveryReason(error: any) {
+    if (isStalePublicOrderFailure(error)) return "stale_form_recovery";
+    return "public_order_outage";
+  }
+
+  async function refreshLiveProductBundleForSubmit(selectedPackageId: string) {
+    if (!publicProductId) return { refreshed: false, packageStillAvailable: true };
+    try {
+      const res = await productsApi.public(publicProductId);
+      if (!res?.product) return { refreshed: false, packageStillAvailable: true };
+      const resolvedProduct = res.product as PublicProduct;
+      const relatedProducts = (res.related ?? []) as PublicProduct[];
+      const merged = [resolvedProduct, ...relatedProducts] as PublicProduct[];
+      setProducts(merged);
+      setProductCacheStatus("live");
+      setLastLiveProductRefreshAt(Date.now());
+      writeCachedValue(publicProductCacheKey(publicProductId), {
+        products: merged,
+        orgId: resolvedProduct.orgId ?? null,
+      });
+
+      if (resolvedProduct.orgId) {
+        embedSettingsApi.public(resolvedProduct.orgId)
+          .then((next) => {
+            if (!next) return;
+            setSettings((prev) => ({ ...prev, ...next }));
+            setSettingsCacheStatus("live");
+            writeCachedValue(publicSettingsCacheKey(resolvedProduct.orgId), next as PublicEmbedSettings);
+          })
+          .catch(() => {
+            // Settings freshness should not block a customer's order attempt.
+          });
+      }
+
+      const liveMainProduct = merged.find((product) => product.id === publicProductId) ?? resolvedProduct;
+      const liveOrderablePackageIds = new Set(
+        activeProductPackages(liveMainProduct)
+          .filter((pkg) => !isAddOnOnlyPackage(pkg))
+          .filter((pkg) => packageMatchesSet(pkg, publicPackageSet))
+          .map((pkg) => pkg.id)
+      );
+      return {
+        refreshed: true,
+        packageStillAvailable: liveOrderablePackageIds.has(selectedPackageId)
+      };
+    } catch {
+      // If the product refresh itself flakes, still attempt the order POST. The
+      // POST has its own no-store request and will fall into recovery capture if
+      // the backend is also unavailable.
+      return { refreshed: false, packageStillAvailable: true };
+    }
+  }
+
   async function saveOutageCapturedCart(options: {
     cartId?: string;
     customerName: string;
     phone: string;
     whatsapp?: string;
+    recoveryReason?: string;
+    failureMessage?: string | null;
   }) {
     if (!browserSupabaseClient || !publicProduct || !chosenPackage) {
       return null;
@@ -3010,7 +3112,13 @@ export default function PublicOrderFormPage() {
           confirmationChecked: orderFormConfirmed,
           preferredDelivery: orderFormDeliveryWindow.trim() || null,
           redirectedAfterSave: Boolean(publicRedirectUrl),
-          formContext: buildPublicFormContext("outage_capture")
+          recoveryReason: options.recoveryReason ?? "public_order_outage",
+          submitFailureMessage: options.failureMessage ?? null,
+          formContext: buildPublicFormContext(
+            options.recoveryReason === "stale_form_recovery"
+              ? "stale_form_recovery_capture"
+              : "outage_capture"
+          )
         }
       });
     if (error) throw error;
@@ -3181,6 +3289,13 @@ export default function PublicOrderFormPage() {
     setPublicOrderSubmitting(true);
     publicOrderSubmittingRef.current = true;
     try {
+      const liveRefresh = await refreshLiveProductBundleForSubmit(submittedPackageId);
+      if (!liveRefresh.packageStillAvailable) {
+        const staleError = new Error("This order form changed while it was open. We saved your request so the team can confirm the latest package.");
+        Object.assign(staleError, { status: 409, staleFormRecovery: true });
+        throw staleError;
+      }
+
       const created = await publicOrdersApi.create(submissionBody);
       const upsellProductId = created.upsellOffer?.productId;
       const upsellPackageId = created.upsellOffer?.packageId;
@@ -3295,13 +3410,16 @@ export default function PublicOrderFormPage() {
       });
       return;
     } catch (error: any) {
-      if (shouldCapturePublicOrderOutage(error)) {
+      if (shouldRecoverPublicOrderSubmission(error)) {
+        const recoveryReason = publicOrderRecoveryReason(error);
         try {
           const savedCaptureId = await saveOutageCapturedCart({
             cartId: submissionCartId || undefined,
             customerName,
             phone: orderFormPhone.trim(),
-            whatsapp: whatsappDigits || undefined
+            whatsapp: whatsappDigits || undefined,
+            recoveryReason,
+            failureMessage: error?.message ?? null
           });
           if (savedCaptureId) {
             resetOrderForm();
@@ -3311,12 +3429,22 @@ export default function PublicOrderFormPage() {
               window.clearTimeout(cartSyncTimerRef.current);
               cartSyncTimerRef.current = null;
             }
-            showToast("We saved your request while the order system was temporarily offline. Our team will contact you shortly.");
+            showToast(
+              recoveryReason === "stale_form_recovery"
+                ? "We saved your request. The form refreshed, and our team will confirm the latest package with you shortly."
+                : "We saved your request while the order system was temporarily offline. Our team will contact you shortly."
+            );
             finishOutageCaptureJourney(savedCaptureId, customerName);
             return;
           }
         } catch {
           // Fall through to the default error path if direct capture also fails.
+        }
+        if (recoveryReason === "stale_form_recovery") {
+          setPublicOrderSubmitting(false);
+          publicOrderSubmittingRef.current = false;
+          showToast("The order form refreshed while you were submitting. Please choose the latest package and tap submit again.");
+          return;
         }
         const queuedId = queueBrowserOutageSubmission({
           customerName,

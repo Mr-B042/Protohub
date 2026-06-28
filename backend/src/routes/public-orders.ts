@@ -79,6 +79,8 @@ const PublicOrderSchema = z.object({
   company:      z.string().max(0).optional()
 });
 
+type PublicOrderInput = z.infer<typeof PublicOrderSchema>;
+
 const contextString = (context: Record<string, unknown> | undefined, ...keys: string[]) => {
   for (const key of keys) {
     const value = context?.[key];
@@ -208,6 +210,134 @@ function sourceFromUtm(utm: string | undefined): typeof ALLOWED_SOURCES[number] 
   if (s.includes("web") || s.includes("organic") || s.includes("embed")) return "Website";
   if (!s || s === "direct" || s === "none") return "Direct";
   return "Website";
+}
+
+const recordFromJson = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+
+type RejectedPublicOrderCartContext = {
+  orgId?: string | null;
+  productId?: string | null;
+  productName?: string | null;
+  packageId?: string | null;
+  packageName?: string | null;
+  amount?: number | null;
+  currency?: string | null;
+  state?: string | null;
+  reason: string;
+  message: string;
+};
+
+async function markRejectedPublicOrderCart(d: PublicOrderInput, context: RejectedPublicOrderCartContext) {
+  const cartId = String(d.cartId ?? "").trim();
+  if (!cartId) return;
+  const now = new Date().toISOString();
+
+  try {
+    const { data: existingCart } = await supabase
+      .from("abandoned_carts")
+      .select("id, org_id, status, capture_payload, product_id, package_id, product_name, package_name, amount, currency, state")
+      .eq("id", cartId)
+      .maybeSingle();
+
+    const orgId = context.orgId ?? existingCart?.org_id ?? null;
+    if (!orgId) return;
+    if (existingCart && existingCart.org_id !== orgId) return;
+
+    const existingPayload = recordFromJson(existingCart?.capture_payload);
+    const existingFormContext = recordFromJson(existingPayload.formContext);
+    const submittedFormContext = recordFromJson(d.formContext);
+    const productId = context.productId ?? existingCart?.product_id ?? null;
+    const packageId = context.packageId ?? existingCart?.package_id ?? d.packageId ?? null;
+    const nextPayload = {
+      ...existingPayload,
+      customerName: d.customer,
+      phone: d.phone,
+      whatsapp: d.whatsapp ?? null,
+      email: d.email || null,
+      address: d.address ?? null,
+      city: d.city ?? null,
+      state: d.state ?? context.state ?? existingCart?.state ?? null,
+      packageId,
+      packageName: context.packageName ?? existingCart?.package_name ?? null,
+      recoveryReason: context.reason,
+      submitFailureReason: context.reason,
+      submitFailureMessage: context.message,
+      submitFailureAt: now,
+      submittedPackageId: d.packageId,
+      submittedPackageSet: d.packageSet ?? null,
+      formContext: {
+        ...existingFormContext,
+        ...submittedFormContext,
+        contextEvent: "submit_rejected_recovery"
+      }
+    };
+
+    if (existingCart) {
+      const updatePayload: Record<string, unknown> = {
+        last_activity: now,
+        capture_payload: nextPayload
+      };
+      if (existingCart.status !== "Converted") updatePayload.status = "Open abandoned";
+      await supabase
+        .from("abandoned_carts")
+        .update(updatePayload)
+        .eq("id", cartId)
+        .eq("org_id", orgId);
+    } else if (productId) {
+      await supabase
+        .from("abandoned_carts")
+        .insert({
+          id: cartId,
+          org_id: orgId,
+          customer: d.customer,
+          phone: d.phone,
+          whatsapp: d.whatsapp ?? null,
+          email: d.email || null,
+          address: d.address ?? null,
+          city: d.city ?? null,
+          state: d.state ?? context.state ?? null,
+          product_id: productId,
+          package_id: packageId,
+          product_name: context.productName ?? "Product",
+          package_name: context.packageName ?? "Selected package",
+          amount: Number(context.amount ?? 0),
+          currency: context.currency ?? "NGN",
+          source: sourceFromUtm(d.utmSource),
+          embed_label: cleanEmbedLabel(d.embedLabel),
+          status: "Open abandoned",
+          preferred_delivery: d.preferredDelivery ?? null,
+          capture_payload: nextPayload,
+          last_activity: now
+        });
+    }
+
+    await supabase
+      .from("cart_journey_events")
+      .insert({
+        org_id: orgId,
+        cart_id: cartId,
+        product_id: productId,
+        package_id: packageId,
+        state: d.state ?? context.state ?? existingCart?.state ?? null,
+        event_type: "submit_rejected_recovery",
+        metadata: {
+          reason: context.reason,
+          message: context.message,
+          customerName: d.customer,
+          embedLabel: cleanEmbedLabel(d.embedLabel)
+        }
+      })
+      .then(() => undefined, () => undefined);
+  } catch (error: any) {
+    logger.warn("public-orders: failed to mark rejected submit cart", {
+      cartId,
+      reason: context.reason,
+      error: error?.message
+    });
+  }
 }
 
 const stateAllowsCompanion = (companion: CompanionOverride, state: string | undefined) =>
@@ -578,6 +708,10 @@ router.post("/", submitRateLimit, async (req, res) => {
     .eq("id", d.packageId)
     .maybeSingle();
   if (pkgErr || !pkg || !pkg.active) {
+    await markRejectedPublicOrderCart(d, {
+      reason: "package_unavailable",
+      message: "Package not available."
+    });
     res.status(404).json({ error: "Package not available." });
     return;
   }
@@ -597,12 +731,33 @@ router.post("/", submitRateLimit, async (req, res) => {
   }
   const { data: product, error: productErr } = productResult;
   if (productErr || !product || !product.active) {
+    await markRejectedPublicOrderCart(d, {
+      reason: "product_unavailable",
+      message: "Product not available.",
+      packageId: pkg.id,
+      packageName: pkg.name,
+      amount: Number(pkg.price ?? 0),
+      currency: pkg.currency
+    });
     res.status(404).json({ error: "Product not available." });
     return;
   }
 
   if (requestedPackageSet && String((pkg as { package_set?: string | null }).package_set ?? "Default").trim().toLowerCase() !== requestedPackageSet.toLowerCase()) {
-    res.status(400).json({ error: "This package is not available on this order form. Please refresh and choose an available package." });
+    const message = "This package is not available on this order form. Please refresh and choose an available package.";
+    await markRejectedPublicOrderCart(d, {
+      orgId: product.org_id,
+      productId: product.id,
+      productName: product.name,
+      packageId: pkg.id,
+      packageName: pkg.name,
+      amount: Number(pkg.price ?? 0),
+      currency: pkg.currency,
+      state: d.state ?? null,
+      reason: "package_set_mismatch",
+      message
+    });
+    res.status(400).json({ error: message });
     return;
   }
 
@@ -631,13 +786,39 @@ router.post("/", submitRateLimit, async (req, res) => {
   }
 
   if (!packageAllowsState(pkg, d.state)) {
-    res.status(400).json({ error: "This package is not available in your selected state. Please choose another package." });
+    const message = "This package is not available in your selected state. Please choose another package.";
+    await markRejectedPublicOrderCart(d, {
+      orgId: product.org_id,
+      productId: stampProductId,
+      productName: stampProductName,
+      packageId: pkg.id,
+      packageName: pkg.name,
+      amount: Number(pkg.price ?? 0),
+      currency: pkg.currency,
+      state: d.state ?? null,
+      reason: "package_state_unavailable",
+      message
+    });
+    res.status(400).json({ error: message });
     return;
   }
   try {
     const stockReady = await packageHasAgentStateStock(product.org_id, product.id, pkg, d.state);
     if (!stockReady) {
-      res.status(409).json({ error: "This combo is no longer available in your state. Please choose the single set." });
+      const message = "This combo is no longer available in your state. Please choose the single set.";
+      await markRejectedPublicOrderCart(d, {
+        orgId: product.org_id,
+        productId: stampProductId,
+        productName: stampProductName,
+        packageId: pkg.id,
+        packageName: pkg.name,
+        amount: Number(pkg.price ?? 0),
+        currency: pkg.currency,
+        state: d.state ?? null,
+        reason: "package_stock_unavailable",
+        message
+      });
+      res.status(409).json({ error: message });
       return;
     }
   } catch (availabilityError: any) {
@@ -646,7 +827,20 @@ router.post("/", submitRateLimit, async (req, res) => {
       state: d.state,
       error: availabilityError?.message
     });
-    res.status(500).json({ error: "Could not confirm package availability. Please try again." });
+    const message = "Could not confirm package availability. Please try again.";
+    await markRejectedPublicOrderCart(d, {
+      orgId: product.org_id,
+      productId: stampProductId,
+      productName: stampProductName,
+      packageId: pkg.id,
+      packageName: pkg.name,
+      amount: Number(pkg.price ?? 0),
+      currency: pkg.currency,
+      state: d.state ?? null,
+      reason: "package_availability_check_failed",
+      message
+    });
+    res.status(500).json({ error: message });
     return;
   }
 
@@ -790,7 +984,20 @@ router.post("/", submitRateLimit, async (req, res) => {
           state: d.state,
           error: availabilityError?.message
         });
-        res.status(500).json({ error: "Could not confirm add-on availability. Please try again." });
+        const message = "Could not confirm add-on availability. Please try again.";
+        await markRejectedPublicOrderCart(d, {
+          orgId: product.org_id,
+          productId: stampProductId,
+          productName: stampProductName,
+          packageId: pkg.id,
+          packageName: pkg.name,
+          amount: Number(pkg.price ?? 0),
+          currency: pkg.currency,
+          state: d.state ?? null,
+          reason: "addon_availability_check_failed",
+          message
+        });
+        res.status(500).json({ error: message });
         return;
       }
     }
@@ -1096,7 +1303,20 @@ router.post("/", submitRateLimit, async (req, res) => {
       return;
     }
     logger.error("public-orders: insert failed", { error: orderErr.message });
-    res.status(500).json({ error: "Could not record order." });
+    const message = "Could not record order.";
+    await markRejectedPublicOrderCart(d, {
+      orgId: product.org_id,
+      productId: stampProductId,
+      productName: stampProductName,
+      packageId: pkg.id,
+      packageName: pkg.name,
+      amount,
+      currency: pkg.currency,
+      state: d.state ?? null,
+      reason: "order_insert_failed",
+      message
+    });
+    res.status(500).json({ error: message });
     return;
   }
 
