@@ -186,17 +186,15 @@ app.use(rateLimit({
     req.path.startsWith("/api/public/pwa/")
 }));
 
-// Rate limit on auth endpoints — 20 attempts per 15 minutes per IP. Bumped
-// from the previous 10 because the limit is per-IP and reps behind the same
-// NAT share a budget; legitimate password typos were locking out the whole
-// office. Successful logins still count against the budget (express-rate-limit
-// counts on response, not just on auth failure) — if that becomes a problem,
-// consider `skipSuccessfulRequests: true` in a follow-up.
+// Rate limit on auth endpoints — 20 failed attempts per 15 minutes per IP.
+// The limit is per-IP and reps behind the same NAT share a budget, so successful
+// login/refresh calls must not burn the office's allowance.
 const authRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  skipSuccessfulRequests: true,
   skip: (req) => isLoopbackIp(req.ip),
   message: { error: "Too many attempts. Please try again in 15 minutes." }
 });

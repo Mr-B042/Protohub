@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import * as Sentry from "@sentry/react";
 import { App } from "./App";
 import { auth } from "./lib/auth";
+import { ensureFreshAuthSession } from "./lib/api";
 import { ensureServiceWorkerRegistration } from "./lib/push-client";
 import { LoginScreen } from "./components/LoginScreen";
 import { ResetPasswordScreen } from "./components/ResetPasswordScreen";
@@ -97,19 +98,57 @@ function Root() {
     const onStorage = (e: StorageEvent) => {
       if (e.key === "protohub.accessToken" && !e.newValue) {
         setLoggedIn(false);
+      } else if (e.key === "protohub.accessToken" && e.newValue) {
+        setLoggedIn(true);
       }
     };
+    const onAuthChanged = () => setLoggedIn(auth.isLoggedIn());
     const onLogoutEvent = () => setLoggedIn(false);
     const onHashChange  = () => setHash(window.location.hash);
     window.addEventListener("storage", onStorage);
+    window.addEventListener("protohub:auth-changed", onAuthChanged);
     window.addEventListener("protohub:logout", onLogoutEvent);
     window.addEventListener("hashchange", onHashChange);
     return () => {
       window.removeEventListener("storage", onStorage);
+      window.removeEventListener("protohub:auth-changed", onAuthChanged);
       window.removeEventListener("protohub:logout", onLogoutEvent);
       window.removeEventListener("hashchange", onHashChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (!loggedIn || hash.startsWith("#/order-form/embed")) return;
+    let stopped = false;
+
+    const refreshIfNeeded = async () => {
+      if (stopped || !auth.isLoggedIn()) return;
+      const result = await ensureFreshAuthSession();
+      if (stopped || result.ok) return;
+      // Transient refresh failures should not kick the user out. The next API
+      // request / interval tick will retry. Only a truly invalid/missing refresh
+      // token means the browser can no longer extend the session.
+      if (result.reason === "invalid" || result.reason === "missing") {
+        auth.clear();
+        setLoggedIn(false);
+      }
+    };
+
+    void refreshIfNeeded();
+    const intervalId = window.setInterval(refreshIfNeeded, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshIfNeeded();
+    };
+    const onFocus = () => void refreshIfNeeded();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      stopped = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [hash, loggedIn]);
 
   useEffect(() => {
     if (hash.startsWith("#/order-form/embed")) return;

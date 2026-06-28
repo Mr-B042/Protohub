@@ -329,7 +329,19 @@ router.post("/refresh", async (req, res) => {
     res.status(400).json({ error: "refreshToken is required." });
     return;
   }
-  const { data, error } = await supabaseAuth.auth.refreshSession({ refresh_token: refreshToken });
+  let refreshResult: Awaited<ReturnType<typeof supabaseAuth.auth.refreshSession>>;
+  try {
+    const authClient = supabaseAnon ?? supabaseAuth;
+    refreshResult = await withLoginTimeout(
+      authClient.auth.refreshSession({ refresh_token: refreshToken }),
+      "Supabase session refresh"
+    );
+  } catch (err: any) {
+    logger.error("session refresh request failed", { error: err?.message ?? String(err) });
+    res.status(504).json({ error: "Session refresh service is taking too long. Please retry in a moment." });
+    return;
+  }
+  const { data, error } = refreshResult;
   if (error || !data.session) {
     res.status(401).json({ error: "Invalid or expired refresh token." });
     return;

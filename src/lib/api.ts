@@ -5,9 +5,16 @@
 import { auth } from "./auth";
 import { fetchWithApiFailover } from "./backend-origin";
 import { snakeToCamel } from "./normalize";
-let refreshInFlight: Promise<boolean> | null = null;
 const TRANSIENT_RETRYABLE_STATUSES = new Set([502, 503, 504]);
 const TRANSIENT_GET_RETRY_LIMIT = 2;
+const PRE_REQUEST_REFRESH_SKEW_MS = 5 * 60 * 1000;
+const BACKGROUND_REFRESH_SKEW_MS = 10 * 60 * 1000;
+
+type AuthRefreshResult =
+  | { ok: true }
+  | { ok: false; reason: "missing" | "invalid" | "transient"; status?: number; message?: string };
+
+let refreshInFlight: Promise<AuthRefreshResult> | null = null;
 
 const toSnakeKey = (key: string) =>
   key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
@@ -120,8 +127,20 @@ async function request<T>(
   retried = false,
   transientAttempt = 0
 ): Promise<T> {
-  const token = auth.getAccessToken();
   const isSessionStartEndpoint = SESSION_START_ENDPOINTS.has(path);
+  let token = auth.getAccessToken();
+  if (token && !isSessionStartEndpoint && auth.isAccessTokenExpiringWithin(PRE_REQUEST_REFRESH_SKEW_MS)) {
+    const refresh = await refreshAuthSession();
+    if (refresh.ok) {
+      token = auth.getAccessToken();
+    } else if (auth.isAccessTokenExpired(30_000)) {
+      if (refresh.reason === "invalid" || refresh.reason === "missing") {
+        auth.clear();
+        throw new ApiError(401, "Your session expired. Please sign in again.");
+      }
+      throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment — you have not been logged out.");
+    }
+  }
   let res: Response;
   try {
     res = await fetchWithApiFailover(path, {
@@ -149,11 +168,13 @@ async function request<T>(
 
   // Auto-refresh on 401 (token expired)
   if (res.status === 401 && !retried && !isSessionStartEndpoint) {
-    const refreshed = await tryRefresh();
-    if (refreshed) return request<T>(method, path, body, true, transientAttempt);
+    const refreshed = await refreshAuthSession();
+    if (refreshed.ok) return request<T>(method, path, body, true, transientAttempt);
+    if (refreshed.reason === "transient") {
+      throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment — you have not been logged out.");
+    }
     auth.clear();
-    window.location.reload();
-    throw new ApiError(401, "Session expired.");
+    throw new ApiError(401, "Your session expired. Please sign in again.");
   }
 
   if (!res.ok) {
@@ -166,20 +187,35 @@ async function request<T>(
   return snakeToCamel<T>(json);
 }
 
-async function tryRefresh(): Promise<boolean> {
+function isTransientRefreshStatus(status: number) {
+  return status === 0 || status === 408 || status === 429 || status >= 500;
+}
+
+export async function refreshAuthSession(): Promise<AuthRefreshResult> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
     const refreshToken = auth.getRefreshToken();
-    if (!refreshToken) return false;
+    if (!refreshToken) return { ok: false, reason: "missing" };
     try {
       const res = await fetchWithApiFailover("/api/auth/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken })
       });
-      if (!res.ok) return false;
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({ error: res.statusText }));
+        return {
+          ok: false,
+          reason: isTransientRefreshStatus(res.status) ? "transient" : "invalid",
+          status: res.status,
+          message: extractErrorMessage(payload, res.statusText || "Session refresh failed.")
+        };
+      }
       const data = await res.json();
+      if (!data?.accessToken || !data?.refreshToken) {
+        return { ok: false, reason: "transient", message: "Session refresh response was incomplete." };
+      }
       // Fetch fresh profile so role/name stay in sync
       let user = auth.getUser();
       try {
@@ -192,15 +228,21 @@ async function tryRefresh(): Promise<boolean> {
         }
       } catch { /* keep existing user if /me fails */ }
       if (user) auth.save(data.accessToken, data.refreshToken, user);
-      return true;
-    } catch {
-      return false;
+      return { ok: true };
+    } catch (error: any) {
+      return { ok: false, reason: "transient", message: error?.message ?? "Session refresh failed." };
     } finally {
       refreshInFlight = null;
     }
   })();
 
   return refreshInFlight;
+}
+
+export async function ensureFreshAuthSession(skewMs = BACKGROUND_REFRESH_SKEW_MS): Promise<AuthRefreshResult> {
+  if (!auth.getAccessToken()) return { ok: false, reason: "missing" };
+  if (!auth.isAccessTokenExpiringWithin(skewMs)) return { ok: true };
+  return refreshAuthSession();
 }
 
 const get  = <T>(path: string)            => request<T>("GET",    path);

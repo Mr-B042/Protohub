@@ -5,6 +5,18 @@ const ACCESS_TOKEN_KEY  = "protohub.accessToken";
 const REFRESH_TOKEN_KEY = "protohub.refreshToken";
 const USER_KEY          = "protohub.authUser";
 
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return null;
+    const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    return JSON.parse(atob(padded)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export interface AuthUser {
   id:    string;
   orgId: string;
@@ -16,6 +28,24 @@ export interface AuthUser {
 export const auth = {
   getAccessToken():  string | null { return localStorage.getItem(ACCESS_TOKEN_KEY); },
   getRefreshToken(): string | null { return localStorage.getItem(REFRESH_TOKEN_KEY); },
+
+  getAccessTokenExpiresAt(): number | null {
+    const token = this.getAccessToken();
+    if (!token) return null;
+    const payload = decodeJwtPayload(token);
+    const exp = payload?.exp;
+    return typeof exp === "number" ? exp * 1000 : null;
+  },
+
+  isAccessTokenExpired(skewMs = 0): boolean {
+    const expiresAt = this.getAccessTokenExpiresAt();
+    return !expiresAt || expiresAt - Date.now() <= skewMs;
+  },
+
+  isAccessTokenExpiringWithin(ms: number): boolean {
+    const expiresAt = this.getAccessTokenExpiresAt();
+    return !expiresAt || expiresAt - Date.now() <= ms;
+  },
 
   getUser(): AuthUser | null {
     try {
