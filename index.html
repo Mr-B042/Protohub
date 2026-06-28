@@ -135,6 +135,18 @@
       // it can serve stale UI while Vite is running the correct code.
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {
+          // The PUBLIC ORDER FORM (#/order-form/embed) is a customer conversion page.
+          // It must NEVER be reloaded mid-order by a SW update (that wipes the form ->
+          // abandoned cart) and needs nothing the SW offers (push is admin-only). Skip
+          // registration + the auto-reload listeners entirely, and drop any SW a prior
+          // visit left controlling this page so future loads are SW-free too.
+          if ((window.location.hash || "").startsWith("#/order-form/embed")) {
+            navigator.serviceWorker.getRegistrations()
+              .then((regs) => Promise.all(regs.map((reg) => reg.unregister())))
+              .catch((err) => console.warn("[SW] order-form cleanup failed:", err));
+            return;
+          }
+
           const isLocalhost = ["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(window.location.hostname);
           if (isLocalhost) {
             Promise.all([
