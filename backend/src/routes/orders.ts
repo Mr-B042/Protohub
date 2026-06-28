@@ -1601,7 +1601,17 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       notes:           `Auto-created on order delivery (${existing.customer})`
     });
 
+    // Per-line idempotency: never deduct a product that already has an Order
+    // Fulfilled movement for this order. Guards against double-deduction on re-saves
+    // / partial-failure retries (the flag can be left false with some lines already
+    // deducted), while still letting a genuinely MISSED line go through.
+    const { data: priorFulfilment } = await supabase
+      .from("stock_movements").select("product_id")
+      .eq("org_id", req.user!.orgId).eq("order_id", req.params.id).eq("type", "Order Fulfilled");
+    const alreadyDeductedProductIds = new Set((priorFulfilment ?? []).map((m: { product_id: string }) => m.product_id));
+
     for (const line of inventoryLines) {
+      if (alreadyDeductedProductIds.has(line.productId)) continue;
       const currentQty = stockMap.get(line.productId) ?? 0;
       const nextQty = Math.max(0, currentQty - line.quantity);
       await applyLocationInventoryDelta(req.user!.orgId, effectiveAgentId, resolvedLocation.id, line, nextQty);
