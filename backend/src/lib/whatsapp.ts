@@ -2061,9 +2061,9 @@ export async function sendCartRecoveryWhatsApp(orgId: string, cart: Record<strin
   const firstName = (cart.customer ?? "").toString().split(" ")[0] || "there";
   const productName = (payload?.productName ?? "your order").toString();
 
-  // Image (converts better): a dedicated recovery creative if set, else the cart's
-  // package image. The product's "real footage" image is kept SEPARATE — it's only
-  // the new-order extra photo, not reused here.
+  // Image (converts better). Chain: dedicated recovery creative → the cart's package
+  // image → the product's catalog image. The "real footage" image is kept SEPARATE
+  // (new-order extra photo only) and is NOT used here.
   let imageUrl: string | undefined = (settings as { cart_recovery_image_url?: string | null }).cart_recovery_image_url?.trim() || undefined;
   if (!imageUrl && cart.package_id) {
     const { data: pkg } = await supabase
@@ -2071,6 +2071,12 @@ export async function sendCartRecoveryWhatsApp(orgId: string, cart: Record<strin
       .eq("id", cart.package_id).maybeSingle();
     const arr = (pkg as { image_urls?: string[] | null } | null)?.image_urls;
     imageUrl = ((pkg as { image_url?: string | null } | null)?.image_url ?? (Array.isArray(arr) ? arr[0] : undefined)) || undefined;
+  }
+  if (!imageUrl && cart.product_id) {
+    const { data: prod } = await supabase
+      .from("products").select("image_url")
+      .eq("id", cart.product_id).maybeSingle();
+    imageUrl = (prod as { image_url?: string | null } | null)?.image_url?.trim() || undefined;
   }
 
   // Mark sent before dispatching so an overlapping cron can't double-send.
@@ -2096,7 +2102,7 @@ export async function runCartRecoveryWhatsApp(): Promise<void> {
   const leftCutoff = new Date(now - 3 * 60 * 1000).toISOString();
   const { data: carts, error } = await supabase
     .from("abandoned_carts")
-    .select("id, org_id, customer, phone, whatsapp, package_id, capture_payload, last_activity, left_at, recovery_sent_at, status")
+    .select("id, org_id, customer, phone, whatsapp, product_id, package_id, capture_payload, last_activity, left_at, recovery_sent_at, status")
     .in("status", ["Open abandoned", "In progress"])
     .is("recovery_sent_at", null)
     .not("phone", "is", null)

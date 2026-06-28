@@ -585,7 +585,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   const productSelectBase = "id, org_id, name, active, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions";
   let productResult = await supabase
     .from("products")
-    .select(`id, org_id, name, active, public_order_assignment_mode, dedicated_handler_user_id, dedicated_handler_user_ids, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions`)
+    .select(`id, org_id, name, active, public_order_assignment_mode, dedicated_handler_user_id, dedicated_handler_user_ids, image_url, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions`)
     .eq("id", pkg.product_id)
     .maybeSingle();
   if (productResult.error && isMissingProductAssignmentModeColumnError(productResult.error)) {
@@ -1298,7 +1298,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     source: order.source ?? null,
     city: (order as any).city ?? null,
     state: (order as any).state ?? null,
-    productImageUrl: (pkg as any)?.image_url ?? ((pkg as any)?.image_urls as string[] | null)?.[0] ?? null,
+    productImageUrl: (pkg as any)?.image_url ?? ((pkg as any)?.image_urls as string[] | null)?.[0] ?? (product as any)?.image_url ?? null,
     productVideoUrl: (pkg as any)?.video_url ?? null,
     crossSellLines: Array.isArray((order as any).cross_sell_lines)
       ? (order as any).cross_sell_lines
