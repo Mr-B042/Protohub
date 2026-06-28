@@ -75,6 +75,9 @@ const PublicOrderSchema = z.object({
   confirmationChecked: z.boolean().optional(),
   preferredDelivery:   z.string().max(80).optional(),
   formContext:  PublicFormContextSchema.optional(),
+  // Set by the browser's localStorage retry queue when resubmitting an order that
+  // was first attempted while the API was unreachable — flags the order as recovered.
+  outageRecovered:     z.boolean().optional(),
   // Honeypot — must be empty. Bots tend to fill every field they see.
   company:      z.string().max(0).optional()
 });
@@ -677,7 +680,8 @@ const PUBLIC_ORDER_OPTIONAL_INSERT_COLUMNS = [
   "assigned_by_user_id",
   "assigned_by_name_snapshot",
   "review_hold",
-  "review_reason"
+  "review_reason",
+  "outage_recovered"
 ] as const;
 
 const missingPublicOrderOptionalColumn = (error: { message?: string } | null | undefined, payload: Record<string, unknown>) =>
@@ -1261,9 +1265,13 @@ router.post("/", submitRateLimit, async (req, res) => {
     form_context:      d.formContext ?? {},
     review_hold:       reviewHold,
     review_reason:     reviewReason,
+    // True only when the browser's localStorage retry queue resubmitted an order
+    // first attempted during an outage — flags it for the team to verify.
+    outage_recovered:  d.outageRecovered ?? false,
     status:            "New"
   } as Record<string, unknown>;
   const legacyInsert = { ...baseInsert };
+  delete legacyInsert.outage_recovered;
   delete legacyInsert.confirmation_checked;
   delete legacyInsert.preferred_delivery;
   delete legacyInsert.referrer;

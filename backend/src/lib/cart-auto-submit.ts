@@ -18,6 +18,7 @@ import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellW
 import { resolveMetaTrackingConfig, sendMetaCapiPurchase } from "./meta-capi.js";
 import { sendTikTokConversion } from "./tiktok-events.js";
 import { assignOrderRep, dedicatedHandlerIdsOf } from "./order-assignment.js";
+import { notifyOutageRecoveredOrder } from "./order-notifications.js";
 
 const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
 const MAX_IDLE_MS = 15 * 60 * 1000;  // give up after 15 min
@@ -245,6 +246,21 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     embedLabel: capturePayload.embedLabel ?? null,
     createdAt: new Date().toISOString()
   };
+
+  // Confirmed submission recovered from an outage — alert Owners/Admins (+ rep) to
+  // verify it, since it landed with no live confirmation at submit time.
+  if (cart.outage_captured) {
+    void notifyOutageRecoveredOrder(orgId, {
+      id: order.id,
+      customer: cart.customer,
+      productName: product.name,
+      packageName: pkg.name,
+      phone: cart.phone,
+      amount,
+      currency: cart.currency ?? pkg.currency ?? "NGN",
+      assignedRepId
+    }).catch(() => {});
+  }
 
   void sendOrderNewCustomerWhatsApp(orgId, orderForWa).catch(() => {});
   // Look up the assigned rep's phone for the rep-alert WhatsApp
