@@ -967,6 +967,48 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
   }
 
   const cartById = new Map(cartRows.map((row) => [row.id, row]));
+  const eventMetadata = (event: any): Record<string, unknown> =>
+    event?.metadata && typeof event.metadata === "object"
+      ? event.metadata as Record<string, unknown>
+      : {};
+  const sourceQualityScore = (source: string) => {
+    const normalized = source.trim().toLowerCase();
+    if (!normalized || normalized === "unknown") return 0;
+    if (normalized === "website" || normalized === "direct") return 1;
+    return 2;
+  };
+  const sourceEventPriority = (eventType: string) => {
+    if (eventType === "order_submitted") return 4;
+    if (eventType === "submit_attempted") return 3;
+    if (eventType === "form_opened") return 2;
+    if (eventType === "first_interaction") return 1;
+    return 0;
+  };
+  const canonicalSourceByCart = new Map<string, { source: string; score: number; createdAt: string }>();
+  const considerCanonicalSource = (event: any) => {
+    const cartId = typeof event?.cart_id === "string" ? event.cart_id.trim() : "";
+    if (!cartId) return;
+    const metadata = eventMetadata(event);
+    const cartRow = cartById.get(cartId);
+    const source = normalizePulseSource(metadata.source ?? cartRow?.source);
+    const eventType = String(event?.event_type ?? "");
+    const createdAt = typeof event?.created_at === "string" ? event.created_at : "";
+    const score = sourceEventPriority(eventType) * 10 + sourceQualityScore(source);
+    const current = canonicalSourceByCart.get(cartId);
+    if (!current || score > current.score || (score === current.score && createdAt > current.createdAt)) {
+      canonicalSourceByCart.set(cartId, { source, score, createdAt });
+    }
+  };
+  [...(rangeEvents ?? []), ...(rangeFeedEvents ?? []), ...(liveWindowEvents ?? []), ...(metricEvents ?? [])].forEach(considerCanonicalSource);
+  const pulseSourceForEvent = (event: any) => {
+    const cartId = typeof event?.cart_id === "string" ? event.cart_id.trim() : "";
+    if (cartId && canonicalSourceByCart.has(cartId)) {
+      return canonicalSourceByCart.get(cartId)!.source;
+    }
+    const metadata = eventMetadata(event);
+    const cartRow = cartId ? cartById.get(cartId) : undefined;
+    return normalizePulseSource(metadata.source ?? cartRow?.source);
+  };
   const rangeByCart = new Map<string, any[]>();
   const liveByCart = new Map<string, any[]>();
 
@@ -974,7 +1016,7 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     if (!LIVE_PULSE_EVENT_TYPES.has(String(event.event_type ?? ""))) continue;
     const cartId = typeof event.cart_id === "string" ? event.cart_id.trim() : "";
     if (!cartId) continue;
-    const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+    const metadata = eventMetadata(event);
     const cartRow = cartById.get(cartId);
     const embedLabel = resolvePulseEmbedLabel(
       metadata.embedLabel ?? cartRow?.embed_label,
@@ -990,7 +1032,7 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     if (!LIVE_PULSE_EVENT_TYPES.has(String(event.event_type ?? ""))) continue;
     const cartId = typeof event.cart_id === "string" ? event.cart_id.trim() : "";
     if (!cartId) continue;
-    const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+    const metadata = eventMetadata(event);
     const cartRow = cartById.get(cartId);
     const embedLabel = resolvePulseEmbedLabel(
       metadata.embedLabel ?? cartRow?.embed_label,
@@ -1009,9 +1051,9 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     if (!createdAt || createdAt < selectedRange.startIso || createdAt >= selectedRange.endExclusiveIso) return;
 
     const cartId = typeof event?.cart_id === "string" ? event.cart_id.trim() : "";
-    const metadata = event?.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+    const metadata = eventMetadata(event);
     const cartRow = cartId ? cartById.get(cartId) : undefined;
-    const source = normalizePulseSource(metadata.source ?? cartRow?.source);
+    const source = pulseSourceForEvent(event);
     const embedLabel = resolvePulseEmbedLabel(
       metadata.embedLabel ?? cartRow?.embed_label,
       metadata.productName ?? cartRow?.product_name
@@ -1035,7 +1077,7 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     .filter((event) => {
       if (embedLabels.length === 0) return true;
       const cartId = typeof event.cart_id === "string" ? event.cart_id.trim() : "";
-      const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+      const metadata = eventMetadata(event);
       const cartRow = cartById.get(cartId);
       const embedLabel = resolvePulseEmbedLabel(
         metadata.embedLabel ?? cartRow?.embed_label,
@@ -1046,9 +1088,9 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     .slice(0, 12)
     .map((event) => {
       const cartId = typeof event.cart_id === "string" ? event.cart_id.trim() : "";
-      const metadata = event.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+      const metadata = eventMetadata(event);
       const cartRow = cartById.get(cartId);
-      const source = normalizePulseSource(metadata.source ?? cartRow?.source);
+      const source = pulseSourceForEvent(event);
       const embedLabel = resolvePulseEmbedLabel(
         metadata.embedLabel ?? cartRow?.embed_label,
         metadata.productName ?? cartRow?.product_name
@@ -1092,6 +1134,14 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
   const recountPulseMetricEvents = () => {
     const countedEventIds = new Set<string>();
     const convertedOrderKeys = new Set<string>();
+    const metricCartStates = new Map<string, {
+      source: string;
+      embedLabel: string;
+      hasView: boolean;
+      hasInteraction: boolean;
+      hasSubmitLike: boolean;
+      latestSeenAt: string | null;
+    }>();
     summary.viewedToday = 0;
     summary.interactedToday = 0;
     summary.submitAttemptsToday = 0;
@@ -1117,9 +1167,9 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
       if (countedEventIds.has(dedupeKey)) continue;
       countedEventIds.add(dedupeKey);
 
-      const metadata = event?.metadata && typeof event.metadata === "object" ? (event.metadata as Record<string, unknown>) : {};
+      const metadata = eventMetadata(event);
       const cartRow = cartId ? cartById.get(cartId) : undefined;
-      const source = normalizePulseSource(metadata.source ?? cartRow?.source);
+      const source = pulseSourceForEvent(event);
       const embedLabel = resolvePulseEmbedLabel(
         metadata.embedLabel ?? cartRow?.embed_label,
         metadata.productName ?? cartRow?.product_name
@@ -1133,6 +1183,23 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
       }
       if (!embedBucket.lastSeenAt || createdAt > embedBucket.lastSeenAt) {
         embedBucket.lastSeenAt = createdAt;
+      }
+      if (cartId) {
+        const metricCartState = metricCartStates.get(cartId) ?? {
+          source,
+          embedLabel,
+          hasView: false,
+          hasInteraction: false,
+          hasSubmitLike: false,
+          latestSeenAt: null as string | null
+        };
+        metricCartState.source = source;
+        metricCartState.embedLabel = embedLabel;
+        metricCartState.latestSeenAt = !metricCartState.latestSeenAt || createdAt > metricCartState.latestSeenAt ? createdAt : metricCartState.latestSeenAt;
+        if (eventType === "form_opened") metricCartState.hasView = true;
+        if (eventType === "first_interaction") metricCartState.hasInteraction = true;
+        if (eventType === "submit_attempted" || eventType === "order_submitted") metricCartState.hasSubmitLike = true;
+        metricCartStates.set(cartId, metricCartState);
       }
 
       if (eventType === "form_opened") {
@@ -1180,12 +1247,58 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
       sourceStats.set(source, sourceBucket);
       embedStats.set(embedLabel, embedBucket);
     }
+
+    // Some embeds, ad browsers, and cached landing pages can miss the early
+    // browser pulse while the backend still receives the final order. Keep the
+    // funnel truthful at source level: a cart with an interaction/submit/order
+    // necessarily had at least one view, and a cart with a submit/order
+    // necessarily had at least one interaction.
+    for (const metricCartState of metricCartStates.values()) {
+      const sourceBucket = sourceStats.get(metricCartState.source) ?? {
+        source: metricCartState.source,
+        viewed: 0,
+        interacted: 0,
+        submitted: 0,
+        lastSeenAt: metricCartState.latestSeenAt
+      };
+      const embedBucket = embedStats.get(metricCartState.embedLabel) ?? {
+        embedLabel: metricCartState.embedLabel,
+        viewed: 0,
+        interacted: 0,
+        submitted: 0,
+        lastSeenAt: metricCartState.latestSeenAt
+      };
+      if (metricCartState.latestSeenAt && (!sourceBucket.lastSeenAt || metricCartState.latestSeenAt > sourceBucket.lastSeenAt)) {
+        sourceBucket.lastSeenAt = metricCartState.latestSeenAt;
+      }
+      if (metricCartState.latestSeenAt && (!embedBucket.lastSeenAt || metricCartState.latestSeenAt > embedBucket.lastSeenAt)) {
+        embedBucket.lastSeenAt = metricCartState.latestSeenAt;
+      }
+      if ((metricCartState.hasInteraction || metricCartState.hasSubmitLike) && !metricCartState.hasView) {
+        summary.viewedToday += 1;
+        sourceBucket.viewed += 1;
+        embedBucket.viewed += 1;
+        summary.lastViewedAt = metricCartState.latestSeenAt && (!summary.lastViewedAt || metricCartState.latestSeenAt > summary.lastViewedAt)
+          ? metricCartState.latestSeenAt
+          : summary.lastViewedAt;
+      }
+      if (metricCartState.hasSubmitLike && !metricCartState.hasInteraction) {
+        summary.interactedToday += 1;
+        sourceBucket.interacted += 1;
+        embedBucket.interacted += 1;
+        summary.lastInteractionAt = metricCartState.latestSeenAt && (!summary.lastInteractionAt || metricCartState.latestSeenAt > summary.lastInteractionAt)
+          ? metricCartState.latestSeenAt
+          : summary.lastInteractionAt;
+      }
+      sourceStats.set(metricCartState.source, sourceBucket);
+      embedStats.set(metricCartState.embedLabel, embedBucket);
+    }
   };
 
   for (const [cartId, events] of rangeByCart.entries()) {
     const cartRow = cartById.get(cartId);
-    const latestSource = normalizePulseSource(
-      [...events].reverse().map((event) => event?.metadata?.source).find((value) => typeof value === "string" && value.trim()) ?? cartRow?.source
+    const latestSource = canonicalSourceByCart.get(cartId)?.source ?? normalizePulseSource(
+      [...events].reverse().map((event) => eventMetadata(event).source).find((value) => typeof value === "string" && value.trim()) ?? cartRow?.source
     );
     const sourceBucket = sourceStats.get(latestSource) ?? { source: latestSource, viewed: 0, interacted: 0, submitted: 0, lastSeenAt: null };
     const latestEmbedLabel = resolvePulseEmbedLabel(
