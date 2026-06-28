@@ -2077,23 +2077,34 @@ export default function PublicOrderFormPage() {
 
   useEffect(() => {
     if (!params) return;
+    // When embedded in an iframe, the parent grows the iframe to our reported height.
+    // .public-order-page has min-height:100vh, which then stretches to fill the taller
+    // iframe and reports an even bigger height — an infinite-growth feedback loop (the
+    // endless grey area) that balloons memory until the mobile tab crashes to white.
+    // Inside an iframe, drop the viewport min-height so our height stays intrinsic.
+    let inIframe = false;
+    try { inIframe = window.self !== window.top; } catch { inIframe = true; }
+    let injectedStyle: HTMLStyleElement | null = null;
+    if (inIframe) {
+      injectedStyle = document.createElement("style");
+      injectedStyle.textContent = ".public-order-page{min-height:auto !important}";
+      document.head.appendChild(injectedStyle);
+    }
     const measureHeight = () => {
-      const body = document.body;
-      const html = document.documentElement;
+      // Measure the CONTENT element's own height, NOT the document/viewport — the
+      // viewport equals the iframe height, so including it feeds the growth loop and
+      // also prevents the iframe from ever shrinking back down.
       const content = document.querySelector<HTMLElement>(".public-order-page");
-      const contentBottom = content ? content.getBoundingClientRect().bottom + 16 : 0;
-      // Use the MAX of the content bottom and the document/scroll heights so we never
-      // under-report (which would clip the iframe in the embed).
-      return Math.ceil(Math.max(
-        contentBottom,
-        body?.scrollHeight ?? 0,
-        body?.offsetHeight ?? 0,
-        html.scrollHeight,
-        html.offsetHeight
-      ));
+      if (content) return Math.ceil(content.scrollHeight + 8);
+      return Math.ceil(document.documentElement.scrollHeight);
     };
+    let lastSent = 0;
     const send = () => {
       const height = measureHeight();
+      // Only report a genuine change — stops redundant posts bouncing against the
+      // parent's resize (the other half of the feedback loop).
+      if (Math.abs(height - lastSent) < 2) return;
+      lastSent = height;
       try {
         window.parent.postMessage({ type: "ordo-resize", height }, "*");
       } catch {
@@ -2136,6 +2147,7 @@ export default function PublicOrderFormPage() {
       window.removeEventListener("resize", schedule);
       window.removeEventListener("orientationchange", schedule);
       window.removeEventListener("message", requestResize);
+      injectedStyle?.remove();
     };
   }, [params, publicOrderSubmitted, publicUpsellOffer, loading, orderFormCrossSells.length, orderFormPackageId, orderFormState]);
 
