@@ -396,6 +396,8 @@ export const productsApi = {
   updatePackage: (productId: string, pkgId: string, body: unknown) => patch<any>(`/api/products/${productId}/packages/${pkgId}`, body),
   uploadPackageImage: (dataUrl: string, filename?: string) =>
     post<{ url: string; path: string }>(`/api/products/package-images/upload`, { dataUrl, filename }),
+  uploadProductVideo: (dataUrl: string, filename?: string) =>
+    post<{ url: string; path: string }>(`/api/products/product-videos/upload`, { dataUrl, filename }),
   deletePricing: (productId: string, currency: string) => del<void>(`/api/products/${productId}/pricings/${currency}`),
   deletePackage: (productId: string, pkgId: string) => del<void>(`/api/products/${productId}/packages/${pkgId}`)
 };
