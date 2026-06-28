@@ -3,6 +3,7 @@ import { logger } from "./logger.js";
 import { ensureWhatsAppReady, sendConnectedWhatsApp } from "./whatsapp-runtime.js";
 import { isWithinWorkingSchedule, nextWorkingScheduleAt, type WorkingSchedule } from "./business-schedule.js";
 import { generateOrderReceiptPdf } from "./order-receipt-pdf.js";
+import { createShortLink } from "./short-links.js";
 
 export type WhatsAppProvider = "baileys" | "cloud_api";
 export type WhatsAppTrigger =
@@ -15,7 +16,8 @@ export type WhatsAppTrigger =
   | "order_scheduled"      // Customer: scheduled delivery date confirmed
   | "order_failed"         // Customer: delivery failed, contact rep
   | "order_delivered"      // Customer: delivery confirmed, thank you
-  | "order_upsell";        // Customer: post-order add-on offer (sent ~5 min after confirmation)
+  | "order_upsell"         // Customer: post-order add-on offer (sent ~5 min after confirmation)
+  | "cart_recovery";       // Customer: abandoned-cart recovery with a continue-where-you-left link
 export type WhatsAppMessageEvent =
   | WhatsAppTrigger
   | "manual_test"
@@ -31,7 +33,8 @@ export const DEFAULT_WHATSAPP_TRIGGERS: Record<WhatsAppTrigger, boolean> = {
   order_scheduled: false,
   order_failed: false,
   order_delivered: false,
-  order_upsell: false
+  order_upsell: false,
+  cart_recovery: false
 };
 
 export const LEGACY_WHATSAPP_TEMPLATE_BODIES: Record<Extract<WhatsAppTrigger, "order_follow_up_rep" | "order_follow_up_manager">, string> = {
@@ -87,6 +90,9 @@ export const DEFAULT_WHATSAPP_TEMPLATES: Record<WhatsAppTrigger, { body: string 
   },
   order_upsell: {
     body: "Hi {{first_name}}! 🎉\n\nThank you for ordering — we are preparing your delivery now.\n\nQuick question — would you like to add *{{upsell_name}}* to your order?\n{{strike_line}}Just *{{upsell_currency}} {{upsell_price}}* — ships in the same delivery.\n\nReply *YES* to add it or *NO* to skip. 😊"
+  },
+  cart_recovery: {
+    body: "Hi {{first_name}}! 🛒\n\nYou were almost done ordering *{{product_name}}* — your details are still saved.\n\nTap here to finish in a few seconds 👉 {{recovery_link}}\n\nReply here if you need any help. 😊"
   }
 };
 
@@ -2027,4 +2033,78 @@ export async function sendOrderUpsellWhatsApp(
       logger.warn("wa order_upsell: send failed", { orgId, orderId: order.id, error: (err as Error).message });
     }
   }, delayMs);
+}
+
+/**
+ * Abandoned-cart recovery to the CUSTOMER on WhatsApp — the product image + a short,
+ * tracked link back to the exact form they left (pre-filled, continues where they
+ * stopped). Marked sent for dedupe.
+ */
+export async function sendCartRecoveryWhatsApp(orgId: string, cart: Record<string, any>): Promise<void> {
+  const settings = await loadSettings(orgId);
+  if (!isConnected(settings)) return;
+  if (!settings?.triggers?.cart_recovery) return;
+  if (cart.recovery_sent_at) return;
+
+  const targetPhone = (cart.whatsapp ?? cart.phone ?? "").toString().trim();
+  if (!targetPhone) return;
+  const normalizedPhone = normalizePhoneForWhatsApp(targetPhone);
+  if (!normalizedPhone) return;
+  if (await customerAlreadyMessagedToday(orgId, normalizedPhone, "cart_recovery")) return;
+
+  // Recovery link = the exact tracked form URL the customer landed on.
+  const payload = (cart.capture_payload ?? {}) as Record<string, any>;
+  const landingUrl: string | null = payload?.formContext?.landingUrl ?? payload?.landingUrl ?? null;
+  if (!landingUrl) return;
+  const recoveryLink = await createShortLink(orgId, landingUrl);
+
+  const firstName = (cart.customer ?? "").toString().split(" ")[0] || "there";
+  const productName = (payload?.productName ?? "your order").toString();
+
+  // Product image (converts better) from the package the cart was on.
+  let imageUrl: string | undefined;
+  if (cart.package_id) {
+    const { data: pkg } = await supabase
+      .from("product_packages").select("image_url, image_urls")
+      .eq("id", cart.package_id).maybeSingle();
+    const arr = (pkg as { image_urls?: string[] | null } | null)?.image_urls;
+    imageUrl = ((pkg as { image_url?: string | null } | null)?.image_url ?? (Array.isArray(arr) ? arr[0] : undefined)) || undefined;
+  }
+
+  // Mark sent before dispatching so an overlapping cron can't double-send.
+  await supabase.from("abandoned_carts").update({ recovery_sent_at: new Date().toISOString() }).eq("id", cart.id).eq("org_id", orgId);
+
+  await queueOrSendWhatsApp(
+    orgId, "cart_recovery",
+    { first_name: firstName, product_name: productName, recovery_link: recoveryLink, cart_id: String(cart.id) },
+    targetPhone,
+    { audience: "customer", recipientName: firstName, metadata: { event: "cart_recovery", cartId: cart.id } },
+    imageUrl ? { imageUrl } : undefined
+  );
+}
+
+/**
+ * Cron: WhatsApp abandoned-cart recovery. Any not-yet-converted cart with a phone
+ * that hasn't been recovered, which either left the form 3+ min ago or has been idle
+ * 5+ min. (Complete carts usually auto-submit to orders first and skip this.)
+ */
+export async function runCartRecoveryWhatsApp(): Promise<void> {
+  const now = Date.now();
+  const idleCutoff = new Date(now - 5 * 60 * 1000).toISOString();
+  const leftCutoff = new Date(now - 3 * 60 * 1000).toISOString();
+  const { data: carts, error } = await supabase
+    .from("abandoned_carts")
+    .select("id, org_id, customer, phone, whatsapp, package_id, capture_payload, last_activity, left_at, recovery_sent_at, status")
+    .in("status", ["Open abandoned", "In progress"])
+    .is("recovery_sent_at", null)
+    .not("phone", "is", null)
+    .not("customer", "eq", "Partial lead")
+    .or(`left_at.lte.${leftCutoff},last_activity.lte.${idleCutoff}`)
+    .limit(100);
+  if (error) { logger.error("cart_recovery: query failed", { error: error.message }); return; }
+  if (!carts?.length) return;
+  for (const cart of carts as Array<Record<string, any>>) {
+    try { await sendCartRecoveryWhatsApp(cart.org_id, cart); }
+    catch (e) { logger.warn("cart_recovery: send failed", { cartId: cart.id, error: (e as Error).message }); }
+  }
 }
