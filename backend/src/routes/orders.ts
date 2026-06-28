@@ -1393,6 +1393,8 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
   }
 
   const watDate = new Date(Date.now() + 60 * 60 * 1000).toISOString().split("T")[0];
+  const shouldRunDeliveryDeduction =
+    !isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && inventoryLines.length > 0;
 
   if (status === "Delivered") {
     if (deliveredDate) {
@@ -1493,11 +1495,22 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     }
   }
 
-  let { data, error } = await supabase
-    .from("orders")
-    .update(updates)
-    .eq("id", req.params.id)
-    .eq("org_id", req.user!.orgId)
+  const guardedOrderUpdate = (payload: Record<string, unknown>) => {
+    let query = supabase
+      .from("orders")
+      .update(payload)
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId);
+    // Only the request that claims stock_deducted=false may run delivery stock
+    // side-effects. This closes the double-click / concurrent-save window where
+    // two requests can both mark Delivered and both deduct the same order lines.
+    if (shouldRunDeliveryDeduction) {
+      query = query.eq("stock_deducted", false);
+    }
+    return query;
+  };
+
+  let { data, error } = await guardedOrderUpdate(updates)
     .select()
     .single();
 
@@ -1507,13 +1520,27 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       "timeline_notes",
       ...DATE_AUDIT_UPDATE_KEYS
     ]);
-    ({ data, error } = await supabase
-      .from("orders")
-      .update(legacyUpdates)
-      .eq("id", req.params.id)
-      .eq("org_id", req.user!.orgId)
+    ({ data, error } = await guardedOrderUpdate(legacyUpdates)
       .select()
       .single());
+  }
+
+  if (error && shouldRunDeliveryDeduction && (error as any).code === "PGRST116") {
+    const { data: latest } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId)
+      .single();
+    if (latest?.status === "Delivered" && latest?.stock_deducted === true) {
+      res.json(latest);
+      return;
+    }
+    res.status(409).json({
+      error: "This order was changed by another request. Refresh the order and try again.",
+      code: "ORDER_DELIVERY_CONFLICT"
+    });
+    return;
   }
 
   if (error) { res.status(500).json({ error: error.message }); return; }
@@ -1580,7 +1607,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
   }
 
   // ── Delivery side-effects: deduct agent stock, create waybill, log movement ──
-  if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && inventoryLines.length > 0) {
+  if (shouldRunDeliveryDeduction) {
    try {
     const today = new Date().toISOString().split("T")[0];
     const deductionLines = inventoryLines.map((line) => ({ productId: line.productId, quantity: line.quantity }));
