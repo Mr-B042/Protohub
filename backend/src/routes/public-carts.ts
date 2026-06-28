@@ -467,6 +467,20 @@ router.post("/:id/heartbeat", captureRateLimit, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── POST /api/public/carts/:id/left ──────────────────────
+// Fired (via sendBeacon) when the customer leaves/closes the embed form. Stamps
+// left_at so the WhatsApp cart-recovery cron can nudge them 3 min after leaving.
+router.post("/:id/left", captureRateLimit, async (req, res) => {
+  const cartId = String(req.params.id ?? "").trim();
+  if (!/^[A-Za-z0-9\-_]+$/.test(cartId)) { res.status(400).json({ error: "Invalid cart id." }); return; }
+  await supabase
+    .from("abandoned_carts")
+    .update({ left_at: new Date().toISOString() })
+    .eq("id", cartId)
+    .is("left_at", null); // first leave only
+  res.json({ ok: true });
+});
+
 // ── POST /api/public/carts/:id/events ────────────────────
 // Tracks the customer's journey through the public order form. Works even
 // before the abandoned cart row has been fully captured, as long as the

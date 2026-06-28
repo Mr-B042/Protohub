@@ -11,7 +11,8 @@ import { runSmartStockAlerts } from "./lib/smart-stock-alerts.js";
 import { runPhantomStockCheck } from "./lib/phantom-stock-check.js";
 import { getOrgPushBranding } from "./lib/push-branding.js";
 import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsDeliveryReports } from "./lib/sms.js";
-import { processQueuedWhatsApp, syncDueFollowUpWhatsApp } from "./lib/whatsapp.js";
+import { processQueuedWhatsApp, syncDueFollowUpWhatsApp, runCartRecoveryWhatsApp } from "./lib/whatsapp.js";
+import shortLinkRoutes from "./routes/short-links.js";
 import { startWhatsAppRuntime } from "./lib/whatsapp-runtime.js";
 import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
 import { runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
@@ -223,6 +224,9 @@ app.get("/health", (_req, res) => {
   });
 });
 
+// ── Public short-link redirector (no auth) ───────────────
+app.use("/r", shortLinkRoutes);
+
 // ── Spy middleware (Owner/Admin can pass X-Spy-User-Id to see another user's data) ──
 app.use("/api", applySpyHeader);
 
@@ -318,6 +322,16 @@ cron.schedule("0 21 * * *", async () => {
   logger.info("cron: follow-up KPI nightly close");
   try { await runFollowUpCloseAllOrgs(); }
   catch (e) { logger.error("cron: follow-up KPI close crashed", { error: (e as Error).message }); }
+});
+}
+
+// ── WhatsApp abandoned-cart recovery — every minute ──────
+// Sends a recovery message (product image + short tracked continue-link) to carts
+// that left the form 3+ min ago or have been idle 5+ min and didn't convert.
+if (ENABLE_BACKGROUND_JOBS) {
+cron.schedule("* * * * *", async () => {
+  try { await runCartRecoveryWhatsApp(); }
+  catch (e) { logger.error("cron: cart recovery whatsapp crashed", { error: (e as Error).message }); }
 });
 }
 

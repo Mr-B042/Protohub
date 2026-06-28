@@ -2653,6 +2653,8 @@ export default function PublicOrderFormPage() {
       if (submitRetryArmed && attemptRecoveredAutoSubmit("leaving")) return;
       const cartId = abandonedDraftCartIdRef.current;
       if (!cartId || !publicProduct) return;
+      // Mark the cart "left" so WhatsApp recovery can nudge ~3 min after leaving.
+      void cartsApi.markLeft(cartId);
       if (exitTrackedRef.current) return;
       exitTrackedRef.current = true;
       cartsApi.trackPublicJourney(
@@ -2679,6 +2681,8 @@ export default function PublicOrderFormPage() {
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "hidden") return;
       if (publicOrderSubmittingRef.current || publicOrderSubmitted) return;
+      const cartId = abandonedDraftCartIdRef.current;
+      if (cartId && publicProduct) void cartsApi.markLeft(cartId);
       if (submitRetryArmed) {
         attemptRecoveredAutoSubmit("leaving");
       }
