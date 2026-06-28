@@ -2838,13 +2838,17 @@ router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, r
 
   const normalizedPhone = normalizeCustomerWhatsAppPhone(targetPhone);
 
-  // Fetch package image/video
+  // Fetch package image/video — fall back to the product-level catalog image.
   let productImageUrl: string | null = null;
   let productVideoUrl: string | null = null;
   if (order.package_id) {
     const { data: pkgRow } = await supabase.from("product_packages").select("image_url, image_urls, video_url").eq("id", order.package_id).maybeSingle();
     productImageUrl = (pkgRow as any)?.image_url ?? (pkgRow as any)?.image_urls?.[0] ?? null;
     productVideoUrl = (pkgRow as any)?.video_url ?? null;
+  }
+  if (!productImageUrl && (order as any).product_id) {
+    const { data: prodRow } = await supabase.from("products").select("image_url").eq("id", (order as any).product_id).maybeSingle();
+    productImageUrl = (prodRow as any)?.image_url ?? null;
   }
 
   try {
