@@ -182,7 +182,10 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     utm_medium:       capturePayload.utm_medium ?? capturePayload.utmMedium ?? null,
     embed_label:      capturePayload.embedLabel ?? capturePayload.embed_label ?? null,
     referrer:         capturePayload.landingUrl ?? capturePayload.referrer ?? null,
-    form_context:     { ...formContext, autoSubmitted: "true", autoSubmitSource: "server" },
+    form_context:     { ...formContext, autoSubmitted: "true", autoSubmitSource: "server", outageRecovered: Boolean(cart.outage_captured) },
+    // Confirmed submission that came in while the API was down and was reconciled
+    // from a Supabase outage capture — flag it so the team can verify these.
+    outage_recovered: Boolean(cart.outage_captured),
     status:           "New"
   };
 
