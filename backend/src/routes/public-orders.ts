@@ -684,17 +684,25 @@ router.post("/", submitRateLimit, async (req, res) => {
     const windowStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const { data: recentOrders } = await supabase
       .from("orders")
-      .select("phone")
+      .select("phone, product_id")
       .eq("org_id", product.org_id)
       .gte("created_at", windowStart.toISOString());
-    const priorInWindow = (recentOrders ?? []).filter(
+    // Only a repeat of the SAME product is a likely duplicate. A different product
+    // from the same number within the window is a genuine new purchase, so it is
+    // allowed through (not held) — the customer is simply buying something else.
+    // Compare on stampProductId — the product the order is actually stored under
+    // (combo/bundle orders are re-attributed above), so prior orders of the same
+    // item match even when the parent product differs.
+    const priorSameProduct = (recentOrders ?? []).filter(
       (o) => String(o.phone ?? "").replace(/\D/g, "").slice(-10) === phoneLast10
+        && o.product_id === stampProductId
     ).length;
-    // One order auto-completes; any other within the window is held.
-    if (priorInWindow >= 1) {
+    // One order of a product auto-completes; another of the SAME product within the
+    // window is held for review.
+    if (priorSameProduct >= 1) {
       reviewHold = true;
-      reviewReason = `Possible duplicate: ${priorInWindow + 1} orders from this number in the last 7 days — held for review.`;
-      logger.warn("public-orders: order held for review (repeat customer)", { priorInWindow, ip: req.ip });
+      reviewReason = `Possible duplicate: ${priorSameProduct + 1} orders for this product from this number in the last 7 days — held for review.`;
+      logger.warn("public-orders: order held for review (repeat customer, same product)", { priorSameProduct, ip: req.ip });
     }
   }
 
