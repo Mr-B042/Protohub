@@ -788,6 +788,30 @@ async function sendViaProvider(
   return sendViaBaileys(orgId, settings, phone, body, media);
 }
 
+// ── Global human-like send pacer ──────────────────────────────────────────────
+// Serializes ALL outbound WhatsApp sends and spaces consecutive ones by a random
+// 30–90s gap so the automations never blast a burst (WhatsApp flags robotic
+// high-rate sending — that is what got the number restricted). An ISOLATED send
+// still goes out right away: the wait only applies when another send happened within
+// the last gap window. Covers every trigger and both the immediate and queued paths,
+// since they all funnel through deliverLoggedWhatsApp.
+const WHATSAPP_SEND_PACING_MIN_MS = 30_000;
+const WHATSAPP_SEND_PACING_MAX_MS = 90_000;
+let whatsappSendChain: Promise<void> = Promise.resolve();
+let lastWhatsAppSendAt = 0;
+function paceWhatsAppSend(): Promise<void> {
+  const run = whatsappSendChain.then(async () => {
+    const span = WHATSAPP_SEND_PACING_MAX_MS - WHATSAPP_SEND_PACING_MIN_MS;
+    const gapMs = WHATSAPP_SEND_PACING_MIN_MS + Math.floor(Math.random() * (span + 1));
+    const waitMs = Math.max(0, lastWhatsAppSendAt + gapMs - Date.now());
+    if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+    lastWhatsAppSendAt = Date.now();
+  });
+  // Keep the chain alive regardless of any single send's outcome.
+  whatsappSendChain = run.catch(() => {});
+  return run;
+}
+
 async function deliverLoggedWhatsApp(
   orgId: string,
   settings: WhatsAppSettings,
@@ -796,6 +820,8 @@ async function deliverLoggedWhatsApp(
   body: string,
   media?: { imageUrl?: string; videoUrl?: string; pdfBuffer?: Buffer; pdfFileName?: string; extraImageUrls?: string[] }
 ) {
+  // Human-like pacing so bunched sends never go out as a rapid burst.
+  await paceWhatsAppSend();
   const result = await sendViaProvider(orgId, settings, normalizedPhone, body, media);
   await updateWhatsAppLog(logId, {
     status: "sent",
@@ -952,9 +978,7 @@ async function queueOrSendWhatsApp(
     status: "queued"
   });
 
-  // Human-like jitter: 1.5–4s random delay before each send to avoid robotic cadence detection
-  await new Promise(r => setTimeout(r, 1500 + Math.random() * 2500));
-
+  // Pacing/jitter is handled globally in deliverLoggedWhatsApp (paceWhatsAppSend).
   try {
     const result = await deliverLoggedWhatsApp(orgId, settings, logId, normalizedPhone, messageBody, media);
     logger.info("whatsapp sent", {
@@ -1550,6 +1574,18 @@ export async function processQueuedWhatsApp(limit = 100) {
       });
       continue;
     }
+
+    // Claim the row BEFORE the paced send. The per-send 30–90s pacing can make a
+    // drain outlast the cron interval, so without a claim an overlapping run would
+    // re-select the still-deferred row and double-send it. Move it to the in-flight
+    // 'queued' state (which this processor does not select); only one run wins.
+    const { data: claimedRow } = await supabase
+      .from("whatsapp_messages")
+      .update({ status: "queued" })
+      .eq("id", row.id)
+      .in("status", ["deferred", "failed"])
+      .select("id");
+    if (!claimedRow || claimedRow.length === 0) continue;
 
     try {
       await updateWhatsAppLog(row.id, {
