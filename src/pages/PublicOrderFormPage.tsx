@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib/api";
 import { browserSupabaseClient } from "../lib/realtime";
 import type { ProductCurrencyCode } from "../types";
@@ -967,13 +967,41 @@ function companionShowcaseImageList(companion: PublicCompanion, targetPackage?: 
   return Array.from(new Set(images.map((url) => url.trim()).filter(Boolean))).slice(0, 15);
 }
 
+// Video embeds (Wistia / custom / iframe players) are memory-heavy on mobile —
+// several of them buffering at once steadily grow the tab's memory until the browser
+// OOM-kills the page to a WHITE screen after a few minutes (the customer then has to
+// refresh). Mount each iframe only while it is in (or near) the viewport and UNMOUNT
+// it once scrolled well away, so at most the one or two on screen are ever alive.
+// Falls back to always-on where IntersectionObserver is unavailable.
+function LazyMediaFrame({ paddingTop, background, children }: { paddingTop: string; background?: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") { setShow(true); return; }
+    const io = new IntersectionObserver(
+      (entries) => { for (const entry of entries) setShow(entry.isIntersecting); },
+      { rootMargin: "250px 0px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return (
+    <div ref={ref} style={{ position: "relative", width: "100%", paddingTop, borderRadius: 14, overflow: "hidden", background: background ?? "#f8fafc" }}>
+      {show ? children : (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: 24 }} aria-hidden>▶</div>
+      )}
+    </div>
+  );
+}
+
 function renderCompanionMedia(companion: PublicCompanion, productName: string, targetPackage?: PublicPackage | null) {
   const embedHtml = (companion.embedHtml ?? "").trim();
   if (embedHtml) {
     const paddingTop = companionEmbedPaddingTop(embedHtml);
     const wistiaMediaId = companionWistiaMediaId(embedHtml);
     return (
-      <div style={{ position: "relative", width: "100%", paddingTop, borderRadius: 14, overflow: "hidden", background: "#f8fafc" }}>
+      <LazyMediaFrame paddingTop={paddingTop} background="#f8fafc">
         {wistiaMediaId ? (
           <iframe
             src={`https://fast.wistia.net/embed/iframe/${wistiaMediaId}?videoFoam=true&seo=false`}
@@ -992,7 +1020,7 @@ function renderCompanionMedia(companion: PublicCompanion, productName: string, t
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none", background: "transparent" }}
           />
         )}
-      </div>
+      </LazyMediaFrame>
     );
   }
   const videoUrl = normaliseCompanionVideoUrl(companion.videoUrl ?? "");
@@ -1003,14 +1031,14 @@ function renderCompanionMedia(companion: PublicCompanion, productName: string, t
         <video
           controls
           playsInline
-          preload="metadata"
+          preload="none"
           style={{ width: "100%", borderRadius: 14, background: "#000", maxHeight: 260, objectFit: "cover" }}
           src={videoUrl}
         />
       );
     }
     return (
-      <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", borderRadius: 14, overflow: "hidden", background: "#0f172a" }}>
+      <LazyMediaFrame paddingTop="56.25%" background="#0f172a">
         <iframe
           src={videoUrl}
           title={`${productName} video`}
@@ -1018,7 +1046,7 @@ function renderCompanionMedia(companion: PublicCompanion, productName: string, t
           allowFullScreen
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" }}
         />
-      </div>
+      </LazyMediaFrame>
     );
   }
   const imageSrc = companionImageSource(companion, targetPackage).trim();
