@@ -42,23 +42,51 @@ export async function runCartAutoSubmit(): Promise<void> {
     .limit(50);
 
   if (error) { logger.error("cart-auto-submit: query failed", { error: error.message }); return; }
-  if (!carts?.length) return;
+
+  // Outage captures are CONFIRMED customer submissions saved straight to Supabase when
+  // the API was unreachable. They must be reconciled regardless of the 2–15 min idle
+  // window — a Railway outage longer than 15 min would otherwise age them out and lose
+  // the order entirely. Settle at least MIN_IDLE so a timed-out-but-actually-successful
+  // original order has had time to land (processCart dedupes against it). No upper age
+  // bound, so a long outage's backlog is always drained once the API is back.
+  const { data: outageCarts } = await supabase
+    .from("abandoned_carts")
+    .select("*")
+    .in("status", ["Open abandoned", "In progress"])
+    .eq("outage_captured", true)
+    .not("phone", "is", null)
+    .not("city", "is", null)
+    .not("state", "is", null)
+    .not("product_id", "is", null)
+    .not("package_id", "is", null)
+    .lte("outage_captured_at", new Date(now - MIN_IDLE_MS).toISOString())
+    .limit(50);
+
+  const mergedCarts: any[] = [...((carts as any[]) ?? [])];
+  const seenCartIds = new Set(mergedCarts.map((c: any) => c.id));
+  for (const oc of (outageCarts as any[]) ?? []) {
+    if (!seenCartIds.has(oc.id)) { mergedCarts.push(oc); seenCartIds.add(oc.id); }
+  }
+  if (!mergedCarts.length) return;
 
   // Group by org to check each org's auto_submit_mode
-  const orgIds = [...new Set((carts as any[]).map((c: any) => c.org_id))];
+  const orgIds = [...new Set(mergedCarts.map((c: any) => c.org_id))];
   const { data: embedRows } = await supabase
     .from("embed_settings")
     .select("org_id, auto_submit_mode")
     .in("org_id", orgIds);
   const orgMode = Object.fromEntries((embedRows ?? []).map((r: any) => [r.org_id, r.auto_submit_mode ?? "full"]));
 
-  logger.info("cart-auto-submit: checking carts", { count: carts.length });
+  logger.info("cart-auto-submit: checking carts", { count: mergedCarts.length });
 
-  for (const cart of carts) {
+  for (const cart of mergedCarts) {
+    const isOutage = Boolean((cart as any).outage_captured);
     const mode = orgMode[(cart as any).org_id] ?? "full";
-    if (mode === "off") continue;
+    // Outage captures are confirmed submissions — reconcile them even when the org has
+    // speculative auto-submit turned off; that setting only governs INCOMPLETE carts.
+    if (!isOutage && mode === "off") continue;
     try {
-      await processCart(cart, mode);
+      await processCart(cart, isOutage ? "full" : mode);
     } catch (err) {
       logger.error("cart-auto-submit: cart failed", { cartId: cart.id, error: (err as Error).message });
     }
@@ -69,14 +97,19 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   const orgId: string = cart.org_id;
   const cartId: string = cart.id;
 
-  // 1. Skip if an order already exists for this cart
-  const { data: existingOrder } = await supabase
+  // 1. Skip if an order already exists for this cart. An OUTAGE capture has id
+  //    "<originalCartId>-outage-<ts>"; if the original submit actually reached the
+  //    server (its response just timed out), the real order carries source_cart_id =
+  //    <originalCartId>. Check BOTH so a recovered outage never duplicates that order.
+  const originalCartId = cartId.replace(/-outage-[a-z0-9]+$/i, "");
+  const dedupeCartIds = originalCartId !== cartId ? [cartId, originalCartId] : [cartId];
+  const { data: existingOrders } = await supabase
     .from("orders")
     .select("id")
     .eq("org_id", orgId)
-    .eq("source_cart_id", cartId)
-    .maybeSingle();
-  if (existingOrder) return;
+    .in("source_cart_id", dedupeCartIds)
+    .limit(1);
+  if (existingOrders && existingOrders.length > 0) return;
 
   // 2. Load product (NOTE: packages live in the product_packages table, NOT a column
   //    on products — selecting a non-existent `packages` column previously errored the
