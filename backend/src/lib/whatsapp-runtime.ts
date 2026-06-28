@@ -2535,6 +2535,13 @@ export async function sendConnectedWhatsApp(
     } catch {
       sent = await socket.sendMessage(jid, { text: body });
     }
+    // Additional gallery images sent one after another, jittered.
+    for (const extra of media.extraImageUrls ?? []) {
+      const url = extra?.trim();
+      if (!url) continue;
+      await new Promise((r) => setTimeout(r, 700));
+      await socket.sendMessage(jid, { image: { url } } as any).catch(() => {});
+    }
   } else {
     sent = await socket.sendMessage(jid, { text: body });
   }
