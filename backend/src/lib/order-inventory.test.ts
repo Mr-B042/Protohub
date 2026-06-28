@@ -89,3 +89,60 @@ test("combo add-on inventory deduction uses component snapshot, not wrapper prod
     ]
   );
 });
+
+test("main product still deducts when package snapshot only contains free gifts", () => {
+  const lines = orderInventoryLinesFromRow({
+    product_id: "corner-rack",
+    product_name: "5-in-1 Corner Racks",
+    quantity: 2,
+    package_components_snapshot: [
+      {
+        productId: "adhesive-hook",
+        productName: "Adhesive Hook",
+        quantity: 20,
+        isFreeGift: true,
+        sourceType: "package_component"
+      },
+      {
+        productId: "super-glue",
+        productName: "Super Adhesive Oily Glue",
+        quantity: 2,
+        isFreeGift: true,
+        sourceType: "package_component"
+      }
+    ]
+  });
+
+  assert.deepEqual(
+    lines.map((line) => ({
+      productId: line.productId,
+      productName: line.productName,
+      quantity: line.quantity,
+      isFreeGift: Boolean(line.isFreeGift),
+      sourceType: line.sourceType
+    })),
+    [
+      {
+        productId: "corner-rack",
+        productName: "5-in-1 Corner Racks",
+        quantity: 2,
+        isFreeGift: false,
+        sourceType: "base_product"
+      },
+      {
+        productId: "adhesive-hook",
+        productName: "Adhesive Hook",
+        quantity: 20,
+        isFreeGift: true,
+        sourceType: "package_component"
+      },
+      {
+        productId: "super-glue",
+        productName: "Super Adhesive Oily Glue",
+        quantity: 2,
+        isFreeGift: true,
+        sourceType: "package_component"
+      }
+    ]
+  );
+});

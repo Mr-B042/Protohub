@@ -195,19 +195,23 @@ export const collapseOrderInventoryLines = (lines: OrderInventoryLine[]) => {
 
 export const orderInventoryLinesFromRow = (order: OrderInventoryLike) => {
   const packageLines = normalizeSnapshotLines(order.package_components_snapshot);
+  const baseProductLine = order.product_id && order.product_name && normalizePositiveInt(order.quantity, 0) > 0
+    ? {
+        productId: order.product_id,
+        productName: order.product_name,
+        quantity: normalizePositiveInt(order.quantity, 1),
+        sourceType: "base_product" as const,
+        isFreeGift: false
+      }
+    : null;
+  const packageSnapshotOnlyContainsGifts =
+    packageLines.length > 0 && packageLines.every((line) => Boolean(line.isFreeGift));
   const baseLines = packageLines.length > 0
-    ? packageLines
-    : (
-        order.product_id && order.product_name && normalizePositiveInt(order.quantity, 0) > 0
-          ? [{
-              productId: order.product_id,
-              productName: order.product_name,
-              quantity: normalizePositiveInt(order.quantity, 1),
-              sourceType: "base_product" as const,
-              isFreeGift: false
-            }]
-          : []
-      );
+    ? [
+        ...(packageSnapshotOnlyContainsGifts && baseProductLine ? [baseProductLine] : []),
+        ...packageLines
+      ]
+    : (baseProductLine ? [baseProductLine] : []);
 
   return collapseOrderInventoryLines([
     ...baseLines,
