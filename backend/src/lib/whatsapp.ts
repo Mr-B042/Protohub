@@ -2061,9 +2061,10 @@ export async function sendCartRecoveryWhatsApp(orgId: string, cart: Record<strin
   const firstName = (cart.customer ?? "").toString().split(" ")[0] || "there";
   const productName = (payload?.productName ?? "your order").toString();
 
-  // Product image (converts better) from the package the cart was on.
-  let imageUrl: string | undefined;
-  if (cart.package_id) {
+  // Image (converts better): a dedicated recovery creative if set, else the cart's
+  // package image.
+  let imageUrl: string | undefined = (settings as { cart_recovery_image_url?: string | null }).cart_recovery_image_url?.trim() || undefined;
+  if (!imageUrl && cart.package_id) {
     const { data: pkg } = await supabase
       .from("product_packages").select("image_url, image_urls")
       .eq("id", cart.package_id).maybeSingle();

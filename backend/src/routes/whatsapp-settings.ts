@@ -104,6 +104,7 @@ const SettingsSchema = z.object({
   triggers: z.record(z.boolean()),
   templates: z.record(TemplateSchema),
   upsell_config: z.union([z.array(UpsellItemSchema), UpsellItemSchema]).nullable().optional(),
+  cart_recovery_image_url: z.string().max(2048).nullable().optional(),
   cloud_api_phone_number_id: z.string().trim().max(60).optional().nullable(),
   cloud_api_waba_id: z.string().trim().max(60).optional().nullable(),
   cloud_api_access_token: z.string().trim().max(5000).optional().nullable()
@@ -202,6 +203,7 @@ router.put("/", requireOwner, async (req, res) => {
   };
   if (d.per_user_dispatch !== undefined) payload.per_user_dispatch = d.per_user_dispatch;
   if (d.upsell_config !== undefined) payload.upsell_config = d.upsell_config;
+  if (d.cart_recovery_image_url !== undefined) payload.cart_recovery_image_url = d.cart_recovery_image_url?.trim() || null;
   if (d.cloud_api_phone_number_id !== undefined) payload.cloud_api_phone_number_id = d.cloud_api_phone_number_id || null;
   if (d.cloud_api_waba_id !== undefined) payload.cloud_api_waba_id = d.cloud_api_waba_id || null;
   if (d.cloud_api_access_token !== undefined) {
