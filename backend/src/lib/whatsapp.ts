@@ -2061,9 +2061,16 @@ export async function sendCartRecoveryWhatsApp(orgId: string, cart: Record<strin
   const firstName = (cart.customer ?? "").toString().split(" ")[0] || "there";
   const productName = (payload?.productName ?? "your order").toString();
 
-  // Image (converts better): a dedicated recovery creative if set, else the cart's
-  // package image.
+  // Image (converts better). Chain: dedicated recovery creative → the product's
+  // real-footage image (covers all of the product's packages) → the cart's package
+  // image. So a package with no image still gets the product photo.
   let imageUrl: string | undefined = (settings as { cart_recovery_image_url?: string | null }).cart_recovery_image_url?.trim() || undefined;
+  if (!imageUrl && cart.product_id) {
+    const { data: prod } = await supabase
+      .from("products").select("whatsapp_footage_image_url")
+      .eq("id", cart.product_id).maybeSingle();
+    imageUrl = (prod as { whatsapp_footage_image_url?: string | null } | null)?.whatsapp_footage_image_url?.trim() || undefined;
+  }
   if (!imageUrl && cart.package_id) {
     const { data: pkg } = await supabase
       .from("product_packages").select("image_url, image_urls")
@@ -2095,7 +2102,7 @@ export async function runCartRecoveryWhatsApp(): Promise<void> {
   const leftCutoff = new Date(now - 3 * 60 * 1000).toISOString();
   const { data: carts, error } = await supabase
     .from("abandoned_carts")
-    .select("id, org_id, customer, phone, whatsapp, package_id, capture_payload, last_activity, left_at, recovery_sent_at, status")
+    .select("id, org_id, customer, phone, whatsapp, product_id, package_id, capture_payload, last_activity, left_at, recovery_sent_at, status")
     .in("status", ["Open abandoned", "In progress"])
     .is("recovery_sent_at", null)
     .not("phone", "is", null)
