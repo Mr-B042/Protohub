@@ -92,7 +92,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: Record<WhatsAppTrigger, { body: string 
     body: "Hi {{first_name}}! 🎉\n\nThank you for ordering — we are preparing your delivery now.\n\nQuick question — would you like to add *{{upsell_name}}* to your order?\n{{strike_line}}Just *{{upsell_currency}} {{upsell_price}}* — ships in the same delivery.\n\nReply *YES* to add it or *NO* to skip. 😊"
   },
   cart_recovery: {
-    body: "Hi {{first_name}}! 🛒\n\nYou were almost done ordering *{{product_name}}* — your details are still saved.\n\nTap here to finish in a few seconds 👉 {{recovery_link}}\n\nReply here if you need any help. 😊"
+    body: "Hi {{first_name}}! 🛒\n\nYou were almost done ordering *{{product_name}}*.\n{{addons_line}}Your details are still saved — tap here to finish in a few seconds 👉 {{recovery_link}}\n\nReply here if you need any help. 😊"
   }
 };
 
@@ -2035,6 +2035,23 @@ export async function sendOrderUpsellWhatsApp(
   }, delayMs);
 }
 
+// Build a "free gifts" line from a package's components (e.g. the 5-in-1's bundled
+// gifts) for the cart-recovery message. Empty string when there are none.
+async function buildCartRecoveryAddonsLine(orgId: string, components: any[] | null | undefined): Promise<string> {
+  const list = Array.isArray(components) ? components.filter((c) => c && c.hiddenFromCustomer !== true && c.productId) : [];
+  if (list.length === 0) return "";
+  const ids = Array.from(new Set(list.map((c) => String(c.productId))));
+  const nameById = new Map<string, string>();
+  const { data: prods } = await supabase.from("products").select("id, name").eq("org_id", orgId).in("id", ids);
+  for (const p of (prods ?? []) as Array<{ id: string; name: string }>) nameById.set(p.id, p.name);
+  const items = list.map((c) => {
+    const name = nameById.get(String(c.productId)) ?? "item";
+    const qty = Math.max(1, Math.round(Number(c.quantity ?? 1) || 1));
+    return `${qty}× ${name}`;
+  });
+  return `🎁 Plus your FREE gifts: ${items.join(" + ")}\n`;
+}
+
 /**
  * Abandoned-cart recovery to the CUSTOMER on WhatsApp — the product image + a short,
  * tracked link back to the exact form they left (pre-filled, continues where they
@@ -2061,16 +2078,21 @@ export async function sendCartRecoveryWhatsApp(orgId: string, cart: Record<strin
   const firstName = (cart.customer ?? "").toString().split(" ")[0] || "there";
   const productName = (payload?.productName ?? "your order").toString();
 
-  // Image (converts better). Chain: dedicated recovery creative → the cart's package
-  // image → the product's catalog image. The "real footage" image is kept SEPARATE
-  // (new-order extra photo only) and is NOT used here.
-  let imageUrl: string | undefined = (settings as { cart_recovery_image_url?: string | null }).cart_recovery_image_url?.trim() || undefined;
-  if (!imageUrl && cart.package_id) {
-    const { data: pkg } = await supabase
-      .from("product_packages").select("image_url, image_urls")
+  // Fetch the cart's package once — for the image fallback AND its included gifts.
+  let pkg: { image_url?: string | null; image_urls?: string[] | null; package_components?: any[] | null } | null = null;
+  if (cart.package_id) {
+    const { data } = await supabase
+      .from("product_packages").select("image_url, image_urls, package_components")
       .eq("id", cart.package_id).maybeSingle();
-    const arr = (pkg as { image_urls?: string[] | null } | null)?.image_urls;
-    imageUrl = ((pkg as { image_url?: string | null } | null)?.image_url ?? (Array.isArray(arr) ? arr[0] : undefined)) || undefined;
+    pkg = (data as { image_url?: string | null; image_urls?: string[] | null; package_components?: any[] | null } | null) ?? null;
+  }
+
+  // Image (converts better). Chain: dedicated recovery creative → the cart's package
+  // image → the product's catalog image. The "real footage" image is kept SEPARATE.
+  let imageUrl: string | undefined = (settings as { cart_recovery_image_url?: string | null }).cart_recovery_image_url?.trim() || undefined;
+  if (!imageUrl && pkg) {
+    const arr = pkg.image_urls;
+    imageUrl = (pkg.image_url ?? (Array.isArray(arr) ? arr[0] : undefined)) || undefined;
   }
   if (!imageUrl && cart.product_id) {
     const { data: prod } = await supabase
@@ -2079,12 +2101,15 @@ export async function sendCartRecoveryWhatsApp(orgId: string, cart: Record<strin
     imageUrl = (prod as { image_url?: string | null } | null)?.image_url?.trim() || undefined;
   }
 
+  // Free gifts / bundled items (e.g. the 5-in-1's gifts) — listed in the message.
+  const addonsLine = await buildCartRecoveryAddonsLine(orgId, pkg?.package_components);
+
   // Mark sent before dispatching so an overlapping cron can't double-send.
   await supabase.from("abandoned_carts").update({ recovery_sent_at: new Date().toISOString() }).eq("id", cart.id).eq("org_id", orgId);
 
   await queueOrSendWhatsApp(
     orgId, "cart_recovery",
-    { first_name: firstName, product_name: productName, recovery_link: recoveryLink, cart_id: String(cart.id) },
+    { first_name: firstName, product_name: productName, addons_line: addonsLine, recovery_link: recoveryLink, cart_id: String(cart.id) },
     targetPhone,
     { audience: "customer", recipientName: firstName, metadata: { event: "cart_recovery", cartId: cart.id } },
     imageUrl ? { imageUrl } : undefined
