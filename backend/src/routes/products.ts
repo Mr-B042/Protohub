@@ -343,6 +343,36 @@ router.post("/package-images/upload",
   }
 );
 
+// ── POST /api/products/product-videos/upload ──────────────
+// Short product/usage videos (e.g. WhatsApp upsell). Uploaded to the public
+// `product-videos` bucket; returns the CDN URL to store on the offer.
+const VIDEO_MIME_EXT: Record<string, string> = { "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov" };
+router.post("/product-videos/upload",
+  requireRole("Owner", "Admin", "Inventory Manager"),
+  async (req, res) => {
+    const dataUrl = typeof req.body?.dataUrl === "string" ? req.body.dataUrl : "";
+    const match = dataUrl.match(/^data:(video\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
+    if (!match) { res.status(400).json({ error: "Invalid video data URL (mp4 / webm / mov)." }); return; }
+    const mime = match[1].toLowerCase();
+    const ext = VIDEO_MIME_EXT[mime];
+    if (!ext) { res.status(400).json({ error: `Unsupported video type: ${mime}. Use MP4, WebM or MOV.` }); return; }
+    const buffer = Buffer.from(match[2], "base64");
+    if (buffer.length > 50 * 1024 * 1024) { res.status(413).json({ error: "Video exceeds 50 MB. Keep it a short clip, or paste a YouTube link instead." }); return; }
+    const orgId = req.user!.orgId;
+    const objectName = `${orgId}/${randomUUID()}.${ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from("product-videos")
+      .upload(objectName, buffer, { contentType: mime, upsert: false });
+    if (uploadError) {
+      logger.error("product video upload failed", { orgId, objectName, error: uploadError.message });
+      res.status(500).json({ error: uploadError.message });
+      return;
+    }
+    const { data: publicData } = supabase.storage.from("product-videos").getPublicUrl(objectName);
+    res.status(201).json({ url: publicData.publicUrl, path: objectName });
+  }
+);
+
 // ── POST /api/products/:id/packages ──────────────────────
 const PackageComponentSchema = z.object({
   componentId: z.string().min(1).max(120).optional(),

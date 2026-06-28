@@ -1982,10 +1982,14 @@ export async function sendOrderUpsellWhatsApp(
   const currency = upsellCfgFull.currency ?? "NGN";
   const firstName = (order.customer ?? "").split(" ")[0] || "there";
   const delayMs = ((upsellCfgFull.delayMinutes ?? 5) * 60 * 1000);
+  const imageUrl = upsellCfgFull.imageUrl?.trim() || undefined;
+  const videoUrl = (upsellCfgFull as { videoUrl?: string | null }).videoUrl?.trim() || undefined;
 
   setTimeout(async () => {
     try {
-      await queueOrSendWhatsApp(
+      // Offer goes with the image (or the video if there's no image). When BOTH are
+      // set, the usage video follows as a second clip so they see it in action.
+      const sent = await queueOrSendWhatsApp(
         orgId, "order_upsell",
         {
           first_name: firstName,
@@ -1999,8 +2003,19 @@ export async function sendOrderUpsellWhatsApp(
         },
         targetPhone,
         { orderId: order.id, audience: "customer", recipientName: firstName },
-        { imageUrl: upsellCfgFull.imageUrl ?? undefined }
+        imageUrl ? { imageUrl } : videoUrl ? { videoUrl } : undefined
       );
+      if (sent && !sent.deferred && imageUrl && videoUrl) {
+        setTimeout(() => {
+          void queueOrSendWhatsApp(
+            orgId, "order_upsell",
+            { first_name: firstName, order_id: order.id, upsell_name: upsellCfgFull.name, upsell_price: "", upsell_currency: currency, strike_line: "" },
+            targetPhone,
+            { orderId: order.id, audience: "customer", recipientName: firstName, ignoreTrigger: true, ignoreRateLimit: true, bodyOverride: `👀 See ${upsellCfgFull.name} in action` },
+            { videoUrl }
+          ).catch(() => {});
+        }, 1500);
+      }
     } catch (err) {
       logger.warn("wa order_upsell: send failed", { orgId, orderId: order.id, error: (err as Error).message });
     }
