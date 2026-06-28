@@ -2162,12 +2162,21 @@ export async function sendCartRecoveryWhatsApp(orgId: string, cart: Record<strin
 /**
  * Cron: WhatsApp abandoned-cart recovery. Any not-yet-converted cart with a phone
  * that hasn't been recovered, which either left the form 3+ min ago or has been idle
- * 5+ min. (Complete carts usually auto-submit to orders first and skip this.)
+ * 5+ min — AND was abandoned within the last hour. (Complete carts usually auto-submit
+ * to orders first and skip this.)
  */
+const CART_RECOVERY_RECENCY_MINUTES = 60;
 export async function runCartRecoveryWhatsApp(): Promise<void> {
   const now = Date.now();
   const idleCutoff = new Date(now - 5 * 60 * 1000).toISOString();
   const leftCutoff = new Date(now - 3 * 60 * 1000).toISOString();
+  // Recency FLOOR: only message carts abandoned within the last hour. Without a lower
+  // age bound, every old open cart with no recovery stamp stays eligible forever — so
+  // when the feature first turns on (or after any downtime) the cron blasts days/weeks
+  // of old carts in one burst, which is exactly what got the WhatsApp number
+  // restricted. A recovery nudge is only relevant right after the customer leaves; a
+  // week-old cart should never get a "you were almost done" message.
+  const recencyFloor = new Date(now - CART_RECOVERY_RECENCY_MINUTES * 60 * 1000).toISOString();
   const { data: carts, error } = await supabase
     .from("abandoned_carts")
     .select("id, org_id, customer, phone, whatsapp, product_id, package_id, capture_payload, last_activity, left_at, recovery_sent_at, status")
@@ -2175,7 +2184,7 @@ export async function runCartRecoveryWhatsApp(): Promise<void> {
     .is("recovery_sent_at", null)
     .not("phone", "is", null)
     .not("customer", "eq", "Partial lead")
-    .or(`left_at.lte.${leftCutoff},last_activity.lte.${idleCutoff}`)
+    .or(`and(left_at.lte.${leftCutoff},left_at.gte.${recencyFloor}),and(last_activity.lte.${idleCutoff},last_activity.gte.${recencyFloor})`)
     .limit(100);
   if (error) { logger.error("cart_recovery: query failed", { error: error.message }); return; }
   if (!carts?.length) return;
