@@ -814,6 +814,15 @@ async function deliverLoggedWhatsApp(
   } satisfies QueueOrSendWhatsAppResult;
 }
 
+// Customer/rep order-lifecycle triggers that must fire at most ONCE per order per
+// trigger. Re-marking a status (e.g. Delivered twice), a status re-save, or two
+// overlapping triggers must never re-send and spam the recipient. Follow-up
+// reminders are intentionally repeatable, and manual sends use other triggers — both
+// are deliberately excluded. cart_recovery has its own atomic recovery_sent_at claim.
+const ONE_SHOT_ORDER_TRIGGERS = new Set<WhatsAppMessageEvent>([
+  "order_new", "order_new_rep", "order_scheduled", "order_failed", "order_delivered", "order_upsell"
+]);
+
 async function queueOrSendWhatsApp(
   orgId: string,
   trigger: WhatsAppMessageEvent,
@@ -827,6 +836,23 @@ async function queueOrSendWhatsApp(
   if (!options.ignoreEnabled && !settings.enabled) return null;
   if (!options.ignoreTrigger && !settings.triggers?.[trigger]) return null;
   if (!options.ignoreEnabled && !canAttemptWhatsAppResume(settings)) return null;
+
+  // Universal one-shot guard: never send the same order-lifecycle message twice for
+  // the same order. A non-failed prior message for this exact (order, trigger) means
+  // it already went out — skip, so re-saving / re-marking an order can't double-fire.
+  if (options.orderId && ONE_SHOT_ORDER_TRIGGERS.has(trigger)) {
+    const { count } = await supabase
+      .from("whatsapp_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("order_id", options.orderId)
+      .eq("trigger", trigger)
+      .in("status", ["sent", "queued", "deferred", "delivered"]);
+    if ((count ?? 0) > 0) {
+      logger.info("whatsapp skipped: order event already messaged", { orgId, trigger, orderId: options.orderId });
+      return null;
+    }
+  }
 
   const normalizedPhone = normalizePhoneForWhatsApp(recipientPhone);
   if (!normalizedPhone) {
@@ -2073,10 +2099,27 @@ export async function sendCartRecoveryWhatsApp(orgId: string, cart: Record<strin
   const payload = (cart.capture_payload ?? {}) as Record<string, any>;
   const landingUrl: string | null = payload?.formContext?.landingUrl ?? payload?.landingUrl ?? null;
   if (!landingUrl) return;
+
+  // Atomically CLAIM this cart before doing any send work. Concurrent recovery runs
+  // (multiple instances, or a rolling deploy where two instances briefly overlap)
+  // each SELECTed the same recovery_sent_at=null cart and ALL dispatched — spamming
+  // the customer 2-3x within the same second. A conditional update only matches for
+  // ONE run; the rest update 0 rows and bail. Idempotent under any concurrency.
+  const { data: claimed } = await supabase
+    .from("abandoned_carts")
+    .update({ recovery_sent_at: new Date().toISOString() })
+    .eq("id", cart.id).eq("org_id", orgId)
+    .is("recovery_sent_at", null)
+    .select("id");
+  if (!claimed || claimed.length === 0) return;
+
   const recoveryLink = await createShortLink(orgId, landingUrl);
 
   const firstName = (cart.customer ?? "").toString().split(" ")[0] || "there";
-  const productName = (payload?.productName ?? "your order").toString();
+  // Prefer the captured product name, then the cart's own product/package name, so
+  // the message reads "…ordering Edge Brusher Max" — not a generic "your order" —
+  // whenever capture_payload.productName wasn't recorded.
+  const productName = (payload?.productName ?? cart.product_name ?? cart.package_name ?? "your order").toString();
 
   // Fetch the cart's package once — for the image fallback AND its included gifts.
   let pkg: { image_url?: string | null; image_urls?: string[] | null; package_components?: any[] | null } | null = null;
