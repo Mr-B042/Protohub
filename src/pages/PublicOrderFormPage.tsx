@@ -3135,7 +3135,9 @@ export default function PublicOrderFormPage() {
       {
         id: queuedId,
         customer: options.customerName,
-        body: options.body,
+        // Flag the resubmission so the recovered order is marked once it lands —
+        // this is the path used when the direct Supabase capture wasn't available.
+        body: { ...options.body, outageRecovered: true },
         createdAt: new Date().toISOString()
       }
     ];

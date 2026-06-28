@@ -131,3 +131,69 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
     console.error("[order-notifications] unexpected error:", err);
   }
 }
+
+/**
+ * Alert Owners/Admins (+ the assigned rep) that an order was RECOVERED from an
+ * outage capture — it came in while the API was down and was reconciled later, so
+ * there was no live confirmation at submit time. Distinct title so it stands out
+ * from a normal "New Order"; uses the order_new type so the client renders it with
+ * the order link. In-app notification + push. Never throws.
+ */
+export async function notifyOutageRecoveredOrder(orgId: string, order: OrderContext) {
+  try {
+    const recipients = new Map<string, string>();
+    const { data: roleUsers } = await supabase
+      .from("users")
+      .select("id, role")
+      .eq("org_id", orgId)
+      .eq("active", true)
+      .in("role", ["Owner", "Admin"]);
+    if (roleUsers) {
+      for (const u of roleUsers) recipients.set(u.id, u.role);
+    }
+    if (order.assignedRepId && !recipients.has(order.assignedRepId)) {
+      const { data: repUser } = await supabase
+        .from("users")
+        .select("id, role")
+        .eq("org_id", orgId)
+        .eq("active", true)
+        .eq("id", order.assignedRepId)
+        .maybeSingle();
+      if (repUser?.id) recipients.set(repUser.id, repUser.role);
+    }
+    if (recipients.size === 0) return;
+
+    const title = `⚡ Recovered Order #${order.id}`;
+    const body = `${orderNotificationSummary(order)} — came in during a system outage. Please verify with the customer before dispatch.`;
+    const branding = await getOrgPushBranding(orgId);
+
+    const rows = [...recipients.entries()].map(([recipientId, role]) => ({
+      org_id:       orgId,
+      recipient_id: recipientId,
+      type:         "order_new",
+      title,
+      message:      body,
+      link:         orderLinkForRole(role, order.id),
+      order_id:     order.id,
+      read:         false,
+    }));
+    const { error } = await supabase.from("system_notifications").insert(rows);
+    if (error) console.error(`[order-notifications] outage-recovered insert failed for ${order.id}:`, error.message);
+
+    await Promise.all(
+      [...recipients.entries()].map(([recipientId, role]) =>
+        sendPushToUser(orgId, recipientId, {
+          title,
+          body,
+          kind: "order_new",
+          url: orderLinkForRole(role, order.id),
+          tag: `order-${order.id}-outage-recovered`,
+          brandName: branding.brandName,
+          brandLogo: branding.brandLogo
+        }).catch((err) => console.warn("[order-notifications] outage push error:", err))
+      )
+    );
+  } catch (err) {
+    console.error("[order-notifications] notifyOutageRecoveredOrder failed:", err);
+  }
+}
