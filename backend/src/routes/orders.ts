@@ -1435,6 +1435,64 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     updates.remittance_variance_reason      = null;
   }
 
+  // ── Pre-flight: a delivery must be able to deduct stock CLEANLY before we commit
+  // the status. Never mark an order Delivered and then silently fail or only
+  // partially deduct — validate the hub + stock up front and REFUSE with a clear,
+  // actionable error so the gap (no hub set up, or short stock) is fixed first. Only
+  // gates the forward transition into Delivered; re-saves are handled downstream. ──
+  if (!isDeliveredDateCorrection && status === "Delivered" && existing?.status !== "Delivered"
+      && effectiveAgentId && inventoryLines.length > 0) {
+    const preflightLines = inventoryLines.map((line) => ({ productId: line.productId, quantity: line.quantity }));
+    // Mirror the deduction block's resolution exactly (strict in-state first, then
+    // the agent's stock-holding hub) so we only refuse when the deduction itself
+    // could not place the order anywhere — never a delivery it would have completed.
+    let preflightLocation = effectiveAgentLocationId
+      ? await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
+          desiredState: existing.state, desiredCity: existing.city,
+          productId: inventoryProductId, requiredLines: preflightLines, explicitLocationId: effectiveAgentLocationId
+        })
+      : await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
+          desiredState: existing.state, desiredCity: existing.city,
+          productId: inventoryProductId, requiredLines: preflightLines
+        });
+    if (!preflightLocation) {
+      preflightLocation = await resolveAgentLocationForOrder(req.user!.orgId, effectiveAgentId, {
+        desiredCity: existing.city, productId: inventoryProductId, requiredLines: preflightLines
+      });
+    }
+
+    if (!preflightLocation) {
+      res.status(400).json({
+        error: `Can't mark this order Delivered yet — no stock hub is set up for ${existing.agent_name_snapshot ?? "this agent"} in ${existing.state ?? "the customer's state"}. Set up the agent's hub (or correct the order's state) first, then mark it Delivered.`,
+        code: "NO_STOCK_LOCATION"
+      });
+      return;
+    }
+
+    // Per-line idempotency: only lines not already fulfilled need stock right now.
+    const { data: priorFulfilment } = await supabase
+      .from("stock_movements").select("product_id")
+      .eq("org_id", req.user!.orgId).eq("order_id", req.params.id).eq("type", "Order Fulfilled");
+    const alreadyDeducted = new Set((priorFulfilment ?? []).map((m: { product_id: string }) => m.product_id));
+    const linesNeedingStock = inventoryLines.filter((line) => !alreadyDeducted.has(line.productId));
+
+    if (linesNeedingStock.length > 0) {
+      const availability = await inventoryAvailabilityMap(
+        effectiveAgentId, preflightLocation.id, linesNeedingStock.map((line) => line.productId));
+      const shortfalls = linesNeedingStock
+        .map((line) => ({ name: line.productName, need: line.quantity, have: availability.get(line.productId) ?? 0 }))
+        .filter((s) => s.have < s.need);
+      if (shortfalls.length > 0) {
+        const detail = shortfalls.map((s) => `${s.name} (need ${s.need}, have ${s.have})`).join("; ");
+        res.status(400).json({
+          error: `Can't mark this order Delivered — not enough stock at ${preflightLocation.name ?? "the hub"}: ${detail}. Restock the hub or fix the routing, then mark it Delivered.`,
+          code: "INSUFFICIENT_STOCK"
+        });
+        return;
+      }
+    }
+  }
+
   let { data, error } = await supabase
     .from("orders")
     .update(updates)
