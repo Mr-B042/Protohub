@@ -2047,9 +2047,9 @@ async function buildCartRecoveryAddonsLine(orgId: string, components: any[] | nu
   const items = list.map((c) => {
     const name = nameById.get(String(c.productId)) ?? "item";
     const qty = Math.max(1, Math.round(Number(c.quantity ?? 1) || 1));
-    return `${qty}× ${name}`;
+    return `${qty} pc${qty === 1 ? "" : "s"} of ${name}`;
   });
-  return `🎁 Plus your FREE gifts: ${items.join(" + ")}\n`;
+  return `🎁 Plus your FREE gifts: ${items.join(", ")}\n`;
 }
 
 /**
