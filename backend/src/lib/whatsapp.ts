@@ -1984,11 +1984,18 @@ export async function sendOrderUpsellWhatsApp(
   const delayMs = ((upsellCfgFull.delayMinutes ?? 5) * 60 * 1000);
   const imageUrl = upsellCfgFull.imageUrl?.trim() || undefined;
   const videoUrl = (upsellCfgFull as { videoUrl?: string | null }).videoUrl?.trim() || undefined;
+  // Additional offer images (a gallery) — sent right after the primary image.
+  const extraImages = ((upsellCfgFull as { imageUrls?: string[] | null }).imageUrls ?? [])
+    .map((u) => (u ?? "").trim())
+    .filter((u) => u && u !== imageUrl);
 
   setTimeout(async () => {
     try {
-      // Offer goes with the image (or the video if there's no image). When BOTH are
-      // set, the usage video follows as a second clip so they see it in action.
+      // Offer goes with the image (+ any extra gallery images), or the video if
+      // there's no image. When image AND video are set, the video follows after.
+      const primaryMedia = imageUrl
+        ? { imageUrl, extraImageUrls: extraImages.length ? extraImages : undefined }
+        : videoUrl ? { videoUrl } : undefined;
       const sent = await queueOrSendWhatsApp(
         orgId, "order_upsell",
         {
@@ -2003,7 +2010,7 @@ export async function sendOrderUpsellWhatsApp(
         },
         targetPhone,
         { orderId: order.id, audience: "customer", recipientName: firstName },
-        imageUrl ? { imageUrl } : videoUrl ? { videoUrl } : undefined
+        primaryMedia
       );
       if (sent && !sent.deferred && imageUrl && videoUrl) {
         setTimeout(() => {

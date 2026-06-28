@@ -89,6 +89,7 @@ const UpsellItemSchema = z.object({
   strikePrice: z.number().nullable().optional(),
   currency: z.string().default("NGN"),
   imageUrl: z.string().nullable().optional(),
+  imageUrls: z.array(z.string()).nullable().optional(),
   videoUrl: z.string().nullable().optional(),
   productId: z.string().nullable().optional(),
   packageId: z.string().nullable().optional(),
