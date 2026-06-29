@@ -1055,6 +1055,8 @@ function renderCompanionMedia(companion: PublicCompanion, productName: string, t
       <img
         src={imageSrc}
         alt={productName}
+        loading="lazy"
+        decoding="async"
         onError={(event) => {
           const target = event.currentTarget;
           if (target.dataset.fallbackApplied === "true") return;
@@ -1075,6 +1077,8 @@ function renderCompanionTeaserVisual(companion: PublicCompanion, productName: st
       <img
         src={src}
         alt={productName}
+        loading="lazy"
+        decoding="async"
         onError={(event) => {
           const target = event.currentTarget;
           if (target.dataset.fallbackApplied === "true") return;
@@ -4865,6 +4869,8 @@ export default function PublicOrderFormPage() {
                               src={activeImageUrl}
                               alt=""
                               aria-hidden="true"
+                              loading="lazy"
+                              decoding="async"
                               style={{
                                 position: "absolute",
                                 inset: 0,
@@ -4880,6 +4886,7 @@ export default function PublicOrderFormPage() {
                               className="public-package-option__image"
                               src={activeImageUrl}
                               alt={`${title} preview ${activeCarouselIndex + 1}`}
+                              decoding="async"
                               style={{
                                 position: "absolute",
                                 inset: 0,
@@ -4932,7 +4939,7 @@ export default function PublicOrderFormPage() {
                                     aria-label={`Show ${title} photo ${imageIndex + 1}`}
                                     onClick={(event) => updateCarouselIndex(imageIndex, event)}
                                   >
-                                    <img src={imageUrl} alt="" aria-hidden="true" />
+                                    <img src={imageUrl} alt="" aria-hidden="true" loading="lazy" decoding="async" />
                                   </button>
                                 ))}
                               </div>
@@ -5128,6 +5135,8 @@ export default function PublicOrderFormPage() {
                                 src={activeImageUrl}
                                 alt=""
                                 aria-hidden="true"
+                                loading="lazy"
+                                decoding="async"
                                 style={{
                                   position: "absolute",
                                   inset: 0,
@@ -5143,6 +5152,7 @@ export default function PublicOrderFormPage() {
                                 className="public-package-option__image"
                                 src={activeImageUrl}
                                 alt={`${title} add-on preview ${activeCarouselIndex + 1}`}
+                                decoding="async"
                                 style={{
                                   position: "absolute",
                                   inset: 0,
@@ -5190,7 +5200,7 @@ export default function PublicOrderFormPage() {
                                       aria-label={`Show ${title} photo ${imageIndex + 1}`}
                                       onClick={(event) => updateCarouselIndex(imageIndex, event)}
                                     >
-                                      <img src={imageUrl} alt="" aria-hidden="true" />
+                                      <img src={imageUrl} alt="" aria-hidden="true" loading="lazy" decoding="async" />
                                     </button>
                                   ))}
                                 </div>
