@@ -11,9 +11,10 @@ router.use(requireAuth);
 // the 3-call requirement. Sales Reps always see their own; Owner/Admin/Manager may
 // scope to a rep via ?repId= (omit for the whole org).
 router.get("/board", async (req, res) => {
-  const role = req.user!.role;
+  const role = req.user!.effectiveUserRole ?? req.user!.role;
+  const userId = req.user!.effectiveUserId ?? req.user!.id;
   const isPrivileged = role === "Owner" || role === "Admin" || role === "Manager";
-  const repId = isPrivileged ? (typeof req.query.repId === "string" ? req.query.repId : null) : req.user!.id;
+  const repId = isPrivileged ? (typeof req.query.repId === "string" ? req.query.repId : null) : userId;
   const date = typeof req.query.date === "string" ? req.query.date : undefined;
   try {
     const board = await getFollowUpBoard(req.user!.orgId, repId, date);
@@ -28,9 +29,10 @@ router.get("/board", async (req, res) => {
 // Owner/Admin/Manager may scope to a rep via ?repId=. ?weekStart=YYYY-MM-DD (Monday)
 // for older weeks; defaults to the current week.
 router.get("/grid", async (req, res) => {
-  const role = req.user!.role;
+  const role = req.user!.effectiveUserRole ?? req.user!.role;
+  const userId = req.user!.effectiveUserId ?? req.user!.id;
   const isPrivileged = role === "Owner" || role === "Admin" || role === "Manager";
-  const repId = isPrivileged ? (typeof req.query.repId === "string" ? req.query.repId : null) : req.user!.id;
+  const repId = isPrivileged ? (typeof req.query.repId === "string" ? req.query.repId : null) : userId;
   const weekStart = typeof req.query.weekStart === "string" ? req.query.weekStart : undefined;
   try {
     const grid = await getFollowUpGrid(req.user!.orgId, repId, weekStart);
@@ -62,12 +64,14 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async
     .eq("org_id", req.user!.orgId)
     .maybeSingle();
   if (!order) { res.status(404).json({ error: "Order not found." }); return; }
-  if (req.user!.role === "Sales Rep" && order.assigned_rep_id !== req.user!.id) {
+  const role = req.user!.effectiveUserRole ?? req.user!.role;
+  const userId = req.user!.effectiveUserId ?? req.user!.id;
+  if (role === "Sales Rep" && order.assigned_rep_id !== userId) {
     res.status(403).json({ error: "You can only log follow-ups on your own orders." });
     return;
   }
   try {
-    const repId = req.user!.role === "Sales Rep" ? req.user!.id : (order.assigned_rep_id ?? req.user!.id);
+    const repId = role === "Sales Rep" ? userId : (order.assigned_rep_id ?? userId);
     await logFollowUpEntry(req.user!.orgId, orderId, repId, text, channels, promisedDate, recoveryBucket, outcomeGroup, promisedTime);
     res.status(201).json({ ok: true });
   } catch (err) {
