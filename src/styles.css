@@ -76,7 +76,7 @@
     --secondary-foreground: 0 0% 98%;
 
     --muted: 210 34% 11%;
-    --muted-foreground: 215 14% 74%;
+    --muted-foreground: 214 18% 82%;
 
     --accent: 210 34% 11%;
     --accent-foreground: 0 0% 98%;
@@ -84,8 +84,8 @@
     --destructive: 0 70% 55%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 205 42% 19%;
-    --input: 205 42% 19%;
+    --border: 205 42% 24%;
+    --input: 205 42% 24%;
     --ring: 207 80% 60%;             /* matches brand blue, dark variant */
 
     --glass-bg: rgba(15, 18, 23, 0.7);
@@ -99,10 +99,10 @@
     --surface-hover: 209 30% 15%;
     --text-strong: 0 0% 98%;
     --text-default: 210 18% 91%;
-    --text-muted: 214 12% 70%;
-    --text-faint: 214 10% 56%;
-    --border-default: 205 42% 19%;
-    --border-subtle: 208 38% 14%;
+    --text-muted: 214 18% 82%;
+    --text-faint: 214 14% 72%;
+    --border-default: 205 44% 24%;
+    --border-subtle: 208 40% 18%;
   }
 }
 
@@ -7846,17 +7846,18 @@ html.dark,
 .dark .text-gray-800,
 .dark .text-slate-800 { color: hsl(0 0% 96%); }
 .dark .text-gray-700,
-.dark .text-slate-700 { color: hsl(214 16% 88%); }
+.dark .text-slate-700 { color: hsl(214 18% 91%); }
 .dark .text-gray-600,
-.dark .text-slate-600 { color: hsl(214 14% 76%); }
+.dark .text-slate-600 { color: hsl(214 18% 84%); }
 .dark .text-gray-500,
 .dark .text-slate-500,
-.dark .text-muted-foreground { color: hsl(214 12% 67%); }
+.dark .text-muted-foreground { color: hsl(214 17% 78%); }
 .dark .text-gray-400,
-.dark .text-slate-400 { color: hsl(214 10% 56%); }
+.dark .text-slate-400 { color: hsl(214 16% 72%); }
 .dark .text-gray-300,
-.dark .text-slate-300 { color: hsl(214 10% 50%); }
-.dark .text-gray-200 { color: hsl(214 10% 44%); }
+.dark .text-slate-300 { color: hsl(214 18% 84%); }
+.dark .text-gray-200,
+.dark .text-slate-200 { color: hsl(214 20% 90%); }
 
 /* Tinted text — push lightness up for high readability on deeper bg */
 .dark .text-blue-700 { color: hsl(217 90% 80%); }
@@ -7943,8 +7944,8 @@ html.dark,
 
 .dark .hover\:text-gray-900:hover { color: hsl(var(--foreground)); }
 .dark .hover\:text-gray-800:hover { color: hsl(0 0% 96%); }
-.dark .hover\:text-gray-700:hover { color: hsl(214 16% 88%); }
-.dark .hover\:text-gray-600:hover { color: hsl(214 14% 74%); }
+.dark .hover\:text-gray-700:hover { color: hsl(214 18% 91%); }
+.dark .hover\:text-gray-600:hover { color: hsl(214 18% 84%); }
 
 /* Focus-only light utilities can still punch white holes into dark inputs.
    Catch them explicitly so focused search bars stay legible on mobile/desktop. */
@@ -7963,7 +7964,7 @@ html.dark,
   -webkit-text-fill-color: hsl(var(--foreground));
 }
 .dark input::placeholder,
-.dark textarea::placeholder { color: hsl(215 12% 48%); }
+.dark textarea::placeholder { color: hsl(214 14% 68%); }
 .dark select option {
   background-color: hsl(var(--surface-card));
   color: hsl(var(--foreground));
