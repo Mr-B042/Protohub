@@ -53,6 +53,25 @@ function lagosMinutesOfDay(input: string | Date): number {
   return lagos.getUTCHours() * 60 + lagos.getUTCMinutes();
 }
 
+// A rep can mark a customer as Ready while the order is being processed. That
+// should not immediately create another same-day "log this order" obligation.
+// If the order is still Ready on the next working day, it returns to the Daily
+// Log so the rep keeps the customer warm until dispatch/delivery.
+const READY_GRACE_STATUSES = new Set(["Confirmed", "In Process"]);
+const READY_GRACE_OUTCOMES = new Set(["ready", "ready now", "confirmed"]);
+function isReadyOutcome(value: string | null | undefined): boolean {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (READY_GRACE_OUTCOMES.has(normalized)) return true;
+  const latestLine = normalized.split(/\n+/).map((line) => line.trim()).filter(Boolean).pop() ?? "";
+  const latestText = latestLine.replace(/^\d{1,2}\/\d{1,2}\s*:\s*/, "").trim();
+  return READY_GRACE_OUTCOMES.has(latestText) || latestText.startsWith("ready ");
+}
+function hasReadySameDayGrace(order: { status: string; call_outcome?: string | null; updated_at?: string | null }, dateKey: string): boolean {
+  if (!READY_GRACE_STATUSES.has(order.status)) return false;
+  if (!isReadyOutcome(order.call_outcome)) return false;
+  return !!order.updated_at && lagosDateKey(order.updated_at) === dateKey;
+}
+
 // "Chase mode": an unreachable order (buyer_health watch/at_risk) must be tried in
 // THREE same-day slots — morning / afternoon / evening — each through all channels,
 // stopping once the customer is reached (a "progress" outcome). Each missed required
@@ -78,6 +97,7 @@ export type FollowUpObligation = {
   paused: boolean;           // scheduled/postponed to a future date
   scheduledFor: string | null;
   exempt: boolean;           // new order that arrived outside working hours today
+  readyGrace: boolean;       // marked Ready today → starts asking again tomorrow
 
   requiredCalls: number;     // 3 when the customer is unreachable, else 1
   attemptsToday: number;
@@ -108,7 +128,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
 
   let orderQuery = supabase
     .from("orders")
-    .select("id, assigned_rep_id, customer, phone, status, created_at, next_follow_up_at, scheduled_at, scheduled_date, buyer_health")
+    .select("id, assigned_rep_id, customer, phone, status, created_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, call_outcome, buyer_health")
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
     .not("assigned_rep_id", "is", null);
@@ -116,8 +136,8 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
   const { data: orders } = await orderQuery;
   const orderRows = (orders ?? []) as Array<{
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
-    status: string; created_at: string; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
-    buyer_health: string | null;
+    status: string; created_at: string; updated_at: string | null; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
+    call_outcome: string | null; buyer_health: string | null;
   }>;
   if (orderRows.length === 0) {
     return { date: dateKey, workingDay: true, obligations: [], dueCount: 0, attendedCount: 0, unattendedCount: 0, atRiskAmount: 0 };
@@ -177,16 +197,17 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     // Grace: an order created today, outside working hours, isn't due/charged today.
     const createdMins = lagosMinutesOfDay(o.created_at);
     const exempt = createdKey === dateKey && (createdMins < WORK_START_MIN || createdMins >= WORK_END_MIN);
+    const readyGrace = hasReadySameDayGrace(o, dateKey);
     const t = todayByOrder.get(o.id);
     const requiredCalls = latestGroupByOrder.get(o.id) === UNREACHABLE_OUTCOME_GROUP ? REQUIRED_CALLS_WHEN_UNREACHABLE : 1;
     const attemptsToday = t?.attempts ?? 0;
     const callsToday = t?.calls ?? 0;
 
     // Chase = unreachable order (3 same-day slots). Otherwise one log a day.
-    const chase = !paused && !exempt && CHASE_HEALTH.has(o.buyer_health ?? "");
+    const chase = !paused && !exempt && !readyGrace && CHASE_HEALTH.has(o.buyer_health ?? "");
     let slots: Record<FollowUpSlot, "done" | "todo" | "na"> | null = null;
     let owedSlots: string[] = [];
-    if (paused || exempt) {
+    if (paused || exempt || readyGrace) {
       // not due today → nothing owed
     } else if (chase) {
       const done = t?.slotsDone ?? new Set<FollowUpSlot>();
@@ -201,7 +222,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     } else {
       if (attemptsToday < 1) owedSlots = ["day"];
     }
-    const attended = (paused || exempt) ? true : owedSlots.length === 0;
+    const attended = (paused || exempt || readyGrace) ? true : owedSlots.length === 0;
     return {
       orderId: o.id,
       repId: o.assigned_rep_id,
@@ -213,6 +234,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
       paused,
       scheduledFor: plannedKey,
       exempt,
+      readyGrace,
       requiredCalls,
       attemptsToday,
       callsToday,
@@ -226,7 +248,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     };
   });
 
-  const due = obligations.filter((o) => !o.paused && !o.exempt);
+  const due = obligations.filter((o) => !o.paused && !o.exempt && !o.readyGrace);
   const attendedCount = due.filter((o) => o.attended).length;
   const atRiskAmount = due.reduce((sum, o) => sum + o.owedCount, 0) * FOLLOW_UP_MISS_AMOUNT;
   return {
@@ -254,7 +276,7 @@ export async function runFollowUpClose(orgId: string, dateKey?: string): Promise
   // One miss row per owed slot. Chase orders can owe up to 3 (morning/afternoon/
   // evening); a normal order owes one "day". Slot is part of the unique key.
   const rows = board.obligations
-    .filter((o) => !o.paused && !o.exempt && o.repId && o.owedSlots.length > 0)
+    .filter((o) => !o.paused && !o.exempt && !o.readyGrace && o.repId && o.owedSlots.length > 0)
     .flatMap((o) => o.owedSlots.map((slot) => ({
       org_id: orgId,
       order_id: o.orderId,
@@ -415,6 +437,7 @@ export type FollowUpGrid = {
     buyerHealth: string | null;
     todayChase: boolean;
     todaySlots: Record<FollowUpSlot, "done" | "todo" | "na"> | null;
+    todayReadyGrace: boolean;
     repId: string | null;
     repName: string | null;
     status: string;
@@ -445,7 +468,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
 
   let orderQuery = supabase
     .from("orders")
-    .select("id, assigned_rep_id, customer, phone, status, created_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location, call_outcome, buyer_health")
+    .select("id, assigned_rep_id, customer, phone, status, created_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location, call_outcome, buyer_health")
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
     .not("assigned_rep_id", "is", null);
@@ -453,7 +476,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
   const { data: orders } = await orderQuery;
   const orderRows = (orders ?? []) as Array<{
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
-    status: string; created_at: string; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
+    status: string; created_at: string; updated_at: string | null; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
     product_name: string | null; package_name: string | null; amount: number | null; currency: string | null; location: string | null;
     call_outcome: string | null; buyer_health: string | null;
   }>;
@@ -513,7 +536,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
         cells[d.key] = { state: "logged", outcome: logged.outcome, channels: Array.from(logged.channels), calls: logged.calls, attempts: logged.attempts, reached: logged.reached };
       } else if (missSet.has(k)) {
         cells[d.key] = { state: "missed" };
-      } else if (d.isToday && todayOb && !todayOb.paused && !todayOb.exempt && !todayOb.attended) {
+      } else if (d.isToday && todayOb && !todayOb.paused && !todayOb.exempt && !todayOb.readyGrace && !todayOb.attended) {
         cells[d.key] = { state: "today" };
       }
     }
@@ -531,6 +554,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
       buyerHealth: o.buyer_health,
       todayChase: todayOb?.chase ?? false,
       todaySlots: todayOb?.slots ?? null,
+      todayReadyGrace: todayOb?.readyGrace ?? hasReadySameDayGrace(o, todayKey),
       repId: o.assigned_rep_id,
       repName: o.assigned_rep_id ? repNameById.get(o.assigned_rep_id) ?? null : null,
       status: o.status,
