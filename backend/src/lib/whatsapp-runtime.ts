@@ -787,6 +787,35 @@ async function clearSessionDir(orgId: string) {
     .then(() => undefined, () => undefined);
 }
 
+// Coalesce Baileys auth-state saves. Baileys calls saveCreds on every creds.update
+// AND keys.set fires saveState on every signal-key operation — during a reconnect
+// loop (e.g. a restricted number stuck "pairing") that rewrites the FULL session
+// blob 40+ times/min, which bloated whatsapp_user_accounts to 100MB+ and produced
+// row-lock contention that timed out logins/orders and seized the whole DB. This
+// debounces writes to at most one per AUTH_SAVE_DEBOUNCE_MS (the write closure reads
+// the latest in-memory creds/keys at flush time, so nothing is lost — only delayed).
+const AUTH_SAVE_DEBOUNCE_MS = 5000;
+function createDebouncedAuthSaver(write: () => Promise<void>): () => Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let writing = false;
+  let dirty = false;
+  const flush = async () => {
+    writing = true;
+    dirty = false;
+    try { await write(); }
+    catch (err) { console.warn("[whatsapp-runtime] auth save failed:", err); }
+    finally {
+      writing = false;
+      if (dirty && !timer) timer = setTimeout(() => { timer = null; void flush(); }, AUTH_SAVE_DEBOUNCE_MS);
+    }
+  };
+  return async () => {
+    dirty = true;
+    if (timer || writing) return;
+    timer = setTimeout(() => { timer = null; void flush(); }, AUTH_SAVE_DEBOUNCE_MS);
+  };
+}
+
 // Supabase-backed auth state for org connections.
 // Stores Baileys credentials + signal keys in the whatsapp_settings row so
 // sessions survive Railway deploys (ephemeral filesystem).
@@ -804,14 +833,14 @@ async function useOrgSupabaseAuthState(orgId: string) {
     ? JSON.parse(JSON.stringify(data.baileys_keys), BufferJSON.reviver)
     : {};
 
-  const saveState = async () => {
+  const saveState = createDebouncedAuthSaver(async () => {
     await supabase.from("whatsapp_settings").upsert({
       org_id: orgId,
       baileys_creds: JSON.parse(JSON.stringify(creds, BufferJSON.replacer)),
       baileys_keys:  JSON.parse(JSON.stringify(keysMap, BufferJSON.replacer)),
       updated_at: new Date().toISOString()
     }, { onConflict: "org_id" });
-  };
+  });
 
   const state = {
     creds,
@@ -853,7 +882,7 @@ async function useUserSupabaseAuthState(orgId: string, userId: string) {
     ? JSON.parse(JSON.stringify(data.baileys_keys), BufferJSON.reviver)
     : {};
 
-  const saveState = async () => {
+  const saveState = createDebouncedAuthSaver(async () => {
     await supabase.from("whatsapp_user_accounts").upsert({
       org_id: orgId,
       user_id: userId,
@@ -861,7 +890,7 @@ async function useUserSupabaseAuthState(orgId: string, userId: string) {
       baileys_keys:  JSON.parse(JSON.stringify(keysMap, BufferJSON.replacer)),
       updated_at: new Date().toISOString()
     }, { onConflict: "org_id,user_id" });
-  };
+  });
 
   const state = {
     creds,
