@@ -14,6 +14,7 @@ import { processQueuedSms, syncDueAbandonedCartSms, syncDueFollowUpSms, syncSmsD
 import { processQueuedWhatsApp, syncDueFollowUpWhatsApp, runCartRecoveryWhatsApp } from "./lib/whatsapp.js";
 import shortLinkRoutes from "./routes/short-links.js";
 import { startWhatsAppRuntime } from "./lib/whatsapp-runtime.js";
+import { runAsSingleton } from "./lib/runtime-lease.js";
 import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
 import { runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
 import { supabase } from "./lib/supabase.js";
@@ -294,8 +295,13 @@ app.listen(PORT, () => {
     whatsappRuntimeEnabled: ENABLE_WHATSAPP_RUNTIME
   });
   if (ENABLE_WHATSAPP_RUNTIME) {
-    void startWhatsAppRuntime().catch((error) => {
-      logger.warn("whatsapp runtime bootstrap failed", { error: error instanceof Error ? error.message : String(error) });
+    // Only ONE backend instance may run the Baileys socket — two clients on one
+    // WhatsApp number cause session conflicts/ban risk and both rewrite the shared
+    // session row (the contention that seized the DB). Lease-elect a single leader.
+    runAsSingleton("whatsapp_runtime", () => {
+      void startWhatsAppRuntime().catch((error) => {
+        logger.warn("whatsapp runtime bootstrap failed", { error: error instanceof Error ? error.message : String(error) });
+      });
     });
   } else {
     logger.info("whatsapp runtime disabled by env");
