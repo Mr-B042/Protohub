@@ -1245,6 +1245,7 @@ const StatusSchema = z.object({
   agentId:     z.string().uuid().optional().nullable(),
   agentLocationId: z.string().uuid().optional().nullable()
 });
+const DELIVERED_LOCK_ALLOWED_STATUSES = new Set(["Delivered", "Cancelled", "Failed"]);
 
 router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
   const parsed = StatusSchema.safeParse(req.body);
@@ -1269,6 +1270,13 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
   const patchScopeId   = req.user!.effectiveUserId   ?? req.user!.id;
   if (patchScopeRole === "Sales Rep" && existing.assigned_rep_id !== patchScopeId) {
     res.status(403).json({ error: "You can only update orders assigned to you." });
+    return;
+  }
+  if (existing.status === "Delivered" && !DELIVERED_LOCK_ALLOWED_STATUSES.has(status)) {
+    res.status(409).json({
+      error: "Delivered orders are locked and cannot be moved back to Ready/Pending. Adjust the delivery date, or mark it Cancelled/Failed if it was truly wrong.",
+      code: "DELIVERED_STATUS_LOCKED"
+    });
     return;
   }
 
@@ -1397,6 +1405,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     !isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && inventoryLines.length > 0;
 
   if (status === "Delivered") {
+    updates.call_outcome = null;
     if (deliveredDate) {
       updates.delivered_date = deliveredDate;
     } else if (isDeliveredDateCorrection) {
