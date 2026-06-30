@@ -427,6 +427,16 @@ const PULSE_METRIC_EVENT_TYPES = [
   "redirect_triggered"
 ] as const;
 const PULSE_METRIC_EVENT_TYPE_SET = new Set<string>(PULSE_METRIC_EVENT_TYPES);
+const LIVE_PULSE_EVENT_SELECT = "id, cart_id, product_id, package_id, event_type, metadata, created_at";
+const LIVE_PULSE_CACHE_TTL_MS = 20_000;
+const livePulseCache = new Map<string, { expiresAt: number; payload: unknown }>();
+const pruneLivePulseCache = () => {
+  if (livePulseCache.size < 250) return;
+  const now = Date.now();
+  for (const [key, value] of livePulseCache.entries()) {
+    if (value.expiresAt <= now) livePulseCache.delete(key);
+  }
+};
 
 const LAGOS_OFFSET_MS = 60 * 60 * 1000;
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -831,7 +841,7 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
         .map((id) => id.trim())
         .filter((id) => /^[0-9a-fA-F-]{36}$/.test(id))
     )
-  ).slice(0, 50);
+  ).slice(0, 50).sort();
   const rawEmbedLabels = typeof req.query.embedLabels === "string" ? req.query.embedLabels : "";
   const embedLabels = Array.from(
     new Set(
@@ -841,7 +851,7 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
         .filter((value) => value.length > 0)
         .map((value) => value.slice(0, 120))
     )
-  ).slice(0, 50);
+  ).slice(0, 50).sort();
   const activeWindowMinutes = Math.max(
     3,
     Math.min(
@@ -857,13 +867,31 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
   );
   const activeSinceIso = new Date(Date.now() - activeWindowMinutes * 60 * 1000).toISOString();
   const recentSinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const cacheKey = JSON.stringify({
+    orgId: req.user!.orgId,
+    activeWindowMinutes,
+    dateFrom: selectedRange.dateFrom,
+    dateTo: selectedRange.dateTo,
+    productIds,
+    embedLabels
+  });
+  pruneLivePulseCache();
+  const cached = livePulseCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    res.setHeader("Cache-Control", "private, max-age=20");
+    res.setHeader("X-Protohub-Cache", "HIT");
+    res.json(cached.payload);
+    return;
+  }
+  livePulseCache.delete(cacheKey);
 
   let rangeQuery = supabase
     .from("cart_journey_events")
-    .select("*")
+    .select(LIVE_PULSE_EVENT_SELECT)
     .eq("org_id", req.user!.orgId)
     .gte("created_at", selectedRange.startIso)
     .lt("created_at", selectedRange.endExclusiveIso)
+    .in("event_type", [...LIVE_PULSE_EVENT_TYPES])
     .order("created_at", { ascending: true })
     // Explicit ceiling — without this, PostgREST silently caps at 1000 rows
     // and a busy day (323+ carts × multiple events) gets truncated to the
@@ -872,17 +900,19 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     .limit(10000);
   let rangeFeedQuery = supabase
     .from("cart_journey_events")
-    .select("*")
+    .select(LIVE_PULSE_EVENT_SELECT)
     .eq("org_id", req.user!.orgId)
     .gte("created_at", selectedRange.startIso)
     .lt("created_at", selectedRange.endExclusiveIso)
+    .in("event_type", [...PULSE_FEED_EVENT_TYPES])
     .order("created_at", { ascending: false })
     .limit(250);
   let liveWindowQuery = supabase
     .from("cart_journey_events")
-    .select("*")
+    .select(LIVE_PULSE_EVENT_SELECT)
     .eq("org_id", req.user!.orgId)
     .gte("created_at", recentSinceIso)
+    .in("event_type", [...LIVE_PULSE_EVENT_TYPES])
     .order("created_at", { ascending: false })
     .limit(250);
 
@@ -902,7 +932,7 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     for (let from = 0; from < maxRows; from += pageSize) {
       let metricQuery = supabase
         .from("cart_journey_events")
-        .select("id, cart_id, product_id, package_id, event_type, metadata, created_at")
+        .select(LIVE_PULSE_EVENT_SELECT)
         .eq("org_id", req.user!.orgId)
         .gte("created_at", selectedRange.startIso)
         .lt("created_at", selectedRange.endExclusiveIso)
@@ -1441,7 +1471,7 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     return { status: "idle", message: "Waiting for fresh landing-page traffic." };
   })();
 
-  res.json({
+  const payload = {
     generatedAt: new Date().toISOString(),
     activeWindowMinutes,
     dateFrom: selectedRange.dateFrom,
@@ -1451,7 +1481,12 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
     sources: [...sourceStats.values()].sort((a, b) => b.viewed - a.viewed || b.submitted - a.submitted),
     embeds: [...embedStats.values()].sort((a, b) => b.viewed - a.viewed || b.submitted - a.submitted),
     recentEvents: pulseFeed
-  });
+  };
+
+  livePulseCache.set(cacheKey, { expiresAt: Date.now() + LIVE_PULSE_CACHE_TTL_MS, payload });
+  res.setHeader("Cache-Control", "private, max-age=20");
+  res.setHeader("X-Protohub-Cache", "MISS");
+  res.json(payload);
 });
 
 // ── GET /api/carts/:id/journey ──────────────────────────

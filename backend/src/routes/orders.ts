@@ -554,6 +554,8 @@ router.get("/", async (req, res) => {
   // can read result.data[0].updated_at as the next high-water mark. Default
   // listing keeps newest-by-created_at order for the UI table.
   const sortColumn = updatedSince ? "updated_at" : "created_at";
+  const isIncrementalPoll = Boolean(updatedSince || since);
+  const selectOptions = isIncrementalPoll ? undefined : { count: "exact" as const };
 
   // Use effectiveUserId/Role in spy mode so the Owner sees the spied user's orders.
   const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
@@ -564,7 +566,7 @@ router.get("/", async (req, res) => {
   const buildQuery = (rFrom: number, rTo: number) => {
     let query = supabase
       .from("orders")
-      .select("*", { count: "exact" })
+      .select("*", selectOptions)
       .eq("org_id", req.user!.orgId)
       .order(sortColumn, { ascending: false })
       .range(rFrom, rTo);
