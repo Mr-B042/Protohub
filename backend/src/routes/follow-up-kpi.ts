@@ -80,9 +80,12 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async
 });
 
 // ── GET /api/follow-up-kpi/misses ────────────────────────
-// Owner/Admin review queue. ?state=pending|approved|waived (default pending).
-router.get("/misses", requireRole("Owner", "Admin"), async (req, res) => {
+// Miss queue. Owner/Admin can review everyone; Sales Reps can only see their
+// own pending/approved/waived misses so their personal debt is visible.
+router.get("/misses", requireRole("Owner", "Admin", "Sales Rep"), async (req, res) => {
   const state = typeof req.query.state === "string" ? req.query.state : "pending";
+  const role = req.user!.effectiveUserRole ?? req.user!.role;
+  const userId = req.user!.effectiveUserId ?? req.user!.id;
   let query = supabase
     .from("follow_up_misses")
     .select("*")
@@ -91,6 +94,7 @@ router.get("/misses", requireRole("Owner", "Admin"), async (req, res) => {
     .order("miss_date", { ascending: false })
     .order("rep_name", { ascending: true });
   if (state !== "all") query = query.eq("state", state);
+  if (role === "Sales Rep") query = query.eq("rep_id", userId);
   const { data, error } = await query;
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json(data ?? []);
