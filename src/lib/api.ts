@@ -9,6 +9,12 @@ const TRANSIENT_RETRYABLE_STATUSES = new Set([502, 503, 504]);
 const TRANSIENT_GET_RETRY_LIMIT = 2;
 const PRE_REQUEST_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const BACKGROUND_REFRESH_SKEW_MS = 10 * 60 * 1000;
+const AUTH_REFRESH_LOCK_KEY = "protohub.authRefreshLock";
+const AUTH_REFRESH_LOCK_TTL_MS = 15_000;
+const AUTH_REFRESH_LOCK_WAIT_MS = 12_000;
+const AUTH_REFRESH_LOCK_POLL_MS = 250;
+const INVALID_REFRESH_GRACE_MS = 90_000;
+const REFRESH_LOCK_OWNER = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 type AuthRefreshResult =
   | { ok: true }
@@ -103,6 +109,72 @@ function extractErrorMessage(payload: any, fallback: string) {
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+type AuthRefreshLock = { owner: string; expiresAt: number };
+
+function readAuthRefreshLock(): AuthRefreshLock | null {
+  try {
+    const raw = localStorage.getItem(AUTH_REFRESH_LOCK_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AuthRefreshLock>;
+    if (typeof parsed.owner !== "string" || typeof parsed.expiresAt !== "number") return null;
+    return { owner: parsed.owner, expiresAt: parsed.expiresAt };
+  } catch {
+    return null;
+  }
+}
+
+function acquireAuthRefreshLock(): boolean {
+  try {
+    const now = Date.now();
+    const current = readAuthRefreshLock();
+    if (current && current.expiresAt > now && current.owner !== REFRESH_LOCK_OWNER) {
+      return false;
+    }
+
+    localStorage.setItem(AUTH_REFRESH_LOCK_KEY, JSON.stringify({
+      owner: REFRESH_LOCK_OWNER,
+      expiresAt: now + AUTH_REFRESH_LOCK_TTL_MS
+    }));
+
+    return readAuthRefreshLock()?.owner === REFRESH_LOCK_OWNER;
+  } catch {
+    // If localStorage is unavailable, keep the app usable in this tab.
+    return true;
+  }
+}
+
+function releaseAuthRefreshLock() {
+  try {
+    const current = readAuthRefreshLock();
+    if (!current || current.owner === REFRESH_LOCK_OWNER) {
+      localStorage.removeItem(AUTH_REFRESH_LOCK_KEY);
+    }
+  } catch { /* ignore */ }
+}
+
+function authSessionChanged(accessToken: string | null, refreshToken: string | null) {
+  return auth.getAccessToken() !== accessToken || auth.getRefreshToken() !== refreshToken;
+}
+
+async function waitForOtherTabRefresh(accessToken: string | null, refreshToken: string | null): Promise<boolean> {
+  const deadline = Date.now() + AUTH_REFRESH_LOCK_WAIT_MS;
+  while (Date.now() < deadline) {
+    if (authSessionChanged(accessToken, refreshToken)) return true;
+    const lock = readAuthRefreshLock();
+    if (!lock || lock.expiresAt <= Date.now() || lock.owner === REFRESH_LOCK_OWNER) return false;
+    await sleep(AUTH_REFRESH_LOCK_POLL_MS);
+  }
+  return authSessionChanged(accessToken, refreshToken);
+}
+
+function invalidRefreshCanBeRetried(accessToken: string | null, refreshToken: string | null) {
+  // Supabase refresh tokens rotate. If another tab/device refreshed first, the
+  // token this tab attempted may be stale even though the browser already has a
+  // newer session. Also, when the current access token still has breathing room,
+  // do not kick the user out on one failed refresh — retry on the next tick.
+  return authSessionChanged(accessToken, refreshToken) || !auth.isAccessTokenExpired(INVALID_REFRESH_GRACE_MS);
+}
+
 // These routes are part of starting/recovering a session, so a 401 from them
 // is the actual form error (for example "Invalid email or password"), not a
 // stale dashboard session that should refresh/reload the app.
@@ -173,6 +245,9 @@ async function request<T>(
     if (refreshed.reason === "transient") {
       throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment — you have not been logged out.");
     }
+    if (refreshed.reason === "invalid" && !auth.isAccessTokenExpired(30_000)) {
+      throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment — you have not been logged out.");
+    }
     auth.clear();
     throw new ApiError(401, "Your session expired. Please sign in again.");
   }
@@ -195,8 +270,18 @@ export async function refreshAuthSession(): Promise<AuthRefreshResult> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
+    const accessToken = auth.getAccessToken();
     const refreshToken = auth.getRefreshToken();
     if (!refreshToken) return { ok: false, reason: "missing" };
+    let lockAcquired = acquireAuthRefreshLock();
+    if (!lockAcquired) {
+      const otherTabRefreshed = await waitForOtherTabRefresh(accessToken, refreshToken);
+      if (otherTabRefreshed) return { ok: true };
+      lockAcquired = acquireAuthRefreshLock();
+      if (!lockAcquired) {
+        return { ok: false, reason: "transient", message: "Another browser tab is refreshing your session." };
+      }
+    }
     try {
       const res = await fetchWithApiFailover("/api/auth/refresh", {
         method: "POST",
@@ -205,9 +290,12 @@ export async function refreshAuthSession(): Promise<AuthRefreshResult> {
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({ error: res.statusText }));
+        const reason = isTransientRefreshStatus(res.status) || invalidRefreshCanBeRetried(accessToken, refreshToken)
+          ? "transient"
+          : "invalid";
         return {
           ok: false,
-          reason: isTransientRefreshStatus(res.status) ? "transient" : "invalid",
+          reason,
           status: res.status,
           message: extractErrorMessage(payload, res.statusText || "Session refresh failed.")
         };
@@ -232,6 +320,7 @@ export async function refreshAuthSession(): Promise<AuthRefreshResult> {
     } catch (error: any) {
       return { ok: false, reason: "transient", message: error?.message ?? "Session refresh failed." };
     } finally {
+      if (lockAcquired) releaseAuthRefreshLock();
       refreshInFlight = null;
     }
   })();
