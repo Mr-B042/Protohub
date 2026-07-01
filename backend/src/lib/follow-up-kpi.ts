@@ -414,6 +414,12 @@ export type FollowUpGridCell = {
   calls?: number;
   attempts?: number;
   reached?: boolean;
+  entries?: Array<{
+    attemptedAt: string;
+    outcome: string | null;
+    channels: string[];
+    reached: boolean;
+  }>;
 };
 export type FollowUpGrid = {
   weekStart: string;
@@ -500,16 +506,29 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     .gte("attempted_at", lagosStartOfDayUtc(weekStart))
     .lt("attempted_at", lagosStartOfDayUtc(addDays(weekStart, 6)))
     .order("attempted_at", { ascending: true });
-  const byOrderDay = new Map<string, { attempts: number; calls: number; channels: Set<string>; reached: boolean; outcome: string | null }>();
+  const byOrderDay = new Map<string, {
+    attempts: number;
+    calls: number;
+    channels: Set<string>;
+    reached: boolean;
+    outcome: string | null;
+    entries: Array<{ attemptedAt: string; outcome: string | null; channels: string[]; reached: boolean }>;
+  }>();
   for (const a of (attempts ?? []) as Array<{ order_id: string; channel: string | null; channels: string[] | null; customer_reached: boolean | null; outcome_code: string | null; attempted_at: string }>) {
     const k = `${a.order_id}|${lagosDateKey(a.attempted_at)}`;
-    const e = byOrderDay.get(k) ?? { attempts: 0, calls: 0, channels: new Set<string>(), reached: false, outcome: null };
+    const e = byOrderDay.get(k) ?? { attempts: 0, calls: 0, channels: new Set<string>(), reached: false, outcome: null, entries: [] };
     e.attempts++;
     const chans = Array.isArray(a.channels) && a.channels.length ? a.channels : (a.channel ? [a.channel] : []);
     for (const c of chans) e.channels.add(c);
     if (chans.includes("call")) e.calls++;
     if (a.customer_reached) e.reached = true;
     if (a.outcome_code) e.outcome = a.outcome_code; // ascending → last (latest) wins
+    e.entries.push({
+      attemptedAt: a.attempted_at,
+      outcome: a.outcome_code,
+      channels: chans,
+      reached: Boolean(a.customer_reached)
+    });
     byOrderDay.set(k, e);
   }
 
@@ -533,7 +552,15 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
       const k = `${o.id}|${d.key}`;
       const logged = byOrderDay.get(k);
       if (logged) {
-        cells[d.key] = { state: "logged", outcome: logged.outcome, channels: Array.from(logged.channels), calls: logged.calls, attempts: logged.attempts, reached: logged.reached };
+        cells[d.key] = {
+          state: "logged",
+          outcome: logged.outcome,
+          channels: Array.from(logged.channels),
+          calls: logged.calls,
+          attempts: logged.attempts,
+          reached: logged.reached,
+          entries: logged.entries
+        };
       } else if (missSet.has(k)) {
         cells[d.key] = { state: "missed" };
       } else if (d.isToday && todayOb && !todayOb.paused && !todayOb.exempt && !todayOb.readyGrace && !todayOb.attended) {
