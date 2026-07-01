@@ -414,11 +414,13 @@ export type FollowUpGridCell = {
   calls?: number;
   attempts?: number;
   reached?: boolean;
+  slots?: Record<FollowUpSlot, "done" | "todo" | "missed" | "na"> | null;
   entries?: Array<{
     attemptedAt: string;
     outcome: string | null;
     channels: string[];
     reached: boolean;
+    slot: FollowUpSlot;
   }>;
 };
 export type FollowUpGrid = {
@@ -512,7 +514,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     channels: Set<string>;
     reached: boolean;
     outcome: string | null;
-    entries: Array<{ attemptedAt: string; outcome: string | null; channels: string[]; reached: boolean }>;
+    entries: Array<{ attemptedAt: string; outcome: string | null; channels: string[]; reached: boolean; slot: FollowUpSlot }>;
   }>();
   for (const a of (attempts ?? []) as Array<{ order_id: string; channel: string | null; channels: string[] | null; customer_reached: boolean | null; outcome_code: string | null; attempted_at: string }>) {
     const k = `${a.order_id}|${lagosDateKey(a.attempted_at)}`;
@@ -523,11 +525,13 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     if (chans.includes("call")) e.calls++;
     if (a.customer_reached) e.reached = true;
     if (a.outcome_code) e.outcome = a.outcome_code; // ascending → last (latest) wins
+    const slot = slotOfHour(lagosHourOf(a.attempted_at));
     e.entries.push({
       attemptedAt: a.attempted_at,
       outcome: a.outcome_code,
       channels: chans,
-      reached: Boolean(a.customer_reached)
+      reached: Boolean(a.customer_reached),
+      slot
     });
     byOrderDay.set(k, e);
   }
@@ -535,12 +539,19 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
   // Recorded misses (the authoritative red cells).
   const { data: misses } = await supabase
     .from("follow_up_misses")
-    .select("order_id, miss_date")
+    .select("order_id, miss_date, slot")
     .eq("org_id", orgId)
     .in("order_id", orderIds)
     .gte("miss_date", weekStart > FOLLOW_UP_KPI_START_DATE ? weekStart : FOLLOW_UP_KPI_START_DATE)
     .lte("miss_date", addDays(weekStart, 5));
   const missSet = new Set((misses ?? []).map((m) => `${m.order_id}|${m.miss_date}`));
+  const missSlotsByOrderDay = new Map<string, Set<string>>();
+  for (const m of (misses ?? []) as Array<{ order_id: string; miss_date: string; slot?: string | null }>) {
+    const k = `${m.order_id}|${m.miss_date}`;
+    const slots = missSlotsByOrderDay.get(k) ?? new Set<string>();
+    slots.add(m.slot || "day");
+    missSlotsByOrderDay.set(k, slots);
+  }
 
   const todayObligation = new Map(board.obligations.map((o) => [o.orderId, o]));
 
@@ -551,6 +562,22 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     for (const d of days) {
       const k = `${o.id}|${d.key}`;
       const logged = byOrderDay.get(k);
+      const missedSlots = missSlotsByOrderDay.get(k);
+      const slotStatuses = (() => {
+        if (d.isToday && todayOb?.chase && todayOb.slots) return todayOb.slots;
+        const doneSlots = new Set((logged?.entries ?? []).map((entry) => entry.slot));
+        const hasSlotMiss = Array.from(missedSlots ?? []).some((slot) => slot !== "day");
+        const shouldShowSlots = doneSlots.size > 1 || hasSlotMiss || CHASE_HEALTH.has(o.buyer_health ?? "");
+        if (!shouldShowSlots) return null;
+        return FOLLOW_UP_SLOTS.reduce((acc, slot) => {
+          acc[slot] = doneSlots.has(slot)
+            ? "done"
+            : missedSlots?.has(slot)
+              ? "missed"
+              : "na";
+          return acc;
+        }, {} as Record<FollowUpSlot, "done" | "todo" | "missed" | "na">);
+      })();
       if (logged) {
         cells[d.key] = {
           state: "logged",
@@ -559,12 +586,13 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
           calls: logged.calls,
           attempts: logged.attempts,
           reached: logged.reached,
+          slots: slotStatuses,
           entries: logged.entries
         };
       } else if (missSet.has(k)) {
-        cells[d.key] = { state: "missed" };
+        cells[d.key] = { state: "missed", slots: slotStatuses };
       } else if (d.isToday && todayOb && !todayOb.paused && !todayOb.exempt && !todayOb.readyGrace && !todayOb.attended) {
-        cells[d.key] = { state: "today" };
+        cells[d.key] = { state: "today", slots: slotStatuses };
       }
     }
     return {
