@@ -9,8 +9,8 @@ export const FOLLOW_UP_MISS_AMOUNT = 50;
 // it (the backlog that existed when the system launched) are never charged.
 export const FOLLOW_UP_KPI_START_DATE = "2026-06-29"; // Monday
 // When the customer's last outcome is "unreachable" they must be called this many
-// times in the day for the order to count as attended.
-const REQUIRED_CALLS_WHEN_UNREACHABLE = 3;
+// chargeable chase slots in the day for the order to count as attended.
+const REQUIRED_CALLS_WHEN_UNREACHABLE = 2;
 const UNREACHABLE_OUTCOME_GROUP = "unreachable";
 
 // Africa/Lagos is UTC+1 year-round (no DST). Work the calendar in Lagos local time.
@@ -73,17 +73,22 @@ function hasReadySameDayGrace(order: { status: string; call_outcome?: string | n
 }
 
 // "Chase mode": an unreachable order (buyer_health watch/at_risk) must be tried in
-// THREE same-day slots — morning / afternoon / evening — each through all channels,
-// stopping once the customer is reached (a "progress" outcome). Each missed required
-// slot is its own ₦50 (strict). A reachable order just needs one log a day.
-const FOLLOW_UP_SLOTS = ["morning", "afternoon", "evening"] as const;
+// TWO chargeable same-day slots — morning, then one later attempt (afternoon OR
+// evening) — stopping once the customer is reached (a "progress" outcome). Each
+// missed required slot is its own ₦50. A reachable order just needs one log a day.
+const FOLLOW_UP_SLOTS = ["morning", "later"] as const;
 export type FollowUpSlot = typeof FOLLOW_UP_SLOTS[number];
 const CHASE_HEALTH = new Set(["watch", "at_risk"]);
 function lagosHourOf(iso: string): number {
   return new Date(new Date(iso).getTime() + LAGOS_OFFSET_MS).getUTCHours();
 }
 function slotOfHour(h: number): FollowUpSlot {
-  return h < 12 ? "morning" : h < 16 ? "afternoon" : "evening";
+  return h < 12 ? "morning" : "later";
+}
+function normalizeMissSlot(slot: string | null | undefined): string {
+  // Legacy rows may still have the old afternoon/evening split. From now on
+  // either one is treated as the single combined later charge slot.
+  return slot === "afternoon" || slot === "evening" ? "later" : slot || "day";
 }
 
 export type FollowUpObligation = {
@@ -99,13 +104,13 @@ export type FollowUpObligation = {
   exempt: boolean;           // new order that arrived outside working hours today
   readyGrace: boolean;       // marked Ready today → starts asking again tomorrow
 
-  requiredCalls: number;     // 3 when the customer is unreachable, else 1
+  requiredCalls: number;     // 2 when the customer is unreachable, else 1
   attemptsToday: number;
   callsToday: number;
   channelsToday: string[];
   customerReachedToday: boolean;
   attended: boolean;
-  chase: boolean;            // unreachable → 3 same-day slots
+  chase: boolean;            // unreachable → morning + later same-day slots
   slots: Record<FollowUpSlot, "done" | "todo" | "na"> | null;
   owedSlots: string[];       // what's still owed today (slot names, or ["day"] for normal)
   owedCount: number;
@@ -176,7 +181,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     todayByOrder.set(a.order_id, e);
   }
 
-  // Latest outcome group per order (drives the 3-call rule).
+  // Latest outcome group per order (drives the unreachable chase-slot rule).
   const { data: recentAttempts } = await supabase
     .from("order_contact_attempts")
     .select("order_id, outcome_group, attempted_at")
@@ -203,7 +208,8 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     const attemptsToday = t?.attempts ?? 0;
     const callsToday = t?.calls ?? 0;
 
-    // Chase = unreachable order (3 same-day slots). Otherwise one log a day.
+    // Chase = unreachable order (morning + one later same-day slot). Otherwise
+    // one log a day.
     const chase = !paused && !exempt && !readyGrace && CHASE_HEALTH.has(o.buyer_health ?? "");
     let slots: Record<FollowUpSlot, "done" | "todo" | "na"> | null = null;
     let owedSlots: string[] = [];
@@ -212,7 +218,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     } else if (chase) {
       const done = t?.slotsDone ?? new Set<FollowUpSlot>();
       const positive = t?.positiveSlots ?? new Set<FollowUpSlot>();
-      slots = { morning: "todo", afternoon: "todo", evening: "todo" };
+      slots = { morning: "todo", later: "todo" };
       let reached = false;
       for (const s of FOLLOW_UP_SLOTS) {
         if (reached) { slots[s] = "na"; continue; } // customer reached earlier → no more slots required
@@ -273,8 +279,8 @@ export async function runFollowUpClose(orgId: string, dateKey?: string): Promise
   if (!isWorkingDay(key)) return { recorded: 0 };
   if (key < FOLLOW_UP_KPI_START_DATE) return { recorded: 0 }; // before go-live → never charged
   const board = await computeBoard(orgId, key);
-  // One miss row per owed slot. Chase orders can owe up to 3 (morning/afternoon/
-  // evening); a normal order owes one "day". Slot is part of the unique key.
+  // One miss row per owed slot. Chase orders can owe up to 2 (morning + later);
+  // a normal order owes one "day". Slot is part of the unique key.
   const rows = board.obligations
     .filter((o) => !o.paused && !o.exempt && !o.readyGrace && o.repId && o.owedSlots.length > 0)
     .flatMap((o) => o.owedSlots.map((slot) => ({
@@ -549,7 +555,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
   for (const m of (misses ?? []) as Array<{ order_id: string; miss_date: string; slot?: string | null }>) {
     const k = `${m.order_id}|${m.miss_date}`;
     const slots = missSlotsByOrderDay.get(k) ?? new Set<string>();
-    slots.add(m.slot || "day");
+    slots.add(normalizeMissSlot(m.slot));
     missSlotsByOrderDay.set(k, slots);
   }
 

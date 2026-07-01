@@ -4,8 +4,8 @@ import { z } from "zod";
 import { buildAgentAssignmentSnapshot } from "../lib/agent-coverage.js";
 import { buildAgentLocationSnapshot, resolveAgentLocationForOrder, syncAgentStockAggregate } from "../lib/agent-locations.js";
 import { appendCartJourneyEvent } from "../lib/cart-journey.js";
-import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, syncOrderFollowUpTask, taskStatusFor } from "../lib/follow-up-workflow.js";
-import { FOLLOW_UP_RECOVERY_BUCKETS } from "../lib/follow-up-outcomes.js";
+import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, refreshOrderFollowUpSummary, syncOrderFollowUpTask, taskStatusFor } from "../lib/follow-up-workflow.js";
+import { classifyFollowUpOutcome, FOLLOW_UP_RECOVERY_BUCKETS } from "../lib/follow-up-outcomes.js";
 import { buildPackageComponentSnapshot, orderInventoryLinesFromRow, primaryInventoryProductId, type OrderInventoryLine } from "../lib/order-inventory.js";
 import { formatOrderForWhatsAppDispatch, type WhatsAppDispatchOrderRow } from "../lib/order-whatsapp-dispatch.js";
 import { isPerUserWhatsAppDispatch } from "../lib/whatsapp-dispatch-mode.js";
@@ -1248,6 +1248,49 @@ const StatusSchema = z.object({
   agentLocationId: z.string().uuid().optional().nullable()
 });
 const DELIVERED_LOCK_ALLOWED_STATUSES = new Set(["Delivered", "Cancelled", "Failed"]);
+const FOLLOW_UP_DETAIL_LOG_STATUSES = new Set(["New", "Confirmed", "Postponed"]);
+
+async function recordOrderDetailCallOutcomeLog(input: {
+  orgId: string;
+  orderId: string;
+  actorId: string;
+  actorName: string;
+  orderBefore: { call_outcome?: string | null };
+  orderAfter: { status?: string | null; assigned_rep_id?: string | null };
+  callOutcome: string | null | undefined;
+}) {
+  const text = String(input.callOutcome ?? "").trim();
+  if (!text) return;
+  if (!FOLLOW_UP_DETAIL_LOG_STATUSES.has(String(input.orderAfter.status ?? ""))) return;
+  if (String(input.orderBefore.call_outcome ?? "").trim() === text) return;
+
+  const outcome = classifyFollowUpOutcome({ outcomeCode: text });
+  const customerReached =
+    outcome.outcomeGroup === "unreachable" ? false
+      : outcome.outcomeGroup === "other" ? null
+        : true;
+  const attemptedAt = new Date().toISOString();
+
+  const { error } = await supabase
+    .from("order_contact_attempts")
+    .insert({
+      org_id: input.orgId,
+      order_id: input.orderId,
+      rep_id: input.orderAfter.assigned_rep_id ?? input.actorId,
+      attempted_at: attemptedAt,
+      channel: "call",
+      channels: ["call"],
+      attempt_type: "fresh_follow_up",
+      outcome_code: outcome.outcomeCode,
+      outcome_group: outcome.outcomeGroup,
+      recovery_bucket: outcome.recoveryBucket,
+      outcome_note: `Logged from Order Details by ${input.actorName}`,
+      customer_reached: customerReached
+    });
+
+  if (error) throw new Error(error.message);
+  await refreshOrderFollowUpSummary(input.orgId, input.orderId);
+}
 
 router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
   const parsed = StatusSchema.safeParse(req.body);
@@ -1556,6 +1599,21 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+
+  if (callOutcome !== undefined) {
+    await recordOrderDetailCallOutcomeLog({
+      orgId: req.user!.orgId,
+      orderId: String(req.params.id),
+      actorId: req.user!.id,
+      actorName: req.user!.name,
+      orderBefore: existing,
+      orderAfter: data as { status?: string | null; assigned_rep_id?: string | null },
+      callOutcome
+    }).catch((err) => logger.warn("order detail call outcome log failed", {
+      orderId: req.params.id,
+      error: (err as Error).message
+    }));
+  }
 
   await logRemittanceDelta({
     orgId: req.user!.orgId,
@@ -2527,6 +2585,21 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep"), asyn
 
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data)  { res.status(404).json({ error: "Order not found." }); return; }
+
+  if (typeof updates.call_outcome === "string") {
+    await recordOrderDetailCallOutcomeLog({
+      orgId: req.user!.orgId,
+      orderId: String(req.params.id),
+      actorId: req.user!.id,
+      actorName: req.user!.name,
+      orderBefore: current,
+      orderAfter: data as { status?: string | null; assigned_rep_id?: string | null },
+      callOutcome: updates.call_outcome
+    }).catch((err) => logger.warn("order detail patch call outcome log failed", {
+      orderId: req.params.id,
+      error: (err as Error).message
+    }));
+  }
 
   // Ping a newly-assigned rep with an in-app + push "Order Assigned" notification.
   // The "Assigned" config targets ONLY the assigned rep (no Owner/Admin), mirroring

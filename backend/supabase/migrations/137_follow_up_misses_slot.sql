@@ -1,7 +1,6 @@
--- Per-slot follow-up misses: an unreachable order is chased in 3 same-day slots
--- (morning / afternoon / evening), each a separate ₦50 miss. Add a slot column and
--- make the uniqueness (order, day, slot) so all three can co-exist. Normal daily
--- misses use slot = 'day'.
+-- Per-slot follow-up misses. This originally supported 3 same-day chase slots;
+-- the app now treats legacy afternoon/evening rows as one combined "later" slot.
+-- Normal daily misses use slot = 'day'.
 alter table public.follow_up_misses
   add column if not exists slot text not null default 'day';
 

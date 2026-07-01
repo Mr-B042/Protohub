@@ -8,7 +8,7 @@ router.use(requireAuth);
 
 // ── GET /api/follow-up-kpi/board ─────────────────────────
 // Daily scoreboard: attended / due / unattended today, with the per-order Day-N and
-// the 3-call requirement. Sales Reps always see their own; Owner/Admin/Manager may
+// the follow-up/chase-slot requirement. Sales Reps always see their own; Owner/Admin/Manager may
 // scope to a rep via ?repId= (omit for the whole org).
 router.get("/board", async (req, res) => {
   const role = req.user!.effectiveUserRole ?? req.user!.role;
