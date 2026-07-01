@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
+import { classifyFollowUpOutcome } from "./follow-up-outcomes.js";
 
 // Orders in these raw statuses are the daily follow-up obligation set (mirrors the
 // Follow-up Queue page). Delivered / Cancelled / Failed are terminal — no obligation.
@@ -72,6 +73,20 @@ function hasReadySameDayGrace(order: { status: string; call_outcome?: string | n
   return !!order.updated_at && lagosDateKey(order.updated_at) === dateKey;
 }
 
+// Some old orders still have raw status "Confirmed" while the human-facing status
+// is terminal from the latest customer note ("Refused", "Not interested", etc.).
+// Those should never appear in Daily Follow-up Log or generate charges.
+const TERMINAL_FOLLOW_UP_OUTCOME_RE = /\b(refused|rejected|not interested|wrong number|out of stock|out of coverage|no coverage|failed delivery|cancelled|canceled)\b/i;
+function latestOutcomeText(value: string | null | undefined): string {
+  const latestLine = String(value ?? "").split(/\n+/).map((line) => line.trim()).filter(Boolean).pop() ?? "";
+  return latestLine.replace(/^\d{1,2}\/\d{1,2}\s*:\s*/, "").trim();
+}
+function hasTerminalCustomerOutcome(value: string | null | undefined): boolean {
+  const latest = latestOutcomeText(value);
+  if (!latest) return false;
+  return TERMINAL_FOLLOW_UP_OUTCOME_RE.test(latest) || classifyFollowUpOutcome({ outcomeCode: latest }).outcomeGroup === "closed_loss";
+}
+
 // "Chase mode": an unreachable order (buyer_health watch/at_risk) must be tried in
 // TWO chargeable same-day slots — morning, then one later attempt (afternoon OR
 // evening) — stopping once the customer is reached (a "progress" outcome). Each
@@ -139,11 +154,12 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     .not("assigned_rep_id", "is", null);
   if (repId) orderQuery = orderQuery.eq("assigned_rep_id", repId);
   const { data: orders } = await orderQuery;
-  const orderRows = (orders ?? []) as Array<{
+  const rawOrderRows = (orders ?? []) as Array<{
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
     status: string; created_at: string; updated_at: string | null; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
     call_outcome: string | null; buyer_health: string | null;
   }>;
+  const orderRows = rawOrderRows.filter((o) => !hasTerminalCustomerOutcome(o.call_outcome));
   if (orderRows.length === 0) {
     return { date: dateKey, workingDay: true, obligations: [], dueCount: 0, attendedCount: 0, unattendedCount: 0, atRiskAmount: 0 };
   }
@@ -488,12 +504,13 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     .not("assigned_rep_id", "is", null);
   if (repId) orderQuery = orderQuery.eq("assigned_rep_id", repId);
   const { data: orders } = await orderQuery;
-  const orderRows = (orders ?? []) as Array<{
+  const rawOrderRows = (orders ?? []) as Array<{
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
     status: string; created_at: string; updated_at: string | null; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
     product_name: string | null; package_name: string | null; amount: number | null; currency: string | null; location: string | null;
     call_outcome: string | null; buyer_health: string | null;
   }>;
+  const orderRows = rawOrderRows.filter((o) => !hasTerminalCustomerOutcome(o.call_outcome));
   const penaltyMeta = { penaltyStartDate: FOLLOW_UP_KPI_START_DATE, penaltyActive: todayKey >= FOLLOW_UP_KPI_START_DATE, missAmount: FOLLOW_UP_MISS_AMOUNT };
   if (orderRows.length === 0) return { weekStart, isCurrentWeek, ...penaltyMeta, days, summary, rows: [] };
   const orderIds = orderRows.map((o) => o.id);
