@@ -46,7 +46,7 @@ async function deleteLinkedWaybillExpenses(orgId: string, waybillId: string) {
 /** Upsert a linked expense for a waybill's fee. Idempotent — updates if exists, inserts if not. */
 async function syncWaybillExpense(
   orgId: string,
-  waybill: { id: string; waybill_fee: number; itemsLabel: string; from_location?: string | null; to_location?: string | null; dispatched_date?: string | null }
+  waybill: { id: string; waybill_fee: number; itemsLabel: string; product_id?: string | null; from_location?: string | null; to_location?: string | null; dispatched_date?: string | null }
 ) {
   if (waybill.waybill_fee <= 0) {
     // Fee is zero — remove any linked expense, including legacy unlinked rows.
@@ -80,6 +80,7 @@ async function syncWaybillExpense(
       description,
       date,
       currency: "NGN",
+      product_id: waybill.product_id ?? null,
       waybill_id: waybill.id
     }).eq("org_id", orgId).eq("id", keep.id);
   } else {
@@ -91,6 +92,7 @@ async function syncWaybillExpense(
       description,
       amount:      waybill.waybill_fee,
       currency:    "NGN",
+      product_id:  waybill.product_id ?? null,
       waybill_id:  waybill.id
     });
   }
@@ -306,6 +308,7 @@ router.post("/",
     if (d.waybillFee > 0) {
       await syncWaybillExpense(req.user!.orgId, {
         id: d.id, waybill_fee: d.waybillFee, itemsLabel: label,
+        product_id: firstItem.product_id,
         from_location: d.fromLocation, to_location: d.toLocation,
         dispatched_date: d.dispatchedDate
       });
@@ -409,6 +412,7 @@ router.patch("/:id",
     if (req.body.waybill_fee !== undefined) {
       await syncWaybillExpense(req.user!.orgId, {
         id: data.id, waybill_fee: data.waybill_fee, itemsLabel: patchLabel,
+        product_id: data.product_id ?? null,
         from_location: data.from_location, to_location: data.to_location,
         dispatched_date: data.dispatched_date
       });
