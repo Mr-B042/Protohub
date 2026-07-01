@@ -70,6 +70,8 @@ const PORT = process.env.PORT ?? 4000;
 const ENABLE_BACKGROUND_JOBS = !["0", "false", "no", "off"].includes((process.env.ENABLE_BACKGROUND_JOBS ?? "true").trim().toLowerCase());
 const ENABLE_WHATSAPP_RUNTIME = !["0", "false", "no", "off"].includes((process.env.ENABLE_WHATSAPP_RUNTIME ?? "true").trim().toLowerCase());
 const DATA_PROFILE = runtimeDataProfile();
+const AUTHENTICATED_API_RATE_LIMIT_15M = Math.max(500, Number(process.env.AUTHENTICATED_API_RATE_LIMIT_15M ?? 3000) || 3000);
+const ANONYMOUS_API_RATE_LIMIT_15M = Math.max(100, Number(process.env.ANONYMOUS_API_RATE_LIMIT_15M ?? 500) || 500);
 
 const normalizeOrigin = (value: string) => value.trim().replace(/\/+$/, "");
 
@@ -118,7 +120,7 @@ function isAllowedFrontendOrigin(origin: string | undefined) {
   return isAllowedLocalOrigin(origin) || allowedFrontendOrigins.includes(normalizeOrigin(origin));
 }
 
-function rateLimitBucketKey(req: express.Request) {
+function rateLimitUserId(req: express.Request): string | null {
   const authHeader = req.headers.authorization;
   if (typeof authHeader === "string") {
     const match = authHeader.match(/^Bearer\s+(.+)$/i);
@@ -129,13 +131,19 @@ function rateLimitBucketKey(req: express.Request) {
         try {
           const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
           const sub = typeof payload?.sub === "string" ? payload.sub.trim() : "";
-          if (UUID_LIKE_PATTERN.test(sub)) return `user:${sub}`;
+          if (UUID_LIKE_PATTERN.test(sub)) return sub;
         } catch {
           // Fall back to IP-based limiting when the header isn't a valid JWT.
         }
       }
     }
   }
+  return null;
+}
+
+function rateLimitBucketKey(req: express.Request) {
+  const userId = rateLimitUserId(req);
+  if (userId) return `user:${userId}`;
   return `ip:${req.ip ?? "unknown"}`;
 }
 
@@ -177,12 +185,13 @@ app.use(cors({
 // Global rate limit — skip for local development
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 500,
+  limit: (req) => rateLimitUserId(req) ? AUTHENTICATED_API_RATE_LIMIT_15M : ANONYMOUS_API_RATE_LIMIT_15M,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateLimitBucketKey,
   skip: (req) =>
     isLoopbackIp(req.ip) ||
+    req.path === "/api/auth/refresh" ||
     req.path.startsWith("/api/public/branding/") ||
     req.path.startsWith("/api/public/pwa/")
 }));
