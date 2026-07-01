@@ -100,6 +100,13 @@ function lagosHourOf(iso: string): number {
 function slotOfHour(h: number): FollowUpSlot {
   return h < 12 ? "morning" : "later";
 }
+function attemptedAtForFollowUpSlot(dateKey: string, slot: FollowUpSlot | null | undefined): string | null {
+  if (!slot) return null;
+  // The daily grid derives slot status from attempted_at. Use a stable Lagos
+  // time inside the intended chargeable slot so a rep can explicitly clear
+  // Morning or the combined Afternoon/Evening slot, even if they save late.
+  return `${dateKey}T${slot === "morning" ? "09:30" : "13:30"}:00+01:00`;
+}
 function normalizeMissSlot(slot: string | null | undefined): string {
   // Legacy rows may still have the old afternoon/evening split. From now on
   // either one is treated as the single combined later charge slot.
@@ -347,7 +354,8 @@ export async function logFollowUpEntry(
   promisedDate?: string | null,
   recoveryBucket?: string | null,
   outcomeGroup?: string | null,
-  promisedTime?: string | null
+  promisedTime?: string | null,
+  followUpSlot?: FollowUpSlot | null
 ): Promise<{ ok: true }> {
   const { data: order } = await supabase
     .from("orders")
@@ -357,18 +365,19 @@ export async function logFollowUpEntry(
     .maybeSingle();
   if (!order) throw new Error("Order not found.");
 
-  const todayKey = lagosDateKey(new Date());
+  const actualNowIso = new Date().toISOString();
+  const todayKey = lagosDateKey(actualNowIso);
   const entry = `${todayKey.slice(8, 10)}/${todayKey.slice(5, 7)}: ${text}`;
   const existing = ((order as { call_outcome?: string | null }).call_outcome ?? "").trim();
   const newCallOutcome = existing ? `${existing}\n${entry}` : entry;
   const primary = channels.includes("call") ? "call" : channels.includes("sms") ? "sms" : channels.some((c) => c.startsWith("whatsapp")) ? "whatsapp" : "manual";
-  const nowIso = new Date().toISOString();
+  const attemptedAtIso = attemptedAtForFollowUpSlot(todayKey, followUpSlot) ?? actualNowIso;
 
   await supabase.from("order_contact_attempts").insert({
     org_id: orgId,
     order_id: orderId,
     rep_id: repId ?? (order as { assigned_rep_id?: string | null }).assigned_rep_id ?? null,
-    attempted_at: nowIso,
+    attempted_at: attemptedAtIso,
     channel: primary,
     channels,
     attempt_type: "fresh_follow_up",
@@ -379,7 +388,7 @@ export async function logFollowUpEntry(
 
   const update: Record<string, unknown> = {
     call_outcome: newCallOutcome,
-    last_contact_attempt_at: nowIso,
+    last_contact_attempt_at: actualNowIso,
     last_contact_attempt_outcome: text,
     follow_up_attempt_count: (Number((order as { follow_up_attempt_count?: number }).follow_up_attempt_count) || 0) + 1
   };

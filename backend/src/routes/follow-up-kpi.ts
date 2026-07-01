@@ -51,6 +51,7 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async
   const channels = Array.isArray(req.body?.channels) ? req.body.channels.filter((c: unknown) => typeof c === "string") : [];
   const promisedDate = typeof req.body?.promisedDate === "string" && req.body.promisedDate ? req.body.promisedDate : null;
   const promisedTime = typeof req.body?.promisedTime === "string" && /^\d{2}:\d{2}$/.test(req.body.promisedTime) ? req.body.promisedTime : null;
+  const followUpSlot = req.body?.slot === "morning" || req.body?.slot === "later" ? req.body.slot : null;
   const VALID_BUCKETS = ["ready_now", "call_tomorrow", "call_in_2_3_days", "salary_wait", "spouse_approval", "wants_discount", "asked_for_whatsapp", "no_answer", "switched_off", "line_busy", "not_interested", "wrong_number", "out_of_coverage"];
   const VALID_GROUPS = ["progress", "recoverable", "unreachable", "closed_loss", "other"];
   const recoveryBucket = typeof req.body?.recoveryBucket === "string" && VALID_BUCKETS.includes(req.body.recoveryBucket) ? req.body.recoveryBucket : null;
@@ -72,7 +73,7 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async
   }
   try {
     const repId = role === "Sales Rep" ? userId : (order.assigned_rep_id ?? userId);
-    await logFollowUpEntry(req.user!.orgId, orderId, repId, text, channels, promisedDate, recoveryBucket, outcomeGroup, promisedTime);
+    await logFollowUpEntry(req.user!.orgId, orderId, repId, text, channels, promisedDate, recoveryBucket, outcomeGroup, promisedTime, followUpSlot);
     res.status(201).json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
