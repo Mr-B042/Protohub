@@ -7,7 +7,7 @@ const IN_SCOPE_STATUSES = ["New", "Confirmed", "Postponed"] as const;
 export const FOLLOW_UP_MISS_AMOUNT = 50;
 // Go-live: the ₦50 miss penalty only applies from this working day on. Days before
 // it (the backlog that existed when the system launched) are never charged.
-export const FOLLOW_UP_KPI_START_DATE = "2026-06-29"; // Monday
+export const FOLLOW_UP_KPI_START_DATE = "2026-07-01"; // Wednesday — reset old test charges
 // When the customer's last outcome is "unreachable" they must be called this many
 // chargeable chase slots in the day for the order to count as attended.
 const REQUIRED_CALLS_WHEN_UNREACHABLE = 2;
