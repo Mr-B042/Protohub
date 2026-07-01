@@ -56,7 +56,7 @@ const OUTCOME_BY_LABEL = new Map(
 const LEGACY_GROUP_OVERRIDES: Array<{ match: RegExp; group: FollowUpOutcomeGroup }> = [
   { match: /confirmed|ready|delivered|recovered delivery|waybill|awaiting payment/i, group: "progress" },
   { match: /not ready|pending|will call back|scheduled callback|travelled|seat at home|have questions/i, group: "recoverable" },
-  { match: /no answer|line busy|not picking|switched off|not reached|not available|number not going/i, group: "unreachable" },
+  { match: /no answer|no response|line busy|not picking|switched off|not reached|not available|number not going/i, group: "unreachable" },
   { match: /refused|wrong number|out of stock|out of coverage|not interested/i, group: "closed_loss" }
 ];
 

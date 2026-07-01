@@ -161,7 +161,7 @@ type SyncOrderFollowUpInput = {
 const CLOSED_ORDER_STATUSES = new Set(["Delivered", "Cancelled", "Failed"]);
 const ACTIVE_FOLLOW_UP_STATUSES: FollowUpTaskStatus[] = ["open", "due", "overdue"];
 const HARD_STOP_OUTCOMES = new Set(["Refused", "Wrong Number", "Wrong number", "Out of Stock", "Out of coverage", "out of coverage", "Not interested"]);
-const UNREACHABLE_OUTCOMES = new Set(["No Answer", "No answer", "Line Busy", "Line busy", "Not Picking", "Switched off", "Phone switched off", "Not Reached", "Not Available", "Number not going"]);
+const UNREACHABLE_OUTCOMES = new Set(["No Answer", "No answer", "No Response", "No response", "Line Busy", "Line busy", "Not Picking", "Switched off", "Phone switched off", "Not Reached", "Not Available", "Number not going"]);
 const WEAK_INTENT_OUTCOMES = new Set([
   "Will Call Back",
   "Scheduled Callback",
