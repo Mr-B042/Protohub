@@ -684,7 +684,9 @@ export const payrollApi = {
   preview: (body: { period: string }) => post<any>("/api/payroll/preview", body),
   generate: (body: { period: string; label?: string; notes?: string }) => post<any>("/api/payroll/generate", body),
   approve: (id: string) => patch<any>(`/api/payroll/${id}/approve`, {}),
-  markPaid: (id: string) => patch<any>(`/api/payroll/${id}/mark-paid`, {})
+  markPaid: (id: string) => patch<any>(`/api/payroll/${id}/mark-paid`, {}),
+  paySalary: (userId: string, month?: string) => post<any>("/api/payroll/pay-salary", month ? { userId, month } : { userId }),
+  payAllSalaries: (month?: string) => post<any>("/api/payroll/pay-all-salaries", month ? { month } : {})
 };
 
 export const bonusCoachApi = {
