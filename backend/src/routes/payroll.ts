@@ -132,6 +132,78 @@ router.patch("/:id/approve", async (req, res) => {
   res.json(data);
 });
 
+// ── Salary → monthly expense ──────────────────────────────────────────────
+// Record a user's monthly salary as a Salary expense so it flows into the P&L /
+// net profit (previously salaries were never tracked as expenses). The expense id
+// is deterministic — SAL-<userId>-<YYYY-MM> — so paying the same user for the same
+// month twice is a no-op (idempotent), no schema change needed.
+const salaryMonthKey = (input?: unknown): string => {
+  if (typeof input === "string" && /^\d{4}-\d{2}$/.test(input)) return input;
+  return new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 7); // Lagos (UTC+1) month
+};
+const salaryMonthLabel = (monthKey: string): string =>
+  new Date(`${monthKey}-01T12:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+
+async function recordSalaryExpense(
+  orgId: string, paidByName: string,
+  user: { id: string; name: string }, fixedSalary: number, monthKey: string
+): Promise<{ status: "paid" | "already_paid"; id: string; amount: number }> {
+  const id = `SAL-${user.id}-${monthKey}`;
+  const { data: existing } = await supabase.from("expenses").select("id").eq("id", id).maybeSingle();
+  if (existing) return { status: "already_paid", id, amount: fixedSalary };
+  const today = new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 10); // Lagos date
+  const { error } = await supabase.from("expenses").insert({
+    id, org_id: orgId, date: today, category: "Salary",
+    description: `Monthly salary · ${user.name} · ${salaryMonthLabel(monthKey)}`,
+    amount: fixedSalary, currency: "NGN", paid_by: paidByName
+  });
+  if (error) throw new Error(error.message);
+  return { status: "paid", id, amount: fixedSalary };
+}
+
+const salariedFixed = (structure: { type?: string | null; fixed_salary?: number | null } | null | undefined): number =>
+  structure && structure.type !== "Per Delivered Order" ? Number(structure.fixed_salary ?? 0) : 0;
+
+router.post("/pay-salary", async (req, res) => {
+  const userId = typeof req.body?.userId === "string" ? req.body.userId : "";
+  const monthKey = salaryMonthKey(req.body?.month);
+  if (!userId) { res.status(400).json({ error: "userId is required." }); return; }
+  const orgId = req.user!.orgId;
+  const [{ data: user }, { data: structure }] = await Promise.all([
+    supabase.from("users").select("id, name, active").eq("org_id", orgId).eq("id", userId).maybeSingle(),
+    supabase.from("pay_structures").select("type, fixed_salary").eq("org_id", orgId).eq("user_id", userId).maybeSingle()
+  ]);
+  if (!user) { res.status(404).json({ error: "User not found." }); return; }
+  if (!user.active) { res.status(400).json({ error: "User is not active." }); return; }
+  const fixedSalary = salariedFixed(structure);
+  if (fixedSalary <= 0) { res.status(400).json({ error: "This user has no monthly salary set in their pay structure." }); return; }
+  try {
+    const result = await recordSalaryExpense(orgId, req.user!.name, { id: user.id, name: user.name }, fixedSalary, monthKey);
+    res.status(result.status === "paid" ? 201 : 200).json({ ...result, monthKey, userId });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/pay-all-salaries", async (req, res) => {
+  const monthKey = salaryMonthKey(req.body?.month);
+  const orgId = req.user!.orgId;
+  const [{ data: users }, { data: structures }] = await Promise.all([
+    supabase.from("users").select("id, name").eq("org_id", orgId).eq("active", true),
+    supabase.from("pay_structures").select("user_id, type, fixed_salary").eq("org_id", orgId)
+  ]);
+  const structByUser = new Map((structures ?? []).map((s: any) => [s.user_id, s]));
+  let paid = 0, skipped = 0, totalAmount = 0;
+  const errors: string[] = [];
+  for (const u of (users ?? []) as { id: string; name: string }[]) {
+    const fixedSalary = salariedFixed(structByUser.get(u.id));
+    if (fixedSalary <= 0) continue;
+    try {
+      const result = await recordSalaryExpense(orgId, req.user!.name, u, fixedSalary, monthKey);
+      if (result.status === "paid") { paid++; totalAmount += fixedSalary; } else skipped++;
+    } catch (e: any) { errors.push(`${u.name}: ${e.message}`); }
+  }
+  res.json({ paid, skipped, totalAmount, monthKey, errors });
+});
+
 router.patch("/:id/mark-paid", async (req, res) => {
   const { data, error } = await supabase
     .from("payroll_runs")
