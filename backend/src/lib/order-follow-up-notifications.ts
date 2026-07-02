@@ -357,10 +357,15 @@ export async function syncDueOrderFollowUpNotifications(limitPerOrg = 300) {
         await notifyScheduledReminder(orgId, order, formatReminderLabel(order.scheduled_at ?? order.scheduled_date ?? scheduledDue));
       }
 
+      // One rep reminder per order per pass. Several timeline notes due in the
+      // same window previously fired one rep SMS + in-app notification PER NOTE
+      // (identical text) — the same duplicate-spam pattern fixed in the customer
+      // SMS + WhatsApp reminders. Stop after the first due note.
       for (const note of normalizeTimelineReminderNotes(order)) {
         const noteDue = dueIsoMoment(note.followUpAt ?? note.followUpDate ?? null, now);
         if (!noteDue || !withinReminderWindow(noteDue, now)) continue;
         await notifyTimelineReminder(orgId, order, note, formatReminderLabel(note.followUpAt ?? note.followUpDate ?? noteDue));
+        break;
       }
     }
   }
