@@ -88,7 +88,8 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async
 
     // Unreachable customers get ~0% call pickup — turn this logged dead call into a
     // text. Fire-and-forget (already responded), skipped if the rep already texted
-    // this round; the helper dedups to one send per order per day.
+    // this round; the helper caps total sends per order + enforces a cooldown so a
+    // multi-day-unreachable order isn't texted every single day.
     if (outcomeGroup === "unreachable" && !channels.includes("sms")) {
       void (async () => {
         const { data: full } = await supabase

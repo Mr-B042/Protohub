@@ -71,10 +71,11 @@ export const DEFAULT_SMS_TEMPLATES: Record<SmsTrigger, { body: string }> = {
   },
   // Fires from the follow-up chase when a rep logs an UNREACHABLE outcome (calls
   // reach ~0% of these customers, so a text is the only channel that lands).
-  // {{reason}} is filled per bucket (switched off / busy / no answer). Deduped to
-  // one send per order per day so 3 chase rounds ≠ 3 texts.
+  // {{reason}} is filled per bucket (switched off / busy / no answer). No "reply
+  // to this SMS" — inbound replies are disabled on the sender, so we only ask
+  // them to call back. Capped per order (see sendUnreachableFollowUpSms).
   order_unreachable: {
-    body: "{{greeting}} {{customer}}, we've tried calling about your {{product_name}} order but {{reason}}. Please call us back or reply to this SMS and we'll arrange your delivery right away. {{rep_contact}}"
+    body: "{{greeting}} {{customer}}, we've tried calling about your {{product_name}} order but {{reason}}. Please call us back and we'll arrange your delivery right away. {{rep_contact}}"
   },
   order_follow_up: {
     // No "on" before {{scheduled_date}} — the label already carries the right
@@ -1476,9 +1477,15 @@ const UNREACHABLE_REASON_PHRASE: Record<string, string> = {
 };
 
 // Auto-SMS a customer the moment a rep logs an unreachable follow-up outcome.
-// Call/WhatsApp reach these buyers ~0% of the time, so this turns a dead call
-// into a landed message with a reply/callback ask. One send per order per Lagos
-// day (dedup), governed by the standard enabled/trigger/quiet-hours settings.
+// Call reaches these buyers ~0% of the time, so this turns a dead call into a
+// landed message with a call-back ask, governed by the standard
+// enabled/trigger/quiet-hours/balance settings.
+//
+// Anti-spam is by ORDER LIFETIME, not just per-day: an unreachable order stays
+// in the chase for days, so a per-day dedup alone would text the same customer
+// every single day. Cap the total sends per order and space them with a cooldown.
+const UNREACHABLE_MAX_PER_ORDER = 2;               // never more than this, ever
+const UNREACHABLE_COOLDOWN_MS = 2 * 24 * 60 * 60 * 1000; // ≥ 2 days between sends
 export async function sendUnreachableFollowUpSms(
   orgId: string,
   order: {
@@ -1494,10 +1501,18 @@ export async function sendUnreachableFollowUpSms(
   bucket?: string | null
 ) {
   if (!order.phone) return null;
-  // Lagos (UTC+1) calendar day as the dedup window.
-  const dayKey = new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 10);
-  const dedupeKey = `unreachable-${dayKey}`;
-  if (await reminderAlreadyLogged(orgId, order.id, dedupeKey, "order_unreachable")) return null;
+  // Lifetime cap + cooldown: look at every prior unreachable text for this order.
+  const { data: priorTexts } = await supabase
+    .from("sms_messages")
+    .select("created_at")
+    .eq("org_id", orgId)
+    .eq("order_id", order.id)
+    .eq("trigger", "order_unreachable")
+    .neq("status", "failed")
+    .order("created_at", { ascending: false });
+  if ((priorTexts?.length ?? 0) >= UNREACHABLE_MAX_PER_ORDER) return null; // hit the cap
+  const lastAt = priorTexts?.[0]?.created_at ? new Date(priorTexts[0].created_at).getTime() : 0;
+  if (lastAt && Date.now() - lastAt < UNREACHABLE_COOLDOWN_MS) return null; // still cooling down
 
   const assignedRep = await loadAssignedRepContact(orgId, order.assignedRepId);
   const reason = UNREACHABLE_REASON_PHRASE[bucket ?? ""] ?? "we couldn't get through";
@@ -1521,7 +1536,7 @@ export async function sendUnreachableFollowUpSms(
       audience: "customer",
       recipientName: order.customer,
       repContactLine: assignedRep?.contactLine,
-      metadata: { event: "follow_up_unreachable", bucket: bucket ?? null, dedupeKey }
+      metadata: { event: "follow_up_unreachable", bucket: bucket ?? null }
     }
   );
 }
