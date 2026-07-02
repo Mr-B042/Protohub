@@ -311,9 +311,12 @@ router.post("/:id/stock",
       .eq("id", productId)
       .single();
     if (product) {
+      // syncAgentStockAggregate above already recomputed products.agent_stock from
+      // the live hub sum (which now includes this distribution). Only warehouse_stock
+      // is ours to adjust here — re-adding quantity to agent_stock double-counts it
+      // and is the chronic upward cache drift the inventory audit surfaced.
       await supabase.from("products").update({
-        warehouse_stock: Math.max(0, product.warehouse_stock - quantity),
-        agent_stock: (product.agent_stock ?? 0) + quantity
+        warehouse_stock: Math.max(0, product.warehouse_stock - quantity)
       }).eq("id", productId);
 
       // Log stock movement
@@ -498,9 +501,12 @@ router.post("/:id/reconcile",
     if (returned > 0) {
       const { data: product } = await supabase.from("products").select("warehouse_stock, agent_stock, name").eq("id", productId).single();
       if (product) {
+        // syncAgentStockAggregate above already recomputed products.agent_stock from
+        // the live hub sum (which now reflects this return). Only warehouse_stock is
+        // ours to adjust — re-subtracting returned from agent_stock double-counts it
+        // (the mirror of the distribution drift).
         await supabase.from("products").update({
-          warehouse_stock: product.warehouse_stock + returned,
-          agent_stock: Math.max(0, product.agent_stock - returned)
+          warehouse_stock: product.warehouse_stock + returned
         }).eq("id", productId);
 
         await supabase.from("stock_movements").insert({
