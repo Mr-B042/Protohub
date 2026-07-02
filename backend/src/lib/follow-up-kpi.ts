@@ -21,6 +21,10 @@ export function lagosDateKey(input: string | Date): string {
   const d = typeof input === "string" ? new Date(input) : input;
   return new Date(d.getTime() + LAGOS_OFFSET_MS).toISOString().slice(0, 10);
 }
+// Current hour (0–23) in Lagos. Used to lock the "later" chase slot before noon.
+export function lagosHourNow(): number {
+  return new Date(Date.now() + LAGOS_OFFSET_MS).getUTCHours();
+}
 function dowOf(dateKey: string): number {
   return new Date(`${dateKey}T12:00:00Z`).getUTCDay(); // 0=Sun .. 6=Sat
 }

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-import { FOLLOW_UP_KPI_START_DATE, getFollowUpBoard, getFollowUpGrid, logFollowUpEntry, runFollowUpClose } from "../lib/follow-up-kpi.js";
+import { FOLLOW_UP_KPI_START_DATE, getFollowUpBoard, getFollowUpGrid, lagosHourNow, logFollowUpEntry, runFollowUpClose } from "../lib/follow-up-kpi.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -52,6 +52,14 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async
   const promisedDate = typeof req.body?.promisedDate === "string" && req.body.promisedDate ? req.body.promisedDate : null;
   const promisedTime = typeof req.body?.promisedTime === "string" && /^\d{2}:\d{2}$/.test(req.body.promisedTime) ? req.body.promisedTime : null;
   const followUpSlot = req.body?.slot === "morning" || req.body?.slot === "later" ? req.body.slot : null;
+  // Anti-gaming: the "later" (Afternoon or Evening) chase slot unlocks at 12:00 PM
+  // Lagos so a rep can't clear both same-day slots in one early-morning sitting.
+  // Morning stays open all day. The log endpoint always records for "today", so a
+  // simple current-hour check is sufficient.
+  if (followUpSlot === "later" && lagosHourNow() < 12) {
+    res.status(400).json({ error: "The Afternoon or Evening follow-up unlocks at 12:00 PM (Lagos). Log the Morning slot now — come back after noon for the later chase.", code: "SLOT_LOCKED" });
+    return;
+  }
   const VALID_BUCKETS = ["ready_now", "call_tomorrow", "call_in_2_3_days", "salary_wait", "spouse_approval", "wants_discount", "asked_for_whatsapp", "no_answer", "switched_off", "line_busy", "not_interested", "wrong_number", "out_of_coverage"];
   const VALID_GROUPS = ["progress", "recoverable", "unreachable", "closed_loss", "other"];
   const recoveryBucket = typeof req.body?.recoveryBucket === "string" && VALID_BUCKETS.includes(req.body.recoveryBucket) ? req.body.recoveryBucket : null;
