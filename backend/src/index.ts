@@ -17,6 +17,7 @@ import { startWhatsAppRuntime } from "./lib/whatsapp-runtime.js";
 import { runAsSingleton } from "./lib/runtime-lease.js";
 import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
 import { runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
+import { pruneOldCartJourneyEvents } from "./lib/cart-journey.js";
 import { supabase } from "./lib/supabase.js";
 import { processQueuedEmails, sendWeeklyReport } from "./lib/mailer.js";
 import { sendPushToRoles } from "./lib/push.js";
@@ -335,6 +336,17 @@ cron.schedule("0 21 * * *", async () => {
   logger.info("cron: follow-up KPI nightly close");
   try { await runFollowUpCloseAllOrgs(); }
   catch (e) { logger.error("cron: follow-up KPI close crashed", { error: (e as Error).message }); }
+});
+}
+
+// ── Cart journey events retention — daily 02:30 UTC (03:30 Lagos) ──
+// Append-only event log that grew unbounded to 120 MB (62% of the DB). Prune to
+// a rolling window nightly at a low-traffic hour so it stops running away.
+if (ENABLE_BACKGROUND_JOBS) {
+cron.schedule("30 2 * * *", async () => {
+  logger.info("cron: pruning old cart journey events");
+  try { const deleted = await pruneOldCartJourneyEvents(); logger.info("cron: cart journey prune done", { deleted }); }
+  catch (e) { logger.error("cron: cart journey prune crashed", { error: (e as Error).message }); }
 });
 }
 
