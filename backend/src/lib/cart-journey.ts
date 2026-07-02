@@ -62,7 +62,7 @@ export const appendCartJourneyEvent = async (args: AppendCartJourneyEventArgs) =
 // The Live-Pulse overview reads this table over a user-selected range, so the
 // window is generous — lower CART_JOURNEY_RETENTION_DAYS to reclaim more if that
 // view is never used beyond a shorter lookback. Floor of 14 days as a guard.
-const CART_JOURNEY_RETENTION_DAYS = Math.max(14, Number(process.env.CART_JOURNEY_RETENTION_DAYS) || 60);
+const CART_JOURNEY_RETENTION_DAYS = Math.max(14, Number(process.env.CART_JOURNEY_RETENTION_DAYS) || 30);
 export async function pruneOldCartJourneyEvents(): Promise<number> {
   const cutoff = new Date(Date.now() - CART_JOURNEY_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { count, error } = await supabase
