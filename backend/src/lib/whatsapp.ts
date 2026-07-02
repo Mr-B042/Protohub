@@ -1486,7 +1486,7 @@ export async function syncDueFollowUpWhatsApp(limitPerOrg = 300) {
         const overdueMinutes = Math.max(0, Math.round((now.getTime() - new Date(noteDue).getTime()) / 60000));
 
         await sendAssignedRepFollowUpReminderWhatsApp(orgId, order, {
-          dedupeKey: `note:${note.id}:${note.followUpAt ?? note.followUpDate}`,
+          dedupeKey: `follow_up_day:${toDateKey(noteDue)}`,
           scheduledLabel: note.followUpAt ?? note.followUpDate ?? toDateKey(noteDue),
           noteText: note.text,
           metadata: {
@@ -1499,7 +1499,7 @@ export async function syncDueFollowUpWhatsApp(limitPerOrg = 300) {
         });
         if (overdueMinutes >= WHATSAPP_MANAGER_ESCALATION_DELAY_MINUTES) {
           await sendManagerFollowUpReminderWhatsApp(orgId, order, {
-            dedupeKey: `note:${note.id}:${note.followUpAt ?? note.followUpDate}:manager`,
+            dedupeKey: `follow_up_day:${toDateKey(noteDue)}:manager`,
             scheduledLabel: note.followUpAt ?? note.followUpDate ?? toDateKey(noteDue),
             noteText: note.text,
             metadata: {
@@ -1513,7 +1513,7 @@ export async function syncDueFollowUpWhatsApp(limitPerOrg = 300) {
         }
         if (overdueMinutes >= WHATSAPP_OWNER_ESCALATION_DELAY_MINUTES) {
           await sendOwnerFollowUpReminderWhatsApp(orgId, order, {
-            dedupeKey: `note:${note.id}:${note.followUpAt ?? note.followUpDate}:owner`,
+            dedupeKey: `follow_up_day:${toDateKey(noteDue)}:owner`,
             scheduledLabel: note.followUpAt ?? note.followUpDate ?? toDateKey(noteDue),
             noteText: note.text,
             metadata: {
@@ -1525,6 +1525,11 @@ export async function syncDueFollowUpWhatsApp(limitPerOrg = 300) {
             }
           });
         }
+        // One staff reminder per order per day (order+day dedupeKey above). An
+        // order with several timeline notes due in the same window previously
+        // sent an identical WhatsApp per note — duplicate pings + extra volume
+        // on the ban-prone number. Stop after the first due note.
+        break;
       }
     }
   }
