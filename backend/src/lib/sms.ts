@@ -13,6 +13,7 @@ export type SmsTrigger =
   | "order_rescheduled"
   | "order_not_picking"
   | "order_not_ready"
+  | "order_unreachable"
   | "order_follow_up"
   | "order_follow_up_rep"
   | "cart_assigned"
@@ -27,6 +28,7 @@ export const DEFAULT_SMS_TRIGGERS: Record<SmsTrigger, boolean> = {
   order_rescheduled: true,
   order_not_picking: true,
   order_not_ready: true,
+  order_unreachable: true,
   order_follow_up: false,
   order_follow_up_rep: true,
   cart_assigned: false,
@@ -66,6 +68,13 @@ export const DEFAULT_SMS_TEMPLATES: Record<SmsTrigger, { body: string }> = {
   },
   order_not_ready: {
     body: "{{greeting}} {{customer}}, no rush. We will hold your {{product_name}} order and check back on {{scheduled_date}}. {{rep_contact}}"
+  },
+  // Fires from the follow-up chase when a rep logs an UNREACHABLE outcome (calls
+  // reach ~0% of these customers, so a text is the only channel that lands).
+  // {{reason}} is filled per bucket (switched off / busy / no answer). Deduped to
+  // one send per order per day so 3 chase rounds ≠ 3 texts.
+  order_unreachable: {
+    body: "{{greeting}} {{customer}}, we've tried calling about your {{product_name}} order but {{reason}}. Please call us back or reply to this SMS and we'll arrange your delivery right away. {{rep_contact}}"
   },
   order_follow_up: {
     // No "on" before {{scheduled_date}} — the label already carries the right
@@ -117,6 +126,7 @@ type SendSmsOptions = {
   repContactLine?: string;
   metadata?: Record<string, unknown>;
   ignoreEnabled?: boolean;
+  ignoreBalance?: boolean;
   ignoreTrigger?: boolean;
   ignoreCompliance?: boolean;
 };
@@ -801,6 +811,40 @@ async function deliverLoggedSms(
   };
 }
 
+// ── Low-balance guard ────────────────────────────────────────────────────
+// Never fire SMS into an empty/low Multitexter account. Instead of burning
+// failed sends + retries, we DEFER (queue) the message and let processQueuedSms
+// pick it back up once the balance is topped up. Balance is cached briefly so a
+// burst of sends doesn't hammer the provider's balance API. Reads fail OPEN
+// (a balance-API hiccup must not silently halt all SMS).
+const SMS_BALANCE_RETRY_MS = 30 * 60 * 1000;
+const SMS_BALANCE_TTL_MS = 3 * 60 * 1000;
+const smsBalanceCache = new Map<string, { balance: number; at: number }>();
+async function cachedSmsBalance(orgId: string): Promise<number | null> {
+  const hit = smsBalanceCache.get(orgId);
+  if (hit && Date.now() - hit.at < SMS_BALANCE_TTL_MS) return hit.balance;
+  try {
+    const { balance } = await getSmsBalance(orgId);
+    if (balance == null || !Number.isFinite(balance)) return null;
+    smsBalanceCache.set(orgId, { balance, at: Date.now() });
+    return balance;
+  } catch {
+    return null;
+  }
+}
+// Enough balance to send `segments`? `balance: null` = unknown → callers fail open.
+async function smsBalanceCovers(orgId: string, segments: number): Promise<{ ok: boolean; balance: number | null }> {
+  const balance = await cachedSmsBalance(orgId);
+  if (balance == null) return { ok: true, balance: null };
+  return { ok: balance >= Math.max(1, segments), balance };
+}
+// Keep the cached balance roughly in step after a successful send so a burst
+// within the TTL doesn't overshoot a near-empty account.
+function noteSmsBalanceSpent(orgId: string, segments: number) {
+  const hit = smsBalanceCache.get(orgId);
+  if (hit) hit.balance = Math.max(0, hit.balance - Math.max(1, segments));
+}
+
 async function dispatchSms(
   orgId: string,
   trigger: SmsTrigger,
@@ -898,6 +942,22 @@ async function dispatchSms(
     }
   }
 
+  if (!options.ignoreBalance) {
+    const { ok, balance } = await smsBalanceCovers(orgId, segments);
+    if (!ok && balance != null) {
+      const retryAt = new Date(Date.now() + SMS_BALANCE_RETRY_MS).toISOString();
+      await insertSmsLog({
+        ...baseLogPayload,
+        status: "deferred",
+        scheduled_for: retryAt,
+        provider_status: `Deferred: SMS balance too low (${balance} left, needs ${segments}). Will retry after top-up.`
+      });
+      await notifyLowBalance(orgId, balance, settings.low_balance_threshold).catch(() => undefined);
+      logger.warn("sms deferred: low balance", { orgId, trigger, balance, needs: segments });
+      return null;
+    }
+  }
+
   const logId = await insertSmsLog({
     ...baseLogPayload,
     status: "queued",
@@ -908,6 +968,7 @@ async function dispatchSms(
 
   try {
     const result = await deliverLoggedSms(orgId, settings, logId, normalizedPhone, messageBody, options.sendAt);
+    noteSmsBalanceSpent(orgId, segments);
     logger.info("sms sent", {
       orgId,
       trigger,
@@ -1253,6 +1314,7 @@ export async function sendTestSms(orgId: string, phone: string) {
       ignoreEnabled: true,
       ignoreTrigger: true,
       ignoreCompliance: true,
+      ignoreBalance: true,
       audience: "customer",
       recipientName: "Protohub Test",
       metadata: { kind: "test_sms" }
@@ -1401,6 +1463,65 @@ export async function sendNewOrderSms(
         assignedRepName: assignedRep?.name ?? null,
         assignedRepPhone: assignedRep?.phone ?? null
       }
+    }
+  );
+}
+
+// Reason phrase per unreachable bucket, injected as {{reason}}. Falls back to a
+// neutral "we couldn't get through" for the untagged unreachable attempts.
+const UNREACHABLE_REASON_PHRASE: Record<string, string> = {
+  switched_off: "your line was switched off",
+  line_busy: "your line was busy",
+  no_answer: "we couldn't get through"
+};
+
+// Auto-SMS a customer the moment a rep logs an unreachable follow-up outcome.
+// Call/WhatsApp reach these buyers ~0% of the time, so this turns a dead call
+// into a landed message with a reply/callback ask. One send per order per Lagos
+// day (dedup), governed by the standard enabled/trigger/quiet-hours settings.
+export async function sendUnreachableFollowUpSms(
+  orgId: string,
+  order: {
+    id: string;
+    customer: string;
+    phone: string;
+    assignedRepId?: string | null;
+    product_name: string;
+    package_name?: string | null;
+    amount: number;
+    currency: string;
+  },
+  bucket?: string | null
+) {
+  if (!order.phone) return null;
+  // Lagos (UTC+1) calendar day as the dedup window.
+  const dayKey = new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 10);
+  const dedupeKey = `unreachable-${dayKey}`;
+  if (await reminderAlreadyLogged(orgId, order.id, dedupeKey, "order_unreachable")) return null;
+
+  const assignedRep = await loadAssignedRepContact(orgId, order.assignedRepId);
+  const reason = UNREACHABLE_REASON_PHRASE[bucket ?? ""] ?? "we couldn't get through";
+  return dispatchSms(
+    orgId,
+    "order_unreachable",
+    {
+      order_id: order.id,
+      customer: order.customer,
+      product_name: orderDisplayName(order),
+      amount: String(order.amount),
+      currency: order.currency,
+      reason,
+      rep_name: assignedRep?.name ?? "",
+      rep_phone: assignedRep?.phone ?? "",
+      rep_contact: assignedRep?.contactLine ?? ""
+    },
+    order.phone,
+    {
+      orderId: order.id,
+      audience: "customer",
+      recipientName: order.customer,
+      repContactLine: assignedRep?.contactLine,
+      metadata: { event: "follow_up_unreachable", bucket: bucket ?? null, dedupeKey }
     }
   );
 }
@@ -1946,12 +2067,17 @@ export async function syncDueFollowUpSms(limitPerOrg = 300) {
         }
       }
 
+      // One customer reminder per order per day — no matter how many timeline
+      // notes fall due in the same window. Previously each due note sent its own
+      // SMS, but the customer-facing text is IDENTICAL across notes, so an order
+      // with several due notes blasted the customer several duplicate texts
+      // (read as spam). Dedup at the order+day level and send at most one.
       for (const note of normalizeTimelineReminderNotes(order)) {
         const noteDue = dueIsoMoment(note.followUpAt ?? note.followUpDate ?? null, now);
         if (!noteDue || !withinReminderWindow(noteDue, now)) continue;
 
-        const dedupeKey = `note:${note.id}:${note.followUpAt ?? note.followUpDate}`;
-        if (await reminderAlreadyLogged(orgId, order.id, dedupeKey)) continue;
+        const dedupeKey = `follow_up_day:${toDateKey(noteDue)}`;
+        if (await reminderAlreadyLogged(orgId, order.id, dedupeKey)) break;
 
         await sendFollowUpReminderSms(orgId, order, {
           dedupeKey,
@@ -1959,11 +2085,13 @@ export async function syncDueFollowUpSms(limitPerOrg = 300) {
           noteText: note.text,
           metadata: {
             kind: "timeline_follow_up",
+            dayKey: toDateKey(noteDue),
             noteId: note.id,
             followUpAt: note.followUpAt ?? null,
             followUpDate: note.followUpDate ?? null
           }
         });
+        break; // at most one customer reminder per order per cron pass
       }
     }
   }
@@ -2069,6 +2197,21 @@ export async function processQueuedSms(limit = 150) {
       continue;
     }
 
+    // Still not enough balance? Keep it queued (push the retry out) rather than
+    // burning another failed send. It goes out on a later run once topped up.
+    const queuedSegments = estimateSmsSegments(row.body);
+    const { ok: balanceOk, balance: queuedBalance } = await smsBalanceCovers(row.org_id, queuedSegments);
+    if (!balanceOk && queuedBalance != null) {
+      await updateSmsLog(row.id, {
+        status: "deferred",
+        scheduled_for: new Date(Date.now() + SMS_BALANCE_RETRY_MS).toISOString(),
+        next_retry_at: null,
+        provider_status: `Deferred: SMS balance too low (${queuedBalance} left, needs ${queuedSegments}). Waiting for top-up.`
+      });
+      await notifyLowBalance(row.org_id, queuedBalance, settings.low_balance_threshold).catch(() => undefined);
+      continue;
+    }
+
     try {
       await updateSmsLog(row.id, {
         retry_count: nextRetryCount,
@@ -2083,6 +2226,7 @@ export async function processQueuedSms(limit = 150) {
       // so the audit trail of "what we tried at 9am" is preserved.
       const freshBody = applyFreshGreeting(row.body, settings.timezone ?? "Africa/Lagos");
       await deliverLoggedSms(row.org_id, settings, row.id, row.normalized_phone, freshBody, null);
+      noteSmsBalanceSpent(row.org_id, queuedSegments);
     } catch (error) {
       const normalized = normalizeSmsError(error);
       const retryable = settings.auto_retry_enabled && isRetryableSmsError(normalized) && nextRetryCount <= settings.max_retry_attempts;
