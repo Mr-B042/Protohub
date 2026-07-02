@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
+import { logger } from "../lib/logger.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { FOLLOW_UP_KPI_START_DATE, getFollowUpBoard, getFollowUpGrid, lagosHourNow, logFollowUpEntry, runFollowUpClose } from "../lib/follow-up-kpi.js";
+import { sendUnreachableFollowUpSms } from "../lib/sms.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -83,6 +85,31 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async
     const repId = role === "Sales Rep" ? userId : (order.assigned_rep_id ?? userId);
     await logFollowUpEntry(req.user!.orgId, orderId, repId, text, channels, promisedDate, recoveryBucket, outcomeGroup, promisedTime, followUpSlot);
     res.status(201).json({ ok: true });
+
+    // Unreachable customers get ~0% call pickup — turn this logged dead call into a
+    // text. Fire-and-forget (already responded), skipped if the rep already texted
+    // this round; the helper dedups to one send per order per day.
+    if (outcomeGroup === "unreachable" && !channels.includes("sms")) {
+      void (async () => {
+        const { data: full } = await supabase
+          .from("orders")
+          .select("id, customer, phone, assigned_rep_id, product_name, package_name, amount, currency, status")
+          .eq("id", orderId).eq("org_id", req.user!.orgId).maybeSingle();
+        if (!full?.phone) return;
+        if (["Delivered", "Cancelled", "Failed"].includes(String(full.status))) return;
+        await sendUnreachableFollowUpSms(req.user!.orgId, {
+          id: full.id,
+          customer: full.customer,
+          phone: full.phone,
+          assignedRepId: full.assigned_rep_id,
+          product_name: full.product_name,
+          package_name: full.package_name,
+          amount: Number(full.amount ?? 0),
+          currency: full.currency ?? "NGN"
+        }, recoveryBucket);
+      })().catch((err) => logger.warn("unreachable follow-up sms failed", { orderId, error: (err as Error).message }));
+    }
+    return;
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
   }
