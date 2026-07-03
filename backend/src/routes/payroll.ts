@@ -4,6 +4,10 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendToUser } from "../lib/mailer.js";
 import { calculatePayrollPreview, payrollPeriodKey } from "../lib/payroll-calculator.js";
+import {
+  elapsedDayIndices, lagosTodayKey, salaryMonthKey, salaryMonthLabel, totalMonthlySalary,
+  weekdaySpreadDates, weekdaySpreadIds, WEEKDAY_SPREAD_LABELS
+} from "../lib/salary-spread.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin"));
@@ -132,69 +136,13 @@ router.patch("/:id/approve", async (req, res) => {
   res.json(data);
 });
 
-// ── Salary → weekly-spread expense ────────────────────────────────────────
-// Salary is a MONTHLY cost but the business closes out profit WEEKLY (same
-// cadence ad spend is entered at) — a single end-of-month lump meant salary
-// never showed up in a given week's break-even/net-profit view except the one
-// week it happened to land in. Instead, the company's total monthly salary
-// (sum of every active user's fixed_salary) is split into 4 equal weekly
-// slices, each recorded as its own Salary expense dated the first day (Sunday)
-// of that week — so it counts toward weekly fixed costs exactly like Ad Spend
-// already does, every week, not just the pay week.
-const salaryMonthKey = (input?: unknown): string => {
-  if (typeof input === "string" && /^\d{4}-\d{2}$/.test(input)) return input;
-  return new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 7); // Lagos (UTC+1) month
-};
-const salaryMonthLabel = (monthKey: string): string =>
-  new Date(`${monthKey}-01T12:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
-
-const salariedFixed = (structure: { type?: string | null; fixed_salary?: number | null } | null | undefined): number =>
-  structure && structure.type !== "Per Delivered Order" ? Number(structure.fixed_salary ?? 0) : 0;
-
-async function totalMonthlySalary(orgId: string): Promise<number> {
-  const [{ data: users }, { data: structures }] = await Promise.all([
-    supabase.from("users").select("id").eq("org_id", orgId).eq("active", true),
-    supabase.from("pay_structures").select("user_id, type, fixed_salary").eq("org_id", orgId)
-  ]);
-  const activeIds = new Set((users ?? []).map((u: any) => u.id as string));
-  return (structures ?? [])
-    .filter((s: any) => activeIds.has(s.user_id))
-    .reduce((sum: number, s: any) => sum + salariedFixed(s), 0);
-}
-
-// 4 consecutive Sunday-anchored weeks covering "the month" — week 1 starts on
-// the Sunday on/before the 1st, so dating an expense there lands inside the
-// same Sun–Sat week bucket the rest of Finance/break-even already use.
-function weekStartsForMonth(monthKey: string): string[] {
-  const [y, m] = monthKey.split("-").map(Number);
-  const firstOfMonth = new Date(Date.UTC(y, (m || 1) - 1, 1, 12));
-  const week1Start = new Date(firstOfMonth);
-  week1Start.setUTCDate(week1Start.getUTCDate() - firstOfMonth.getUTCDay());
-  return [0, 1, 2, 3].map((i) => {
-    const d = new Date(week1Start);
-    d.setUTCDate(d.getUTCDate() + i * 7);
-    return d.toISOString().slice(0, 10);
-  });
-}
-
-// A week's amount lands as ONE lump on its Sunday, which reads as a shock on
-// any DAILY expense/profit view (₦0 for six days, then a spike). Smoothed
-// instead across the 4 WORKING days of that week — Monday through Thursday —
-// a quarter of the week's amount each day. Friday, Saturday, and the week's
-// own Sunday anchor carry none.
-const WEEKDAY_SPREAD_LABELS = ["Mon", "Tue", "Wed", "Thu"] as const;
-function weekdaySpreadDates(monthKey: string, week: number): string[] {
-  const sunday = weekStartsForMonth(monthKey)[week - 1];
-  const [y, m, d] = sunday.split("-").map(Number);
-  const base = new Date(Date.UTC(y, (m || 1) - 1, d, 12));
-  return [1, 2, 3, 4].map((offset) => {
-    const dt = new Date(base);
-    dt.setUTCDate(dt.getUTCDate() + offset);
-    return dt.toISOString().slice(0, 10);
-  });
-}
-const weekdaySpreadIds = (monthKey: string, week: number) => [1, 2, 3, 4].map((d) => `SAL-WEEKLY-${monthKey}-W${week}-D${d}`);
-
+// ── Salary → weekly-spread, daily-drip expense ────────────────────────────
+// See backend/src/lib/salary-spread.ts for the full model. In short: clicking
+// "Spread Week N" is the manual on/off switch — it catches up any days of
+// that week which have already elapsed (Mon..today), but never writes a
+// FUTURE day. Once Monday exists, the daily cron
+// (dropDueDailySalaryForAllOrgs) takes over and drops Tue/Wed/Thu
+// automatically, one per day, on that actual day.
 router.post("/spread-weekly-salary", async (req, res) => {
   const week = Number(req.body?.week);
   if (![1, 2, 3, 4].includes(week)) { res.status(400).json({ error: "week must be 1, 2, 3, or 4." }); return; }
@@ -202,6 +150,7 @@ router.post("/spread-weekly-salary", async (req, res) => {
   const orgId = req.user!.orgId;
   const ids = weekdaySpreadIds(monthKey, week);
   const dayDates = weekdaySpreadDates(monthKey, week);
+  const todayKey = lagosTodayKey();
 
   const { data: existingRows } = await supabase.from("expenses").select("id, amount").eq("org_id", orgId).in("id", ids);
   const existingById = new Map((existingRows ?? []).map((r: any) => [r.id as string, Number(r.amount)]));
@@ -211,18 +160,26 @@ router.post("/spread-weekly-salary", async (req, res) => {
     return;
   }
 
-  // Computed fresh from the CURRENTLY active payroll every time a NOT-yet-spread
-  // week is clicked — not locked to whatever an earlier week in this month
+  const elapsed = elapsedDayIndices(dayDates, todayKey);
+  if (elapsed.length === 0) {
+    res.status(400).json({ error: `Week ${week} hasn't started yet — it begins ${dayDates[0]}.` });
+    return;
+  }
+
+  // Computed fresh from the CURRENTLY active payroll every time a catch-up
+  // click happens — not locked to whatever an earlier week in this month
   // used. Deliberate: hiring a new salaried staffer (or changing someone's pay)
-  // mid-month should be covered starting from the next week you spread, not
-  // wait until next month.
+  // mid-month should be covered starting from the next day/week you spread,
+  // not wait until next month.
   const total = await totalMonthlySalary(orgId);
   if (total <= 0) { res.status(400).json({ error: "No active users have a monthly salary set in their pay structure." }); return; }
   const dailyAmount = Math.round(Math.round(total / 4) / 4);
 
-  // Insert only the days not already recorded — idempotent completion if a
-  // prior attempt partially failed, rather than duplicating or erroring.
-  for (let i = 0; i < 4; i++) {
+  // Insert only the elapsed days not already recorded — never a future day
+  // (the cron drops those on their own date), and idempotent completion if a
+  // prior attempt partially failed.
+  let created = 0;
+  for (const i of elapsed) {
     if (existingById.has(ids[i])) continue;
     const { error } = await supabase.from("expenses").insert({
       id: ids[i], org_id: orgId, date: dayDates[i], category: "Salary",
@@ -230,8 +187,9 @@ router.post("/spread-weekly-salary", async (req, res) => {
       amount: dailyAmount, currency: "NGN", paid_by: req.user!.name
     });
     if (error) { res.status(500).json({ error: error.message }); return; }
+    created++;
   }
-  res.status(201).json({ status: "spread", ids, amount: dailyAmount * 4, dailyAmount, dayDates, monthKey, week });
+  res.status(201).json({ status: "spread", ids, dailyAmount, created, dayDates, monthKey, week });
 });
 
 router.patch("/:id/mark-paid", async (req, res) => {
