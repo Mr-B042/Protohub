@@ -151,9 +151,12 @@ async function recordSalaryExpense(
   const id = `SAL-${user.id}-${monthKey}`;
   const { data: existing } = await supabase.from("expenses").select("id").eq("id", id).maybeSingle();
   if (existing) return { status: "already_paid", id, amount: fixedSalary };
-  const today = new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 10); // Lagos date
+  // Date the expense on the LAST DAY of the month it's for — so back-paying (e.g.
+  // June salary recorded in July) lands in June's P&L, not the month you clicked.
+  const [y, m] = monthKey.split("-").map(Number);
+  const expenseDate = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
   const { error } = await supabase.from("expenses").insert({
-    id, org_id: orgId, date: today, category: "Salary",
+    id, org_id: orgId, date: expenseDate, category: "Salary",
     description: `Monthly salary · ${user.name} · ${salaryMonthLabel(monthKey)}`,
     amount: fixedSalary, currency: "NGN", paid_by: paidByName
   });
