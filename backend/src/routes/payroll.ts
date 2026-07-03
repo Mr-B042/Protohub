@@ -177,35 +177,61 @@ function weekStartsForMonth(monthKey: string): string[] {
   });
 }
 
+// A week's amount lands as ONE lump on its Sunday, which reads as a shock on
+// any DAILY expense/profit view (₦0 for six days, then a spike). Smoothed
+// instead across the 4 WORKING days of that week — Monday through Thursday —
+// a quarter of the week's amount each day. Friday, Saturday, and the week's
+// own Sunday anchor carry none.
+const WEEKDAY_SPREAD_LABELS = ["Mon", "Tue", "Wed", "Thu"] as const;
+function weekdaySpreadDates(monthKey: string, week: number): string[] {
+  const sunday = weekStartsForMonth(monthKey)[week - 1];
+  const [y, m, d] = sunday.split("-").map(Number);
+  const base = new Date(Date.UTC(y, (m || 1) - 1, d, 12));
+  return [1, 2, 3, 4].map((offset) => {
+    const dt = new Date(base);
+    dt.setUTCDate(dt.getUTCDate() + offset);
+    return dt.toISOString().slice(0, 10);
+  });
+}
+const weekdaySpreadIds = (monthKey: string, week: number) => [1, 2, 3, 4].map((d) => `SAL-WEEKLY-${monthKey}-W${week}-D${d}`);
+
 router.post("/spread-weekly-salary", async (req, res) => {
   const week = Number(req.body?.week);
   if (![1, 2, 3, 4].includes(week)) { res.status(400).json({ error: "week must be 1, 2, 3, or 4." }); return; }
   const monthKey = salaryMonthKey(req.body?.month);
   const orgId = req.user!.orgId;
-  const id = `SAL-WEEKLY-${monthKey}-W${week}`;
-  const weekStart = weekStartsForMonth(monthKey)[week - 1];
+  const ids = weekdaySpreadIds(monthKey, week);
+  const dayDates = weekdaySpreadDates(monthKey, week);
 
-  const { data: existing } = await supabase.from("expenses").select("id, amount").eq("id", id).maybeSingle();
-  if (existing) { res.json({ status: "already_spread", id, amount: Number(existing.amount), weekStart, monthKey, week }); return; }
+  const { data: existingRows } = await supabase.from("expenses").select("id, amount").eq("org_id", orgId).in("id", ids);
+  const existingById = new Map((existingRows ?? []).map((r: any) => [r.id as string, Number(r.amount)]));
+  if (existingById.size === 4) {
+    const amount = ids.reduce((s, i) => s + (existingById.get(i) ?? 0), 0);
+    res.json({ status: "already_spread", ids, amount, dailyAmount: Math.round(amount / 4), dayDates, monthKey, week });
+    return;
+  }
 
-  // Computed fresh from the CURRENTLY active payroll every time a week is
-  // spread — not locked to whatever an earlier week in this month used. This
-  // is deliberate: hiring a new salaried staffer (or changing someone's pay)
+  // Computed fresh from the CURRENTLY active payroll every time a NOT-yet-spread
+  // week is clicked — not locked to whatever an earlier week in this month
+  // used. Deliberate: hiring a new salaried staffer (or changing someone's pay)
   // mid-month should be covered starting from the next week you spread, not
-  // wait until next month. A week that's ALREADY been spread is untouched
-  // (its expense row exists and is returned above) — only weeks not yet
-  // recorded pick up the new total.
+  // wait until next month.
   const total = await totalMonthlySalary(orgId);
   if (total <= 0) { res.status(400).json({ error: "No active users have a monthly salary set in their pay structure." }); return; }
-  const amount = Math.round(total / 4);
+  const dailyAmount = Math.round(Math.round(total / 4) / 4);
 
-  const { error } = await supabase.from("expenses").insert({
-    id, org_id: orgId, date: weekStart, category: "Salary",
-    description: `Weekly salary spread · Week ${week} · ${salaryMonthLabel(monthKey)}`,
-    amount, currency: "NGN", paid_by: req.user!.name
-  });
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  res.status(201).json({ status: "spread", id, amount, weekStart, monthKey, week });
+  // Insert only the days not already recorded — idempotent completion if a
+  // prior attempt partially failed, rather than duplicating or erroring.
+  for (let i = 0; i < 4; i++) {
+    if (existingById.has(ids[i])) continue;
+    const { error } = await supabase.from("expenses").insert({
+      id: ids[i], org_id: orgId, date: dayDates[i], category: "Salary",
+      description: `Weekly salary spread · Week ${week}, ${WEEKDAY_SPREAD_LABELS[i]} · ${salaryMonthLabel(monthKey)}`,
+      amount: dailyAmount, currency: "NGN", paid_by: req.user!.name
+    });
+    if (error) { res.status(500).json({ error: error.message }); return; }
+  }
+  res.status(201).json({ status: "spread", ids, amount: dailyAmount * 4, dailyAmount, dayDates, monthKey, week });
 });
 
 router.patch("/:id/mark-paid", async (req, res) => {
