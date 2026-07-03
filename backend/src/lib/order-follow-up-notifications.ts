@@ -2,7 +2,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { sendPushToUser } from "./push.js";
-import { sendAssignedRepFollowUpReminderSms } from "./sms.js";
+import { dueIsoMoment, sendAssignedRepFollowUpReminderSms, withinReminderWindow } from "./sms.js";
 
 type DueReminderOrder = {
   id: string;
@@ -117,23 +117,9 @@ function normalizeTimelineReminderNotes(order: DueReminderOrder): TimelineRemind
     .filter((note) => Boolean(note.followUpAt || note.followUpDate));
 }
 
-function dueIsoMoment(value: string | null | undefined, now: Date): string | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed.getTime() <= now.getTime() ? parsed.toISOString() : null;
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value) && value <= toDateKey(now.toISOString())) {
-    return `${value}T08:00:00.000Z`;
-  }
-  return null;
-}
-
-function withinReminderWindow(iso: string, now: Date, maxAgeHours = 36) {
-  const ts = new Date(iso).getTime();
-  if (Number.isNaN(ts)) return false;
-  return ts <= now.getTime() && ts >= now.getTime() - maxAgeHours * 60 * 60 * 1000;
-}
+// dueIsoMoment / withinReminderWindow now live in sms.js — shared with the SMS
+// reminder cron so both paths use the same (short) reminder window and can't
+// drift apart.
 
 async function buildRecipients(orgId: string, assignedRepId?: string | null) {
   const recipients = new Map<string, string>();

@@ -1104,7 +1104,7 @@ function toDateKey(value: string) {
   return value.slice(0, 10);
 }
 
-function dueIsoMoment(value: string | null | undefined, now: Date): string | null {
+export function dueIsoMoment(value: string | null | undefined, now: Date): string | null {
   if (!value) return null;
   const parsed = new Date(value);
   if (!Number.isNaN(parsed.getTime())) {
@@ -1116,7 +1116,14 @@ function dueIsoMoment(value: string | null | undefined, now: Date): string | nul
   return null;
 }
 
-function withinReminderWindow(iso: string, now: Date, maxAgeHours = 36) {
+// maxAgeHours is deliberately small (2h, not the cron's old 36h). The cron runs
+// every 5-15 min, so a genuinely due reminder is caught within minutes — a wide
+// window instead meant that RETROACTIVELY correcting a scheduled_at/followUpAt
+// value (e.g. fixing a bad time entered by mistake) looked like a brand-new due
+// moment and re-fired a stale reminder, even for a time that was hours/a day in
+// the past by the time the correction was made. 2h still covers a real cron
+// hiccup without resurrecting old corrections.
+export function withinReminderWindow(iso: string, now: Date, maxAgeHours = 2) {
   const ts = new Date(iso).getTime();
   if (Number.isNaN(ts)) return false;
   return ts <= now.getTime() && ts >= now.getTime() - maxAgeHours * 60 * 60 * 1000;
