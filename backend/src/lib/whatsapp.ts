@@ -4,6 +4,7 @@ import { ensureWhatsAppReady, sendConnectedWhatsApp } from "./whatsapp-runtime.j
 import { isWithinWorkingSchedule, nextWorkingScheduleAt, type WorkingSchedule } from "./business-schedule.js";
 import { generateOrderReceiptPdf } from "./order-receipt-pdf.js";
 import { createShortLink } from "./short-links.js";
+import { dueIsoMoment, withinReminderWindow } from "./sms.js";
 
 export type WhatsAppProvider = "baileys" | "cloud_api";
 export type WhatsAppTrigger =
@@ -395,23 +396,9 @@ function toDateKey(value: string) {
   return value.slice(0, 10);
 }
 
-function dueIsoMoment(value: string | null | undefined, now: Date): string | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed.getTime() <= now.getTime() ? parsed.toISOString() : null;
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value) && value <= toDateKey(now.toISOString())) {
-    return `${value}T08:00:00.000Z`;
-  }
-  return null;
-}
-
-function withinReminderWindow(iso: string, now: Date, maxAgeHours = 36) {
-  const ts = new Date(iso).getTime();
-  if (Number.isNaN(ts)) return false;
-  return ts <= now.getTime() && ts >= now.getTime() - maxAgeHours * 60 * 60 * 1000;
-}
+// dueIsoMoment / withinReminderWindow now live in sms.js — shared across the
+// in-app, SMS, and WhatsApp follow-up reminders so all three use the same
+// (short) reminder window and can't drift apart.
 
 async function loadSettings(orgId: string): Promise<WhatsAppSettings | null> {
   const { data, error } = await supabase
