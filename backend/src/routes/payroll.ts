@@ -177,12 +177,17 @@ function weekStartsForMonth(monthKey: string): string[] {
   });
 }
 
-// Split into 4 whole-naira slices that sum EXACTLY to the total (remainder
-// absorbed into week 4) so nothing is lost/gained to rounding across the month.
-function weeklySalarySlices(total: number): number[] {
-  const base = Math.round(total / 4);
-  const w4 = Math.round(total) - base * 3;
-  return [base, base, base, w4];
+// Once ANY week of a month has been spread, its amount is LOCKED for the whole
+// month — every other week (already spread or not yet) reuses that exact
+// figure instead of recomputing from the live payroll total. Otherwise hiring
+// a new staffer or changing someone's salary mid-month would silently shift
+// the weeks spread afterward away from the weeks already spread, breaking the
+// "spread evenly" guarantee. Only the FIRST week spread for a month computes
+// fresh from totalMonthlySalary(); every subsequent week just copies it.
+async function lockedWeeklySalaryAmount(orgId: string, monthKey: string): Promise<number | null> {
+  const ids = [1, 2, 3, 4].map((w) => `SAL-WEEKLY-${monthKey}-W${w}`);
+  const { data } = await supabase.from("expenses").select("amount").eq("org_id", orgId).in("id", ids).limit(1);
+  return data && data.length > 0 ? Number(data[0].amount) : null;
 }
 
 router.post("/spread-weekly-salary", async (req, res) => {
@@ -190,20 +195,26 @@ router.post("/spread-weekly-salary", async (req, res) => {
   if (![1, 2, 3, 4].includes(week)) { res.status(400).json({ error: "week must be 1, 2, 3, or 4." }); return; }
   const monthKey = salaryMonthKey(req.body?.month);
   const orgId = req.user!.orgId;
-  const total = await totalMonthlySalary(orgId);
-  if (total <= 0) { res.status(400).json({ error: "No active users have a monthly salary set in their pay structure." }); return; }
-  const amount = weeklySalarySlices(total)[week - 1];
-  const weekStart = weekStartsForMonth(monthKey)[week - 1];
   const id = `SAL-WEEKLY-${monthKey}-W${week}`;
-  const { data: existing } = await supabase.from("expenses").select("id").eq("id", id).maybeSingle();
-  if (existing) { res.json({ status: "already_spread", id, amount, weekStart, monthKey, week, total }); return; }
+  const weekStart = weekStartsForMonth(monthKey)[week - 1];
+
+  const { data: existing } = await supabase.from("expenses").select("id, amount").eq("id", id).maybeSingle();
+  if (existing) { res.json({ status: "already_spread", id, amount: Number(existing.amount), weekStart, monthKey, week }); return; }
+
+  let amount = await lockedWeeklySalaryAmount(orgId, monthKey);
+  if (amount == null) {
+    const total = await totalMonthlySalary(orgId);
+    if (total <= 0) { res.status(400).json({ error: "No active users have a monthly salary set in their pay structure." }); return; }
+    amount = Math.round(total / 4);
+  }
+
   const { error } = await supabase.from("expenses").insert({
     id, org_id: orgId, date: weekStart, category: "Salary",
     description: `Weekly salary spread · Week ${week} · ${salaryMonthLabel(monthKey)}`,
     amount, currency: "NGN", paid_by: req.user!.name
   });
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.status(201).json({ status: "spread", id, amount, weekStart, monthKey, week, total });
+  res.status(201).json({ status: "spread", id, amount, weekStart, monthKey, week });
 });
 
 router.patch("/:id/mark-paid", async (req, res) => {
