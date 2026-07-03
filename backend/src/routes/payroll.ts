@@ -177,19 +177,6 @@ function weekStartsForMonth(monthKey: string): string[] {
   });
 }
 
-// Once ANY week of a month has been spread, its amount is LOCKED for the whole
-// month — every other week (already spread or not yet) reuses that exact
-// figure instead of recomputing from the live payroll total. Otherwise hiring
-// a new staffer or changing someone's salary mid-month would silently shift
-// the weeks spread afterward away from the weeks already spread, breaking the
-// "spread evenly" guarantee. Only the FIRST week spread for a month computes
-// fresh from totalMonthlySalary(); every subsequent week just copies it.
-async function lockedWeeklySalaryAmount(orgId: string, monthKey: string): Promise<number | null> {
-  const ids = [1, 2, 3, 4].map((w) => `SAL-WEEKLY-${monthKey}-W${w}`);
-  const { data } = await supabase.from("expenses").select("amount").eq("org_id", orgId).in("id", ids).limit(1);
-  return data && data.length > 0 ? Number(data[0].amount) : null;
-}
-
 router.post("/spread-weekly-salary", async (req, res) => {
   const week = Number(req.body?.week);
   if (![1, 2, 3, 4].includes(week)) { res.status(400).json({ error: "week must be 1, 2, 3, or 4." }); return; }
@@ -201,12 +188,16 @@ router.post("/spread-weekly-salary", async (req, res) => {
   const { data: existing } = await supabase.from("expenses").select("id, amount").eq("id", id).maybeSingle();
   if (existing) { res.json({ status: "already_spread", id, amount: Number(existing.amount), weekStart, monthKey, week }); return; }
 
-  let amount = await lockedWeeklySalaryAmount(orgId, monthKey);
-  if (amount == null) {
-    const total = await totalMonthlySalary(orgId);
-    if (total <= 0) { res.status(400).json({ error: "No active users have a monthly salary set in their pay structure." }); return; }
-    amount = Math.round(total / 4);
-  }
+  // Computed fresh from the CURRENTLY active payroll every time a week is
+  // spread — not locked to whatever an earlier week in this month used. This
+  // is deliberate: hiring a new salaried staffer (or changing someone's pay)
+  // mid-month should be covered starting from the next week you spread, not
+  // wait until next month. A week that's ALREADY been spread is untouched
+  // (its expense row exists and is returned above) — only weeks not yet
+  // recorded pick up the new total.
+  const total = await totalMonthlySalary(orgId);
+  if (total <= 0) { res.status(400).json({ error: "No active users have a monthly salary set in their pay structure." }); return; }
+  const amount = Math.round(total / 4);
 
   const { error } = await supabase.from("expenses").insert({
     id, org_id: orgId, date: weekStart, category: "Salary",
