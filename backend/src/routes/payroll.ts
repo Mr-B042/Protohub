@@ -132,11 +132,15 @@ router.patch("/:id/approve", async (req, res) => {
   res.json(data);
 });
 
-// ── Salary → monthly expense ──────────────────────────────────────────────
-// Record a user's monthly salary as a Salary expense so it flows into the P&L /
-// net profit (previously salaries were never tracked as expenses). The expense id
-// is deterministic — SAL-<userId>-<YYYY-MM> — so paying the same user for the same
-// month twice is a no-op (idempotent), no schema change needed.
+// ── Salary → weekly-spread expense ────────────────────────────────────────
+// Salary is a MONTHLY cost but the business closes out profit WEEKLY (same
+// cadence ad spend is entered at) — a single end-of-month lump meant salary
+// never showed up in a given week's break-even/net-profit view except the one
+// week it happened to land in. Instead, the company's total monthly salary
+// (sum of every active user's fixed_salary) is split into 4 equal weekly
+// slices, each recorded as its own Salary expense dated the first day (Sunday)
+// of that week — so it counts toward weekly fixed costs exactly like Ad Spend
+// already does, every week, not just the pay week.
 const salaryMonthKey = (input?: unknown): string => {
   if (typeof input === "string" && /^\d{4}-\d{2}$/.test(input)) return input;
   return new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 7); // Lagos (UTC+1) month
@@ -144,67 +148,62 @@ const salaryMonthKey = (input?: unknown): string => {
 const salaryMonthLabel = (monthKey: string): string =>
   new Date(`${monthKey}-01T12:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
-async function recordSalaryExpense(
-  orgId: string, paidByName: string,
-  user: { id: string; name: string }, fixedSalary: number, monthKey: string
-): Promise<{ status: "paid" | "already_paid"; id: string; amount: number }> {
-  const id = `SAL-${user.id}-${monthKey}`;
-  const { data: existing } = await supabase.from("expenses").select("id").eq("id", id).maybeSingle();
-  if (existing) return { status: "already_paid", id, amount: fixedSalary };
-  // Date the expense on the LAST DAY of the month it's for — so back-paying (e.g.
-  // June salary recorded in July) lands in June's P&L, not the month you clicked.
-  const [y, m] = monthKey.split("-").map(Number);
-  const expenseDate = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-  const { error } = await supabase.from("expenses").insert({
-    id, org_id: orgId, date: expenseDate, category: "Salary",
-    description: `Monthly salary · ${user.name} · ${salaryMonthLabel(monthKey)}`,
-    amount: fixedSalary, currency: "NGN", paid_by: paidByName
-  });
-  if (error) throw new Error(error.message);
-  return { status: "paid", id, amount: fixedSalary };
-}
-
 const salariedFixed = (structure: { type?: string | null; fixed_salary?: number | null } | null | undefined): number =>
   structure && structure.type !== "Per Delivered Order" ? Number(structure.fixed_salary ?? 0) : 0;
 
-router.post("/pay-salary", async (req, res) => {
-  const userId = typeof req.body?.userId === "string" ? req.body.userId : "";
-  const monthKey = salaryMonthKey(req.body?.month);
-  if (!userId) { res.status(400).json({ error: "userId is required." }); return; }
-  const orgId = req.user!.orgId;
-  const [{ data: user }, { data: structure }] = await Promise.all([
-    supabase.from("users").select("id, name, active").eq("org_id", orgId).eq("id", userId).maybeSingle(),
-    supabase.from("pay_structures").select("type, fixed_salary").eq("org_id", orgId).eq("user_id", userId).maybeSingle()
-  ]);
-  if (!user) { res.status(404).json({ error: "User not found." }); return; }
-  if (!user.active) { res.status(400).json({ error: "User is not active." }); return; }
-  const fixedSalary = salariedFixed(structure);
-  if (fixedSalary <= 0) { res.status(400).json({ error: "This user has no monthly salary set in their pay structure." }); return; }
-  try {
-    const result = await recordSalaryExpense(orgId, req.user!.name, { id: user.id, name: user.name }, fixedSalary, monthKey);
-    res.status(result.status === "paid" ? 201 : 200).json({ ...result, monthKey, userId });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
-});
-
-router.post("/pay-all-salaries", async (req, res) => {
-  const monthKey = salaryMonthKey(req.body?.month);
-  const orgId = req.user!.orgId;
+async function totalMonthlySalary(orgId: string): Promise<number> {
   const [{ data: users }, { data: structures }] = await Promise.all([
-    supabase.from("users").select("id, name").eq("org_id", orgId).eq("active", true),
+    supabase.from("users").select("id").eq("org_id", orgId).eq("active", true),
     supabase.from("pay_structures").select("user_id, type, fixed_salary").eq("org_id", orgId)
   ]);
-  const structByUser = new Map((structures ?? []).map((s: any) => [s.user_id, s]));
-  let paid = 0, skipped = 0, totalAmount = 0;
-  const errors: string[] = [];
-  for (const u of (users ?? []) as { id: string; name: string }[]) {
-    const fixedSalary = salariedFixed(structByUser.get(u.id));
-    if (fixedSalary <= 0) continue;
-    try {
-      const result = await recordSalaryExpense(orgId, req.user!.name, u, fixedSalary, monthKey);
-      if (result.status === "paid") { paid++; totalAmount += fixedSalary; } else skipped++;
-    } catch (e: any) { errors.push(`${u.name}: ${e.message}`); }
-  }
-  res.json({ paid, skipped, totalAmount, monthKey, errors });
+  const activeIds = new Set((users ?? []).map((u: any) => u.id as string));
+  return (structures ?? [])
+    .filter((s: any) => activeIds.has(s.user_id))
+    .reduce((sum: number, s: any) => sum + salariedFixed(s), 0);
+}
+
+// 4 consecutive Sunday-anchored weeks covering "the month" — week 1 starts on
+// the Sunday on/before the 1st, so dating an expense there lands inside the
+// same Sun–Sat week bucket the rest of Finance/break-even already use.
+function weekStartsForMonth(monthKey: string): string[] {
+  const [y, m] = monthKey.split("-").map(Number);
+  const firstOfMonth = new Date(Date.UTC(y, (m || 1) - 1, 1, 12));
+  const week1Start = new Date(firstOfMonth);
+  week1Start.setUTCDate(week1Start.getUTCDate() - firstOfMonth.getUTCDay());
+  return [0, 1, 2, 3].map((i) => {
+    const d = new Date(week1Start);
+    d.setUTCDate(d.getUTCDate() + i * 7);
+    return d.toISOString().slice(0, 10);
+  });
+}
+
+// Split into 4 whole-naira slices that sum EXACTLY to the total (remainder
+// absorbed into week 4) so nothing is lost/gained to rounding across the month.
+function weeklySalarySlices(total: number): number[] {
+  const base = Math.round(total / 4);
+  const w4 = Math.round(total) - base * 3;
+  return [base, base, base, w4];
+}
+
+router.post("/spread-weekly-salary", async (req, res) => {
+  const week = Number(req.body?.week);
+  if (![1, 2, 3, 4].includes(week)) { res.status(400).json({ error: "week must be 1, 2, 3, or 4." }); return; }
+  const monthKey = salaryMonthKey(req.body?.month);
+  const orgId = req.user!.orgId;
+  const total = await totalMonthlySalary(orgId);
+  if (total <= 0) { res.status(400).json({ error: "No active users have a monthly salary set in their pay structure." }); return; }
+  const amount = weeklySalarySlices(total)[week - 1];
+  const weekStart = weekStartsForMonth(monthKey)[week - 1];
+  const id = `SAL-WEEKLY-${monthKey}-W${week}`;
+  const { data: existing } = await supabase.from("expenses").select("id").eq("id", id).maybeSingle();
+  if (existing) { res.json({ status: "already_spread", id, amount, weekStart, monthKey, week, total }); return; }
+  const { error } = await supabase.from("expenses").insert({
+    id, org_id: orgId, date: weekStart, category: "Salary",
+    description: `Weekly salary spread · Week ${week} · ${salaryMonthLabel(monthKey)}`,
+    amount, currency: "NGN", paid_by: req.user!.name
+  });
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.status(201).json({ status: "spread", id, amount, weekStart, monthKey, week, total });
 });
 
 router.patch("/:id/mark-paid", async (req, res) => {
