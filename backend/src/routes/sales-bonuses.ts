@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import {
+  SALES_BONUS_LAUNCH_WEEK_START,
   currentSalesBonusWeekStart,
   getSalesBonusProgress,
   listSalesBonusPrograms,
@@ -55,6 +56,10 @@ const RepParamsSchema = z.object({
 const ownerAdminOnly = requireRole("Owner", "Admin");
 const coachViewer = requireRole("Owner", "Admin", "Manager", "Sales Rep");
 const allRepViewer = requireRole("Owner", "Admin", "Manager");
+const clampSalesRepWeekStart = (role: string, weekStart: string) =>
+  role === "Sales Rep" && weekStart < SALES_BONUS_LAUNCH_WEEK_START
+    ? SALES_BONUS_LAUNCH_WEEK_START
+    : weekStart;
 
 const normalizeProgramInsert = (orgId: string, userId: string, body: z.infer<typeof ProgramBodySchema>) => ({
   org_id: orgId,
@@ -338,7 +343,7 @@ router.get("/progress", coachViewer, async (req, res) => {
     return;
   }
   try {
-    const weekStart = parsed.data.weekStart ?? currentSalesBonusWeekStart();
+    const weekStart = clampSalesRepWeekStart(req.user!.role, parsed.data.weekStart ?? currentSalesBonusWeekStart());
     const repId = req.user!.role === "Sales Rep"
       ? (req.user!.effectiveUserId ?? req.user!.id)
       : undefined;

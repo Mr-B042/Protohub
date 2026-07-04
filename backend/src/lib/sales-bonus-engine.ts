@@ -159,6 +159,7 @@ export type SalesBonusPayrollRow = {
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 86_400_000;
 const TERMINAL_LOST_STATUSES = new Set(["Cancelled", "Failed", "Rejected"]);
+export const SALES_BONUS_LAUNCH_WEEK_START = "2026-07-05";
 
 export const addDaysToDateKey = (dateKey: string, days: number) => {
   const date = new Date(`${dateKey}T00:00:00Z`);
@@ -188,7 +189,10 @@ export const sundayWeekStartForDateKey = (dateKey: string) => {
   return date.toISOString().slice(0, 10);
 };
 
-export const currentSalesBonusWeekStart = () => sundayWeekStartForDateKey(lagosDateKey());
+export const currentSalesBonusWeekStart = () => {
+  const current = sundayWeekStartForDateKey(lagosDateKey());
+  return current && current < SALES_BONUS_LAUNCH_WEEK_START ? SALES_BONUS_LAUNCH_WEEK_START : current;
+};
 
 const toNumber = (value: unknown, fallback = 0) => {
   const parsed = Number(value ?? fallback);
@@ -326,6 +330,7 @@ const appliesToRep = (program: SalesBonusProgram, repId: string) => {
 };
 
 const programCoversWeek = (program: SalesBonusProgram, weekStart: string) => {
+  if (weekStart < SALES_BONUS_LAUNCH_WEEK_START) return false;
   const start = program.starts_on ?? "";
   const end = program.ends_on ?? "";
   if (start && weekStart < start) return false;
@@ -491,10 +496,12 @@ export const computeSalesBonusForRep = (input: {
     });
   }
 
-  const manualAdjustments = deliveredOrders.reduce((sum, order) => {
-    const manual = toNumber(order.manual_bonus_override, 0);
-    return order.bonus_manually_adjusted && Number.isFinite(manual) ? sum + Math.round(manual) : sum;
-  }, 0);
+  const manualAdjustments = input.weekStart < SALES_BONUS_LAUNCH_WEEK_START
+    ? 0
+    : deliveredOrders.reduce((sum, order) => {
+      const manual = toNumber(order.manual_bonus_override, 0);
+      return order.bonus_manually_adjusted && Number.isFinite(manual) ? sum + Math.round(manual) : sum;
+    }, 0);
 
   const earnedFromRules = rules.reduce((sum, rule) => sum + rule.earnedAmount, 0);
   const potentialFromRules = rules.reduce((sum, rule) => sum + rule.potentialAmount, 0);
@@ -680,7 +687,7 @@ export const salesBonusWeekStartsForPeriod = (periodStartDate: string, periodEnd
   const starts: string[] = [];
   let cursor = sundayWeekStartForDateKey(periodStartDate);
   while (cursor && cursor < periodEndDate) {
-    starts.push(cursor);
+    if (cursor >= SALES_BONUS_LAUNCH_WEEK_START) starts.push(cursor);
     cursor = addDaysToDateKey(cursor, 7);
   }
   return Array.from(new Set(starts));

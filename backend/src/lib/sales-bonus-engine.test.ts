@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  SALES_BONUS_LAUNCH_WEEK_START,
   computeSalesBonusForRep,
+  salesBonusWeekStartsForPeriod,
   type SalesBonusOrder,
   type SalesBonusProgram,
   type SalesBonusRep,
@@ -20,7 +22,7 @@ const activeProgram: SalesBonusProgram = {
   org_id: "org-1",
   name: "Weekly Sales Rep Bonus",
   status: "active",
-  starts_on: "2026-06-28",
+  starts_on: SALES_BONUS_LAUNCH_WEEK_START,
   applies_to_user_ids: []
 };
 
@@ -38,7 +40,7 @@ const order = (id: string, patch: Partial<SalesBonusOrder> = {}): SalesBonusOrde
 
 const run = (rules: SalesBonusRule[], orders: SalesBonusOrder[]) => computeSalesBonusForRep({
   rep,
-  weekStart: "2026-06-28",
+  weekStart: SALES_BONUS_LAUNCH_WEEK_START,
   programs: [activeProgram],
   rules,
   orders
@@ -247,4 +249,43 @@ test("paused and deleted rules do not count for future weeks", () => {
   assert.equal(result.earnedSoFar, 0);
   assert.equal(result.rules.length, 1);
   assert.equal(result.rules[0]?.active, false);
+});
+
+test("new bonus engine does not pay before launch week", () => {
+  const rule: SalesBonusRule = {
+    id: "pre-launch-delivery",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "Delivery-rate pay boost",
+    type: "delivery_rate_per_delivered",
+    status: "active",
+    config: { minOrders: 1, targetRatePercent: 70, fallbackPerDelivered: 200, qualifiedPerDelivered: 400 },
+    display_order: 1
+  };
+  const preLaunch = computeSalesBonusForRep({
+    rep,
+    weekStart: "2026-06-28",
+    programs: [activeProgram],
+    rules: [rule],
+    orders: [order("pre-launch", { manual_bonus_override: 500, bonus_manually_adjusted: true })]
+  });
+  const launch = computeSalesBonusForRep({
+    rep,
+    weekStart: SALES_BONUS_LAUNCH_WEEK_START,
+    programs: [activeProgram],
+    rules: [rule],
+    orders: [order("launch")]
+  });
+
+  assert.equal(preLaunch.earnedSoFar, 0);
+  assert.equal(preLaunch.manualAdjustments, 0);
+  assert.equal(preLaunch.rules[0]?.active, false);
+  assert.equal(launch.earnedSoFar, 400);
+});
+
+test("payroll week collection starts at sales bonus launch week", () => {
+  assert.deepEqual(
+    salesBonusWeekStartsForPeriod("2026-06-01", "2026-07-20"),
+    ["2026-07-05", "2026-07-12", "2026-07-19"]
+  );
 });
