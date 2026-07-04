@@ -56,6 +56,7 @@ export const navItems = [
   { label: "Notifications", icon: Bell },
   { label: "Call Rep Console", icon: Phone },
   { label: "Sales Rep Workspace", icon: Headphones },
+  { label: "Bonuses", icon: HandCoins },
   { label: "Settings", icon: Settings }
 ];
 
