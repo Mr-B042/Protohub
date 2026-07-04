@@ -694,6 +694,24 @@ export const bonusCoachApi = {
   rep: (repId: string, weekStart: string) => get<any>(`/api/bonus-coach/rep/${repId}?${new URLSearchParams({ weekStart }).toString()}`)
 };
 
+export const salesBonusesApi = {
+  programs: (params?: { includeDeleted?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (params?.includeDeleted) qs.set("includeDeleted", "1");
+    const suffix = qs.toString();
+    return get<any[]>(`/api/sales-bonuses/programs${suffix ? `?${suffix}` : ""}`);
+  },
+  createProgram: (body: unknown) => post<any>("/api/sales-bonuses/programs", body),
+  updateProgram: (id: string, body: unknown) => patch<any>(`/api/sales-bonuses/programs/${id}`, body),
+  duplicateProgram: (id: string) => post<any>(`/api/sales-bonuses/programs/${id}/duplicate`, {}),
+  deleteProgram: (id: string) => del<void>(`/api/sales-bonuses/programs/${id}`),
+  createRule: (programId: string, body: unknown) => post<any>(`/api/sales-bonuses/programs/${programId}/rules`, body),
+  updateRule: (id: string, body: unknown) => patch<any>(`/api/sales-bonuses/rules/${id}`, body),
+  deleteRule: (id: string) => del<void>(`/api/sales-bonuses/rules/${id}`),
+  progress: (weekStart: string) => get<any>(`/api/sales-bonuses/progress?${new URLSearchParams({ weekStart }).toString()}`),
+  progressForRep: (repId: string, weekStart: string) => get<any>(`/api/sales-bonuses/progress/${repId}?${new URLSearchParams({ weekStart }).toString()}`)
+};
+
 // ── Customers ─────────────────────────────────────────────
 export const customersApi = {
   list: () => get<any[]>("/api/customers"),

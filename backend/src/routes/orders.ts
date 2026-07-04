@@ -2074,6 +2074,9 @@ const POST_TERMINAL_FIELDS = new Set([
   "manual_bonus_components", "manualBonusComponents",
   "manual_bonus_reason", "manualBonusReason",
   "bonus_manually_adjusted", "bonusManuallyAdjusted",
+  "full_upfront_paid", "fullUpfrontPaid",
+  "full_upfront_paid_at", "fullUpfrontPaidAt",
+  "full_upfront_marked_by", "fullUpfrontMarkedBy",
   "call_outcome", "callOutcome",
   "delivered_date", "deliveredDate",
   "notes",
@@ -2347,6 +2350,9 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep"), asyn
     manual_bonus_reason:       ["manual_bonus_reason", "manualBonusReason"],
     bonus_manually_adjusted:   ["bonus_manually_adjusted", "bonusManuallyAdjusted"],
     bonus_paid:                ["bonus_paid", "bonusPaid"],
+    full_upfront_paid:         ["full_upfront_paid", "fullUpfrontPaid"],
+    full_upfront_paid_at:      ["full_upfront_paid_at", "fullUpfrontPaidAt"],
+    full_upfront_marked_by:    ["full_upfront_marked_by", "fullUpfrontMarkedBy"],
     timeline_notes:            ["timeline_notes", "timelineNotes"],
     cross_sell_lines:          ["cross_sell_lines", "crossSellLines"],
     free_gift_lines:           ["free_gift_lines", "freeGiftLines"],
@@ -2357,6 +2363,22 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep"), asyn
   for (const [dbKey, inputKeys] of Object.entries(allowed)) {
     for (const inKey of inputKeys) {
       if (req.body[inKey] !== undefined) { updates[dbKey] = req.body[inKey]; break; }
+    }
+  }
+  const touchesFullUpfront = hasOwn(updates, "full_upfront_paid")
+    || hasOwn(updates, "full_upfront_paid_at")
+    || hasOwn(updates, "full_upfront_marked_by");
+  if (touchesFullUpfront) {
+    if (req.user!.role !== "Owner" && req.user!.role !== "Admin") {
+      res.status(403).json({ error: "Only an Owner or Admin can mark full upfront payment for commission." });
+      return;
+    }
+    const nextPaid = updates.full_upfront_paid === true;
+    if (hasOwn(updates, "full_upfront_paid")) {
+      updates.full_upfront_paid_at = nextPaid
+        ? (typeof updates.full_upfront_paid_at === "string" && updates.full_upfront_paid_at ? updates.full_upfront_paid_at : new Date().toISOString())
+        : null;
+      updates.full_upfront_marked_by = nextPaid ? req.user!.id : null;
     }
   }
   // Settled-remittance correction lock. Editing a 'Paid' remittance's money-affecting

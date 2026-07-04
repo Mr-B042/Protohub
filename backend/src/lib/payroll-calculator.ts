@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { calculateSalesBonusPayroll } from "./sales-bonus-engine.js";
 
 type BonusRule = { quantity: number; amount: number };
 type UpgradeBonusRule = { fromQty: number; toQty: number; amount: number };
@@ -72,6 +73,7 @@ export type PayrollEntry = {
   fixedSalary: number;
   commission: number;
   autoBonus: number;
+  bonusBreakdown?: unknown;
   deductions: number;
   total: number;
 };
@@ -279,7 +281,6 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
   const [
     usersResult,
     structuresResult,
-    productsResult,
     orgResult,
     deliveredOrdersResult,
     deliveredFallbackOrdersResult,
@@ -288,7 +289,6 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
   ] = await Promise.all([
     supabase.from("users").select("id, name, role").eq("org_id", orgId).eq("active", true),
     supabase.from("pay_structures").select("*").eq("org_id", orgId),
-    supabase.from("products").select("id, bonus_config").eq("org_id", orgId),
     supabase.from("organizations").select("top_performer_bonus_enabled, top_performer_bonus_amount").eq("id", orgId).maybeSingle(),
     supabase
       .from("orders")
@@ -315,7 +315,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     supabase.from("rep_penalties").select("rep_id, amount, period, created_at").eq("org_id", orgId)
   ]);
 
-  const settled = [usersResult, structuresResult, productsResult, orgResult, deliveredOrdersResult, deliveredFallbackOrdersResult, pendingOrdersResult, penaltiesResult];
+  const settled = [usersResult, structuresResult, orgResult, deliveredOrdersResult, deliveredFallbackOrdersResult, pendingOrdersResult, penaltiesResult];
   const firstError = settled.find((result) => result.error);
   if (firstError?.error) {
     throw new Error(firstError.error.message);
@@ -323,7 +323,6 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
 
   const users = (usersResult.data ?? []) as PayrollUser[];
   const structures = (structuresResult.data ?? []) as PayStructure[];
-  const products = (productsResult.data ?? []) as ProductRecord[];
   const org = orgResult.data as { top_performer_bonus_enabled?: boolean | null; top_performer_bonus_amount?: number | null } | null;
   const selectedPeriodKey = bounds.periodStartDate.slice(0, 7);
   const penalties = ((penaltiesResult.data ?? []) as PayrollPenalty[]).filter((penalty) => {
@@ -338,86 +337,15 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     deliveredOrders.set(order.id, order);
   }
   const payrollMonthDelivered = Array.from(deliveredOrders.values());
-  const pendingOrders = (pendingOrdersResult.data ?? []) as PayrollOrder[];
+  void pendingOrdersResult;
 
-  const productMap = buildProductBonusConfigMap(products);
-
-  const repWeeklyStats = new Map<string, Map<string, { delivered: number; total: number; revenue: number }>>();
-  const upsertWeekStat = (repId: string, weekKey: string, patch: Partial<{ delivered: number; total: number; revenue: number }>) => {
-    const rep = repWeeklyStats.get(repId) ?? new Map<string, { delivered: number; total: number; revenue: number }>();
-    const current = rep.get(weekKey) ?? { delivered: 0, total: 0, revenue: 0 };
-    current.delivered += patch.delivered ?? 0;
-    current.total += patch.total ?? 0;
-    current.revenue += patch.revenue ?? 0;
-    rep.set(weekKey, current);
-    repWeeklyStats.set(repId, rep);
-  };
-
-  for (const order of payrollMonthDelivered) {
-    const repId = order.assigned_rep_id;
-    const weekKey = weekKeyForDateKey(orderDeliveredKey(order) || orderCreatedKey(order));
-    if (!repId || !weekKey) continue;
-    upsertWeekStat(repId, weekKey, {
-      delivered: 1,
-      total: 1,
-      revenue: Number(order.amount ?? 0)
-    });
-  }
-
-  for (const order of pendingOrders) {
-    const repId = order.assigned_rep_id;
-    const weekKey = weekKeyForDateKey(orderCreatedKey(order));
-    if (!repId || !weekKey) continue;
-    upsertWeekStat(repId, weekKey, { total: 1 });
-  }
-
-  const computeRepAutoBonus = (repId: string) => {
-    const orders = payrollMonthDelivered.filter((order) => order.assigned_rep_id === repId);
-    if (orders.length === 0) {
-      return 0;
-    }
-
-    let perOrder = 0;
-    for (const order of orders) {
-      const weekKey = weekKeyForDateKey(orderDeliveredKey(order) || orderCreatedKey(order));
-      const stats = repWeeklyStats.get(repId)?.get(weekKey);
-      const rate = stats && stats.total > 0 ? (stats.delivered / stats.total) * 100 : 100;
-      const aov = stats && stats.delivered > 0 ? stats.revenue / stats.delivered : 0;
-      const count = stats?.total ?? orders.length;
-      perOrder += computeOrderBonus(order, productMap, rate, aov, count);
-    }
-
-    let weeklyTiers = 0;
-    const weeks = repWeeklyStats.get(repId);
-    if (weeks) {
-      const repProducts = new Set(orders.map((order) => order.product_id).filter((value): value is string => !!value));
-      weeks.forEach((weekStats) => {
-        if (weekStats.total === 0) return;
-        const rate = (weekStats.delivered / weekStats.total) * 100;
-        const aov = weekStats.delivered > 0 ? weekStats.revenue / weekStats.delivered : 0;
-        repProducts.forEach((productId) => {
-          const cfg = productMap.get(productId) ?? defaultBonusConfig();
-          if (weekStats.total >= cfg.deliveryRateMinOrders && rate >= cfg.poorDeliveryRatePercent) {
-            const deliveryRateTier = cfg.deliveryRateBonuses
-              .filter((rule) => rate >= rule.ratePercent)
-              .sort((a, b) => b.ratePercent - a.ratePercent)[0];
-            if (deliveryRateTier) weeklyTiers += Number(deliveryRateTier.amount ?? 0);
-          }
-          if (rate >= cfg.aovRequiresMinDeliveryRate) {
-            const aovTier = cfg.aovBonuses
-              .filter((rule) => aov >= rule.threshold)
-              .sort((a, b) => b.threshold - a.threshold)[0];
-            if (aovTier) weeklyTiers += Number(aovTier.amount ?? 0);
-          }
-        });
-      });
-    }
-
-    return perOrder + weeklyTiers;
-  };
+  const salesBonusByRep = await calculateSalesBonusPayroll(orgId, {
+    periodStartDate: bounds.periodStartDate,
+    periodEndDate: bounds.periodEndDate
+  });
 
   const rows: PayrollEntry[] = users
-    .map((user) => {
+    .map((user): PayrollEntry | null => {
       const structure = structures.find((entry) => entry.user_id === user.id);
       if (!structure) return null;
 
@@ -432,7 +360,8 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
           .filter((tier) => delivered >= Number(tier.threshold ?? 0))
           .sort((a, b) => Number(b.threshold ?? 0) - Number(a.threshold ?? 0))[0]?.amount ?? 0)
         : 0;
-      const autoBonus = (user.role === "Sales Rep" ? computeRepAutoBonus(user.id) : 0) + Number(tierBonus ?? 0);
+      const bonusSnapshot = user.role === "Sales Rep" ? salesBonusByRep.get(user.id) : undefined;
+      const autoBonus = Number(bonusSnapshot?.autoBonus ?? 0) + Number(tierBonus ?? 0);
       const deductions = penalties
         .filter((penalty) => penalty.rep_id === user.id)
         .reduce((sum, penalty) => sum + Number(penalty.amount ?? 0), 0);
@@ -444,6 +373,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
         fixedSalary,
         commission,
         autoBonus,
+        bonusBreakdown: bonusSnapshot?.bonusBreakdown as unknown,
         deductions,
         total
       };

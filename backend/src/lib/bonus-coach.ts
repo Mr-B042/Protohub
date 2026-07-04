@@ -7,6 +7,7 @@ import {
   type ProductBonusConfig,
   type ProductRecord
 } from "./payroll-calculator.js";
+import { getSalesBonusProgress } from "./sales-bonus-engine.js";
 import { supabase } from "./supabase.js";
 
 type BonusCoachOrder = PayrollOrder & {
@@ -510,6 +511,83 @@ export const getRepBonusCoach = async (
   repId: string,
   weekStart: string
 ): Promise<RepBonusCoachResponse> => {
+  const engineProgress = await getSalesBonusProgress(orgId, weekStart, { repId });
+  const repProgress = engineProgress.reps[0];
+  if (repProgress) {
+    const nextRule = repProgress.rules
+      .filter((rule) => rule.active && !rule.completed && rule.remainingPotential > 0)
+      .sort((a, b) => b.remainingPotential - a.remainingPotential)[0];
+    const deliveryRule = repProgress.rules.find((rule) => rule.type === "delivery_rate_per_delivered");
+    const motivators: RepBonusMotivator[] = [];
+    if (nextRule) {
+      motivators.push({
+        type: nextRule.type === "upgrade_count"
+          ? "upsell_opportunity"
+          : nextRule.type === "cross_sell_count"
+            ? "cross_sell_opportunity"
+            : nextRule.type === "delivery_rate_per_delivered"
+              ? "delivery_rate_unlock"
+              : "next_delivered_unlock",
+        title: `${nextRule.name}: ${nextRule.helper}`,
+        subtitle: `${formatAmount(nextRule.remainingPotential)} still up for grabs this week.`,
+        amount: nextRule.remainingPotential,
+        targetRate: nextRule.type === "delivery_rate_per_delivered" ? nextRule.progressTarget : undefined,
+        priority: 100
+      });
+    }
+    if (deliveryRule && !deliveryRule.completed) {
+      motivators.push({
+        type: "bonus_at_risk",
+        title: `Delivery rate is ${repProgress.deliveryRate}% this week`,
+        subtitle: deliveryRule.helper,
+        targetRate: deliveryRule.progressTarget,
+        priority: 90
+      });
+    }
+    if (repProgress.pendingPotential > 0) {
+      motivators.push({
+        type: "next_delivered_unlock",
+        title: `${formatAmount(repProgress.pendingPotential)} more can still be earned`,
+        subtitle: "Use the Bonuses tab to see exactly which rule needs action.",
+        amount: repProgress.pendingPotential,
+        priority: 80
+      });
+    }
+
+    return {
+      snapshot: {
+        weekStart: repProgress.weekStart,
+        weekEnd: repProgress.weekEnd,
+        deliveredCount: repProgress.deliveredCount,
+        deliveredRevenue: repProgress.deliveredRevenue,
+        deliveryRate: repProgress.deliveryRate,
+        currentBonusEarned: repProgress.earnedSoFar,
+        projectedBonusOpenPipeline: repProgress.totalAvailable,
+        nextTierTarget: nextRule?.progressTarget ?? null,
+        ordersNeededForNextTier: nextRule && nextRule.progressTarget > nextRule.progressCurrent
+          ? Math.ceil(nextRule.progressTarget - nextRule.progressCurrent)
+          : null,
+        nextDeliveryRateTarget: deliveryRule?.completed ? null : deliveryRule?.progressTarget ?? null,
+        deliveriesNeededForRateTarget: null,
+        topPerformerGap: null,
+        topPerformerRank: null
+      },
+      motivators: motivators.sort((a, b) => b.priority - a.priority).slice(0, 3),
+      orderOpportunities: repProgress.opportunities.map((opportunity) => ({
+        orderId: opportunity.orderId,
+        customerName: opportunity.customerName,
+        packageName: opportunity.packageName,
+        amount: opportunity.amount,
+        type: opportunity.type === "upgrade"
+          ? "upsell_opportunity"
+          : opportunity.type === "cross_sell"
+            ? "cross_sell_opportunity"
+            : "bonus_opportunity",
+        subtitle: opportunity.reason
+      }))
+    };
+  }
+
   const context = await buildRepBonusSnapshot(orgId, repId, weekStart);
   const rate = context.repStats.total > 0 ? (context.repStats.delivered / context.repStats.total) * 100 : 0;
   const aov = context.repStats.delivered > 0 ? context.repStats.revenue / context.repStats.delivered : 0;
