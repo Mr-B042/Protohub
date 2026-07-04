@@ -62,6 +62,7 @@ export type SalesBonusOrder = {
   package_id?: string | null;
   package_name?: string | null;
   source?: string | null;
+  embed_label?: string | null;
   upsell_from_qty?: number | null;
   upsell_to_qty?: number | null;
   manual_bonus_override?: number | null;
@@ -91,6 +92,7 @@ export type SalesBonusRuleProgress = {
   progressPercent: number;
   completed: boolean;
   helper: string;
+  scopeLabel: string;
   qualifiedOrderIds: string[];
   config: Record<string, unknown>;
 };
@@ -99,6 +101,8 @@ export type SalesBonusOrderOpportunity = {
   orderId: string;
   customerName?: string;
   packageName?: string;
+  productName?: string;
+  scopeLabel?: string;
   amount: number;
   reason: string;
   type: "upgrade" | "cross_sell" | "delivery_rate" | "upfront";
@@ -200,6 +204,98 @@ const asConfig = (rule: SalesBonusRule) =>
     : {};
 
 const arrayValue = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
+const stringArrayValue = (value: unknown): string[] =>
+  Array.isArray(value) ? value.map((item) => String(item ?? "").trim()).filter(Boolean) : [];
+
+const cleanText = (value: unknown) => String(value ?? "").trim();
+const normalizeText = (value: unknown) => cleanText(value).toLowerCase();
+
+const configStringValues = (config: Record<string, unknown>, keys: string[]) => {
+  const values: string[] = [];
+  for (const key of keys) {
+    const value = config[key];
+    if (Array.isArray(value)) values.push(...stringArrayValue(value));
+    else {
+      const text = cleanText(value);
+      if (text) values.push(text);
+    }
+  }
+  return Array.from(new Set(values));
+};
+
+const textMatchesAny = (value: unknown, allowed: string[]) => {
+  if (allowed.length === 0) return true;
+  const normalizedValue = normalizeText(value);
+  if (!normalizedValue) return false;
+  return allowed.some((candidate) => {
+    const normalizedCandidate = normalizeText(candidate);
+    return normalizedCandidate
+      && (
+        normalizedValue === normalizedCandidate
+        || normalizedValue.includes(normalizedCandidate)
+        || normalizedCandidate.includes(normalizedValue)
+      );
+  });
+};
+
+const scopedDimensionMatches = (
+  idValue: unknown,
+  nameValue: unknown,
+  ids: string[],
+  names: string[]
+) => {
+  if (ids.length === 0 && names.length === 0) return true;
+  const idMatch = ids.length > 0 && textMatchesAny(idValue, ids);
+  const nameMatch = names.length > 0 && textMatchesAny(nameValue, names);
+  return idMatch || nameMatch;
+};
+
+const ruleScope = (config: Record<string, unknown>) => ({
+  productIds: configStringValues(config, ["scopeProductId", "scopeProductIds", "productId", "productIds"]),
+  packageIds: configStringValues(config, ["scopePackageId", "scopePackageIds", "packageId", "packageIds"]),
+  productNames: configStringValues(config, ["scopeProductName", "scopeProductNames", "productName", "productNames"]),
+  packageNames: configStringValues(config, ["scopePackageName", "scopePackageNames", "packageName", "packageNames"]),
+  embedLabels: configStringValues(config, ["scopeEmbedLabel", "scopeEmbedLabels", "embedLabel", "embedLabels"])
+});
+
+const ruleScopeLabel = (config: Record<string, unknown>) => {
+  const scope = ruleScope(config);
+  const product = cleanText(config.scopeProductName)
+    || cleanText(config.productName)
+    || (scope.productIds.length === 1 ? `Product ${scope.productIds[0]}` : "");
+  const pkg = cleanText(config.scopePackageName)
+    || cleanText(config.packageName)
+    || (scope.packageIds.length === 1 ? `Package ${scope.packageIds[0]}` : "");
+  const embed = scope.embedLabels.length === 1 ? scope.embedLabels[0] : "";
+  if (!product && !pkg && !embed) return "All products / generated links";
+  return [
+    product ? `Product: ${product}` : "",
+    pkg ? `Package: ${pkg}` : "",
+    embed ? `Embed: ${embed}` : ""
+  ].filter(Boolean).join(" · ");
+};
+
+const orderMatchesRuleScope = (order: SalesBonusOrder, config: Record<string, unknown>) => {
+  const scope = ruleScope(config);
+  return scopedDimensionMatches(order.product_id, order.product_name, scope.productIds, scope.productNames)
+    && scopedDimensionMatches(order.package_id, order.package_name, scope.packageIds, scope.packageNames)
+    && textMatchesAny(order.embed_label, scope.embedLabels);
+};
+
+const crossSellLineMatchesRuleScope = (line: unknown, config: Record<string, unknown>) => {
+  if (!line || typeof line !== "object") return false;
+  const record = line as Record<string, unknown>;
+  const scope = ruleScope(config);
+  const hasProductScope = scope.productIds.length > 0 || scope.productNames.length > 0;
+  const hasPackageScope = scope.packageIds.length > 0 || scope.packageNames.length > 0;
+  if (!hasProductScope && !hasPackageScope) return true;
+  const productId = record.productId ?? record.product_id ?? record.companionProductId ?? record.companion_product_id;
+  const packageId = record.packageId ?? record.package_id ?? record.companionPackageId ?? record.companion_package_id;
+  const productName = record.productName ?? record.product_name ?? record.name ?? record.label;
+  const packageName = record.packageName ?? record.package_name ?? record.packageLabel ?? record.package_label;
+  return scopedDimensionMatches(productId, productName, scope.productIds, scope.productNames)
+    && scopedDimensionMatches(packageId, packageName, scope.packageIds, scope.packageNames);
+};
 
 const selectionSource = (line: unknown) => {
   if (!line || typeof line !== "object") return "";
@@ -294,6 +390,12 @@ export const computeSalesBonusForRep = (input: {
     let progressTarget = 1;
     let completed = false;
     let helper = "";
+    const scopeLabel = ruleScopeLabel(cfg);
+    const scopedRepOrders = repOrders.filter((order) => orderMatchesRuleScope(order, cfg));
+    const scopedDeliveredOrders = scopedRepOrders.filter(isDelivered);
+    const scopedAssignedCount = scopedRepOrders.length;
+    const scopedDeliveredCount = scopedDeliveredOrders.length;
+    const scopedDeliveryRate = scopedAssignedCount > 0 ? Math.round((scopedDeliveredCount / scopedAssignedCount) * 100) : 0;
     let qualifiedOrderIds: string[] = [];
 
     if (rule.type === "upgrade_count") {
@@ -301,7 +403,7 @@ export const computeSalesBonusForRep = (input: {
       const toQtyMin = Math.max(fromQty + 1, Math.round(toNumber(cfg.toQtyMin ?? cfg.toQty, fromQty + 1)));
       const targetCount = Math.max(1, Math.round(toNumber(cfg.targetCount, 1)));
       const amount = positiveAmount(cfg.amount);
-      const qualifying = deliveredOrders.filter((order) => {
+      const qualifying = scopedDeliveredOrders.filter((order) => {
         const from = typeof order.upsell_from_qty === "number" ? order.upsell_from_qty : null;
         const to = typeof order.upsell_to_qty === "number" ? order.upsell_to_qty : null;
         return from === fromQty && to !== null && to >= toQtyMin;
@@ -312,16 +414,23 @@ export const computeSalesBonusForRep = (input: {
       completed = qualifying.length >= targetCount;
       earnedAmount = active ? countEarnedForTarget(qualifying.length, targetCount, amount, cfg.repeatMode) : 0;
       potentialAmount = amount;
-      helper = `${qualifying.length} / ${targetCount} upgrades from ${fromQty}pcs to ${toQtyMin}+pcs`;
+      helper = `${qualifying.length} / ${targetCount} scoped upgrades from ${fromQty}pcs to ${toQtyMin}+pcs`;
     } else if (rule.type === "cross_sell_count") {
       const targetCount = Math.max(1, Math.round(toNumber(cfg.targetCount, 1)));
       const amount = positiveAmount(cfg.amount);
       const repDrivenOnly = cfg.repDrivenOnly !== false;
+      const embedScoped = ruleScope(cfg).embedLabels.length > 0;
       const qualifying = deliveredOrders.filter((order) => {
         const lines = arrayValue(order.cross_sell_lines);
+        const baseOrderMatches = orderMatchesRuleScope(order, cfg);
+        const scopedLines = lines.filter((line) => crossSellLineMatchesRuleScope(line, cfg));
+        const lineMatches = scopedLines.length > 0;
+        const scopeMatches = baseOrderMatches || (!embedScoped && lineMatches);
+        if (!scopeMatches) return false;
+        const linesToCheck = baseOrderMatches ? lines : scopedLines;
         return repDrivenOnly
-          ? lines.some(isRepDrivenCrossSellLine)
-          : lines.length > 0;
+          ? linesToCheck.some(isRepDrivenCrossSellLine)
+          : linesToCheck.length > 0;
       });
       progressCurrent = qualifying.length;
       progressTarget = targetCount;
@@ -329,10 +438,10 @@ export const computeSalesBonusForRep = (input: {
       completed = qualifying.length >= targetCount;
       earnedAmount = active ? countEarnedForTarget(qualifying.length, targetCount, amount, cfg.repeatMode) : 0;
       potentialAmount = amount;
-      helper = `${qualifying.length} / ${targetCount} delivered cross-sell customers`;
+      helper = `${qualifying.length} / ${targetCount} scoped delivered cross-sell customers`;
     } else if (rule.type === "upfront_percent") {
       const percent = Math.max(0, toNumber(cfg.percent, 0));
-      const qualifying = deliveredOrders.filter((order) => order.full_upfront_paid === true);
+      const qualifying = scopedDeliveredOrders.filter((order) => order.full_upfront_paid === true);
       const amount = qualifying.reduce((sum, order) => sum + Math.round(orderAmount(order) * (percent / 100)), 0);
       progressCurrent = qualifying.length;
       progressTarget = Math.max(1, qualifying.length);
@@ -340,23 +449,23 @@ export const computeSalesBonusForRep = (input: {
       completed = qualifying.length > 0;
       earnedAmount = active ? amount : 0;
       potentialAmount = amount;
-      helper = `${percent}% on ${qualifying.length} delivered upfront-paid order${qualifying.length === 1 ? "" : "s"}`;
+      helper = `${percent}% on ${qualifying.length} scoped delivered upfront-paid order${qualifying.length === 1 ? "" : "s"}`;
     } else if (rule.type === "delivery_rate_per_delivered") {
       const minOrders = Math.max(0, Math.round(toNumber(cfg.minOrders, 50)));
       const targetRatePercent = Math.max(0, toNumber(cfg.targetRatePercent, 70));
       const fallbackPerDelivered = positiveAmount(cfg.fallbackPerDelivered ?? 200);
       const qualifiedPerDelivered = positiveAmount(cfg.qualifiedPerDelivered ?? 400);
-      const qualified = assignedCount >= minOrders && deliveryRate >= targetRatePercent;
+      const qualified = scopedAssignedCount >= minOrders && scopedDeliveryRate >= targetRatePercent;
       const rate = qualified ? qualifiedPerDelivered : fallbackPerDelivered;
-      progressCurrent = deliveryRate;
+      progressCurrent = scopedDeliveryRate;
       progressTarget = targetRatePercent;
-      qualifiedOrderIds = deliveredOrders.map((order) => order.id);
+      qualifiedOrderIds = scopedDeliveredOrders.map((order) => order.id);
       completed = qualified;
-      earnedAmount = active ? deliveredCount * rate : 0;
-      potentialAmount = deliveredCount * qualifiedPerDelivered;
+      earnedAmount = active ? scopedDeliveredCount * rate : 0;
+      potentialAmount = scopedDeliveredCount * qualifiedPerDelivered;
       helper = qualified
-        ? `${deliveryRate}% delivery rate unlocked ₦${qualifiedPerDelivered.toLocaleString("en-NG")} per delivered order`
-        : `${deliveryRate}% / ${targetRatePercent}% delivery rate · ${assignedCount} / ${minOrders} assigned orders`;
+        ? `${scopedDeliveryRate}% scoped delivery rate unlocked ₦${qualifiedPerDelivered.toLocaleString("en-NG")} per delivered order`
+        : `${scopedDeliveryRate}% / ${targetRatePercent}% scoped delivery rate · ${scopedAssignedCount} / ${minOrders} assigned orders`;
     }
 
     const safePotential = Math.max(earnedAmount, potentialAmount);
@@ -376,6 +485,7 @@ export const computeSalesBonusForRep = (input: {
       progressPercent: progress(progressCurrent, progressTarget),
       completed,
       helper,
+      scopeLabel,
       qualifiedOrderIds,
       config: cfg
     });
@@ -388,36 +498,61 @@ export const computeSalesBonusForRep = (input: {
 
   const earnedFromRules = rules.reduce((sum, rule) => sum + rule.earnedAmount, 0);
   const potentialFromRules = rules.reduce((sum, rule) => sum + rule.potentialAmount, 0);
-  const opportunities = openOrders.flatMap((order): SalesBonusOrderOpportunity[] => {
+  const activeRules = rules.filter((rule) => rule.active);
+  const seenOpportunityKeys = new Set<string>();
+  const pushOpportunity = (
+    entries: SalesBonusOrderOpportunity[],
+    key: string,
+    opportunity: SalesBonusOrderOpportunity
+  ) => {
+    if (seenOpportunityKeys.has(key)) return;
+    seenOpportunityKeys.add(key);
+    entries.push(opportunity);
+  };
+  const opportunities = activeRules.flatMap((rule): SalesBonusOrderOpportunity[] => {
+    const cfg = rule.config ?? {};
+    const scopedOpenOrders = openOrders.filter((order) => orderMatchesRuleScope(order, cfg));
     const entries: SalesBonusOrderOpportunity[] = [];
-    const qty = quantityForOrder(order);
-    if (qty <= 3) {
-      entries.push({
+    scopedOpenOrders.forEach((order) => {
+      const base = {
         orderId: order.id,
         customerName: order.customer ?? undefined,
+        productName: order.product_name ?? undefined,
         packageName: order.package_name ?? undefined,
         amount: 0,
-        reason: "Can help upgrade-count bonus if moved from 3pcs to a higher package and delivered.",
-        type: "upgrade"
-      });
-    }
-    if (arrayValue(order.cross_sell_lines).length === 0) {
-      entries.push({
-        orderId: order.id,
-        customerName: order.customer ?? undefined,
-        packageName: order.package_name ?? undefined,
-        amount: 0,
-        reason: "Can help cross-sell bonus if the customer accepts an add-on and the order delivers.",
-        type: "cross_sell"
-      });
-    }
-    entries.push({
-      orderId: order.id,
-      customerName: order.customer ?? undefined,
-      packageName: order.package_name ?? undefined,
-      amount: 0,
-      reason: "A successful delivery improves this week’s delivery-rate pay.",
-      type: "delivery_rate"
+        scopeLabel: rule.scopeLabel
+      };
+      if (rule.type === "upgrade_count") {
+        const fromQty = Math.max(1, Math.round(toNumber(cfg.fromQty, 3)));
+        const qty = quantityForOrder(order);
+        if (qty <= fromQty) {
+          pushOpportunity(entries, `${order.id}:${rule.ruleId}:upgrade`, {
+            ...base,
+            reason: `Can help "${rule.name}" if moved from ${fromQty}pcs to a higher scoped package and delivered.`,
+            type: "upgrade"
+          });
+        }
+      } else if (rule.type === "cross_sell_count") {
+        if (arrayValue(order.cross_sell_lines).length === 0) {
+          pushOpportunity(entries, `${order.id}:${rule.ruleId}:cross_sell`, {
+            ...base,
+            reason: `Can help "${rule.name}" if the customer accepts an add-on and the order delivers.`,
+            type: "cross_sell"
+          });
+        }
+      } else if (rule.type === "delivery_rate_per_delivered") {
+        pushOpportunity(entries, `${order.id}:${rule.ruleId}:delivery_rate`, {
+          ...base,
+          reason: `A successful delivery improves "${rule.name}" for this scoped product/package.`,
+          type: "delivery_rate"
+        });
+      } else if (rule.type === "upfront_percent" && order.full_upfront_paid !== true) {
+        pushOpportunity(entries, `${order.id}:${rule.ruleId}:upfront`, {
+          ...base,
+          reason: `Can help "${rule.name}" if full upfront payment is owner/admin marked and the order delivers.`,
+          type: "upfront"
+        });
+      }
     });
     return entries;
   }).slice(0, 12);
@@ -502,7 +637,7 @@ export const getSalesBonusProgress = async (
       .eq("active", true),
     supabase
       .from("orders")
-      .select("id, assigned_rep_id, customer, phone, status, amount, quantity, product_id, product_name, package_id, package_name, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, full_upfront_paid, full_upfront_paid_at, created_at, updated_at, delivered_date, review_hold")
+      .select("id, assigned_rep_id, customer, phone, status, amount, quantity, product_id, product_name, package_id, package_name, source, embed_label, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, full_upfront_paid, full_upfront_paid_at, created_at, updated_at, delivered_date, review_hold")
       .eq("org_id", orgId)
       .gte("created_at", `${weekStart}T00:00:00`)
       .lt("created_at", `${nextWeek}T00:00:00`)

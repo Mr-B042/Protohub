@@ -130,6 +130,93 @@ test("delivery-rate rule pays ₦200 below gate and ₦400 at 70% with 50+ order
   assert.equal(qualified.earnedSoFar, 35 * 400);
 });
 
+test("product/package-scoped rules do not mix different generated-link products", () => {
+  const upgradeRule: SalesBonusRule = {
+    id: "corner-upgrade",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "5-in-1 Corner Rack upgrades",
+    type: "upgrade_count",
+    status: "active",
+    config: {
+      scopeProductId: "corner-rack",
+      scopeProductName: "5-in-1 Corner Racks",
+      scopePackageId: "corner-lite",
+      scopePackageName: "Lite Pack",
+      fromQty: 3,
+      toQtyMin: 4,
+      targetCount: 2,
+      amount: 2_000
+    },
+    display_order: 10
+  };
+  const deliveryRule: SalesBonusRule = {
+    id: "corner-delivery",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "5-in-1 delivery rate",
+    type: "delivery_rate_per_delivered",
+    status: "active",
+    config: {
+      scopeProductId: "corner-rack",
+      scopeProductName: "5-in-1 Corner Racks",
+      minOrders: 2,
+      targetRatePercent: 70,
+      fallbackPerDelivered: 200,
+      qualifiedPerDelivered: 400
+    },
+    display_order: 20
+  };
+  const result = run([upgradeRule, deliveryRule], [
+    order("corner-1", { product_id: "corner-rack", product_name: "5-in-1 Corner Racks", package_id: "corner-lite", package_name: "Lite Pack", upsell_from_qty: 3, upsell_to_qty: 5 }),
+    order("corner-2", { product_id: "corner-rack", product_name: "5-in-1 Corner Racks", package_id: "corner-lite", package_name: "Lite Pack", upsell_from_qty: 3, upsell_to_qty: 5 }),
+    order("edge-1", { product_id: "edge-brusher", product_name: "Edge Brusher Max", package_id: "edge-trial", package_name: "Trial Pack", upsell_from_qty: 3, upsell_to_qty: 5 }),
+    order("edge-open", { product_id: "edge-brusher", product_name: "Edge Brusher Max", package_id: "edge-trial", package_name: "Trial Pack", status: "Confirmed" })
+  ]);
+
+  assert.equal(result.rules[0]?.earnedAmount, 2_000);
+  assert.deepEqual(result.rules[0]?.qualifiedOrderIds.sort(), ["corner-1", "corner-2"]);
+  assert.equal(result.rules[0]?.scopeLabel, "Product: 5-in-1 Corner Racks · Package: Lite Pack");
+  assert.equal(result.rules[1]?.earnedAmount, 2 * 400);
+  assert.equal(result.rules[1]?.progressCurrent, 100);
+});
+
+test("cross-sell product scope only counts matching rep-driven add-on lines", () => {
+  const rule: SalesBonusRule = {
+    id: "soap-cross",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "Soap holder cross-sell",
+    type: "cross_sell_count",
+    status: "active",
+    config: {
+      scopeProductId: "soap-holder",
+      scopeProductName: "Shark Soap Holder",
+      targetCount: 1,
+      amount: 4_000,
+      repDrivenOnly: true
+    },
+    display_order: 10
+  };
+  const result = run([rule], [
+    order("soap-line", {
+      product_id: "edge-brusher",
+      cross_sell_lines: [{ productId: "soap-holder", productName: "Shark Soap Holder", selectionSource: "manual_rep" }]
+    }),
+    order("wrong-line", {
+      product_id: "edge-brusher",
+      cross_sell_lines: [{ productId: "mini-mop", productName: "Mini Mop", selectionSource: "manual_rep" }]
+    }),
+    order("public-soap-line", {
+      product_id: "edge-brusher",
+      cross_sell_lines: [{ productId: "soap-holder", productName: "Shark Soap Holder", selectionSource: "public_form" }]
+    })
+  ]);
+
+  assert.equal(result.earnedSoFar, 4_000);
+  assert.deepEqual(result.rules[0]?.qualifiedOrderIds, ["soap-line"]);
+});
+
 test("paused and deleted rules do not count for future weeks", () => {
   const rules: SalesBonusRule[] = [
     {
