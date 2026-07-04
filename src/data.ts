@@ -40,7 +40,6 @@ export const navItems = [
   { label: "Inventory", icon: Box },
   { label: "Sales Reps", icon: Users },
   { label: "Sales Teams", icon: Users },
-  { label: "Sales Rep Bonuses", icon: BadgeDollarSign },
   { label: "Weekend Stock Summary", icon: ClipboardCheck },
   { label: "Agents", icon: Truck },
   { label: "Waybill", icon: ArrowLeftRight },
