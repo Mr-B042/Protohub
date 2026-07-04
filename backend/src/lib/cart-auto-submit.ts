@@ -17,7 +17,7 @@ import { logger } from "./logger.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "./whatsapp.js";
 import { resolveMetaTrackingConfig, sendMetaCapiPurchase } from "./meta-capi.js";
 import { sendTikTokConversion } from "./tiktok-events.js";
-import { assignOrderRep, dedicatedHandlerIdsOf } from "./order-assignment.js";
+import { assignOrderRep } from "./order-assignment.js";
 import { notifyOutageRecoveredOrder } from "./order-notifications.js";
 
 const MIN_IDLE_MS = 2 * 60 * 1000;   // must be idle at least 2 min
@@ -117,7 +117,7 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
   //    whole query and silently aborted every auto-submit).
   const { data: product } = await supabase
     .from("products")
-    .select("id, org_id, name, active, dedicated_handler_user_id, dedicated_handler_user_ids")
+    .select("id, org_id, name, active")
     .eq("id", cart.product_id)
     .eq("org_id", orgId)
     .maybeSingle();
@@ -139,9 +139,9 @@ async function processCart(cart: Record<string, any>, mode: "full"|"cart" = "ful
     currency: cart.currency ?? "NGN"
   };
 
-  // 3. Assign — a product can restrict its orders to a set of dedicated handlers
-  //    (round-robin among just them); otherwise the global round-robin.
-  const assignment = await assignOrderRep(orgId, dedicatedHandlerIdsOf(product as any));
+  // 3. Assign — a product can restrict its orders to a weighted set of dedicated
+  //    handlers (see migration 148); otherwise the global round-robin.
+  const assignment = await assignOrderRep(orgId, product.id);
   const assignedRepId: string | null = assignment.assignedRepId;
   const assignedByLabel: string | null = assignment.assignedByLabel;
 

@@ -521,6 +521,7 @@ export const productsApi = {
   create: (body: unknown) => post<any>("/api/products", body),
   update: (id: string, body: unknown) => patch<any>(`/api/products/${id}`, body),
   delete: (id: string) => del<void>(`/api/products/${id}`),
+  resetDedicatedHandlerCounts: (id: string) => post<{ ok: true }>(`/api/products/${id}/dedicated-handlers/reset-counts`, {}),
   createPricing: (productId: string, body: unknown) => post<any>(`/api/products/${productId}/pricings`, body),
   listPackages: (productId: string) => get<any[]>(`/api/products/${productId}/packages`),
   createPackage: (productId: string, body: unknown) => post<any>(`/api/products/${productId}/packages`, body),

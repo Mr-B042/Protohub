@@ -17,7 +17,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { notifyOrderEvent } from "../lib/order-notifications.js";
-import { assignOrderRep, dedicatedHandlerIdsOf } from "../lib/order-assignment.js";
+import { assignOrderRep } from "../lib/order-assignment.js";
 import { buildPackageComponentSnapshot } from "../lib/order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "../lib/package-availability.js";
 import { resolveMetaTrackingConfig, sendMetaCapiPurchase, type MetaTrackingConfig } from "../lib/meta-capi.js";
@@ -723,7 +723,7 @@ router.post("/", submitRateLimit, async (req, res) => {
   const productSelectBase = "id, org_id, name, active, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions";
   let productResult = await supabase
     .from("products")
-    .select(`id, org_id, name, active, public_order_assignment_mode, dedicated_handler_user_id, dedicated_handler_user_ids, image_url, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions`)
+    .select(`id, org_id, name, active, public_order_assignment_mode, image_url, cross_sell_product_ids, cross_sell_price_overrides, cross_sell_state_restrictions`)
     .eq("id", pkg.product_id)
     .maybeSingle();
   if (productResult.error && isMissingProductAssignmentModeColumnError(productResult.error)) {
@@ -1216,10 +1216,10 @@ router.post("/", submitRateLimit, async (req, res) => {
 
   // Held orders are never auto-assigned — they wait, parked, for a human.
   if (publicOrderAssignmentMode === "auto_assign" && !reviewHold) {
-    // A product can restrict its orders to a set of dedicated handlers (round-robin
-    // among just them); otherwise it's the global round-robin. Falls back to the
-    // global rotation if the pinned set has nobody assignable.
-    const assignment = await assignOrderRep(product.org_id, dedicatedHandlerIdsOf(product as any));
+    // A product can restrict its orders to a weighted set of dedicated handlers
+    // (see migration 148); otherwise it's the global round-robin. Falls back to
+    // the global rotation if the pinned set has nobody assignable.
+    const assignment = await assignOrderRep(product.org_id, product.id);
     assignedRepId = assignment.assignedRepId;
     assignedByLabel = assignment.assignedByLabel;
   }

@@ -72,7 +72,8 @@ router.get("/", async (req, res) => {
     .select(`
       *,
       pricings: product_pricings!product_pricings_product_id_fkey(*),
-      packages: product_packages!product_packages_product_id_fkey(*)
+      packages: product_packages!product_packages_product_id_fkey(*),
+      dedicated_handlers: product_dedicated_handlers!product_dedicated_handlers_product_id_fkey(*)
     `)
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: false });
@@ -119,11 +120,88 @@ router.post("/",
   }
 );
 
+// Dedicated handler weights (migration 148) — a rep's relative share of a
+// product's dedicated-handler rotation. Not required to sum to 100; the
+// backend just tracks each rep's ratio against the others.
+const DedicatedHandlerWeightSchema = z.object({
+  userId: z.string().uuid(),
+  weight: z.number().int().min(0).max(100000)
+});
+
 // ── PATCH /api/products/:id ───────────────────────────────
 router.patch("/:id",
   requireRole("Owner", "Admin", "Inventory Manager"),
   async (req, res) => {
     const { id } = req.params;
+
+    // Dedicated handler weights live in their own table (product_dedicated_handlers),
+    // not a products column, so they're handled separately from the allow-list
+    // update below. dedicated_handlers (new, weighted) and dedicated_handler_user_ids
+    // (legacy, plain array) are two different write paths into that same table —
+    // accepting both in one request would leave an ambiguous precedence rule to
+    // remember, so reject that instead.
+    const rawWeighted = req.body.dedicated_handlers;
+    const rawLegacyIds = req.body.dedicated_handler_user_ids;
+    if (rawWeighted !== undefined && rawLegacyIds !== undefined) {
+      res.status(400).json({ error: "Send either dedicated_handler_user_ids or dedicated_handlers, not both." });
+      return;
+    }
+
+    if (rawWeighted !== undefined || rawLegacyIds !== undefined) {
+      // product_dedicated_handlers has no org_id column of its own — the shared
+      // supabase client is service-role and bypasses RLS, so this ownership
+      // check has to happen here, before touching that table, the same way the
+      // final products update below is scoped by .eq("org_id", ...).
+      const { data: owned } = await supabase.from("products").select("id").eq("id", id).eq("org_id", req.user!.orgId).maybeSingle();
+      if (!owned) { res.status(404).json({ error: "Product not found." }); return; }
+    }
+
+    if (rawWeighted !== undefined) {
+      const parsed = z.array(DedicatedHandlerWeightSchema).max(200).safeParse(rawWeighted);
+      if (!parsed.success) { res.status(400).json({ error: "Invalid dedicated_handlers payload." }); return; }
+      const entries = parsed.data;
+      const ids = entries.map((e) => e.userId);
+      if (new Set(ids).size !== ids.length) { res.status(400).json({ error: "Duplicate userId in dedicated_handlers." }); return; }
+      if (ids.length > 0) {
+        const { data: validUsers } = await supabase.from("users").select("id").eq("org_id", req.user!.orgId).in("id", ids);
+        const validIds = new Set((validUsers ?? []).map((u) => u.id));
+        const unknown = ids.filter((uid) => !validIds.has(uid));
+        if (unknown.length > 0) { res.status(400).json({ error: `Unknown user id(s): ${unknown.join(", ")}` }); return; }
+      }
+      const { data: currentRows } = await supabase.from("product_dedicated_handlers").select("user_id").eq("product_id", id);
+      const currentIds = new Set((currentRows ?? []).map((r) => r.user_id));
+      const toRemove = [...currentIds].filter((uid) => !ids.includes(uid));
+      if (toRemove.length > 0) {
+        await supabase.from("product_dedicated_handlers").delete().eq("product_id", id).in("user_id", toRemove);
+      }
+      if (entries.length > 0) {
+        const { error: upsertErr } = await supabase
+          .from("product_dedicated_handlers")
+          .upsert(entries.map((e) => ({ product_id: id, user_id: e.userId, weight: e.weight })), { onConflict: "product_id,user_id" });
+        if (upsertErr) { res.status(500).json({ error: upsertErr.message }); return; }
+      }
+      req.body.dedicated_handler_user_ids = ids; // mirror — picked up by the allow-list loop below
+    } else if (rawLegacyIds !== undefined) {
+      // Diff-based, not replace-all: adding one rep via the plain-array path
+      // (the existing toggle UI / "All sales reps" / "Clear" pills) defaults
+      // only that new rep to weight 100 and leaves everyone else's custom
+      // weight untouched, instead of resetting the whole set back to equal.
+      const parsed = z.array(z.string().uuid()).max(200).safeParse(rawLegacyIds);
+      if (!parsed.success) { res.status(400).json({ error: "Invalid dedicated_handler_user_ids payload." }); return; }
+      const ids = [...new Set(parsed.data)];
+      const { data: currentRows } = await supabase.from("product_dedicated_handlers").select("user_id").eq("product_id", id);
+      const currentIds = new Set((currentRows ?? []).map((r) => r.user_id));
+      const toRemove = [...currentIds].filter((uid) => !ids.includes(uid));
+      const toAdd = ids.filter((uid) => !currentIds.has(uid));
+      if (toRemove.length > 0) {
+        await supabase.from("product_dedicated_handlers").delete().eq("product_id", id).in("user_id", toRemove);
+      }
+      if (toAdd.length > 0) {
+        const { error: insertErr } = await supabase.from("product_dedicated_handlers").insert(toAdd.map((uid) => ({ product_id: id, user_id: uid, weight: 100 })));
+        if (insertErr) { res.status(500).json({ error: insertErr.message }); return; }
+      }
+    }
+
     // Stock fields (warehouse_stock / agent_stock) are intentionally excluded.
     // All stock changes must go through /api/stock/* or /api/agents/:id/stock so
     // they generate stock_movements rows for the audit trail.
@@ -165,6 +243,30 @@ router.patch("/:id",
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!data)  { res.status(404).json({ error: "Product not found." }); return; }
     res.json(data);
+  }
+);
+
+// ── POST /api/products/:id/dedicated-handlers/reset-counts ─
+// Manually zero a product's dedicated-handler assigned_count/last_assigned_at
+// after a big weight edit. The weighted picker is self-correcting forever
+// (no automatic reset needed for normal operation), but a large weight cut
+// can leave the ratio metric "remembering" a rep's old, larger share for a
+// long stretch — this lets an owner force an immediate step-change right
+// after editing weights, rather than resetting on every minor tweak (which
+// would be a surprising side effect of a routine edit).
+router.post("/:id/dedicated-handlers/reset-counts",
+  requireRole("Owner", "Admin", "Inventory Manager"),
+  async (req, res) => {
+    const { id } = req.params;
+    const { data: owned } = await supabase.from("products").select("id").eq("id", id).eq("org_id", req.user!.orgId).maybeSingle();
+    if (!owned) { res.status(404).json({ error: "Product not found." }); return; }
+
+    const { error } = await supabase
+      .from("product_dedicated_handlers")
+      .update({ assigned_count: 0, last_assigned_at: null })
+      .eq("product_id", id);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
   }
 );
 
