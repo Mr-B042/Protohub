@@ -355,9 +355,9 @@ cron.schedule("30 2 * * *", async () => {
 
 // ── Weekly salary daily drip — daily 05:00 UTC (06:00 Lagos) ──
 // Continues an already-activated week's salary spread one weekday at a time —
-// Monday only ever starts via a manual "Spread Week N" click; this just drops
-// Tue/Wed/Thu automatically on their own actual date once the day before them
-// already exists, so it never dumps all 4 days at once. No-op on Fri/Sat/Sun.
+// Sunday only ever starts via a manual "Spread Week N" click; this just drops
+// Mon/Tue/Wed automatically on their own actual date once the day before them
+// already exists, so it never dumps all 4 days at once. No-op on Thu/Fri/Sat.
 if (ENABLE_BACKGROUND_JOBS) {
 cron.schedule("0 5 * * *", async () => {
   logger.info("cron: dropping due daily salary spread");

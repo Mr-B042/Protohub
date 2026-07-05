@@ -7,16 +7,16 @@ import { logger } from "./logger.js";
 // never showed up in a given week's break-even/net-profit view except the one
 // week it happened to land in. The company's total monthly salary (sum of
 // every active user's fixed_salary) is split into 4 equal weekly slices, and
-// each week's slice is further smoothed across its 4 WORKING days — Monday
-// through Thursday — a quarter of the week's amount per day. Friday,
-// Saturday, and the week's own Sunday anchor carry none.
+// each week's slice is further smoothed across its 4 WORKING days — Sunday
+// through Wednesday — a quarter of the week's amount per day. Thursday,
+// Friday, and Saturday carry none.
 //
 // Crucially, days are NOT all written at once when a week is "spread" — that
-// would just future-date rows and still read as a shock. Monday's entry is
+// would just future-date rows and still read as a shock. Sunday's entry is
 // only ever created by an explicit "Spread Week N" click (the manual on/off
 // switch), which also catches up any already-elapsed days in that week. Once
-// Monday exists, the daily cron (dropDueDailySalaryForAllOrgs) takes over and
-// creates Tuesday/Wednesday/Thursday's entries automatically — one per day,
+// Sunday exists, the daily cron (dropDueDailySalaryForAllOrgs) takes over and
+// creates Monday/Tuesday/Wednesday's entries automatically — one per day,
 // on that day, and only if the day before it already exists (proof the week
 // was actually activated).
 
@@ -57,12 +57,12 @@ export function weekStartsForMonth(monthKey: string): string[] {
   });
 }
 
-export const WEEKDAY_SPREAD_LABELS = ["Mon", "Tue", "Wed", "Thu"] as const;
+export const WEEKDAY_SPREAD_LABELS = ["Sun", "Mon", "Tue", "Wed"] as const;
 export function weekdaySpreadDates(monthKey: string, week: number): string[] {
   const sunday = weekStartsForMonth(monthKey)[week - 1];
   const [y, m, d] = sunday.split("-").map(Number);
   const base = new Date(Date.UTC(y, (m || 1) - 1, d, 12));
-  return [1, 2, 3, 4].map((offset) => {
+  return [0, 1, 2, 3].map((offset) => {
     const dt = new Date(base);
     dt.setUTCDate(dt.getUTCDate() + offset);
     return dt.toISOString().slice(0, 10);
@@ -78,14 +78,14 @@ export function elapsedDayIndices(dayDates: string[], todayKey: string): number[
 
 // ── Daily cron: drop TODAY's slice for any week that's already been manually
 // activated (its previous weekday already has an expense row). Only ever
-// continues an already-started week — it never originates Monday itself, so
+// continues an already-started week — it never originates Sunday itself, so
 // a week that was never clicked stays fully manual/untouched. Runs once a
-// day; a no-op on Fri/Sat/Sun and for orgs with no salaried active users.
+// day; a no-op on Thu/Fri/Sat and for orgs with no salaried active users.
 export async function dropDueDailySalaryForAllOrgs(): Promise<{ orgsChecked: number; created: number }> {
   const todayKey = lagosTodayKey();
   const [y, m, d] = todayKey.split("-").map(Number);
   const dow = new Date(Date.UTC(y, (m || 1) - 1, d, 12)).getUTCDay(); // 0=Sun..6=Sat
-  if (dow < 1 || dow > 4) return { orgsChecked: 0, created: 0 }; // nothing drips on Fri/Sat/Sun
+  if (dow > 3) return { orgsChecked: 0, created: 0 }; // nothing drips on Thu/Fri/Sat
 
   const { data: orgs, error: orgsError } = await supabase.from("organizations").select("id");
   if (orgsError) {
@@ -112,7 +112,7 @@ export async function dropDueDailySalaryForAllOrgs(): Promise<{ orgsChecked: num
       }
       if (bucket) break;
     }
-    if (!bucket || bucket.dayIndex === 0) continue; // Monday only ever starts via manual click
+    if (!bucket || bucket.dayIndex === 0) continue; // Sunday only ever starts via manual click
 
     const ids = weekdaySpreadIds(bucket.monthKey, bucket.week);
     const priorId = ids[bucket.dayIndex - 1];

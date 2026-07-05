@@ -139,9 +139,9 @@ router.patch("/:id/approve", async (req, res) => {
 // ── Salary → weekly-spread, daily-drip expense ────────────────────────────
 // See backend/src/lib/salary-spread.ts for the full model. In short: clicking
 // "Spread Week N" is the manual on/off switch — it catches up any days of
-// that week which have already elapsed (Mon..today), but never writes a
-// FUTURE day. Once Monday exists, the daily cron
-// (dropDueDailySalaryForAllOrgs) takes over and drops Tue/Wed/Thu
+// that week which have already elapsed (Sun..today), but never writes a
+// FUTURE day. Once Sunday exists, the daily cron
+// (dropDueDailySalaryForAllOrgs) takes over and drops Mon/Tue/Wed
 // automatically, one per day, on that actual day.
 router.post("/spread-weekly-salary", async (req, res) => {
   const week = Number(req.body?.week);
