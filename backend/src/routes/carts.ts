@@ -657,20 +657,28 @@ router.post("/journey-bulk", async (req, res) => {
     return;
   }
 
-  const { data: events, error } = await supabase
-    .from("cart_journey_events")
-    .select("*")
-    .eq("org_id", req.user!.orgId)
-    .in("cart_id", allowedIds)
-    .order("created_at", { ascending: true });
+  const events: any[] = [];
+  const EVENT_PAGE_SIZE = 1000;
+  for (let from = 0; ; from += EVENT_PAGE_SIZE) {
+    const { data: batch, error } = await supabase
+      .from("cart_journey_events")
+      .select("*")
+      .eq("org_id", req.user!.orgId)
+      .in("cart_id", allowedIds)
+      .order("created_at", { ascending: true })
+      .range(from, from + EVENT_PAGE_SIZE - 1);
 
-  if (error) {
-    res.status(500).json({ error: error.message });
-    return;
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+
+    events.push(...(batch ?? []));
+    if (!batch || batch.length < EVENT_PAGE_SIZE) break;
   }
 
   const grouped = Object.fromEntries(allowedIds.map((id) => [id, [] as any[]]));
-  for (const event of events ?? []) {
+  for (const event of events) {
     const cartId = typeof event.cart_id === "string" ? event.cart_id : "";
     if (!cartId || !grouped[cartId]) continue;
     grouped[cartId].push(event);
