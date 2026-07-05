@@ -528,7 +528,7 @@ const applyLocationInventoryDelta = async (
   line: OrderInventoryLine,
   nextQuantity: number
 ) => {
-  await supabase
+  const { error } = await supabase
     .from("agent_location_stock")
     .upsert({
       org_id: orgId,
@@ -537,7 +537,111 @@ const applyLocationInventoryDelta = async (
       product_id: line.productId,
       quantity: nextQuantity
     }, { onConflict: "agent_location_id,product_id" });
+  if (error) throw error;
   await syncAgentStockAggregate(orgId, agentId, line.productId);
+};
+
+type DeliveryStockMovementRow = {
+  product_id: string | null;
+  type: string | null;
+  created_at: string;
+  note?: string | null;
+};
+
+const DELIVERY_STOCK_MOVEMENT_TYPES = new Set(["Order Fulfilled", "Status Reversal", "Delete Reversal"]);
+const REVERSAL_STOCK_MOVEMENT_TYPES = new Set(["Status Reversal", "Delete Reversal"]);
+
+const isReversalMovementFallback = (row: DeliveryStockMovementRow) =>
+  row.type === "Correction" && /^(Status Reversal|Delete Reversal):/.test(String(row.note ?? ""));
+
+const activeDeliveredProductIdsForOrder = async (orgId: string, orderId: string) => {
+  const { data, error } = await supabase
+    .from("stock_movements")
+    .select("product_id, type, created_at, note")
+    .eq("org_id", orgId)
+    .eq("order_id", orderId)
+    .order("created_at", { ascending: true });
+
+  if (error) throw error;
+
+  const latestByProduct = new Map<string, DeliveryStockMovementRow>();
+  for (const row of (data ?? []) as DeliveryStockMovementRow[]) {
+    if (!row.product_id) continue;
+    if (!DELIVERY_STOCK_MOVEMENT_TYPES.has(String(row.type)) && !isReversalMovementFallback(row)) continue;
+    latestByProduct.set(row.product_id, row);
+  }
+
+  const active = new Set<string>();
+  for (const [productId, row] of latestByProduct) {
+    if (row.type === "Order Fulfilled") active.add(productId);
+  }
+  return active;
+};
+
+const isStockMovementEnumValueError = (error: { message?: string } | null | undefined) => {
+  const message = String(error?.message ?? "").toLowerCase();
+  return message.includes("invalid input value for enum") || message.includes("stock_movement_type");
+};
+
+const insertStockMovementOrThrow = async (payload: Record<string, unknown>) => {
+  const { error } = await supabase.from("stock_movements").insert(payload);
+  if (error) throw error;
+};
+
+const insertReversalStockMovementOrThrow = async (payload: Record<string, unknown>) => {
+  const desiredType = String(payload.type ?? "");
+  const { error } = await supabase.from("stock_movements").insert(payload);
+  if (!error) return;
+
+  if (REVERSAL_STOCK_MOVEMENT_TYPES.has(desiredType) && isStockMovementEnumValueError(error)) {
+    const fallback = {
+      ...payload,
+      type: "Correction",
+      note: `${desiredType}: ${String(payload.note ?? "")}`
+    };
+    const { error: fallbackError } = await supabase.from("stock_movements").insert(fallback);
+    if (!fallbackError) return;
+    throw fallbackError;
+  }
+
+  throw error;
+};
+
+const applyLocationInventoryDeltaWithMovement = async (args: {
+  orgId: string;
+  agentId: string;
+  agentLocationId: string;
+  line: OrderInventoryLine;
+  previousQuantity: number;
+  nextQuantity: number;
+  movement: Record<string, unknown>;
+  allowReversalFallback?: boolean;
+}) => {
+  await applyLocationInventoryDelta(args.orgId, args.agentId, args.agentLocationId, args.line, args.nextQuantity);
+  try {
+    if (args.allowReversalFallback) {
+      await insertReversalStockMovementOrThrow(args.movement);
+    } else {
+      await insertStockMovementOrThrow(args.movement);
+    }
+  } catch (error: any) {
+    try {
+      await applyLocationInventoryDelta(args.orgId, args.agentId, args.agentLocationId, args.line, args.previousQuantity);
+    } catch (rollbackError: any) {
+      logger.error("inventory: failed to roll back stock quantity after movement insert failure", {
+        orgId: args.orgId,
+        agentId: args.agentId,
+        agentLocationId: args.agentLocationId,
+        productId: args.line.productId,
+        attemptedQuantity: args.nextQuantity,
+        rollbackQuantity: args.previousQuantity,
+        movementType: args.movement.type,
+        movementError: error?.message,
+        rollbackError: rollbackError?.message
+      });
+    }
+    throw error;
+  }
 };
 
 // ── GET /api/orders ───────────────────────────────────────
@@ -1525,11 +1629,10 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       return;
     }
 
-    // Per-line idempotency: only lines not already fulfilled need stock right now.
-    const { data: priorFulfilment } = await supabase
-      .from("stock_movements").select("product_id")
-      .eq("org_id", req.user!.orgId).eq("order_id", req.params.id).eq("type", "Order Fulfilled");
-    const alreadyDeducted = new Set((priorFulfilment ?? []).map((m: { product_id: string }) => m.product_id));
+    // Per-line idempotency: only lines whose latest delivery stock movement is
+    // still active need no stock right now. If a prior delivery was reversed,
+    // the next real delivery must be allowed to deduct again.
+    const alreadyDeducted = await activeDeliveredProductIdsForOrder(req.user!.orgId, String(req.params.id));
     const linesNeedingStock = inventoryLines.filter((line) => !alreadyDeducted.has(line.productId));
 
     if (linesNeedingStock.length > 0) {
@@ -1755,37 +1858,41 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       notes:           `Auto-created on order delivery (${existing.customer})`
     });
 
-    // Per-line idempotency: never deduct a product that already has an Order
-    // Fulfilled movement for this order. Guards against double-deduction on re-saves
-    // / partial-failure retries (the flag can be left false with some lines already
-    // deducted), while still letting a genuinely MISSED line go through.
-    const { data: priorFulfilment } = await supabase
-      .from("stock_movements").select("product_id")
-      .eq("org_id", req.user!.orgId).eq("order_id", req.params.id).eq("type", "Order Fulfilled");
-    const alreadyDeductedProductIds = new Set((priorFulfilment ?? []).map((m: { product_id: string }) => m.product_id));
+    // Per-line idempotency: never deduct a product whose latest delivery stock
+    // movement is still Order Fulfilled. This guards against double-deduction on
+    // re-saves / partial-failure retries while allowing a legitimately reversed
+    // order to deduct again if it is delivered again later.
+    const alreadyDeductedProductIds = await activeDeliveredProductIdsForOrder(req.user!.orgId, String(req.params.id));
 
     for (const line of inventoryLines) {
       if (alreadyDeductedProductIds.has(line.productId)) continue;
       const currentQty = stockMap.get(line.productId) ?? 0;
       const nextQty = Math.max(0, currentQty - line.quantity);
-      await applyLocationInventoryDelta(req.user!.orgId, effectiveAgentId, resolvedLocation.id, line, nextQty);
-      await supabase.from("stock_movements").insert({
-        id:            `MOV-${randomUUID()}`,
-        org_id:        req.user!.orgId,
-        product_id:    line.productId,
-        product_name:  line.productName,
-        type:          "Order Fulfilled",
-        qty:           line.quantity,
-        balance_after: nextQty,
-        agent_id:      effectiveAgentId,
-        order_id:      req.params.id,
-        by_name:       req.user!.name,
-        by_user_id:    req.user!.id,
-        waybill_id:    waybillId,
-        from_location: agentLocationName || originState,
-        to_location:   customerLocation,
-        from_agent_location_id: resolvedLocation.id,
-        note:          `Delivered to ${existing.customer} — ${line.productName}${line.isFreeGift ? " (gift)" : ""} deducted ${currentQty} → ${nextQty} by agent ${agentName}${serviceStateNote}`
+      await applyLocationInventoryDeltaWithMovement({
+        orgId: req.user!.orgId,
+        agentId: effectiveAgentId,
+        agentLocationId: resolvedLocation.id,
+        line,
+        previousQuantity: currentQty,
+        nextQuantity: nextQty,
+        movement: {
+          id:            `MOV-${randomUUID()}`,
+          org_id:        req.user!.orgId,
+          product_id:    line.productId,
+          product_name:  line.productName,
+          type:          "Order Fulfilled",
+          qty:           line.quantity,
+          balance_after: nextQty,
+          agent_id:      effectiveAgentId,
+          order_id:      req.params.id,
+          by_name:       req.user!.name,
+          by_user_id:    req.user!.id,
+          waybill_id:    waybillId,
+          from_location: agentLocationName || originState,
+          to_location:   customerLocation,
+          from_agent_location_id: resolvedLocation.id,
+          note:          `Delivered to ${existing.customer} — ${line.productName}${line.isFreeGift ? " (gift)" : ""} deducted ${currentQty} → ${nextQty} by agent ${agentName}${serviceStateNote}`
+        }
       });
     }
    } catch (deductionError: any) {
@@ -1826,22 +1933,30 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       for (const line of inventoryLines) {
         const currentQty = stockMap.get(line.productId) ?? 0;
         const restoredQty = currentQty + line.quantity;
-        await applyLocationInventoryDelta(req.user!.orgId, existing.agent_id, reversalLocation.id, line, restoredQty);
-        await supabase.from("stock_movements").insert({
-          id:            `MOV-${randomUUID()}`,
-          org_id:        req.user!.orgId,
-          product_id:    line.productId,
-          product_name:  line.productName,
-          type:          "Status Reversal",
-          qty:           line.quantity,
-          balance_after: restoredQty,
-          agent_id:      existing.agent_id,
-          order_id:      req.params.id,
-          by_name:       req.user!.name,
-          by_user_id:    req.user!.id,
-          to_agent_location_id: reversalLocation.id,
-          to_location:   reversalLocation.name,
-          note:          `Delivery reversed — ${line.productName}${line.isFreeGift ? " (gift)" : ""} restored ${currentQty} → ${restoredQty} for order ${req.params.id} (agent ${agentInfo?.name ?? existing.agent_id})`
+        await applyLocationInventoryDeltaWithMovement({
+          orgId: req.user!.orgId,
+          agentId: existing.agent_id,
+          agentLocationId: reversalLocation.id,
+          line,
+          previousQuantity: currentQty,
+          nextQuantity: restoredQty,
+          allowReversalFallback: true,
+          movement: {
+            id:            `MOV-${randomUUID()}`,
+            org_id:        req.user!.orgId,
+            product_id:    line.productId,
+            product_name:  line.productName,
+            type:          "Status Reversal",
+            qty:           line.quantity,
+            balance_after: restoredQty,
+            agent_id:      existing.agent_id,
+            order_id:      req.params.id,
+            by_name:       req.user!.name,
+            by_user_id:    req.user!.id,
+            to_agent_location_id: reversalLocation.id,
+            to_location:   reversalLocation.name,
+            note:          `Delivery reversed — ${line.productName}${line.isFreeGift ? " (gift)" : ""} restored ${currentQty} → ${restoredQty} for order ${req.params.id} (agent ${agentInfo?.name ?? existing.agent_id})`
+          }
         });
       }
     }
@@ -2955,22 +3070,30 @@ router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
       for (const line of inventoryLines) {
         const currentQty = stockMap.get(line.productId) ?? 0;
         const restoredQty = currentQty + line.quantity;
-        await applyLocationInventoryDelta(req.user!.orgId, existing.agent_id, reversalLocation.id, line, restoredQty);
-        await supabase.from("stock_movements").insert({
-          id:            `MOV-${randomUUID()}`,
-          org_id:        req.user!.orgId,
-          product_id:    line.productId,
-          product_name:  line.productName,
-          type:          "Delete Reversal",
-          qty:           line.quantity,
-          balance_after: restoredQty,
-          agent_id:      existing.agent_id,
-          order_id:      req.params.id,
-          by_name:       req.user!.name,
-          by_user_id:    req.user!.id,
-          to_agent_location_id: reversalLocation.id,
-          to_location:   reversalLocation.name,
-          note:          `Stock restored — ${line.productName}${line.isFreeGift ? " (gift)" : ""} returned because order ${req.params.id} was deleted (${currentQty} → ${restoredQty}, agent ${agentInfo?.name ?? existing.agent_id})`
+        await applyLocationInventoryDeltaWithMovement({
+          orgId: req.user!.orgId,
+          agentId: existing.agent_id,
+          agentLocationId: reversalLocation.id,
+          line,
+          previousQuantity: currentQty,
+          nextQuantity: restoredQty,
+          allowReversalFallback: true,
+          movement: {
+            id:            `MOV-${randomUUID()}`,
+            org_id:        req.user!.orgId,
+            product_id:    line.productId,
+            product_name:  line.productName,
+            type:          "Delete Reversal",
+            qty:           line.quantity,
+            balance_after: restoredQty,
+            agent_id:      existing.agent_id,
+            order_id:      req.params.id,
+            by_name:       req.user!.name,
+            by_user_id:    req.user!.id,
+            to_agent_location_id: reversalLocation.id,
+            to_location:   reversalLocation.name,
+            note:          `Stock restored — ${line.productName}${line.isFreeGift ? " (gift)" : ""} returned because order ${req.params.id} was deleted (${currentQty} → ${restoredQty}, agent ${agentInfo?.name ?? existing.agent_id})`
+          }
         });
       }
     }
