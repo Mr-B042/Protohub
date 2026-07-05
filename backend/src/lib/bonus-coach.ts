@@ -523,7 +523,7 @@ export const getRepBonusCoach = async (
       motivators.push({
         type: nextRule.type === "upgrade_count"
           ? "upsell_opportunity"
-          : nextRule.type === "cross_sell_count"
+          : nextRule.type === "cross_sell_count" || nextRule.type === "cross_sell_offer"
             ? "cross_sell_opportunity"
             : nextRule.type === "delivery_rate_per_delivered"
               ? "delivery_rate_unlock"

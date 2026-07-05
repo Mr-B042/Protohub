@@ -4,7 +4,8 @@ export type SalesBonusRuleType =
   | "upgrade_count"
   | "cross_sell_count"
   | "upfront_percent"
-  | "delivery_rate_per_delivered";
+  | "delivery_rate_per_delivered"
+  | "cross_sell_offer";
 
 export type SalesBonusProgramStatus = "draft" | "active" | "paused" | "deleted";
 export type SalesBonusRuleStatus = "active" | "paused" | "deleted";
@@ -444,6 +445,40 @@ export const computeSalesBonusForRep = (input: {
       earnedAmount = active ? countEarnedForTarget(qualifying.length, targetCount, amount, cfg.repeatMode) : 0;
       potentialAmount = amount;
       helper = `${qualifying.length} / ${targetCount} scoped delivered cross-sell customers`;
+    } else if (rule.type === "cross_sell_offer") {
+      // Bonuses a SPECIFIC pre-vetted cross-sell deal (product/package scope +
+      // minimum quantity + minimum price), not just "any cross-sell happened"
+      // like cross_sell_count. Scope names the companion/cross-sell product
+      // itself, so this checks line-level scope directly rather than falling
+      // back to the order's own product (unlike cross_sell_count's dual
+      // fallback) — an Edge Brusher order cross-selling a Shark Soap Holder
+      // should match on the soap holder, not on Edge Brusher.
+      const offerQty = Math.max(1, Math.round(toNumber(cfg.offerQty, 1)));
+      const offerAmount = positiveAmount(cfg.offerAmount);
+      const targetCount = Math.max(1, Math.round(toNumber(cfg.targetCount, 1)));
+      const amount = positiveAmount(cfg.amount);
+      const repDrivenOnly = cfg.repDrivenOnly !== false;
+      const scope = ruleScope(cfg);
+      const lineMeetsOffer = (line: unknown) => {
+        if (!crossSellLineMatchesRuleScope(line, cfg)) return false;
+        const record = (line && typeof line === "object") ? line as Record<string, unknown> : {};
+        const qty = Math.round(toNumber(record.quantity, 1));
+        const lineAmount = positiveAmount(record.amount);
+        if (qty < offerQty || lineAmount < offerAmount) return false;
+        return repDrivenOnly ? isRepDrivenCrossSellLine(line) : true;
+      };
+      const qualifying = deliveredOrders.filter((order) => {
+        if (scope.embedLabels.length > 0 && !textMatchesAny(order.embed_label, scope.embedLabels)) return false;
+        return arrayValue(order.cross_sell_lines).some(lineMeetsOffer);
+      });
+      progressCurrent = qualifying.length;
+      progressTarget = targetCount;
+      qualifiedOrderIds = qualifying.map((order) => order.id);
+      completed = qualifying.length >= targetCount;
+      earnedAmount = active ? countEarnedForTarget(qualifying.length, targetCount, amount, cfg.repeatMode) : 0;
+      potentialAmount = amount;
+      const offerProductLabel = cleanText(cfg.scopeProductName) || "scoped";
+      helper = `${qualifying.length} / ${targetCount} customers took the ₦${offerAmount.toLocaleString("en-NG")} ${offerQty}pcs ${offerProductLabel} deal`;
     } else if (rule.type === "upfront_percent") {
       const percent = Math.max(0, toNumber(cfg.percent, 0));
       const qualifying = scopedDeliveredOrders.filter((order) => order.full_upfront_paid === true);

@@ -30,7 +30,7 @@ const ProgramPatchSchema = ProgramBodySchema.partial().extend({
 
 const RuleBodySchema = z.object({
   name: z.string().trim().min(2).max(120),
-  type: z.enum(["upgrade_count", "cross_sell_count", "upfront_percent", "delivery_rate_per_delivered"]),
+  type: z.enum(["upgrade_count", "cross_sell_count", "upfront_percent", "delivery_rate_per_delivered", "cross_sell_offer"]),
   status: z.enum(["active", "paused"]).optional().default("active"),
   config: z.record(z.unknown()).optional().default({}),
   displayOrder: z.number().int().min(0).max(10_000).optional().default(100)
