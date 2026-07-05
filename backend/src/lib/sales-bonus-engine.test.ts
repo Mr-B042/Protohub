@@ -219,6 +219,48 @@ test("cross-sell product scope only counts matching rep-driven add-on lines", ()
   assert.deepEqual(result.rules[0]?.qualifiedOrderIds, ["soap-line"]);
 });
 
+test("cross-sell specific offer only counts lines meeting both the quantity and price floor", () => {
+  const rule: SalesBonusRule = {
+    id: "soap-offer",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "Soap holder offer",
+    type: "cross_sell_offer",
+    status: "active",
+    config: {
+      scopeProductId: "soap-holder",
+      scopeProductName: "Shark Soap Holder",
+      offerQty: 2,
+      offerAmount: 4_900,
+      targetCount: 1,
+      amount: 2_000,
+      repDrivenOnly: true
+    },
+    display_order: 10
+  };
+  const result = run([rule], [
+    order("meets-both", {
+      product_id: "edge-brusher",
+      cross_sell_lines: [{ productId: "soap-holder", productName: "Shark Soap Holder", quantity: 2, amount: 4_900, selectionSource: "manual_rep" }]
+    }),
+    order("under-priced", {
+      product_id: "edge-brusher",
+      cross_sell_lines: [{ productId: "soap-holder", productName: "Shark Soap Holder", quantity: 2, amount: 3_000, selectionSource: "manual_rep" }]
+    }),
+    order("under-qty", {
+      product_id: "edge-brusher",
+      cross_sell_lines: [{ productId: "soap-holder", productName: "Shark Soap Holder", quantity: 1, amount: 6_000, selectionSource: "manual_rep" }]
+    }),
+    order("public-form-meets-both", {
+      product_id: "edge-brusher",
+      cross_sell_lines: [{ productId: "soap-holder", productName: "Shark Soap Holder", quantity: 2, amount: 4_900, selectionSource: "public_form" }]
+    })
+  ]);
+
+  assert.equal(result.earnedSoFar, 2_000);
+  assert.deepEqual(result.rules[0]?.qualifiedOrderIds, ["meets-both"]);
+});
+
 test("paused and deleted rules do not count for future weeks", () => {
   const rules: SalesBonusRule[] = [
     {
