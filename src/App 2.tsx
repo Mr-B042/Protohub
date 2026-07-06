@@ -1151,9 +1151,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [formCrossSellLabel, setFormCrossSellLabel] = useState<string>(() => readStored<string>(storageKeys.formCrossSellLabel, "Optional add-ons"));
   const [formFreeGiftLabel, setFormFreeGiftLabel] = useState<string>(() => readStored<string>(storageKeys.formFreeGiftLabel, "Free gift included:"));
   const [formAddonPromptText, setFormAddonPromptText] = useState<string>(() => readStored<string>(storageKeys.formAddonPromptText, "Would you like to add an additional product?"));
-  const [formAddonYesLabel, setFormAddonYesLabel] = useState<string>(() => readStored<string>(storageKeys.formAddonYesLabel, "Yes — show me add-ons"));
+  const [formAddonYesLabel, setFormAddonYesLabel] = useState<string>(() => readStored<string>(storageKeys.formAddonYesLabel, "Yes - show me add-ons"));
   const [formAddonNoLabel, setFormAddonNoLabel] = useState<string>(() => readStored<string>(storageKeys.formAddonNoLabel, "No, just submit my order"));
-  const [formAddonNoMessage, setFormAddonNoMessage] = useState<string>(() => readStored<string>(storageKeys.formAddonNoMessage, "No problem — just hit \"Order Now\" below to submit your order as-is."));
+  const [formAddonNoMessage, setFormAddonNoMessage] = useState<string>(() => readStored<string>(storageKeys.formAddonNoMessage, "No problem - just hit \"Order Now\" below to submit your order as-is."));
   const [formOrderSummaryTitle, setFormOrderSummaryTitle] = useState<string>(() => readStored<string>(storageKeys.formOrderSummaryTitle, "Your Order Summary"));
   const [formAddonPromptEnabled, setFormAddonPromptEnabled] = useState<boolean>(() => readStored<boolean>(storageKeys.formAddonPromptEnabled, true));
   const [formOrderSummaryEnabled, setFormOrderSummaryEnabled] = useState<boolean>(() => readStored<boolean>(storageKeys.formOrderSummaryEnabled, true));
@@ -1658,7 +1658,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const expenseCogs = expenseDeliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
   const expenseNetProfit = expenseRevenue - expenseCogs - totalExpenses;
   const expenseMargin = expenseRevenue === 0 ? 0 : Math.round((expenseNetProfit / expenseRevenue) * 1000) / 10;
-  // Product filter helpers — applied across all finance computations
+  // Product filter helpers - applied across all finance computations
   const productFilterActive = financeProductFilter.length > 0;
   const orderMatchesProductFilter = (order: TrackedOrder) => !productFilterActive || (order.productId != null && financeProductFilter.includes(order.productId));
   const expenseMatchesProductFilter = (expense: ExpenseRecord) => !productFilterActive || (expense.productId == null) || financeProductFilter.includes(expense.productId);
@@ -1777,7 +1777,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       logisticsCost: newLogistics,
       amountRemitted: newRemitted,
       remittanceStatus: status,
-      notes: [orderTimelineNote(`Remittance updated — logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)}, ${status.toLowerCase()}.`), ...(o.notes ?? [])]
+      notes: [orderTimelineNote(`Remittance updated - logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)}, ${status.toLowerCase()}.`), ...(o.notes ?? [])]
     } : o));
     const _rrId = order.id;
     setModal(null);
@@ -1841,7 +1841,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const openNewStockCount = () => {
     const dateLabel = new Date().toLocaleDateString("en-NG", { day: "2-digit", month: "short", year: "numeric" });
-    setStockCountTitleDraft(`Stock Count — ${dateLabel}`);
+    setStockCountTitleDraft(`Stock Count - ${dateLabel}`);
     setStockCountAgentIdsDraft(agents.map((a) => a.id));
     setModal("newStockCount");
   };
@@ -1914,7 +1914,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       )
     })));
     setModal(null);
-    showToast(status === "Verified" ? "Verified — counts match." : status === "Discrepancy" ? "Discrepancy recorded." : "Count saved.");
+    showToast(status === "Verified" ? "Verified - counts match." : status === "Discrepancy" ? "Discrepancy recorded." : "Count saved.");
   };
 
   const openAdjustStockFromCount = (entry: StockCountEntry) => {
@@ -1943,7 +1943,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       balanceAfter: entry.agentCount!,
       agent: entry.agentName,
       by: ownerName,
-      note: `Write-off: ${delta >= 0 ? "+" : ""}${delta} units — ${reasonLabel}. (Stock count reconciliation)`
+      note: `Write-off: ${delta >= 0 ? "+" : ""}${delta} units - ${reasonLabel}. (Stock count reconciliation)`
     }, ...prev]);
     setStockCounts((prev) => prev.map((session) => ({
       ...session,
@@ -2144,7 +2144,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // ===== Bonus engine =====
   // Computes per-order bonus given the rep's weekly delivery rate.
-  // Pure compute (no side-effects) — returns components for transparency.
+  // Pure compute (no side-effects) - returns components for transparency.
   const computeOrderBonus = (
     order: TrackedOrder,
     repWeeklyDeliveryRate: number,
@@ -2163,7 +2163,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const qty = quantityForOrder(order);
     const isManualSourced = order.source === "WhatsApp";
 
-    // Base or manual-source bonus (mutually exclusive — manual wins if WhatsApp)
+    // Base or manual-source bonus (mutually exclusive - manual wins if WhatsApp)
     let base = 0;
     if (isManualSourced) {
       const m = cfg.manualOrderBonuses.find((rule) => rule.quantity === qty)
@@ -2200,7 +2200,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       components.push({ label: `Free gifts (${order.freeGiftLines.length})`, amount: freeGift });
     }
 
-    // Poor delivery rate gate — only base survives
+    // Poor delivery rate gate - only base survives
     if (repWeeklyOrderCount >= cfg.deliveryRateMinOrders && repWeeklyDeliveryRate < cfg.poorDeliveryRatePercent) {
       const total = base;
       return { base, upgrade: 0, crossSell: 0, freeGift: 0, manual: 0, total, components: [{ label: `Base only (rate <${cfg.poorDeliveryRatePercent}%)`, amount: base }] };
@@ -2211,7 +2211,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return { base, upgrade, crossSell, freeGift, manual: 0, total, components };
   };
 
-  // Projected bonus: what the rep would earn IF this order is delivered — ignores status check
+  // Projected bonus: what the rep would earn IF this order is delivered - ignores status check
   const projectedOrderBonus = (order: TrackedOrder) => {
     if (order.bonusManuallyAdjusted && typeof order.manualBonusOverride === "number") {
       return { total: order.manualBonusOverride, components: [{ label: "Manual override", amount: order.manualBonusOverride }] };
@@ -2265,7 +2265,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     : tier === "Fair" ? "bg-amber-100 text-amber-700 border border-amber-200"
     : "bg-red-100 text-red-700 border border-red-200";
 
-  // ===== State performance — every state with at least one period order, grouped =====
+  // ===== State performance - every state with at least one period order, grouped =====
   const financePeriodOrders = trackedOrders.filter((order) => isInPeriod(orderCreatedKey(order), financePeriod, financeDateRange) && orderMatchesProductFilter(order));
   const stateRows = (() => {
     const map = new Map<string, { state: string; total: number; delivered: number; cancelled: number; failed: number; pending: number; revenue: number; cogs: number }>();
@@ -2545,7 +2545,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       perOrder += computeOrderBonus(o, rate, aov, count).total;
     });
-    // Weekly tier bonuses (AOV + delivery rate) — once per week, using each week's strongest rule per product
+    // Weekly tier bonuses (AOV + delivery rate) - once per week, using each week's strongest rule per product
     let weeklyTiers = 0;
     const weeks = repWeeklyStats.get(repId);
     if (weeks) {
@@ -3112,7 +3112,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           })));
         }
       } catch (_) {
-        // API unreachable — continue with localStorage data
+        // API unreachable - continue with localStorage data
       }
     };
 
@@ -3583,7 +3583,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div className="flex-1 min-w-0">
             {range.start || range.end ? (
               <div className="flex items-center gap-1.5 text-sm min-w-0">
-                <span className="font-bold text-[#1A6FBF] shrink-0">{range.start || "—"}</span>
+                <span className="font-bold text-[#1A6FBF] shrink-0">{range.start || "-"}</span>
                 {range.end && <ArrowRight className="w-3 h-3 text-gray-400 shrink-0" />}
                 {range.end && <span className="font-bold text-[#1A6FBF] shrink-0">{range.end}</span>}
               </div>
@@ -3886,14 +3886,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     win.document.write(`<!DOCTYPE html><html><head><title>Waybill ${w.id}</title>
 <style>body{font-family:Arial,sans-serif;margin:40px;color:#111}h1{font-size:20px;margin-bottom:4px}h2{font-size:14px;font-weight:normal;color:#555;margin:0 0 24px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #ddd;padding:8px 12px;text-align:left;font-size:13px}th{background:#f5f5f5;font-weight:600}.badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600}.status-transit{background:#dbeafe;color:#1d4ed8}.status-received{background:#dcfce7;color:#15803d}.status-returned{background:#fef3c7;color:#92400e}.status-cancelled{background:#f3f4f6;color:#6b7280}@media print{button{display:none}}</style></head>
 <body>
-<h1>ProtoHub CRM — Waybill</h1>
+<h1>ProtoHub CRM - Waybill</h1>
 <h2>${w.id} · Printed ${new Date().toLocaleDateString("en-GB")}</h2>
 <table>
 <tr><th>Product</th><td>${w.productName}</td><th>Quantity</th><td>${w.quantity} units</td></tr>
 <tr><th>From</th><td>${w.sendingState}</td><th>To</th><td>${w.receivingState}</td></tr>
-<tr><th>Logistics Partner</th><td>${w.logisticsPartner || "—"}</td><th>Waybill Fee</th><td>${w.waybillFee > 0 ? "₦" + w.waybillFee.toLocaleString() : "—"}</td></tr>
-<tr><th>Date Sent</th><td>${w.dateSent}</td><th>Date Received</th><td>${w.dateReceived || "—"}</td></tr>
-<tr><th>Status</th><td><span class="badge status-${w.status === "In Transit" ? "transit" : w.status === "Received" ? "received" : w.status === "Returned" ? "returned" : "cancelled"}">${w.status}</span></td><th>Notes</th><td>${w.notes || "—"}</td></tr>
+<tr><th>Logistics Partner</th><td>${w.logisticsPartner || "-"}</td><th>Waybill Fee</th><td>${w.waybillFee > 0 ? "₦" + w.waybillFee.toLocaleString() : "-"}</td></tr>
+<tr><th>Date Sent</th><td>${w.dateSent}</td><th>Date Received</th><td>${w.dateReceived || "-"}</td></tr>
+<tr><th>Status</th><td><span class="badge status-${w.status === "In Transit" ? "transit" : w.status === "Received" ? "received" : w.status === "Returned" ? "returned" : "cancelled"}">${w.status}</span></td><th>Notes</th><td>${w.notes || "-"}</td></tr>
 </table>
 <br/><button onclick="window.print()" style="padding:8px 20px;background:#1A6FBF;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px">Print</button>
 </body></html>`);
@@ -4104,7 +4104,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setSelectedProductId(saved.id);
         if (stock > 0) stockApi.update({ productId: saved.id, change: stock, note: "Opening stock" }).catch(() => {});
       })
-      .catch(() => showToast("Product saved locally — sync to database failed."));
+      .catch(() => showToast("Product saved locally - sync to database failed."));
   };
 
   const submitStockUpdate = () => {
@@ -4142,7 +4142,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (actualChange < 0 && nextBalance <= product.reorderPoint && product.warehouseStock > product.reorderPoint) {
       pushSystemNotification({
         type: "low_stock",
-        message: `Low stock: ${product.name} — warehouse down to ${nextBalance} unit${nextBalance === 1 ? "" : "s"} (reorder point: ${product.reorderPoint})`,
+        message: `Low stock: ${product.name} - warehouse down to ${nextBalance} unit${nextBalance === 1 ? "" : "s"} (reorder point: ${product.reorderPoint})`,
         productId: product.id
       });
     }
@@ -4254,7 +4254,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // Does this attached cross-sell appear when the customer is in `state`?
   // Order of precedence:
-  //  1. Per-attachment override on the main product (most specific) — empty list = available everywhere
+  //  1. Per-attachment override on the main product (most specific) - empty list = available everywhere
   //  2. The cross-sell product's own availableStates
   //  3. No restrictions = available everywhere
   // When `state` is empty we don't filter (form not yet committed to a state).
@@ -4536,7 +4536,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       showToast(`${label} copied.`);
     } catch {
-      showToast(`Could not copy ${label} — please copy it manually.`);
+      showToast(`Could not copy ${label} - please copy it manually.`);
     }
   };
 
@@ -4551,7 +4551,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     const candidates = activeSalesRepUsers.length > 0 ? activeSalesRepUsers : salesRepUsers;
     if (candidates.length === 0) {
-      showToast("No sales reps available — order created unassigned. Add a sales rep first.");
+      showToast("No sales reps available - order created unassigned. Add a sales rep first.");
       return undefined;
     }
     return [...candidates].sort((a, b) => {
@@ -4615,7 +4615,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (newWarehouseStock <= product.reorderPoint && product.warehouseStock > product.reorderPoint) {
         pushSystemNotification({
           type: "low_stock",
-          message: `Low stock: ${product.name} — warehouse down to ${newWarehouseStock} unit${newWarehouseStock === 1 ? "" : "s"} (reorder point: ${product.reorderPoint})`,
+          message: `Low stock: ${product.name} - warehouse down to ${newWarehouseStock} unit${newWarehouseStock === 1 ? "" : "s"} (reorder point: ${product.reorderPoint})`,
           productId: product.id
         });
       }
@@ -4850,7 +4850,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setModal(null);
     setCreateOrderContext("admin");
     showToast(`${order.id} created and assigned to ${users.find((user) => user.id === order.assignedRepId)?.name ?? "round-robin queue"}.`);
-    ordersApi.create(order).catch(() => showToast(`${order.id} saved locally — sync failed.`));
+    ordersApi.create(order).catch(() => showToast(`${order.id} saved locally - sync failed.`));
   };
 
   const openOrderModal = (order: TrackedOrder, nextModal: ModalType) => {
@@ -5469,7 +5469,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setModal(null);
     showToast(`Sales rep "${rep.name}" created and added to round-robin.`);
     if (salesRepPassword.trim()) {
-      authApi.invite({ name: rep.name, email: rep.email, password: salesRepPassword.trim(), role: rep.role }).catch(() => showToast("Sales rep saved locally — invite sync failed."));
+      authApi.invite({ name: rep.name, email: rep.email, password: salesRepPassword.trim(), role: rep.role }).catch(() => showToast("Sales rep saved locally - invite sync failed."));
     }
   };
 
@@ -5506,7 +5506,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setAgents((prev) => prev.map((a) => a.id === _agLocalId ? { ...a, id: saved.id } : a));
         setSelectedAgentId(saved.id);
       })
-      .catch(() => showToast(`Agent saved locally — sync failed.`));
+      .catch(() => showToast(`Agent saved locally - sync failed.`));
   };
 
   const openAgentModal = (agent: DeliveryAgentRecord, nextModal: ModalType) => {
@@ -5584,13 +5584,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     if (totalRemoved > currentQuantity) {
-      showToast(`Cannot reconcile ${totalRemoved} units — agent only has ${currentQuantity}.`);
+      showToast(`Cannot reconcile ${totalRemoved} units - agent only has ${currentQuantity}.`);
       return;
     }
 
     const nextQuantity = currentQuantity - totalRemoved;
 
-    // Accumulate defective/missing tallies — do NOT reset to 0
+    // Accumulate defective/missing tallies - do NOT reset to 0
     setAgentStock((value) =>
       value.map((stock) =>
         stock.agentId === selectedAgent.id && stock.productId === reconcileProductId
@@ -5616,7 +5616,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         );
       }
 
-      const noteSuffix = reconcileNotes.trim() ? ` — ${reconcileNotes.trim()}` : "";
+      const noteSuffix = reconcileNotes.trim() ? ` - ${reconcileNotes.trim()}` : "";
       const newMovements: StockMovement[] = [];
 
       // Log return and write-offs as separate movements so the history is readable
@@ -5724,7 +5724,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             balanceAfter: p.warehouseStock + qty,
             agent: selectedAgent.name,
             by: ownerName,
-            note: `Stock returned to warehouse — agent "${selectedAgent.name}" deleted`,
+            note: `Stock returned to warehouse - agent "${selectedAgent.name}" deleted`,
           });
           return { ...p, warehouseStock: p.warehouseStock + qty, agentStock: Math.max(0, p.agentStock - qty) };
         })
@@ -5830,12 +5830,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       balanceAfter: waybillFromType === "Warehouse" ? product.warehouseStock - qty : 0,
       agent: waybillFromType === "Warehouse" ? (toAgent?.name ?? receivingState) : (fromAgent?.name ?? sendingState),
       by: ownerName,
-      note: `Waybill ${record.id}: ${sendingState} → ${receivingState} via ${waybillPartner.trim()}${waybillNote.trim() ? " — " + waybillNote.trim() : ""}`,
+      note: `Waybill ${record.id}: ${sendingState} → ${receivingState} via ${waybillPartner.trim()}${waybillNote.trim() ? " - " + waybillNote.trim() : ""}`,
     }, ...prev]);
 
     setWaybillRecords((prev) => [record, ...prev]);
     setModal(null);
-    showToast(`Waybill created — ${qty} × ${product.name} → ${receivingState}.`);
+    showToast(`Waybill created - ${qty} × ${product.name} → ${receivingState}.`);
     waybillsApi.create({ id: record.id, productId: record.productId, productName: record.productName, quantity: record.quantity, waybillFee: record.waybillFee, fromLocation: record.sendingState, toLocation: record.receivingState, carrier: record.logisticsPartner, agentId: record.toAgentId, notes: record.note, dispatchedDate: record.dateSent }).catch(() => {});
   };
 
@@ -5902,7 +5902,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         balanceAfter: record.fromAgentId ? 0 : product.warehouseStock + record.quantity,
         agent: record.fromAgentId ? agents.find((a) => a.id === record.fromAgentId)?.name ?? record.sendingState : "Warehouse",
         by: ownerName,
-        note: `Waybill ${record.id} cancelled — stock returned to ${record.fromAgentId ? record.sendingState : "warehouse"}`,
+        note: `Waybill ${record.id} cancelled - stock returned to ${record.fromAgentId ? record.sendingState : "warehouse"}`,
       }, ...prev]);
     }
 
@@ -6185,7 +6185,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setModal(null);
     showToast(`User "${userFullName.trim()}" created.`);
     if (userPassword.trim()) {
-      authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), password: userPassword.trim(), role: newUserRole }).catch(() => showToast("User saved locally — invite sync failed."));
+      authApi.invite({ name: userFullName.trim(), email: userEmail.trim(), password: userPassword.trim(), role: newUserRole }).catch(() => showToast("User saved locally - invite sync failed."));
     }
   };
 
@@ -6476,7 +6476,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <td className="px-4 py-3 text-center text-xs text-gray-700">{line.quantity}</td>
                     <td className="px-4 py-3 text-xs text-gray-500 italic">FREE</td>
                     <td className="px-4 py-3 text-right text-xs">
-                      <span className="text-gray-500">—</span>
+                      <span className="text-gray-500">-</span>
                       <button className="!min-h-0 ml-2 text-red-500 hover:text-red-700" onClick={() => removeFreeGift(order.id, line.id)}>×</button>
                     </td>
                   </tr>
@@ -6543,10 +6543,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </ul>
               )}
               {(isDelivered ? earned?.components ?? [] : projected.components).length === 0 && (
-                <p className="text-xs text-gray-400">No bonus rules matched — check product bonus settings.</p>
+                <p className="text-xs text-gray-400">No bonus rules matched - check product bonus settings.</p>
               )}
               {order.bonusManuallyAdjusted && (
-                <p className="text-xs text-amber-700">Manual override active: {formatProductMoney(order.manualBonusOverride ?? 0, order.currency)}{order.manualBonusReason ? ` — ${order.manualBonusReason}` : ""}</p>
+                <p className="text-xs text-amber-700">Manual override active: {formatProductMoney(order.manualBonusOverride ?? 0, order.currency)}{order.manualBonusReason ? ` - ${order.manualBonusReason}` : ""}</p>
               )}
               <div className="flex items-center gap-2 pt-1">
                 <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-blue-300 text-blue-700 text-xs font-semibold hover:bg-blue-50" onClick={() => openManualBonusModal(order)}>{order.bonusManuallyAdjusted ? "Edit Manual Bonus" : "Manual Adjust"}</button>
@@ -6683,17 +6683,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         </article>
       </div>
 
-      {/* Delivery Fee & Remittance — POD cash reconciliation, editable by reps */}
+      {/* Delivery Fee & Remittance - POD cash reconciliation, editable by reps */}
       <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden border-l-4 border-l-emerald-500">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <div>
             <h2 className="text-base font-bold text-gray-900">Delivery Fee & Remittance</h2>
-            <p className="text-xs text-gray-400 font-medium">Add the courier's delivery fee — Amount to Remit auto-fills. Optionally log extra expenses (storekeeper, waybill, etc.).</p>
+            <p className="text-xs text-gray-400 font-medium">Add the courier's delivery fee - Amount to Remit auto-fills. Optionally log extra expenses (storekeeper, waybill, etc.).</p>
           </div>
           <span className={`status-pill status-${slugify(order.remittanceStatus ?? (order.amountRemitted == null ? "Pending" : (order.amountRemitted >= order.amount - (order.logisticsCost ?? 0) ? "Paid" : "Partial")))}`}>{order.remittanceStatus ?? (order.amountRemitted == null ? "Pending" : (order.amountRemitted >= order.amount - (order.logisticsCost ?? 0) ? "Paid" : "Partial"))}</span>
         </div>
         <div className="p-5 space-y-5">
-          {/* Top row — order amount (read), delivery fee (input), amount to remit (auto + editable) */}
+          {/* Top row - order amount (read), delivery fee (input), amount to remit (auto + editable) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Order Amount</label>
@@ -6734,7 +6734,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <h3 className="text-sm font-bold text-gray-800">Extra Expenses <span className="text-gray-400 font-normal">(optional)</span></h3>
-                <p className="text-xs text-gray-400">e.g. storekeeper fee, waybill, additional delivery surcharge — auto-saved to Expenses on save.</p>
+                <p className="text-xs text-gray-400">e.g. storekeeper fee, waybill, additional delivery surcharge - auto-saved to Expenses on save.</p>
               </div>
               <button type="button" onClick={addRepExtraExpense} className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors">
                 <Plus className="w-3 h-3" /> Add expense
@@ -7340,7 +7340,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <div style={{ padding: 10, border: "1px solid #d1d5db", background: "#f9fafb", borderRadius: 12 }}>
                         <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>{formAddonPromptText}</label>
                         <select value={orderFormAddonChoice} onChange={(e) => setOrderFormAddonChoice(e.target.value as "" | "yes" | "no")} style={{ width: "100%", padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 13 }}>
-                          <option value="">— choose —</option>
+                          <option value="">- choose -</option>
                           <option value="yes">{formAddonYesLabel}</option>
                           <option value="no">{formAddonNoLabel}</option>
                         </select>
@@ -7507,8 +7507,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
                 {!collapsed && (
                   <div className="flex flex-col min-w-0">
-                    <span className="font-semibold text-sm leading-tight text-gray-900 truncate">{ownerUser?.name ?? "—"}</span>
-                    <span className="text-[11px] text-gray-500 leading-tight">{ownerUser?.role ?? "—"}</span>
+                    <span className="font-semibold text-sm leading-tight text-gray-900 truncate">{ownerUser?.name ?? "-"}</span>
+                    <span className="text-[11px] text-gray-500 leading-tight">{ownerUser?.role ?? "-"}</span>
                   </div>
                 )}
               </div>
@@ -7544,7 +7544,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               onClick={() => setModal("tokens")}
             >
               <Zap className="w-3.5 h-3.5" />
-              {tokens === 0 ? "0 tokens — Buy more" : `${tokens} tokens`}
+              {tokens === 0 ? "0 tokens - Buy more" : `${tokens} tokens`}
             </button>
             
             <button className="text-gray-600 hover:text-gray-900 relative" onClick={() => setModal("notifications")}>
@@ -7588,7 +7588,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 </div>
               </header>
 
-              {/* Getting-started checklist — shown only for new accounts with no data */}
+              {/* Getting-started checklist - shown only for new accounts with no data */}
               {products.length === 0 && trackedOrders.length === 0 && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 flex flex-col gap-4">
                   <div>
@@ -7797,7 +7797,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                   <div>
                     <h2 className="text-base font-bold text-gray-900 m-0">Dashboard Math Rules</h2>
-                    <p className="text-xs text-gray-400 m-0">Revenue and profit count only after delivery — total orders counts all created orders.</p>
+                    <p className="text-xs text-gray-400 m-0">Revenue and profit count only after delivery - total orders counts all created orders.</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -9069,7 +9069,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <span className="text-gray-900 font-medium">{w.receivingState}</span>
                             </td>
                             <td className="px-4 py-3 text-gray-700">{w.logisticsPartner}</td>
-                            <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.waybillFee > 0 ? `₦${w.waybillFee.toLocaleString()}` : "—"}</td>
+                            <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.waybillFee > 0 ? `₦${w.waybillFee.toLocaleString()}` : "-"}</td>
                             <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{w.dateSent}</td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusColors[w.status]}`}>{w.status}</span>
@@ -9694,7 +9694,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 ))}
               </nav>
 
-              {/* Product filter chips — toggle one or more products to scope every tab's metrics. Empty = all products merged. */}
+              {/* Product filter chips - toggle one or more products to scope every tab's metrics. Empty = all products merged. */}
               <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-4" aria-label="Product filter">
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div>
@@ -9747,7 +9747,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     ))}
                   </section>
 
-                  {/* Cash Position — POD-specific reconciliation between recognized revenue and cash actually received */}
+                  {/* Cash Position - POD-specific reconciliation between recognized revenue and cash actually received */}
                   <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5" aria-label="Cash position">
                     <div className="flex items-start justify-between mb-4">
                       <div>
@@ -9971,7 +9971,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Remittance summary">
                     {[
                       { title: "Expected Remittance", value: formatMoney(totalRemittanceExpected), helper: `From ${financeDeliveredCount} delivered orders`, tone: "blue", icon: HandCoins },
-                      { title: "Cash Received", value: formatMoney(totalRemittanceReceived), helper: totalRemittanceExpected === 0 ? "—" : `${Math.round((totalRemittanceReceived / totalRemittanceExpected) * 100)}% collected`, tone: "green", icon: BadgeCheck },
+                      { title: "Cash Received", value: formatMoney(totalRemittanceReceived), helper: totalRemittanceExpected === 0 ? "-" : `${Math.round((totalRemittanceReceived / totalRemittanceExpected) * 100)}% collected`, tone: "green", icon: BadgeCheck },
                       { title: "Outstanding", value: formatMoney(totalRemittanceOutstanding), helper: `${remittanceRows.filter((r) => r.outstanding > 0).length} partner${remittanceRows.filter((r) => r.outstanding > 0).length === 1 ? "" : "s"} owe you`, tone: "amber", icon: AlertTriangle },
                       { title: "Logistics Fees", value: formatMoney(totalLogisticsCost), helper: "Already deducted by partners", tone: "gray", icon: Truck },
                     ].map(({ title, value, helper, tone, icon: Icon }) => (
@@ -10034,7 +10034,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                 <tr key={row.partnerName} className="hover:bg-gray-50 transition-colors">
                                   <td className="px-4 py-4">
                                     <div className="font-bold text-gray-900">{row.partnerName}</div>
-                                    {row.agentId && <div className="text-xs text-gray-400">{agents.find((a) => a.id === row.agentId)?.zone ?? "—"}</div>}
+                                    {row.agentId && <div className="text-xs text-gray-400">{agents.find((a) => a.id === row.agentId)?.zone ?? "-"}</div>}
                                   </td>
                                   <td className="px-4 py-4 text-gray-700">{row.orderCount}</td>
                                   <td className="px-4 py-4 text-gray-700">{formatMoney(row.revenue)}</td>
@@ -10045,7 +10045,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <td className="px-4 py-4">
                                     {row.outstanding > 0
                                       ? (() => { const ag = remittanceAgingLabel(row.oldestUnpaidDays); return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${ag.cls}`}>{ag.label}</span>; })()
-                                      : <span className="text-gray-300 text-xs">—</span>}
+                                      : <span className="text-gray-300 text-xs">-</span>}
                                   </td>
                                   <td className="px-4 py-4"><span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${pctTone}`}>{pct}%</span></td>
                                 </tr>
@@ -10061,8 +10061,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               <td className="px-4 py-3 text-blue-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.expected, 0))}</td>
                               <td className="px-4 py-3 text-green-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.remitted, 0))}</td>
                               <td className="px-4 py-3 text-amber-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.outstanding, 0))}</td>
-                              <td className="px-4 py-3 text-gray-700">—</td>
-                              <td className="px-4 py-3 text-gray-700">—</td>
+                              <td className="px-4 py-3 text-gray-700">-</td>
+                              <td className="px-4 py-3 text-gray-700">-</td>
                             </tr>
                           )}
                         </tbody>
@@ -10266,7 +10266,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <span className="w-8 h-8 rounded-lg bg-green-50 text-green-600 flex items-center justify-center"><BadgeCheck className="w-4 h-4" /></span>
                         <div>
                           <h2 className="text-sm font-bold text-gray-800">Top States</h2>
-                          <p className="text-xs text-gray-400">≥60% delivery rate — scale ads here</p>
+                          <p className="text-xs text-gray-400">≥60% delivery rate - scale ads here</p>
                         </div>
                       </div>
                       {topStateRows.length === 0 ? (
@@ -10294,7 +10294,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <span className="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center"><AlertTriangle className="w-4 h-4" /></span>
                         <div>
                           <h2 className="text-sm font-bold text-gray-800">Worst States</h2>
-                          <p className="text-xs text-gray-400">&lt;50% delivery rate — pause ads or screen leads harder</p>
+                          <p className="text-xs text-gray-400">&lt;50% delivery rate - pause ads or screen leads harder</p>
                         </div>
                       </div>
                       {worstStateRows.length === 0 ? (
@@ -10322,7 +10322,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
                       <div>
-                        <h2 className="text-sm font-bold text-gray-800">All States — {selectedFinancePeriodLabel}</h2>
+                        <h2 className="text-sm font-bold text-gray-800">All States - {selectedFinancePeriodLabel}</h2>
                         <p className="text-xs text-gray-400">{stateRows.length} state{stateRows.length === 1 ? "" : "s"} active{productFilterActive ? ` · filtered to ${financeProductFilter.length} product${financeProductFilter.length === 1 ? "" : "s"}` : ""}</p>
                       </div>
                     </div>
@@ -10364,7 +10364,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="space-y-6">
               <header className="flex flex-col gap-1">
                 <h1 className="text-2xl font-bold text-[#1A6FBF]">Ad Tracking</h1>
-                <p className="text-sm font-medium text-gray-500">Orders placed via tracked links — grouped by campaign and creative</p>
+                <p className="text-sm font-medium text-gray-500">Orders placed via tracked links - grouped by campaign and creative</p>
               </header>
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 flex items-start gap-4">
                 <span className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0"><BookOpen className="w-5 h-5" /></span>
@@ -10571,7 +10571,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   <td colSpan={7} className="px-6 py-4">
                                     <div className="flex items-start justify-between gap-3 mb-3">
                                       <div>
-                                        <p className="text-sm font-semibold text-gray-900">{user.name} — Permissions</p>
+                                        <p className="text-sm font-semibold text-gray-900">{user.name} - Permissions</p>
                                         {isOwner && <p className="text-xs text-gray-500 mt-0.5">Owner always has full access. Permissions cannot be changed.</p>}
                                         {!isOwner && <p className="text-xs text-gray-500 mt-0.5">Toggle individual permissions for this user.</p>}
                                       </div>
@@ -10643,7 +10643,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     const rotated = [...reps.slice(1), first];
                     return [...nonReps, ...rotated];
                   });
-                  showToast(`Round-robin advanced — ${reps[1]?.name ?? reps[0].name} is now #1 in the sequence.`);
+                  showToast(`Round-robin advanced - ${reps[1]?.name ?? reps[0].name} is now #1 in the sequence.`);
                 }}>
                   <Repeat2 className="w-4 h-4" /> Advance Sequence
                 </button>
@@ -10806,7 +10806,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div>
                           <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><ShoppingBag className="w-4 h-4 text-amber-600" /> Add-ons offered with this product</p>
-                          <p className="text-xs text-gray-500 mt-0.5">Tick any product to offer it as an add-on. Set the bundle price and the states it sells in — that's it.</p>
+                          <p className="text-xs text-gray-500 mt-0.5">Tick any product to offer it as an add-on. Set the bundle price and the states it sells in - that's it.</p>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-200/70 text-amber-900 font-semibold">{(previewProduct.crossSellProductIds ?? []).length} attached</span>
@@ -10817,7 +10817,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         const eligibles = products.filter((p) => p.id !== previewProduct.id);
                         const selected = previewProduct.crossSellProductIds ?? [];
                         if (eligibles.length === 0) {
-                          return <p className="text-xs text-amber-700 bg-white border border-amber-200 rounded-lg px-3 py-2">No other products yet. Click <strong>New product</strong> above to create one — it'll show here instantly.</p>;
+                          return <p className="text-xs text-amber-700 bg-white border border-amber-200 rounded-lg px-3 py-2">No other products yet. Click <strong>New product</strong> above to create one - it'll show here instantly.</p>;
                         }
                         return (
                           <div className="flex flex-col gap-2">
@@ -10918,7 +10918,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         const eligibles = products.filter((p) => p.id !== previewProduct.id);
                         const selected = previewProduct.freeGiftProductIds ?? [];
                         if (eligibles.length === 0) {
-                          return <p className="text-xs text-emerald-700 bg-white border border-emerald-200 rounded-lg px-3 py-2">No other products yet. Click <strong>New product</strong> above to create one — it'll show here instantly.</p>;
+                          return <p className="text-xs text-emerald-700 bg-white border border-emerald-200 rounded-lg px-3 py-2">No other products yet. Click <strong>New product</strong> above to create one - it'll show here instantly.</p>;
                         }
                         return (
                           <div className="flex flex-col gap-2">
@@ -10990,7 +10990,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5"><Pencil className="w-4 h-4 text-blue-600" /> Marketing message on this product's form</p>
                         <p className="text-xs text-gray-500 mt-0.5">Anything you write here shows above the package picker on the order form. Great for benefits, urgency, or guarantees.</p>
                       </div>
-                      <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} — sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} />
+                      <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white" rows={3} placeholder={`e.g. ✨ ${previewProduct.name} - sold out 3 times this month. Limited stock left.`} value={previewProduct.formCustomText ?? ""} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === previewProduct.id ? { ...p, formCustomText: e.target.value } : p))} />
                     </div>
                   )}
 
@@ -11025,7 +11025,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <label className="flex flex-col gap-1">
                           <span className="text-xs font-semibold text-gray-600">"Yes" option label</span>
-                          <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" value={formAddonYesLabel} onChange={(e) => setFormAddonYesLabel(e.target.value)} placeholder="Yes — show me add-ons" />
+                          <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" value={formAddonYesLabel} onChange={(e) => setFormAddonYesLabel(e.target.value)} placeholder="Yes - show me add-ons" />
                         </label>
                         <label className="flex flex-col gap-1">
                           <span className="text-xs font-semibold text-gray-600">"No" option label</span>
@@ -11034,7 +11034,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                       <label className="flex flex-col gap-1">
                         <span className="text-xs font-semibold text-gray-600">Message shown when customer picks "No"</span>
-                        <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" value={formAddonNoMessage} onChange={(e) => setFormAddonNoMessage(e.target.value)} placeholder="No problem — just hit Order Now below" />
+                        <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm" value={formAddonNoMessage} onChange={(e) => setFormAddonNoMessage(e.target.value)} placeholder="No problem - just hit Order Now below" />
                       </label>
                       <label className="flex flex-col gap-1">
                         <span className="text-xs font-semibold text-gray-600">Order Summary heading</span>
@@ -11120,7 +11120,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <div className="flex flex-wrap items-center gap-3 pt-1">
                     <button className="flex items-center gap-2 px-4 py-2 bg-[#1A6FBF] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={() => showToast("Embed form settings saved.")}>Save changes</button>
                     {readyEmbedProducts.length === 0 ? (
-                      <span className="text-sm text-gray-400">Preview unavailable — create a product with packages first.</span>
+                      <span className="text-sm text-gray-400">Preview unavailable - create a product with packages first.</span>
                     ) : (
                       <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors" onClick={() => { setShowOrderPreview((v) => !v); setOrderFormPackageId(previewPackages[0]?.id || ""); setOrderFormConfirmed(false); setOrderFormCommitmentAccepted(false); }}>
                         <ExternalLink className="w-4 h-4" /> {showOrderPreview ? "Hide preview" : "Preview form"}
@@ -11187,7 +11187,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <input type="radio" name="preview-package" className="mt-0.5 accent-[#1A6FBF]" checked={orderFormPackageId === item.id} onChange={() => setOrderFormPackageId(item.id)} />
                             <div>
                               <strong className="text-sm font-bold text-gray-900">{showPackageName ? item.name : `${previewProduct.name} x${item.quantity}`}</strong>
-                              <p className="text-xs text-gray-500 mt-0.5">{item.description || "Pay on delivery"} — {formatProductMoney(item.price, item.currency)}</p>
+                              <p className="text-xs text-gray-500 mt-0.5">{item.description || "Pay on delivery"} - {formatProductMoney(item.price, item.currency)}</p>
                             </div>
                           </label>
                         ))}
@@ -11201,7 +11201,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <div className="rounded-xl border border-gray-300 bg-gray-50 p-3">
                             <label className="block text-xs font-semibold text-gray-700 mb-1.5">{formAddonPromptText}</label>
                             <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white" value={orderFormAddonChoice} onChange={(e) => setOrderFormAddonChoice(e.target.value as "" | "yes" | "no")}>
-                              <option value="">— choose —</option>
+                              <option value="">- choose -</option>
                               <option value="yes">{formAddonYesLabel}</option>
                               <option value="no">{formAddonNoLabel}</option>
                             </select>
@@ -11505,7 +11505,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <strong className="text-3xl font-bold text-gray-900">{tokens}</strong>
                     <span className="text-sm text-gray-500">tokens</span>
                   </div>
-                  <p className="flex items-center gap-1.5 text-xs font-medium text-amber-600 mt-2"><AlertTriangle className="w-3.5 h-3.5" /> Low balance — buy more tokens to keep AI calls and SMS running</p>
+                  <p className="flex items-center gap-1.5 text-xs font-medium text-amber-600 mt-2"><AlertTriangle className="w-3.5 h-3.5" /> Low balance - buy more tokens to keep AI calls and SMS running</p>
                 </div>
                 <span className="w-12 h-12 rounded-full bg-amber-100 text-amber-500 flex items-center justify-center shrink-0"><Zap className="w-6 h-6" /></span>
               </div>
@@ -11679,9 +11679,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {(() => {
                     const ownerUser = users.find((u) => u.role === "Owner") ?? users[0];
                     return [
-                      { label: "Name", value: ownerUser?.name ?? "—" },
-                      { label: "Email", value: ownerUser?.email ?? "—" },
-                      { label: "Role", value: ownerUser?.role ?? "—" },
+                      { label: "Name", value: ownerUser?.name ?? "-" },
+                      { label: "Email", value: ownerUser?.email ?? "-" },
+                      { label: "Role", value: ownerUser?.role ?? "-" },
                     ];
                   })().map(({ label, value }) => (
                     <div key={label} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
@@ -11805,7 +11805,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <div className="flex flex-col gap-1">
                     <button className="flex items-center gap-1 text-sm text-[#1A6FBF] font-medium hover:underline w-fit" onClick={() => setInventoryView("dashboard")}><ArrowRight className="w-4 h-4 rotate-180" /> Back to Inventory</button>
                     <h1 className="text-2xl font-bold text-[#1A6FBF]">Manage Packages</h1>
-                    <p className="text-sm font-medium text-gray-500">{selectedProduct.name} — configure public order packages and bundle pricing.</p>
+                    <p className="text-sm font-medium text-gray-500">{selectedProduct.name} - configure public order packages and bundle pricing.</p>
                   </div>
                   <button className="flex items-center gap-2 px-4 py-2 bg-[#1A6FBF] text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors" onClick={openAddPackage}><PackagePlus className="w-4 h-4" /> Create Package</button>
                 </header>
@@ -11930,12 +11930,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                               <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{entry.agentName}</td>
                                               <td className="px-4 py-3 text-gray-700">{entry.productName}</td>
                                               <td className="px-4 py-3 text-gray-600">{entry.systemQty}</td>
-                                              <td className="px-4 py-3">{entry.agentCount !== undefined ? <span className="font-semibold text-gray-900">{entry.agentCount}</span> : <span className="text-gray-400 italic">—</span>}</td>
-                                              <td className="px-4 py-3">{entry.adminCount !== undefined ? <span className="font-semibold text-gray-900">{entry.adminCount}</span> : <span className="text-gray-400 italic">—</span>}</td>
+                                              <td className="px-4 py-3">{entry.agentCount !== undefined ? <span className="font-semibold text-gray-900">{entry.agentCount}</span> : <span className="text-gray-400 italic">-</span>}</td>
+                                              <td className="px-4 py-3">{entry.adminCount !== undefined ? <span className="font-semibold text-gray-900">{entry.adminCount}</span> : <span className="text-gray-400 italic">-</span>}</td>
                                               <td className="px-4 py-3">
                                                 {entry.variance !== undefined ? (
                                                   <span className={`font-bold ${entry.variance === 0 ? "text-green-600" : "text-red-600"}`}>{entry.variance > 0 ? "+" : ""}{entry.variance}</span>
-                                                ) : <span className="text-gray-400">—</span>}
+                                                ) : <span className="text-gray-400">-</span>}
                                               </td>
                                               <td className="px-4 py-3">
                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${statusCls}`}>{entry.status}</span>
@@ -12087,7 +12087,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                     <button className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-blue-600 transition-colors" title="Packages" onClick={() => openPackagesView(product)}><PackageCheck className="w-4 h-4" /></button>
                                     <button className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-blue-600 transition-colors" title="Preview order form" onClick={() => previewProductForm(product)}><Globe className="w-4 h-4" /></button>
                                     <button className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-blue-600 transition-colors" title="Duplicate (clones pricing, packages, bonus, states)" onClick={() => duplicateProduct(product)}><Copy className="w-4 h-4" /></button>
-                                    <button className={`p-1.5 rounded transition-colors ${product.active ? "text-emerald-600 hover:bg-emerald-50" : "text-gray-400 hover:bg-gray-100"}`} title={product.active ? "Active — click to deactivate" : "Inactive — click to activate"} onClick={() => toggleProductActive(product)}>{product.active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}</button>
+                                    <button className={`p-1.5 rounded transition-colors ${product.active ? "text-emerald-600 hover:bg-emerald-50" : "text-gray-400 hover:bg-gray-100"}`} title={product.active ? "Active - click to deactivate" : "Inactive - click to activate"} onClick={() => toggleProductActive(product)}>{product.active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}</button>
                                     <button className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors" title="Delete product" onClick={() => openDeleteProduct(product)}><Trash2 className="w-4 h-4" /></button>
                                   </div>
                                 </td>
@@ -12221,7 +12221,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                {modal === "deleteAgent" && "Delete Agent"}
 	                {modal === "salesRepDetails" && "Sales Rep Profile"}
 	                {modal === "editSalesRep" && "Edit Sales Rep"}
-	                {modal === "recordRemittance" && remittanceTargetOrder && `Record Remittance — ${remittanceTargetOrder.id}`}
+	                {modal === "recordRemittance" && remittanceTargetOrder && `Record Remittance - ${remittanceTargetOrder.id}`}
 	                {modal === "bonusSettings" && "Bonus Settings"}
 	                {modal === "stateAvailability" && "State Availability"}
 	                {modal === "addCrossSell" && "Add Cross-sell"}
@@ -12234,7 +12234,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 {modal === "flagCustomer" && "Flag Customer"}
                 {modal === "newStockCount" && "New Stock Count Session"}
                 {modal === "stockCountEntry" && "Enter Stock Counts"}
-                {modal === "adjustStockCount" && "Adjust Stock — Write-off Reason"}
+                {modal === "adjustStockCount" && "Adjust Stock - Write-off Reason"}
 	              </h2>
               <button className="!min-h-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" aria-label="Close dialog" onClick={closeModal}><X className="w-5 h-5" /></button>
             </div>
@@ -12321,7 +12321,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	            {modal === "scheduleOrder" && selectedOrder && (
 	              <div className="modal-form">
-	                <p className="text-sm text-gray-600">Choose a delivery window for <strong>{selectedOrder.id}</strong> — {selectedOrder.customer}.</p>
+	                <p className="text-sm text-gray-600">Choose a delivery window for <strong>{selectedOrder.id}</strong> - {selectedOrder.customer}.</p>
 	                <div className="flex flex-wrap gap-2">
 	                  {scheduleRanges.map((range) => (
 	                    <button key={range} className={`!min-h-0 flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold border transition-colors ${normalizeDateKey(selectedOrder.scheduledDate) === scheduleDateForRange(range) ? "border-[#1A6FBF] bg-blue-50 text-[#1A6FBF]" : "border-gray-200 text-gray-700 hover:bg-gray-50"}`} onClick={() => { scheduleOrder(selectedOrder.id, range); closeModal(); }}>
@@ -12370,7 +12370,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	            {modal === "orderDetails" && selectedOrder && (
 	              <div className="px-6 py-5 flex flex-col gap-6">
-	                {/* Owner/admin always has full permissions — Reassign + Change Status always visible */}
+	                {/* Owner/admin always has full permissions - Reassign + Change Status always visible */}
 	                <div className="flex items-center justify-between gap-2 flex-wrap">
 	                  <div className="flex items-center gap-2 flex-wrap">
 	                    <span className="text-xs text-gray-400 font-medium">Quick Actions:</span>
@@ -12498,7 +12498,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                            <td className="px-4 py-2 text-center text-gray-700 text-xs">{line.quantity}</td>
 	                            <td className="px-4 py-2 text-right text-gray-700 text-xs italic">FREE</td>
 	                            <td className="px-4 py-2 text-right text-xs">
-	                              <span className="text-gray-500">—</span>
+	                              <span className="text-gray-500">-</span>
 	                              <button className="!min-h-0 ml-2 text-red-500 hover:text-red-700" onClick={() => removeFreeGift(selectedOrder.id, line.id)}>×</button>
 	                            </td>
 	                          </tr>
@@ -12564,10 +12564,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                          </ul>
 	                        )}
 	                        {displaySO.components.length === 0 && (
-	                          <p className="text-xs text-gray-400">No bonus rules matched — check product bonus settings.</p>
+	                          <p className="text-xs text-gray-400">No bonus rules matched - check product bonus settings.</p>
 	                        )}
 	                        {selectedOrder.bonusManuallyAdjusted && (
-	                          <p className="text-xs text-amber-700">Manual override active: {formatProductMoney(selectedOrder.manualBonusOverride ?? 0, selectedOrder.currency)}{selectedOrder.manualBonusReason ? ` — ${selectedOrder.manualBonusReason}` : ""}</p>
+	                          <p className="text-xs text-amber-700">Manual override active: {formatProductMoney(selectedOrder.manualBonusOverride ?? 0, selectedOrder.currency)}{selectedOrder.manualBonusReason ? ` - ${selectedOrder.manualBonusReason}` : ""}</p>
 	                        )}
 	                        <div className="flex items-center gap-2 pt-1">
 	                          <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-blue-300 text-blue-700 text-xs font-semibold hover:bg-blue-50" onClick={() => openManualBonusModal(selectedOrder)}>{selectedOrder.bonusManuallyAdjusted ? "Edit Manual Bonus" : "Manual Adjust"}</button>
@@ -12628,7 +12628,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                  })()}
 	                </section>
 	
-	                {/* Section 6: Notes — only when notes exist */}
+	                {/* Section 6: Notes - only when notes exist */}
 	                {(selectedOrder.notes ?? []).length > 0 && (
 	                  <section>
 	                    <h3 className="font-semibold text-base border-b border-gray-100 pb-2 mb-3">Notes</h3>
@@ -12741,7 +12741,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	              <div className="modal-form">
 	                <label><span>Current Status</span><input value={selectedOrder.status ?? "New"} readOnly /></label>
 	                <label><span>New Status *</span><select value={statusChangeDraft} onChange={(event) => setStatusChangeDraft(event.target.value as Exclude<OrderStatus, "All Orders">)}>{repChangeStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
-	                <label><span>Call Outcome</span><select value={callOutcomeDraft} onChange={(e) => setCallOutcomeDraft(e.target.value as CallOutcome | "")}><option value="">— Not recorded —</option>{(["Confirmed","No Answer","Wrong Number","Refused","Scheduled Callback","Not Reached"] as CallOutcome[]).map((o) => <option key={o} value={o}>{o}</option>)}</select></label>
+	                <label><span>Call Outcome</span><select value={callOutcomeDraft} onChange={(e) => setCallOutcomeDraft(e.target.value as CallOutcome | "")}><option value="">- Not recorded -</option>{(["Confirmed","No Answer","Wrong Number","Refused","Scheduled Callback","Not Reached"] as CallOutcome[]).map((o) => <option key={o} value={o}>{o}</option>)}</select></label>
 	                <label><span>Reason for Status Change *</span><textarea value={statusChangeReason} onChange={(event) => setStatusChangeReason(event.target.value)} placeholder="Customer confirmed after call, no answer, requested later delivery..." /></label>
 	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitRepStatusChange}>Change Status</button></div>
 	              </div>
@@ -12959,7 +12959,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     {historicalOrders.length > 0 && (
                       <div className="flex items-start gap-3 px-4 py-3 bg-gray-50">
                         <span className="mt-0.5 font-bold text-base text-gray-400">○</span>
-                        <p className="text-gray-600 font-medium">{historicalOrders.length} historical order{historicalOrders.length !== 1 ? "s" : ""} — kept, product name already saved on each</p>
+                        <p className="text-gray-600 font-medium">{historicalOrders.length} historical order{historicalOrders.length !== 1 ? "s" : ""} - kept, product name already saved on each</p>
                       </div>
                     )}
                     {agentUnits > 0 && (
@@ -12975,7 +12975,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       </div>
                     )}
                   </div>
-                  {blocked && <p className="text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">Cannot delete — {activeOrders.length} active order{activeOrders.length !== 1 ? "s" : ""} must be completed or cancelled first.</p>}
+                  {blocked && <p className="text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">Cannot delete - {activeOrders.length} active order{activeOrders.length !== 1 ? "s" : ""} must be completed or cancelled first.</p>}
                   <div className="flex items-center justify-end gap-3 pt-1">
                     <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
                     <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled={blocked} onClick={deleteSelectedProduct}>Delete Product</button>
@@ -13024,25 +13024,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <div className="px-6 py-5 flex flex-col gap-4">
                   <div>
                     <p className="font-semibold text-gray-900">Delete package <strong>{selectedPackage.name}</strong>?</p>
-                    <p className="text-sm text-gray-500 mt-1">Package name is already saved on existing orders — history is preserved.</p>
+                    <p className="text-sm text-gray-500 mt-1">Package name is already saved on existing orders - history is preserved.</p>
                   </div>
                   {(activeUsingPackage.length > 0 || ordersUsingPackage.length > 0) && (
                     <div className="rounded-lg border border-gray-200 divide-y divide-gray-100 text-sm overflow-hidden">
                       {activeUsingPackage.length > 0 && (
                         <div className="flex items-start gap-3 px-4 py-3 bg-red-50">
                           <span className="mt-0.5 font-bold text-base text-red-500">◈</span>
-                          <p className="text-red-800 font-medium">{activeUsingPackage.length} active order{activeUsingPackage.length !== 1 ? "s" : ""} still using this package — complete or cancel them first</p>
+                          <p className="text-red-800 font-medium">{activeUsingPackage.length} active order{activeUsingPackage.length !== 1 ? "s" : ""} still using this package - complete or cancel them first</p>
                         </div>
                       )}
                       {ordersUsingPackage.length - activeUsingPackage.length > 0 && (
                         <div className="flex items-start gap-3 px-4 py-3 bg-gray-50">
                           <span className="mt-0.5 font-bold text-base text-gray-400">○</span>
-                          <p className="text-gray-600 font-medium">{ordersUsingPackage.length - activeUsingPackage.length} historical order{ordersUsingPackage.length - activeUsingPackage.length !== 1 ? "s" : ""} — unaffected, name already saved</p>
+                          <p className="text-gray-600 font-medium">{ordersUsingPackage.length - activeUsingPackage.length} historical order{ordersUsingPackage.length - activeUsingPackage.length !== 1 ? "s" : ""} - unaffected, name already saved</p>
                         </div>
                       )}
                     </div>
                   )}
-                  {blocked && <p className="text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">Cannot delete — {activeUsingPackage.length} active order{activeUsingPackage.length !== 1 ? "s" : ""} must be completed or cancelled first.</p>}
+                  {blocked && <p className="text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">Cannot delete - {activeUsingPackage.length} active order{activeUsingPackage.length !== 1 ? "s" : ""} must be completed or cancelled first.</p>}
                   <div className="flex items-center justify-end gap-3 pt-1">
                     <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
                     <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled={blocked} onClick={deleteSelectedPackage}>Delete Package</button>
@@ -13117,7 +13117,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                    const product = products.find((item) => item.id === stock.productId);
 	                    const pricing = product ? primaryPricing(product) : undefined;
 	                    const stockValue = stock.quantity * (pricing?.sellingPrice ?? 0);
-	                    return <p key={`${stock.agentId}-${stock.productId}`}><strong>{product?.name ?? "Unknown product"}</strong><br />Available {stock.quantity} · Defective {stock.defective} · Missing {stock.missing} · Value {pricing ? formatProductMoney(stockValue, pricing.currency) : "—"}</p>;
+	                    return <p key={`${stock.agentId}-${stock.productId}`}><strong>{product?.name ?? "Unknown product"}</strong><br />Available {stock.quantity} · Defective {stock.defective} · Missing {stock.missing} · Value {pricing ? formatProductMoney(stockValue, pricing.currency) : "-"}</p>;
 	                  })}
 	                </section>
 	                <div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("assignAgentStock")}>Assign Stock</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => setModal("reconcileAgentStock")}>Reconcile</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button></div>
@@ -13306,13 +13306,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	                            {agentStockRows.map((s) => {
 	                              const name = products.find((p) => p.id === s.productId)?.name ?? s.productId;
 	                              return `${s.quantity} × ${name}`;
-	                            }).join(" · ")} — will be returned to warehouse automatically.
+	                            }).join(" · ")} - will be returned to warehouse automatically.
 	                          </p>
 	                        )}
 	                      </div>
 	                    </div>
 
-	                    {/* Active orders — blocker */}
+	                    {/* Active orders - blocker */}
 	                    <div className={`flex items-start gap-3 px-4 py-3 ${blocked ? "bg-red-50" : "bg-gray-50"}`}>
 	                      <span className={`mt-0.5 font-bold text-lg leading-none ${blocked ? "text-red-500" : "text-gray-400"}`}>◈</span>
 	                      <div>
@@ -13343,7 +13343,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
 	                  {blocked && (
 	                    <p className="text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-	                      Cannot delete — reassign the {activeOrders.length} active order{activeOrders.length !== 1 ? "s" : ""} first.
+	                      Cannot delete - reassign the {activeOrders.length} active order{activeOrders.length !== 1 ? "s" : ""} first.
 	                    </p>
 	                  )}
 
@@ -13359,7 +13359,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 	              <div className="px-6 py-5 flex flex-col gap-4"><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Name</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.name}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Email</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.email}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Status</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.active ? "Active" : "Inactive"}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Joined</span><strong className="text-sm font-semibold text-gray-900">{selectedSalesRep.created}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Orders</span><strong className="text-sm font-semibold text-gray-900">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).length}</strong></article><article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Revenue</span><strong className="text-sm font-semibold text-gray-900">{formatMoney(trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id && (order.status ?? "New") === "Delivered").reduce((sum, order) => sum + order.amount, 0))}</strong></article></div><section className="flex flex-col gap-2 max-h-44 overflow-y-auto">{trackedOrders.filter((order) => order.assignedRepId === selectedSalesRep.id).slice(0, 5).map((order) => <p key={order.id}><strong>{order.id}</strong> · {order.customer} · {order.status ?? "New"} · {order.source ?? orderSourceFromUtm(order.utmSource)}</p>)}</section><div className="flex items-center justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={() => { setSalesRepName(selectedSalesRep.name); setSalesRepEmail(selectedSalesRep.email); setSalesRepActive(selectedSalesRep.active); setModal("editSalesRep"); }}>Edit Profile</button><button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1A6FBF] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => {
                         const repOrders = trackedOrders.filter((o) => o.assignedRepId === selectedSalesRep.id);
                         const rows = [
-                          [`Sales Rep Report — ${selectedSalesRep.name}`],
+                          [`Sales Rep Report - ${selectedSalesRep.name}`],
                           ["Email", selectedSalesRep.email],
                           ["Total Orders", String(repOrders.length)],
                           ["Delivered", String(repOrders.filter((o) => (o.status ?? "New") === "Delivered").length)],
@@ -13536,7 +13536,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     {historicalOrders.length > 0 && (
                       <div className="flex items-start gap-3 px-4 py-3 bg-gray-50">
                         <span className="mt-0.5 font-bold text-base text-gray-400">○</span>
-                        <p className="text-gray-600 font-medium">{historicalOrders.length} historical order{historicalOrders.length !== 1 ? "s" : ""} — kept, rep assignment will be cleared</p>
+                        <p className="text-gray-600 font-medium">{historicalOrders.length} historical order{historicalOrders.length !== 1 ? "s" : ""} - kept, rep assignment will be cleared</p>
                       </div>
                     )}
                     {selectedUser.role === "Owner" && (
@@ -13611,7 +13611,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <input type="checkbox" checked={Boolean(product.canBeFreeGift)} onChange={(e) => setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, canBeFreeGift: e.target.checked } : p))} />
                         <span className="text-gray-700">Also available as free gift on other products</span>
                       </label>
-                      <p className="text-[10px] text-gray-500 italic mt-1">A Main product can be ticked here too — it can be sold on its own AND offered as an add-on on another product's form.</p>
+                      <p className="text-[10px] text-gray-500 italic mt-1">A Main product can be ticked here too - it can be sold on its own AND offered as an add-on on another product's form.</p>
                     </div>
                   </header>
 
@@ -13760,7 +13760,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                           );
                                         })}
                                       </div>
-                                      <p className="text-[10px] text-gray-500 italic mt-2">When the customer picks a state outside this list, this add-on is hidden — but the main product is still sold.</p>
+                                      <p className="text-[10px] text-gray-500 italic mt-2">When the customer picks a state outside this list, this add-on is hidden - but the main product is still sold.</p>
                                     </div>
                                   </details>
                                 )}
@@ -13868,7 +13868,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <div className="flex items-center justify-between">
                       <div>
                         <strong className="text-sm">4. Weekly AOV Bonus</strong>
-                        <p className="text-[11px] text-gray-500">Average order value tiers — one-time weekly payout when threshold reached.</p>
+                        <p className="text-[11px] text-gray-500">Average order value tiers - one-time weekly payout when threshold reached.</p>
                       </div>
                       <button className="!min-h-0 text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, aovBonuses: [...c.aovBonuses, { id: makeBonusRuleId(), threshold: 0, amount: 0 }] }))}>+ Add</button>
                     </div>
@@ -13913,7 +13913,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       ))}
                     </div>
                     <label className="text-xs flex items-center gap-2 pt-1">
-                      <span className="text-gray-600">Poor delivery rate threshold (%) — only base bonus paid below this</span>
+                      <span className="text-gray-600">Poor delivery rate threshold (%) - only base bonus paid below this</span>
                       <input className="w-16 border border-gray-200 rounded px-2 py-1" inputMode="numeric" value={cfg.poorDeliveryRatePercent} onChange={(e) => updateProductBonusConfig(product.id, (c) => ({ ...c, poorDeliveryRatePercent: Number(e.target.value) || 0 }))} />
                     </label>
                   </section>
@@ -14004,7 +14004,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <label><span>Product</span>
                     <select value={crossSellProductId} onChange={(e) => setCrossSellProductId(e.target.value)}>
                       <option value="">Select a product</option>
-                      {crossSellOptions.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatProductMoney(primaryPricing(p)?.sellingPrice ?? 0, primaryPricing(p)?.currency ?? "NGN")} {p.role && p.role !== "Main" ? `(${p.role})` : ""}</option>)}
+                      {crossSellOptions.map((p) => <option key={p.id} value={p.id}>{p.name} - {formatProductMoney(primaryPricing(p)?.sellingPrice ?? 0, primaryPricing(p)?.currency ?? "NGN")} {p.role && p.role !== "Main" ? `(${p.role})` : ""}</option>)}
                     </select>
                   </label>
                   <div className="grid grid-cols-2 gap-3">
@@ -14335,7 +14335,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <p className="text-sm text-gray-600">This creates a snapshot of current agent stock quantities. You'll then enter what each agent physically reports to reconcile.</p>
                 <label>
                   <span>Session Title</span>
-                  <input type="text" value={stockCountTitleDraft} onChange={(e) => setStockCountTitleDraft(e.target.value)} placeholder="e.g., End of Month Count — May 2026" />
+                  <input type="text" value={stockCountTitleDraft} onChange={(e) => setStockCountTitleDraft(e.target.value)} placeholder="e.g., End of Month Count - May 2026" />
                 </label>
                 <div className="flex flex-col gap-2">
                   <span className="text-sm font-semibold text-gray-700">Include Agents</span>
@@ -14353,7 +14353,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             onChange={(e) => setStockCountAgentIdsDraft((prev) => e.target.checked ? [...prev, agent.id] : prev.filter((id) => id !== agent.id))}
                           />
                           <span className="font-medium">{agent.name}</span>
-                          <span className="text-gray-400 text-xs">— {agent.zone}</span>
+                          <span className="text-gray-400 text-xs">- {agent.zone}</span>
                         </label>
                       ))
                     )}
@@ -14387,7 +14387,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <div className={`rounded-lg p-3 border ${wouldVerify ? "bg-green-50 border-green-200" : wouldDiscrepancy ? "bg-red-50 border-red-200" : "bg-gray-50 border-gray-200"}`}>
                       <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Variance</p>
                       <strong className={`text-xl font-bold ${wouldVerify ? "text-green-600" : wouldDiscrepancy ? "text-red-600" : "text-gray-400"}`}>
-                        {bothFilled ? (() => { const v = parseInt(agentCountDraft, 10) - parseInt(adminCountDraft, 10); return (v > 0 ? "+" : "") + v; })() : "—"}
+                        {bothFilled ? (() => { const v = parseInt(agentCountDraft, 10) - parseInt(adminCountDraft, 10); return (v > 0 ? "+" : "") + v; })() : "-"}
                       </strong>
                       <p className={`text-[10px] mt-0.5 ${wouldVerify ? "text-green-600 font-semibold" : wouldDiscrepancy ? "text-red-500 font-semibold" : "text-gray-400"}`}>{wouldVerify ? "Will verify" : wouldDiscrepancy ? "Discrepancy" : "Pending"}</p>
                     </div>
@@ -14419,7 +14419,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               return (
                 <div className="modal-form">
                   <div className="rounded-xl border border-red-200 bg-red-50 p-4 flex flex-col gap-2">
-                    <p className="text-sm font-bold text-red-800">{writeOffQty} unit{writeOffQty === 1 ? "" : "s"} will be written off for {entry.agentName} — {entry.productName}</p>
+                    <p className="text-sm font-bold text-red-800">{writeOffQty} unit{writeOffQty === 1 ? "" : "s"} will be written off for {entry.agentName} - {entry.productName}</p>
                     <div className="flex items-center gap-6 text-sm text-red-700">
                       <span>System: <strong>{entry.systemQty}</strong></span>
                       <span>→</span>
@@ -14430,7 +14430,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <label>
                     <span>Write-off Reason <span className="text-red-500">*</span></span>
                     <select value={writeOffReason} onChange={(e) => { setWriteOffReason(e.target.value as WriteOffReason | ""); setWriteOffCustomReason(""); }}>
-                      <option value="">— Select a reason —</option>
+                      <option value="">- Select a reason -</option>
                       {(["Damaged", "Theft", "Unreported Sale", "Return to Warehouse", "Other"] as WriteOffReason[]).map((r) => (
                         <option key={r} value={r}>{r}</option>
                       ))}

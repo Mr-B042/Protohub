@@ -46,7 +46,7 @@ type PublicCompanion = {
   displayMode?: "compact" | "card" | "showcase";
   proofMode?: "real" | "promo_copy" | "hidden";
   urgencyMode?: "standard" | "price_loss";
-  // Admin-typed promo numbers — only rendered when proofMode === "promo_copy".
+  // Admin-typed promo numbers - only rendered when proofMode === "promo_copy".
   // Any null/blank/0 field is silently skipped.
   promoAllTimeBuyerCount?: number | null;
   promoBuyersLast24HoursCount?: number | null;
@@ -478,7 +478,7 @@ function componentListSummary(
   if (components.length === 0) return "";
   return components
     .filter((component) => component.productId || component.product_id)
-    // Hide components flagged "hidden from customer" — they still deduct
+    // Hide components flagged "hidden from customer" - they still deduct
     // stock, but listing them would just confuse the buyer (e.g. a part
     // already implied by the combo name).
     .filter((component) => !(component.hiddenFromCustomer ?? component.hidden_from_customer))
@@ -967,7 +967,7 @@ function companionShowcaseImageList(companion: PublicCompanion, targetPackage?: 
   return Array.from(new Set(images.map((url) => url.trim()).filter(Boolean))).slice(0, 15);
 }
 
-// Video embeds (Wistia / custom / iframe players) are memory-heavy on mobile —
+// Video embeds (Wistia / custom / iframe players) are memory-heavy on mobile -
 // several of them buffering at once steadily grow the tab's memory until the browser
 // OOM-kills the page to a WHITE screen after a few minutes (the customer then has to
 // refresh). Mount each iframe only while it is in (or near) the viewport and UNMOUNT
@@ -1760,7 +1760,7 @@ export default function PublicOrderFormPage() {
       }
       setSubmitRetryArmed(false);
       if (reason === "idle") {
-        showToast("All required fields complete — submitting your order now...");
+        showToast("All required fields complete - submitting your order now...");
       }
       void submitPublicOrder();
       return true;
@@ -2083,7 +2083,7 @@ export default function PublicOrderFormPage() {
     if (!params) return;
     // When embedded in an iframe, the parent grows the iframe to our reported height.
     // .public-order-page has min-height:100vh, which then stretches to fill the taller
-    // iframe and reports an even bigger height — an infinite-growth feedback loop (the
+    // iframe and reports an even bigger height - an infinite-growth feedback loop (the
     // endless grey area) that balloons memory until the mobile tab crashes to white.
     // Inside an iframe, drop the viewport min-height so our height stays intrinsic.
     let inIframe = false;
@@ -2095,7 +2095,7 @@ export default function PublicOrderFormPage() {
       document.head.appendChild(injectedStyle);
     }
     const measureHeight = () => {
-      // Measure the CONTENT element's own height, NOT the document/viewport — the
+      // Measure the CONTENT element's own height, NOT the document/viewport - the
       // viewport equals the iframe height, so including it feeds the growth loop and
       // also prevents the iframe from ever shrinking back down.
       const content = document.querySelector<HTMLElement>(".public-order-page");
@@ -2105,7 +2105,7 @@ export default function PublicOrderFormPage() {
     let lastSent = 0;
     const send = () => {
       const height = measureHeight();
-      // Only report a genuine change — stops redundant posts bouncing against the
+      // Only report a genuine change - stops redundant posts bouncing against the
       // parent's resize (the other half of the feedback loop).
       if (Math.abs(height - lastSent) < 2) return;
       lastSent = height;
@@ -2124,13 +2124,13 @@ export default function PublicOrderFormPage() {
     const requestResize = (event: MessageEvent) => {
       if (event.data?.type === "ordo-request-resize") schedule();
     };
-    // Observe the CONTENT element, not just the viewport — documentElement's box is
+    // Observe the CONTENT element, not just the viewport - documentElement's box is
     // the viewport and never fires on content growth (image loads, taller packages).
     const content = document.querySelector<HTMLElement>(".public-order-page");
     if (content) ro.observe(content);
     ro.observe(document.documentElement);
     if (document.body) ro.observe(document.body);
-    // Re-measure when images finish loading — they expand the form after first paint.
+    // Re-measure when images finish loading - they expand the form after first paint.
     const onImgLoad = () => schedule();
     const imgs = Array.from(document.images);
     imgs.forEach((img) => { if (!img.complete) img.addEventListener("load", onImgLoad); });
@@ -2310,7 +2310,7 @@ export default function PublicOrderFormPage() {
   // Field-level touch + hesitation tracking. Watches all customer-typed
   // fields and (a) records the most recently touched one (for form_exited's
   // lastFieldTouched metadata) and (b) fires "field_hesitated" once per field
-  // when the customer types ≥ 3 characters then clears them — a strong
+  // when the customer types ≥ 3 characters then clears them - a strong
   // indecision signal reps can act on.
   useEffect(() => {
     if (publicEmbedIsPreview) return;
@@ -2332,7 +2332,7 @@ export default function PublicOrderFormPage() {
         const currentMax = fieldMaxLengthRef.current[key] ?? 0;
         if (trimmedLength > currentMax) fieldMaxLengthRef.current[key] = trimmedLength;
       } else if (previous.trim().length > 0) {
-        // Field just transitioned to empty — judge hesitation off the
+        // Field just transitioned to empty - judge hesitation off the
         // high-water mark, not the immediate previous value.
         const maxSeen = fieldMaxLengthRef.current[key] ?? 0;
         if (maxSeen >= 3 && !fieldHesitationTrackedRef.current.has(key)) {
@@ -2353,7 +2353,7 @@ export default function PublicOrderFormPage() {
 
   // Submit-idle tracking: if the customer scrolls the submit area into view
   // and lingers there 30 seconds without pressing submit, fire submit_idle.
-  // High-signal hesitation event — rep knows the customer was right at the
+  // High-signal hesitation event - rep knows the customer was right at the
   // finish line but bailed.
   useEffect(() => {
     if (publicEmbedIsPreview || publicOrderSubmitted) return;
@@ -2399,7 +2399,7 @@ export default function PublicOrderFormPage() {
 
   // Carousel image-view tracking. Each time a package's carousel index changes,
   // start a 1.5s dwell timer (per package). If the customer stays on the image
-  // long enough, fire "image_viewed" — useful for the rep to know which photo
+  // long enough, fire "image_viewed" - useful for the rep to know which photo
   // hooked the customer. Each (packageId, imageIndex) only fires once.
   useEffect(() => {
     if (publicEmbedIsPreview || !publicProduct) return;
@@ -2658,14 +2658,14 @@ export default function PublicOrderFormPage() {
       });
     };
     if (!previousPackageId) {
-      // First package selection — keep the package_selected signal so even
+      // First package selection - keep the package_selected signal so even
       // single-tier customers produce a journey breadcrumb.
       lastTrackedPackageIdRef.current = chosenPackage.id;
       firePackageSelected();
       return;
     }
     if (previousPackageId === chosenPackage.id) return;
-    // Every subsequent hop fires tier_switched (no dedupe — we want the full
+    // Every subsequent hop fires tier_switched (no dedupe - we want the full
     // trail so reps can see "looked at 6 sets, dropped to 3 sets, then bailed").
     const previousPkg = publicPackages.find((p) => p.id === previousPackageId);
     tierSwitchCountRef.current += 1;
@@ -2912,7 +2912,7 @@ export default function PublicOrderFormPage() {
     setPublicUpsellOffer(null);
     exitTrackedRef.current = true;
     // A held (possible-duplicate) order must NOT redirect to the merchant's
-    // landing page — that page carries the Facebook pixel, so redirecting would
+    // landing page - that page carries the Facebook pixel, so redirecting would
     // count the duplicate as a "Purchase" conversion (and get charged for it).
     // Show the in-place "order received" thank-you instead; a human confirms it.
     if (options?.heldForReview) {
@@ -3179,7 +3179,7 @@ export default function PublicOrderFormPage() {
       {
         id: queuedId,
         customer: options.customerName,
-        // Flag the resubmission so the recovered order is marked once it lands —
+        // Flag the resubmission so the recovered order is marked once it lands -
         // this is the path used when the direct Supabase capture wasn't available.
         body: { ...options.body, outageRecovered: true },
         createdAt: new Date().toISOString()
@@ -3872,7 +3872,7 @@ export default function PublicOrderFormPage() {
     </div>
   ) : null;
 
-  // Auto-derived items breakdown — only show when it adds info beyond what
+  // Auto-derived items breakdown - only show when it adds info beyond what
   // the headline already says (i.e. combos that mix multiple products).
   const orderSummaryAutoBreakdown = chosenPackage ? packageComponentSummary(chosenPackage, products) : "";
   const orderSummaryAutoBreakdownLine = orderSummaryAutoBreakdown && orderSummaryAutoBreakdown !== chosenPackageQtyLabel

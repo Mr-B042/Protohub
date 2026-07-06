@@ -11,7 +11,7 @@ const QuerySchema = z.object({
   weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   // Optional explicit window end. When omitted the window is the standard
   // 7-day Mon–Sun week (weekStart + 6). When provided (and >= weekStart),
-  // the summary covers the arbitrary [weekStart, weekEnd] range — opening
+  // the summary covers the arbitrary [weekStart, weekEnd] range - opening
   // balance at the start, closing at the end, every movement in between.
   weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   agentId: z.string().uuid().optional(),
@@ -491,6 +491,7 @@ router.get(
           transferredOutThisWeek: entry.transferredOutThisWeek,
           restoredThisWeek: entry.restoredThisWeek,
           writtenOffThisWeek: entry.writtenOffThisWeek,
+          currentBalance: entry.currentBalance,
           closingBalance,
           netChange: closingBalance - openingBalance
         };

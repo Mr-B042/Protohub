@@ -159,7 +159,7 @@ export type PackageCompanion = {
   proofMode?: "real" | "promo_copy" | "hidden";
   urgencyMode?: "standard" | "price_loss";
   // Optional promo-copy fields. Only rendered on the buyer card when
-  // proofMode === "promo_copy". Each field is independently nullable —
+  // proofMode === "promo_copy". Each field is independently nullable -
   // blank/zero values are silently skipped, matching the real-proof gating.
   promoAllTimeBuyerCount?: number;
   promoBuyersLast24HoursCount?: number;

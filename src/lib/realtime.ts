@@ -1,4 +1,4 @@
-// Frontend Supabase client — used only for Realtime subscriptions.
+// Frontend Supabase client - used only for Realtime subscriptions.
 // Uses the anon key (safe to expose to the browser; restricted by RLS).
 // Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your Vercel environment.
 

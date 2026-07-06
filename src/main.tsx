@@ -65,7 +65,7 @@ function scheduleStaleChunkRecovery(error: unknown): boolean {
   return true;
 }
 
-// Sentry error tracking — set VITE_SENTRY_DSN in Vercel environment variables.
+// Sentry error tracking - set VITE_SENTRY_DSN in Vercel environment variables.
 // If the env var is missing (local dev), Sentry is a no-op.
 const sentryDsn = (import.meta as any).env?.VITE_SENTRY_DSN as string | undefined;
 if (sentryDsn) {
@@ -83,7 +83,7 @@ function Root() {
 
   // Fade out the first-paint splash (index.html) once React has mounted, then
   // remove it from the DOM. Runs after the first commit, so by now real UI is
-  // on screen — the white-screen gap is covered end to end.
+  // on screen - the white-screen gap is covered end to end.
   useEffect(() => {
     const splash = document.getElementById("app-splash");
     if (!splash) return;
@@ -203,14 +203,14 @@ function Root() {
   const handleLogin  = () => setLoggedIn(true);
   const handleLogout = () => { auth.clear(); setLoggedIn(false); };
 
-  // Recovery email lands on /#/reset-password — handle it before the auth gate
+  // Recovery email lands on /#/reset-password - handle it before the auth gate
   // so the user can complete the reset even if they aren't "logged in" yet.
   if (hash.startsWith("#/reset-password")) {
     return <ResetPasswordScreen onDone={() => { setHash(""); setLoggedIn(auth.isLoggedIn()); }} />;
   }
 
   // Public embed form is hit by unauthenticated customers. App detects the
-  // hash here and renders a lightweight public page — bypass the auth gate
+  // hash here and renders a lightweight public page - bypass the auth gate
   // and avoid booting the full admin dashboard bundle.
   if (hash.startsWith("#/order-form/embed")) {
     return <PublicOrderFormPage />;

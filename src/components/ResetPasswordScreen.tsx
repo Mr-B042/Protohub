@@ -9,7 +9,7 @@ interface Props {
 // Lands here from the Supabase recovery email. The email link redirects to
 // `${FRONTEND_URL}/#/reset-password#access_token=...&refresh_token=...&type=recovery`.
 // We pull the recovery JWT out of the URL fragment, store it via auth.save, and
-// then call /api/auth/set-password (which uses requireAuth — Supabase recovery
+// then call /api/auth/set-password (which uses requireAuth - Supabase recovery
 // tokens are valid Bearer tokens). On success, send the user to /login.
 export function ResetPasswordScreen({ onDone }: Props) {
   const [password, setPassword] = useState("");
@@ -32,7 +32,7 @@ export function ResetPasswordScreen({ onDone }: Props) {
     const type         = params.get("type");
 
     if (type === "recovery" && accessToken && refreshToken) {
-      // We don't yet have a user profile — set-password resolves the user from the JWT.
+      // We don't yet have a user profile - set-password resolves the user from the JWT.
       auth.save(accessToken, refreshToken, {
         id: "", orgId: "", name: "", email: "", role: ""
       });

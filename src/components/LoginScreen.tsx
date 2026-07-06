@@ -60,7 +60,7 @@ function readStoredString(key: string): string {
 }
 
 // Local sandbox vs live prod. The REAL bundled company logo is only used as
-// the default on prod — on localhost we fall back to the generic cube so the
+// the default on prod - on localhost we fall back to the generic cube so the
 // two environments are instantly distinguishable at a glance.
 const IS_LOCAL_HOST =
   typeof window !== "undefined" &&
@@ -133,13 +133,13 @@ export function LoginScreen({ onLogin }: Props) {
     setError(""); setLoading(true);
     try {
       await authApi.resetPassword(email);
-      // Backend deliberately returns 200 regardless of email existence —
+      // Backend deliberately returns 200 regardless of email existence -
       // we only reach this branch on a successful HTTP response.
       setSuccess("If that email is registered, a reset link has been sent. Check your inbox.");
       setMode("login");
     } catch (err: any) {
       // Real failure (network, 5xx, rate-limit). Surface the error so the
-      // user knows the request didn't go through — earlier code silently
+      // user knows the request didn't go through - earlier code silently
       // swallowed this as success and the user would never get an email.
       setError(err?.message ?? "Could not send reset email. Please try again.");
     } finally {
@@ -153,7 +153,7 @@ export function LoginScreen({ onLogin }: Props) {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md">
-        {/* Logo / brand — the org's saved logo if present, else the bundled
+        {/* Logo / brand - the org's saved logo if present, else the bundled
             company logo. Falls back to the ProtoHub mark only if both fail. */}
         <div className="text-center mb-8">
           {loginLogoSrc && !brandLogoBroken ? (
@@ -176,7 +176,7 @@ export function LoginScreen({ onLogin }: Props) {
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
-          {/* Public self-registration is disabled — this is a private workspace.
+          {/* Public self-registration is disabled - this is a private workspace.
               New users are added by the Owner/Admin in User Management, so the
               login screen is sign-in only (plus password reset). */}
 

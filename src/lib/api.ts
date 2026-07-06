@@ -171,7 +171,7 @@ function invalidRefreshCanBeRetried(accessToken: string | null, refreshToken: st
   // Supabase refresh tokens rotate. If another tab/device refreshed first, the
   // token this tab attempted may be stale even though the browser already has a
   // newer session. Also, when the current access token still has breathing room,
-  // do not kick the user out on one failed refresh — retry on the next tick.
+  // do not kick the user out on one failed refresh - retry on the next tick.
   return authSessionChanged(accessToken, refreshToken) || !auth.isAccessTokenExpired(INVALID_REFRESH_GRACE_MS);
 }
 
@@ -210,7 +210,7 @@ async function request<T>(
         auth.clear();
         throw new ApiError(401, "Your session expired. Please sign in again.");
       }
-      throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment — you have not been logged out.");
+      throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment - you have not been logged out.");
     }
   }
   let res: Response;
@@ -243,10 +243,10 @@ async function request<T>(
     const refreshed = await refreshAuthSession();
     if (refreshed.ok) return request<T>(method, path, body, true, transientAttempt);
     if (refreshed.reason === "transient") {
-      throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment — you have not been logged out.");
+      throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment - you have not been logged out.");
     }
     if (refreshed.reason === "invalid" && !auth.isAccessTokenExpired(30_000)) {
-      throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment — you have not been logged out.");
+      throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment - you have not been logged out.");
     }
     auth.clear();
     throw new ApiError(401, "Your session expired. Please sign in again.");
@@ -434,7 +434,7 @@ export const authApi = {
   resetPassword: (email: string) =>
     post<{ message: string }>("/api/auth/reset-password", { email }),
 
-  // userId is optional — when omitted, the backend resolves the target from
+  // userId is optional - when omitted, the backend resolves the target from
   // the Bearer token (used by the recovery flow, where we have no profile yet).
   setPassword: (passwordOrUserId: string, password?: string) =>
     post<{ message: string }>(
@@ -944,7 +944,7 @@ export const emailReportsApi = {
 export const cartsApi = {
   list: () => get<any[]>("/api/carts"),
   create: (body: unknown) => post<any>("/api/carts", body),
-  // Public capture endpoint — no auth required, derives org from product_id.
+  // Public capture endpoint - no auth required, derives org from product_id.
   // Use this from the embed form so it works inside customer-facing iframes.
   capture: (body: unknown) => post<any>("/api/public/carts", body),
   trackPublicJourney: async (id: string, body: unknown, options?: { keepalive?: boolean }) => {

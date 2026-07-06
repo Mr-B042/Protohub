@@ -13,9 +13,9 @@
     --popover: 0 0% 100%;
     --popover-foreground: 224 71% 4%;
     
-    --primary: 207 75% 50%;          /* #1F8FE0 — Protohub brand blue */
+    --primary: 207 75% 50%;          /* #1F8FE0 - Protohub brand blue */
     --primary-foreground: 0 0% 100%;
-    --brand-navy: 220 26% 17%;       /* #1F2937 — Protohub dark diamond */
+    --brand-navy: 220 26% 17%;       /* #1F2937 - Protohub dark diamond */
     --brand-navy-foreground: 0 0% 100%;
     
     --secondary: 210 40% 96%;
@@ -41,7 +41,7 @@
     --glass-border: rgba(255, 255, 255, 0.3);
     --glass-blur: 12px;
 
-    /* Surface colors — single source of truth used by both Tailwind utilities
+    /* Surface colors - single source of truth used by both Tailwind utilities
        and bare CSS. Override in .dark below. */
     --surface-page: 0 0% 92%;       /* #EBEBEB-ish */
     --surface-page-alt: 0 0% 95%;
@@ -4416,7 +4416,7 @@ th {
 }
 
 .public-order-page {
-  /* No min-height:100vh — let content dictate the height so iframe auto-resize reads a clean number */
+  /* No min-height:100vh - let content dictate the height so iframe auto-resize reads a clean number */
   background: #eef1f4;
   color: #161616;
   color-scheme: light;
@@ -4461,7 +4461,7 @@ html.public-order-embed-active #root {
   padding: 24px;
 }
 
-/* Public form — 2-column contact/delivery grid */
+/* Public form - 2-column contact/delivery grid */
 .public-order-card .preview-grid {
   grid-template-columns: repeat(2, 1fr);
 }
@@ -7809,7 +7809,7 @@ html.dark,
 .dark .bg-black\/10 { background-color: rgba(255, 255, 255, 0.10); }
 .dark .bg-black\/\[0\.02\] { background-color: rgba(255, 255, 255, 0.04); }
 
-/* Tinted surface backgrounds (for KPI card icon wells, badges) — keep
+/* Tinted surface backgrounds (for KPI card icon wells, badges) - keep
    the hue but darken the chroma so they sit on a dark card. */
 .dark .bg-blue-50 { background-color: hsl(217 80% 18%); }
 .dark .bg-blue-100 { background-color: hsl(217 70% 22%); }
@@ -7837,7 +7837,7 @@ html.dark,
 .dark .bg-pink-50 { background-color: hsl(330 60% 18%); }
 .dark .bg-sky-50 { background-color: hsl(200 70% 18%); }
 
-/* Text — neutral ramps. Pushed bright to maximise legibility on the
+/* Text - neutral ramps. Pushed bright to maximise legibility on the
    deeper background. */
 .dark .text-gray-900,
 .dark .text-gray-950,
@@ -7859,7 +7859,7 @@ html.dark,
 .dark .text-gray-200,
 .dark .text-slate-200 { color: hsl(214 20% 90%); }
 
-/* Tinted text — push lightness up for high readability on deeper bg */
+/* Tinted text - push lightness up for high readability on deeper bg */
 .dark .text-blue-700 { color: hsl(217 90% 80%); }
 .dark .text-blue-600,
 .dark .text-blue-500 { color: hsl(217 90% 72%); }
@@ -7954,7 +7954,7 @@ html.dark,
   background-color: hsl(var(--surface-card));
 }
 
-/* Form controls — inputs, selects, textareas */
+/* Form controls - inputs, selects, textareas */
 .dark input,
 .dark select,
 .dark textarea {
@@ -7989,7 +7989,7 @@ html.dark,
   border-color: hsl(var(--border));
 }
 
-/* Shadows are too dark on top of dark surfaces — soften them */
+/* Shadows are too dark on top of dark surfaces - soften them */
 .dark .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.4); }
 .dark .shadow,
 .dark .shadow-md { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4); }
@@ -7997,7 +7997,7 @@ html.dark,
 .dark .shadow-xl { box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.4); }
 .dark .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); }
 
-/* Recharts — make axes and tooltips legible */
+/* Recharts - make axes and tooltips legible */
 .dark .recharts-text { fill: hsl(215 14% 65%) !important; }
 .dark .recharts-cartesian-axis-line,
 .dark .recharts-cartesian-axis-tick-line { stroke: hsl(var(--border)); }
@@ -8484,7 +8484,7 @@ article.public-order-card.public-form-clean input::placeholder,
 article.public-order-card.public-form-clean textarea::placeholder {
   color: #9ca3af;
 }
-/* Field labels (e.g. "When would you like it delivered? *") — small + medium weight, with breathing room. */
+/* Field labels (e.g. "When would you like it delivered? *") - small + medium weight, with breathing room. */
 article.public-order-card.public-form-clean label > span:first-child {
   display: block;
   font-size: 14px;
@@ -8493,7 +8493,7 @@ article.public-order-card.public-form-clean label > span:first-child {
   margin: 0 0 8px 0;
   letter-spacing: 0;
 }
-/* Delivery-question label sits directly under the package picker — give it air */
+/* Delivery-question label sits directly under the package picker - give it air */
 article.public-order-card.public-form-clean .package-picker-clean + label,
 article.public-order-card.public-form-clean .package-picker-clean ~ label {
   display: block;
@@ -8520,7 +8520,7 @@ article.public-order-card.public-form-clean label.preview-check input[type="chec
   accent-color: #1F8FE0;
   min-height: 0;
 }
-/* Custom <select> styling — show a chevron on the right and grey out the empty-state option text */
+/* Custom <select> styling - show a chevron on the right and grey out the empty-state option text */
 article.public-order-card.public-form-clean .public-form-clean-grid select {
   appearance: none;
   -webkit-appearance: none;
@@ -8670,7 +8670,7 @@ article.public-order-card.public-form-clean .public-order-submit-button:disabled
     animation: none !important;
   }
 }
-/* Clean form is always a single centered column — no side rail on any viewport.
+/* Clean form is always a single centered column - no side rail on any viewport.
    Summary rail (if enabled) stacks underneath the form, also centered. */
 .public-form-layout:has(.public-form-clean),
 .public-form-layout:has(.public-form-clean) > * { grid-template-columns: none !important; }
@@ -8681,7 +8681,7 @@ article.public-order-card.public-form-clean .public-order-submit-button:disabled
   gap: 20px;
 }
 /* Fill the embed container (Elementor box / iframe) instead of capping at 640px and
-   leaving space when the box is wider — the box width is the merchant's chosen width. */
+   leaving space when the box is wider - the box width is the merchant's chosen width. */
 .public-form-layout:has(.public-form-clean) .public-form-clean { width: 100%; max-width: 100%; margin: 0 auto; }
 .public-form-layout:has(.public-form-clean) .public-order-summary-rail {
   width: 100%;

@@ -1,4 +1,4 @@
-// Token management — stored in localStorage so it survives page refreshes.
+// Token management - stored in localStorage so it survives page refreshes.
 // The API client reads from here on every request.
 
 const ACCESS_TOKEN_KEY  = "protohub.accessToken";
@@ -82,7 +82,7 @@ export const auth = {
       localStorage.removeItem(REFRESH_TOKEN_KEY);
       localStorage.removeItem(USER_KEY);
     }
-    // Same-tab notification — the "storage" event only fires across tabs.
+    // Same-tab notification - the "storage" event only fires across tabs.
     if (typeof window !== "undefined") {
       window.dispatchEvent(new Event("protohub:logout"));
     }

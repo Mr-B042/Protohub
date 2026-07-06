@@ -11,14 +11,14 @@ export type HelpEntry = {
 
 export const PAGE_HELP: Record<string, HelpEntry> = {
   "Dashboard": {
-    title: "Dashboard — Help",
+    title: "Dashboard - Help",
     intro:
       "Your at-a-glance business overview: key numbers, stock health, cart conversion, and revenue modelling. Use it to track daily performance and spot trends.",
     sections: [
       {
         heading: "What you can see here",
         points: [
-          "Five key metrics — Total Revenue, Gross Profit, Net Profit, Total Orders, and Fulfillment Rate — each showing the current period next to the previous one.",
+          "Five key metrics - Total Revenue, Gross Profit, Net Profit, Total Orders, and Fulfillment Rate - each showing the current period next to the previous one.",
           "Smart stock health alerts: states at risk of running out, based on the last 7 days of sales. Scan for new alerts or jump straight to Inventory to fix them.",
           "Abandoned cart tracker: how many carts you have captured, contacted, and converted, plus how many still need attention.",
           "Revenue Opportunity Simulator: drag the conversion-rate slider to see what happens to profit if you deliver more orders or lift conversion.",
@@ -37,7 +37,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "Good to know",
         points: [
-          "Total Revenue counts delivered orders only — not orders that were merely placed.",
+          "Total Revenue counts delivered orders only - not orders that were merely placed.",
           "Total Orders and Fulfillment Rate count orders created in the period. Fulfillment Rate here is throughput: delivered this period divided by placed this period.",
           "Net Profit subtracts operating expenses; if you have not logged any, it falls back to zero or an estimate.",
           "Smart stock health runs on the last 7 days of real sales velocity, so it predicts run-outs rather than just checking a fixed threshold.",
@@ -52,7 +52,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Orders": {
-    title: "Orders — Help",
+    title: "Orders - Help",
     intro:
       "Track and manage all active orders from customers. Assign each order to a delivery agent, follow up on pending ones, and watch delivery progress.",
     sections: [
@@ -61,7 +61,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         points: [
           "Search orders by number, customer name, or phone number.",
           "Filter by status, location, product, or source (WhatsApp, form, and so on).",
-          "Assign orders to delivery agents — the system suggests agents in the customer's state and shows their stock levels.",
+          "Assign orders to delivery agents - the system suggests agents in the customer's state and shows their stock levels.",
           "View details, edit the customer or items, bulk-update statuses, or delete orders.",
           "Export filtered orders as CSV and model the revenue impact of a higher delivery rate.",
         ],
@@ -91,14 +91,14 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Follow-up Queue": {
-    title: "Follow-up Queue — Help",
+    title: "Follow-up Queue - Help",
     intro:
       "See every order waiting on a callback, a scheduled delivery, or a customer action. This is where you track promised follow-ups and keep deals moving.",
     sections: [
       {
         heading: "What you can do here",
         points: [
-          "View all orders that need a follow-up call or action — postponed orders, scheduled deliveries, and note reminders.",
+          "View all orders that need a follow-up call or action - postponed orders, scheduled deliveries, and note reminders.",
           "See which callbacks are overdue (Due Now) and which are due soon, so you know what to handle first.",
           "Track buyers who asked for another try (Recoverable) and those who are hard to reach (Unreachable) to decide the next step.",
           "Open an order to log a contact attempt, set or reschedule a follow-up, or mark it postponed or ready for delivery.",
@@ -117,7 +117,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "Good to know",
         points: [
-          "Delivered, cancelled, and failed orders are not here — find those in Closed Orders.",
+          "Delivered, cancelled, and failed orders are not here - find those in Closed Orders.",
           "Contact attempts and follow-up tasks show the history of every call or action, along with the outcome.",
           "Recovery buckets (like \"call tomorrow\" or \"waiting on salary\") let you batch similar buyers into one sweep of calls.",
         ],
@@ -130,9 +130,9 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Closed Orders": {
-    title: "Closed Orders — Help",
+    title: "Closed Orders - Help",
     intro:
-      "Review every order that has reached a final state — delivered, cancelled, or failed. Open orders are kept out, so you can focus on outcomes without pipeline noise.",
+      "Review every order that has reached a final state - delivered, cancelled, or failed. Open orders are kept out, so you can focus on outcomes without pipeline noise.",
     sections: [
       {
         heading: "What you can do here",
@@ -149,14 +149,14 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         points: [
           "Pick a period (This Week, Last Week, This Month, Last Month, or Custom) to see closed orders from that timeframe.",
           "This Week runs Sunday through Saturday.",
-          "Switch the currency to NGN, USD, or GBP — amounts convert at the current rates.",
+          "Switch the currency to NGN, USD, or GBP - amounts convert at the current rates.",
           "The metric cards update as you filter, so the counts always match your selection.",
         ],
       },
       {
         heading: "Good to know",
         points: [
-          "Orders here need no further action — they have finished their lifecycle.",
+          "Orders here need no further action - they have finished their lifecycle.",
           "The Closed Orders by Product card shows which products drive your final outcomes.",
           "If your role allows it, you can create a new order directly from this page.",
         ],
@@ -169,7 +169,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Abandoned Carts": {
-    title: "Abandoned Carts — Help",
+    title: "Abandoned Carts - Help",
     intro:
       "Recover incomplete orders: track carts captured from your order form, assign them to your team for follow-up, and watch how many convert.",
     sections: [
@@ -180,7 +180,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
           "Assign carts to sales reps and track their follow-up progress.",
           "Set a cart status (Contacted, No response, Not interested) or convert it into a real order.",
           "Filter by period, product, or customer to focus your recovery effort.",
-          "See team recovery outcomes — how many assigned carts converted, and how those orders delivered.",
+          "See team recovery outcomes - how many assigned carts converted, and how those orders delivered.",
         ],
       },
       {
@@ -195,7 +195,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "Form insights (Owner and Admin only)",
         points: [
-          "Live Form Pulse shows real-time traffic to your order form — views, clicks, submit attempts, and conversions.",
+          "Live Form Pulse shows real-time traffic to your order form - views, clicks, submit attempts, and conversions.",
           "Journey Funnel reveals where customers drop off (for example, after adding extra items).",
           "Top Submit Blocks identifies what stops customers from finishing checkout.",
           "Additional Item Interest shows which add-ons get the most engagement.",
@@ -208,12 +208,12 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       Admin:
         "You see full team recovery outcomes and can use Live Form Pulse to diagnose form traffic issues.",
       Manager:
-        "You can view carts, assign them to reps, and track team conversion — but not the form health metrics.",
+        "You can view carts, assign them to reps, and track team conversion - but not the form health metrics.",
     },
   },
 
   "Scheduled Deliveries": {
-    title: "Scheduled Deliveries — Help",
+    title: "Scheduled Deliveries - Help",
     intro:
       "Track orders your sales reps have promised to deliver on a specific date. See who delivered on time, who was late, and which deliveries still need attention.",
     sections: [
@@ -232,7 +232,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         points: [
           "Delivery Rate: the share of promised orders actually delivered on the target date.",
           "On-time Rate: orders delivered on or before the promised date.",
-          "Late Rate: orders delivered after the promise — still counted as delivered, just outside the window.",
+          "Late Rate: orders delivered after the promise - still counted as delivered, just outside the window.",
           "Needs Action: overdue (past the promise date and not delivered), unassigned, or failed orders that need ops to step in.",
         ],
       },
@@ -250,12 +250,12 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       Manager:
         "You can see scheduled orders across your operations, but you cannot edit or assign deliveries. Use this to track promise performance and spot overdue or problem schedules.",
       Viewer:
-        "This page is not available to you — Scheduled Deliveries is for management and logistics staff.",
+        "This page is not available to you - Scheduled Deliveries is for management and logistics staff.",
     },
   },
 
   "Deliveries": {
-    title: "Deliveries — Help",
+    title: "Deliveries - Help",
     intro:
       "See every order delivered in a chosen period, with revenue and fulfillment performance. Orders are grouped by the date they actually reached the customer.",
     sections: [
@@ -294,7 +294,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Inventory": {
-    title: "Inventory — Help",
+    title: "Inventory - Help",
     intro:
       "Track and manage warehouse stock and per-state agent inventory in one place. Watch total stock value, units on hand, and how stock is spread across your hubs.",
     sections: [
@@ -322,19 +322,19 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         heading: "Good to know",
         points: [
           "Orders always route to the hub in the customer's state, and every item must be fulfillable there.",
-          "You can switch the currency (NGN, USD, GBP) at the top — this only changes the display.",
+          "You can switch the currency (NGN, USD, GBP) at the top - this only changes the display.",
           "Stock Count needs both sides to match before you can mark it Verified.",
         ],
       },
     ],
     roleNotes: {
       "Inventory Manager":
-        "This is your main workspace — you manage all stock levels, agent distribution, and stock reconciliation.",
+        "This is your main workspace - you manage all stock levels, agent distribution, and stock reconciliation.",
     },
   },
 
   "Sales Reps": {
-    title: "Sales Reps — Help",
+    title: "Sales Reps - Help",
     intro:
       "Track your sales team at a glance with a leaderboard and per-rep stats. Add reps, watch their conversion rates, and manage their status.",
     sections: [
@@ -370,7 +370,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Sales Teams": {
-    title: "Sales Teams — Help",
+    title: "Sales Teams - Help",
     intro:
       "Create selling groups, assign team leads, and scope products to the teams that sell them. Watch how each lead manages follow-ups, delivery, and pipeline health.",
     sections: [
@@ -379,7 +379,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         points: [
           "Create teams and assign a team lead to each one.",
           "Add sales reps to teams and scope products (or leave all products open to a team).",
-          "See each lead's performance score — how well they manage delivery, follow-ups, pipeline health, and team consistency.",
+          "See each lead's performance score - how well they manage delivery, follow-ups, pipeline health, and team consistency.",
           "Check which buyers need action now (overdue follow-ups), which are due soon, how many orders are open, and which deals are at risk.",
         ],
       },
@@ -406,9 +406,9 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Weekend Stock Summary": {
-    title: "Weekend Stock Summary — Help",
+    title: "Weekend Stock Summary - Help",
     intro:
-      "See your delivery agents' weekly stock at a glance — opening, received, delivered, and closing — built for quick summaries you can copy or send to agents without touching inventory controls.",
+      "See your delivery agents' weekly stock at a glance - opening, received, delivered, and closing - built for quick summaries you can copy or send to agents without touching inventory controls.",
     sections: [
       {
         heading: "What you can do here",
@@ -423,7 +423,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "Good to know",
         points: [
-          "This is a summary view — you cannot edit stock here. To adjust inventory, use the Inventory or Stock History pages.",
+          "This is a summary view - you cannot edit stock here. To adjust inventory, use the Inventory or Stock History pages.",
           "Opening balances come from the first weekly snapshot; closing figures track real delivered orders and inventory changes.",
           "The week always runs Sunday to Saturday, and any date you pick snaps back to that week's Sunday.",
           "The This Week button always jumps to the current week.",
@@ -433,10 +433,10 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "Column breakdown",
         points: [
-          "Opening — stock at the start of the week. Received — units added during the week.",
-          "Delivered — units used to fulfil customer orders.",
-          "Adjustments — the net of returned, transferred, restored, and written-off units (click to drill in).",
-          "Closing — stock the agent has now.",
+          "Opening - stock at the start of the week. Received - units added during the week.",
+          "Delivered - units used to fulfil customer orders.",
+          "Adjustments - the net of returned, transferred, restored, and written-off units (click to drill in).",
+          "Closing - stock the agent has now.",
         ],
       },
     ],
@@ -447,7 +447,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Agents": {
-    title: "Agents — Help",
+    title: "Agents - Help",
     intro:
       "Track your delivery partners' performance, stock, and earnings across all state hubs. Spot who is delivering well, catch problems early, and manage stock at the hub level.",
     sections: [
@@ -455,7 +455,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         heading: "What you can do here",
         points: [
           "View all delivery agents and their status (active or inactive).",
-          "See top performers by revenue, deliveries, and success rate — and flag agents who need support.",
+          "See top performers by revenue, deliveries, and success rate - and flag agents who need support.",
           "Check how much stock each agent holds per state hub and which products they have on hand.",
           "Click an agent's name for full detail: orders, revenue, delivery rate, stock value, and shrinkage (defective plus missing).",
           "Add an agent, assign stock to their hubs, reconcile inventory, or edit and delete as needed.",
@@ -466,7 +466,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         points: [
           "Delivery Rate = orders delivered divided by total orders assigned to the agent (in the selected period).",
           "Stock Value = the cost of inventory they currently hold across all their state hubs.",
-          "Shrinkage = the value of stock marked defective or missing — watch for trends.",
+          "Shrinkage = the value of stock marked defective or missing - watch for trends.",
           "Revenue = cash from delivered orders only.",
           "Active on Duty = agents with their status toggled on right now.",
         ],
@@ -493,7 +493,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Waybill": {
-    title: "Waybill — Help",
+    title: "Waybill - Help",
     intro:
       "Track stock moving between your warehouse and state hubs, or between agents. Record manual transfers and watch delivery status with waybill fees.",
     sections: [
@@ -511,7 +511,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         heading: "Key info",
         points: [
           "Manual transfers are stock you move between locations (warehouse to hub, or hub to hub).",
-          "Customer deliveries are records created automatically when orders are delivered — you do not create these.",
+          "Customer deliveries are records created automatically when orders are delivered - you do not create these.",
           "In Transit means the waybill has been sent and is waiting for Mark Received at the destination.",
           "Summary cards show counts of pending transfers, completed receipts, and total fees charged.",
         ],
@@ -529,7 +529,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Payroll": {
-    title: "Payroll — Help",
+    title: "Payroll - Help",
     intro:
       "Set pay rates for your team and run monthly payroll. Configure how each person is paid, preview earnings for any month, apply bonuses and penalties, and keep a payroll history.",
     sections: [
@@ -537,7 +537,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         heading: "What you can do here",
         points: [
           "Set pay rates: choose a structure (fixed salary, per-order commission, hybrid, or performance tiers) for each team member.",
-          "Preview payroll: pick any month and see the full breakdown — fixed salary, commission, bonuses, and deductions — before finalising.",
+          "Preview payroll: pick any month and see the full breakdown - fixed salary, commission, bonuses, and deductions - before finalising.",
           "Apply bonuses: set a monthly top-performer bonus (for the rep with the most delivered orders) and let the system work it out.",
           "Apply penalties: deduct amounts for issues like fake upgrades or missed recoveries.",
           "Save and manage runs: create drafts with notes, approve them, mark as paid, and view the full history.",
@@ -556,7 +556,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "Good to know",
         points: [
-          "You can only preview and run payroll for past months — future months are locked.",
+          "You can only preview and run payroll for past months - future months are locked.",
           "If a payroll already exists for a month (Draft, Approved, or Paid), you cannot start a new one, but you can review and approve the existing run.",
           "Penalties are matched to the exact payroll month you are previewing.",
           "If top performers tie on delivered orders, the bonus splits equally between them.",
@@ -566,7 +566,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Customers": {
-    title: "Customers — Help",
+    title: "Customers - Help",
     intro:
       "Your full customer directory and relationship tracker. See every customer's details, order history, and reliability, and flag anyone who needs follow-up.",
     sections: [
@@ -575,14 +575,14 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         points: [
           "Search and filter customers by name, email, phone, source, state, or products ordered.",
           "See each customer's contact details, latest order, total orders, delivery success rate (Reliability %), and lifetime spend.",
-          "Flag a customer with a reason — flagged customers show on a red background; unflag once it is resolved.",
+          "Flag a customer with a reason - flagged customers show on a red background; unflag once it is resolved.",
           "View all orders for a customer, export the full list as CSV, and filter by period or currency (NGN, USD, GBP).",
         ],
       },
       {
         heading: "Key metrics at a glance",
         points: [
-          "Reliability % = successful orders divided by total orders, times 100 — green at 70%+, yellow 40–69%, red below 40%.",
+          "Reliability % = successful orders divided by total orders, times 100 - green at 70%+, yellow 40–69%, red below 40%.",
           "Active Customers = customers with at least one delivered order in your selected period.",
           "Returning Rate = the share of customers who placed 2 or more orders (your loyal repeat buyers).",
           "Avg. Lifetime Value = total delivered spend divided by number of customers (shows your highest-value segment).",
@@ -591,7 +591,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "Good to know",
         points: [
-          "Flagging does not block orders — it is just a note to your team to follow up or take care.",
+          "Flagging does not block orders - it is just a note to your team to follow up or take care.",
           "Cancelled or undelivered orders lower a customer's Reliability %, which affects their rating.",
         ],
       },
@@ -603,9 +603,9 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Expenses": {
-    title: "Expenses — Help",
+    title: "Expenses - Help",
     intro:
-      "Track all operational costs — ad spend, delivery, waybills, and general overhead. See which expenses hit profit hardest and which products cost the most to support.",
+      "Track all operational costs - ad spend, delivery, waybills, and general overhead. See which expenses hit profit hardest and which products cost the most to support.",
     sections: [
       {
         heading: "What you can do here",
@@ -619,11 +619,11 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "Key numbers you will see",
         points: [
-          "Total Expenses — all costs this period, plus the record count.",
-          "Product-Linked Expenses — costs tied to specific products (as a share of the total).",
-          "General Expenses — operations and overhead costs.",
-          "Daily Burn Rate — the average daily spend across the period.",
-          "Profit Impact Report — Gross Revenue minus COGS minus Logistics minus Operating Expenses equals Net Profit.",
+          "Total Expenses - all costs this period, plus the record count.",
+          "Product-Linked Expenses - costs tied to specific products (as a share of the total).",
+          "General Expenses - operations and overhead costs.",
+          "Daily Burn Rate - the average daily spend across the period.",
+          "Profit Impact Report - Gross Revenue minus COGS minus Logistics minus Operating Expenses equals Net Profit.",
         ],
       },
       {
@@ -643,7 +643,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Finance & Accounting": {
-    title: "Finance & Accounting — Help",
+    title: "Finance & Accounting - Help",
     intro:
       "Full financial reporting and cash management for Protohub. See revenue, profit, and expenses, and track the cash your delivery partners still owe.",
     sections: [
@@ -681,7 +681,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Ad Tracking": {
-    title: "Ad Tracking — Help",
+    title: "Ad Tracking - Help",
     intro:
       "See which ad campaigns and creatives are driving sales by tracking orders from tagged links. Add UTM tags (utm_campaign, utm_content, utm_source) to your links so every order gets the right credit.",
     sections: [
@@ -699,7 +699,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         points: [
           "Tracked Orders = orders that carry UTM tags; Attributed Revenue = delivered tracked orders only.",
           "Delivery Rate = of this campaign or channel, how many ordered items actually got delivered.",
-          "ROAS = return on ad spend — 2x means you earned 2 naira for every 1 naira spent (profitable); below 1x means you lost money.",
+          "ROAS = return on ad spend - 2x means you earned 2 naira for every 1 naira spent (profitable); below 1x means you lost money.",
           "Recovery Rate = of abandoned carts from this channel, how many later converted into real orders.",
         ],
       },
@@ -707,7 +707,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         heading: "Getting started",
         points: [
           "Tag your ad links with UTM parameters, for example: ?utm_campaign=promo_jan&utm_content=banner_v2&utm_source=instagram",
-          "Use those links in WhatsApp, email, or ads — Protohub reads the UTM values automatically when orders come in.",
+          "Use those links in WhatsApp, email, or ads - Protohub reads the UTM values automatically when orders come in.",
           "Log spend in the Daily Ad Spend tab each day so ROAS stays up to date.",
           "Open the guide (button on Campaign Orders) to learn the exact UTM naming rules.",
         ],
@@ -716,7 +716,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Marketing": {
-    title: "Marketing — Help",
+    title: "Marketing - Help",
     intro:
       "Compare media buyers and campaigns by delivered profit, not just raw orders. This page uses UTM attribution, hidden buyer fields, delivered order outcomes, product costs, delivery fees, and logged ad spend.",
     sections: [
@@ -751,7 +751,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "User Management": {
-    title: "User Management — Help",
+    title: "User Management - Help",
     intro:
       "Create and manage staff accounts, assign roles and permissions, and control who can access what in Protohub. Owner only.",
     sections: [
@@ -759,7 +759,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         heading: "What you can do here",
         points: [
           "Add new staff and set their role (Owner, Admin, Manager, Sales Rep, Inventory Manager, Viewer).",
-          "View all users and their activity — how many are active, new this month, and online now.",
+          "View all users and their activity - how many are active, new this month, and online now.",
           "Search and filter users by name, email, role, or status (enabled or disabled).",
           "See each person's permissions and enable or disable their account.",
           "Edit user details, reset passwords, or remove staff.",
@@ -777,7 +777,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "Good to know",
         points: [
-          "Each role grants default permissions automatically — you can customise them if needed.",
+          "Each role grants default permissions automatically - you can customise them if needed.",
           "Disabled guest or test accounts also appear here.",
           "The Online Now card shows staff active in the last 5 minutes.",
           "The User Growth and Role Distribution charts help you track team size and structure.",
@@ -787,7 +787,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Round-Robin": {
-    title: "Round-Robin — Help",
+    title: "Round-Robin - Help",
     intro:
       "Decide who gets the next incoming lead or order. This page controls the automatic assignment sequence for your sales team.",
     sections: [
@@ -805,7 +805,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         points: [
           "Incoming orders are assigned automatically to the rep at position #1.",
           "After an assignment, that rep moves to the end of the active sequence.",
-          "Excluded reps are skipped entirely — they stay under Temporarily Excluded and get no orders until you re-enable them.",
+          "Excluded reps are skipped entirely - they stay under Temporarily Excluded and get no orders until you re-enable them.",
           "The sequence applies to new incoming orders only, not to manual reassignments.",
         ],
       },
@@ -814,7 +814,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         points: [
           "Use Skip Rep to give the current #1 a breather without losing their place in line.",
           "Use Advance Sequence to rotate the queue manually (for example, when someone is unavailable).",
-          "Use Reset Sequence to start fresh — reps go back to alphabetical order at position 1.",
+          "Use Reset Sequence to start fresh - reps go back to alphabetical order at position 1.",
           "Search by name to find a rep in the active or excluded list.",
         ],
       },
@@ -826,7 +826,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Embed Form": {
-    title: "Embed Form — Help",
+    title: "Embed Form - Help",
     intro:
       "Set up and customise an order form you can embed on any website. Customers fill it in to place orders directly, and you control which fields show, which states are available, and how orders are assigned.",
     sections: [
@@ -859,7 +859,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Notifications": {
-    title: "Notifications — Help",
+    title: "Notifications - Help",
     intro:
       "Your notification centre tracks order events, stock alerts, and other operational updates. Filter by period and product, and manage which ones you have reviewed.",
     sections: [
@@ -876,9 +876,9 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "How notifications work",
         points: [
-          "They are created automatically when orders or inventory events happen — you do not create them yourself.",
+          "They are created automatically when orders or inventory events happen - you do not create them yourself.",
           "Unread notifications show a blue dot; click one to mark it read and jump to that order or page.",
-          "Read notifications stay in your history until you delete them — use Delete read to tidy up.",
+          "Read notifications stay in your history until you delete them - use Delete read to tidy up.",
         ],
       },
       {
@@ -893,7 +893,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Settings": {
-    title: "Settings — Help",
+    title: "Settings - Help",
     intro:
       "Manage your account and preferences for notifications, email, SMS, and workspace setup. What you see depends on your role.",
     sections: [
@@ -901,7 +901,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         heading: "What you can do here",
         points: [
           "Turn push notifications on or off on this device, for orders, low stock, waybills, and other alerts.",
-          "Set up and test email delivery (Owner only) — configure Resend or Mailjet, create templates, and watch activity.",
+          "Set up and test email delivery (Owner only) - configure Resend or Mailjet, create templates, and watch activity.",
           "Check your SMS credit balance and configure SMS delivery (Owner sets it up; Admin can view the balance).",
           "Adjust quiet hours and retry rules for customer SMS messages.",
           "Install the app on your home screen for the most reliable push notifications on mobile.",
@@ -940,14 +940,14 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Call Rep Console": {
-    title: "Call Rep Console — Help",
+    title: "Call Rep Console - Help",
     intro:
       "Make outbound calls to customers to confirm orders, schedule deliveries, and follow up. Work the call queue one customer at a time, confirm or reschedule, and log each outcome.",
     sections: [
       {
         heading: "What you can do here",
         points: [
-          "Work the incoming call queue one customer at a time — each card shows the order, customer name, phone, and product details.",
+          "Work the incoming call queue one customer at a time - each card shows the order, customer name, phone, and product details.",
           "Call (tap Phone) or message (WhatsApp) the customer, or tap Details for the full order.",
           "Reschedule or set a new delivery date if the customer asks.",
           "Mark the outcome: Confirmed, Postponed, Not Picking, or Cancelled.",
@@ -966,7 +966,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "Good to know",
         points: [
-          "This is a core part of the Sales Rep workspace — stay here to work through incoming orders.",
+          "This is a core part of the Sales Rep workspace - stay here to work through incoming orders.",
           "Delivery scheduling is tied to the customer's state hub; the system checks stock there before you schedule.",
           "Your outcomes directly affect order status and delivery timelines.",
         ],
@@ -975,9 +975,9 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
   },
 
   "Sales Rep Workspace": {
-    title: "Sales Rep Workspace — Help",
+    title: "Sales Rep Workspace - Help",
     intro:
-      "Your hub for managing orders, customers, and commission. Everything here is personal to you — the orders assigned to you, the customers you work with, and the bonus you earn this week.",
+      "Your hub for managing orders, customers, and commission. Everything here is personal to you - the orders assigned to you, the customers you work with, and the bonus you earn this week.",
     sections: [
       {
         heading: "Your workspace tabs",
@@ -1002,7 +1002,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         heading: "Pro tips",
         points: [
           "Use Bonus Coach to see which open orders move your commission fastest this week.",
-          "Hot stock signals flag products customers ask for when agent stock is tight — useful data for your inventory requests.",
+          "Hot stock signals flag products customers ask for when agent stock is tight - useful data for your inventory requests.",
           "Owner and admin can use View as [Your Name] to coach you; they see exactly what you see here.",
         ],
       },
@@ -1019,7 +1019,7 @@ export const DEFAULT_HELP: HelpEntry = {
       heading: "Getting around",
       points: [
         "Most pages have a period filter (This Week, Last Week, This Month, and a custom date range). This Week always runs Sunday through Saturday.",
-        "You can switch the currency display (NGN, USD, GBP) where money is shown — this only changes the display, not the underlying data.",
+        "You can switch the currency display (NGN, USD, GBP) where money is shown - this only changes the display, not the underlying data.",
         "Use the search and filter controls at the top of a page to narrow what you see.",
       ],
     },
@@ -1028,7 +1028,7 @@ export const DEFAULT_HELP: HelpEntry = {
       points: [
         "Revenue counts delivered orders only. Net Profit is revenue minus product cost (COGS), delivery, ad spend, and other expenses.",
         "Orders route to the delivery agent hub in the customer's state, and that hub must be able to fulfil every line on the order.",
-        "What you can do depends on your role. If an action is missing, your role may not have access — ask an Owner or Admin.",
+        "What you can do depends on your role. If an action is missing, your role may not have access - ask an Owner or Admin.",
       ],
     },
   ],
