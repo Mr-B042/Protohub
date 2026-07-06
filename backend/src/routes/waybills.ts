@@ -439,6 +439,8 @@ const WaybillStatusSchema = z.object({
   notes:        z.string().max(500).optional()
 }).strict();
 
+const WAYBILL_TERMINAL_STATUSES = new Set(["Received", "Returned", "Cancelled", "Defective", "Missing"]);
+
 router.patch("/:id/status",
   requireRole("Owner", "Admin", "Inventory Manager"),
   async (req, res) => {
@@ -448,6 +450,19 @@ router.patch("/:id/status",
       return;
     }
     const { status, receivedDate, notes } = parsed.data;
+    const { data: current, error: currentError } = await supabase
+      .from("waybill_records")
+      .select("*")
+      .eq("id", req.params.id).eq("org_id", req.user!.orgId)
+      .single();
+    if (currentError || !current) { res.status(404).json({ error: "Waybill not found." }); return; }
+    if (current.status !== status && WAYBILL_TERMINAL_STATUSES.has(current.status) && WAYBILL_TERMINAL_STATUSES.has(status)) {
+      res.status(409).json({
+        error: `Waybill is already ${current.status}. Create an inventory correction instead of changing it to ${status}, so stock is not counted twice.`,
+        code: "WAYBILL_TERMINAL_STATUS_LOCKED"
+      });
+      return;
+    }
     const updates: Record<string, unknown> = { status };
     if (status === "Received" && receivedDate) updates.received_date = receivedDate;
     if (notes !== undefined) updates.notes = notes;
@@ -467,6 +482,21 @@ router.patch("/:id/status",
       // "In" movements add stock back; "Correction" (Defective/Missing) removes it.
       const isInbound = movType === "Waybill In";
       for (const item of statusItems) {
+        // Idempotency guard: re-saving the same terminal status must not add or
+        // remove stock again. If a prior attempt set the status but failed before
+        // writing its movement, this check lets the retry repair only the missing
+        // product line.
+        const { data: existingMovement } = await supabase
+          .from("stock_movements")
+          .select("id")
+          .eq("org_id", req.user!.orgId)
+          .eq("waybill_id", data.id)
+          .eq("product_id", item.product_id)
+          .eq("type", movType)
+          .ilike("note", `Waybill ${data.id} marked ${status}%`)
+          .limit(1);
+        if (existingMovement && existingMovement.length > 0) continue;
+
         const { data: product } = await supabase
           .from("products").select("warehouse_stock, agent_stock").eq("id", item.product_id).single();
         let balanceAfter = 0;
