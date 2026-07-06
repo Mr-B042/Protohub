@@ -1,4 +1,4 @@
-// Phantom-stock safety net — a daily audit that flags any order marked Delivered
+// Phantom-stock safety net - a daily audit that flags any order marked Delivered
 // whose agent stock was NOT actually deducted (no "Order Fulfilled" movement).
 //
 // This should essentially never fire. The delivery deduction has a lenient hub
@@ -6,7 +6,7 @@
 // any failure, so a Delivered order that still reads stock_deducted=true has had
 // its deduction run to completion. This cron is belt-and-suspenders: if some
 // unforeseen edge ever strands an order Delivered-but-undeducted, an Owner/Admin
-// hears about it within a day — instead of discovering phantom stock weeks later.
+// hears about it within a day instead of discovering phantom stock weeks later.
 //
 // Detection = Delivered + agent-fulfilled + physical (product set) order that has
 // NO "Order Fulfilled" stock_movements row. Notifies Owners/Admins in-app.
@@ -14,14 +14,22 @@
 
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
+import { createHash } from "node:crypto";
 
 const RECIPIENT_ROLES = ["Owner", "Admin"] as const;
 // Older phantoms (the one-off June remediation) are already fixed, and bounding
 // the scan keeps the daily job cheap. New phantoms would be recent.
 const LOOKBACK_DAYS = 60;
-// Don't re-fire within this window, so a daily run never double-alerts.
-const DEDUPE_WINDOW_HOURS = 20;
 const DEDUPE_LINK = "stock-audit/phantom";
+// Keep the legacy base-link guard briefly so old deployed notifications don't
+// duplicate while a new deployment is rolling out.
+const LEGACY_DEDUPE_WINDOW_HOURS = 72;
+
+function phantomDedupeLink(orderIds: string[]) {
+  const stable = orderIds.slice().sort().join(",");
+  const hash = createHash("sha256").update(stable).digest("hex").slice(0, 16);
+  return `${DEDUPE_LINK}/${hash}`;
+}
 
 async function scanOrgForPhantomStock(orgId: string): Promise<number> {
   const sinceDate = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().split("T")[0];
@@ -75,18 +83,27 @@ async function scanOrgForPhantomStock(orgId: string): Promise<number> {
   const recipientIds = Array.from(new Set(((recipientsRaw ?? []) as { id: string }[]).map((r) => r.id)));
   if (recipientIds.length === 0) return 0;
 
-  // Dedupe: skip if we already alerted this org within the window.
-  const dedupeSince = new Date(Date.now() - DEDUPE_WINDOW_HOURS * 3_600_000).toISOString();
-  const { data: recent } = await supabase
-    .from("system_notifications").select("id")
-    .eq("org_id", orgId).eq("type", "info").eq("link", DEDUPE_LINK)
-    .gte("created_at", dedupeSince).limit(1);
-  if (recent && recent.length > 0) return 0;
-
+  // Dedupe per exact phantom set. If the same order stays broken overnight, don't
+  // spam Owner/Admin again. If a new/different phantom appears, send a fresh alert.
   const n = phantoms.length;
   const sample = phantoms.slice(0, 6).join(", ");
+  const link = phantomDedupeLink(phantoms);
+  const { data: recent } = await supabase
+    .from("system_notifications").select("id")
+    .eq("org_id", orgId).eq("type", "info").eq("link", link)
+    .limit(1);
+  if (recent && recent.length > 0) return 0;
+
+  const legacyDedupeSince = new Date(Date.now() - LEGACY_DEDUPE_WINDOW_HOURS * 3_600_000).toISOString();
+  const { data: legacyRecent } = await supabase
+    .from("system_notifications").select("id")
+    .eq("org_id", orgId).eq("type", "info").eq("link", DEDUPE_LINK)
+    .ilike("message", `%(${sample}%`)
+    .gte("created_at", legacyDedupeSince).limit(1);
+  if (legacyRecent && legacyRecent.length > 0) return 0;
+
   const title = `Stock audit: ${n} delivered order${n === 1 ? "" : "s"} not deducted`;
-  const message = `${n} order${n === 1 ? " was" : "s were"} marked Delivered but agent stock was NOT deducted (${sample}${n > 6 ? ", …" : ""}). Re-save the delivery on each to retry, or check the agent's hub — this should be rare.`;
+  const message = `${n} order${n === 1 ? " was" : "s were"} marked Delivered but agent stock was NOT deducted (${sample}${n > 6 ? ", ..." : ""}). Re-save the delivery on each to retry, or check the agent's hub.`;
 
   const rows = recipientIds.map((rid) => ({
     org_id: orgId,
@@ -94,7 +111,7 @@ async function scanOrgForPhantomStock(orgId: string): Promise<number> {
     type: "info",
     title,
     message,
-    link: DEDUPE_LINK,
+    link,
     read: false
   }));
   const { error: insertErr } = await supabase.from("system_notifications").insert(rows);
