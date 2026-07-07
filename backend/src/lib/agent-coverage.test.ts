@@ -27,3 +27,11 @@ test("normalizeState folds Abuja/FCT aliases", () => {
   assert.equal(normalizeState("Abuja"), "FCT Abuja");
   assert.equal(normalizeState("FCT, Abuja"), "FCT Abuja");
 });
+
+test("normalizeState maps known city-only hub labels to their real state", () => {
+  assert.equal(normalizeState("Ibadan"), "Oyo");
+  assert.equal(normalizeState("Asaba Delta"), "Delta");
+  assert.equal(normalizeState("Enugu Nsukka"), "Enugu");
+  assert.equal(normalizeState("Oyo"), "Oyo");
+  assert.equal(normalizeState("Enugu"), "Enugu");
+});

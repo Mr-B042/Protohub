@@ -42,15 +42,30 @@ const ABUJA_ALIASES = new Set([
   "federal capital territory", "fct federal capital territory"
 ]);
 
+// A handful of hubs are labeled by a city within the state rather than the
+// state itself (a distinct logistics company's own choice of label, same
+// situation as the Edo comma-note case above - different companies, not to
+// be merged, just correctly matched at routing time). These need an explicit
+// lookup since there's no generic string rule connecting a Nigerian city to
+// its state - confirmed against real hub labels rather than assumed.
+const CITY_LABEL_TO_STATE: Record<string, string> = {
+  "ibadan": "Oyo",
+  "asaba": "Delta",
+  "asaba delta": "Delta",
+  "nsukka": "Enugu",
+  "enugu nsukka": "Enugu"
+};
+
 // State labels arrive spelled many ways. Canonicalize so the SAME state always
 // matches in routing/coverage: collapse whitespace, drop a trailing " State"
 // descriptor ("Rivers State" -> "Rivers"), drop a comma-separated city note a
 // hub's own label sometimes carries in the state field ("Edo, Benin" -> "Edo" -
 // this is one logistics company's own city note, NOT a different state; it
 // does not rename or merge that hub's stored record, only how it's MATCHED
-// against an order's state at routing time), and fold the Abuja/FCT family.
-// Only ever merges genuinely-identical states (never collapses two distinct
-// states), so it can only ADD correct matches, never create a wrong one.
+// against an order's state at routing time), fold the Abuja/FCT family, and
+// map known city-only labels to their real state. Only ever merges
+// genuinely-identical states (never collapses two distinct states), so it can
+// only ADD correct matches, never create a wrong one.
 export const normalizeState = (value: unknown) => {
   const trimmed = normalizeText(value).replace(/\s+/g, " ");
   if (!trimmed) return "";
@@ -58,6 +73,7 @@ export const normalizeState = (value: unknown) => {
   const canonical = statePart.replace(/\s+state$/i, "").trim();
   const key = canonical.toLowerCase().replace(/[.,()]/g, " ").replace(/\s+/g, " ").trim();
   if (ABUJA_ALIASES.has(key)) return "FCT Abuja";
+  if (CITY_LABEL_TO_STATE[key]) return CITY_LABEL_TO_STATE[key];
   return canonical;
 };
 export const normalizeCity = (value: unknown) => normalizeText(value);
