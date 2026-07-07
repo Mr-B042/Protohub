@@ -709,7 +709,12 @@ export const salesBonusesApi = {
   updateRule: (id: string, body: unknown) => patch<any>(`/api/sales-bonuses/rules/${id}`, body),
   deleteRule: (id: string) => del<void>(`/api/sales-bonuses/rules/${id}`),
   progress: (weekStart: string) => get<any>(`/api/sales-bonuses/progress?${new URLSearchParams({ weekStart }).toString()}`),
-  progressForRep: (repId: string, weekStart: string) => get<any>(`/api/sales-bonuses/progress/${repId}?${new URLSearchParams({ weekStart }).toString()}`)
+  progressForRep: (repId: string, weekStart: string) => get<any>(`/api/sales-bonuses/progress/${repId}?${new URLSearchParams({ weekStart }).toString()}`),
+  orderBonusMap: (dateTo: string, dateFrom?: string) => {
+    const qs = new URLSearchParams({ dateTo });
+    if (dateFrom) qs.set("dateFrom", dateFrom);
+    return get<Record<string, number>>(`/api/sales-bonuses/order-bonus-map?${qs.toString()}`);
+  }
 };
 
 // ── Customers ─────────────────────────────────────────────

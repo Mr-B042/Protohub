@@ -5,6 +5,7 @@ import {
   currentSalesBonusWeekStart,
   getSalesBonusProgress,
   listSalesBonusPrograms,
+  perOrderBonusMapForDeliveredRange,
   type SalesBonusRuleType
 } from "../lib/sales-bonus-engine.js";
 import { supabase } from "../lib/supabase.js";
@@ -370,6 +371,33 @@ router.get("/progress/:repId", allRepViewer, async (req, res) => {
     res.json(await getSalesBonusProgress(req.user!.orgId, weekStart, { repId: parsedParams.data.repId }));
   } catch (error: any) {
     res.status(400).json({ error: error?.message ?? "Failed to calculate bonus progress." });
+  }
+});
+
+// Maps {orderId -> attributed new-engine bonus amount} for delivered orders
+// in the given date range - lets Net Profit / break-even views fold the new
+// engine's cost in without re-deriving rule logic. See
+// perOrderBonusMapForDeliveredRange in sales-bonus-engine.ts for the model.
+const OrderBonusMapQuerySchema = z.object({
+  dateFrom: z.string().regex(DATE_KEY_PATTERN).optional(),
+  dateTo: z.string().regex(DATE_KEY_PATTERN)
+});
+
+router.get("/order-bonus-map", allRepViewer, async (req, res) => {
+  const parsed = OrderBonusMapQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+  const dateFrom = parsed.data.dateFrom ?? SALES_BONUS_LAUNCH_WEEK_START;
+  if (dateFrom > parsed.data.dateTo) {
+    res.status(400).json({ error: "dateFrom must be on or before dateTo." });
+    return;
+  }
+  try {
+    res.json(await perOrderBonusMapForDeliveredRange(req.user!.orgId, dateFrom, parsed.data.dateTo));
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message ?? "Failed to calculate order bonus map." });
   }
 });
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   SALES_BONUS_LAUNCH_WEEK_START,
+  attributeRuleEarningsToOrders,
   computeSalesBonusForRep,
   salesBonusWeekStartsForPeriod,
   type SalesBonusOrder,
@@ -330,4 +331,127 @@ test("payroll week collection starts at sales bonus launch week", () => {
     salesBonusWeekStartsForPeriod("2026-06-01", "2026-07-20"),
     ["2026-07-05", "2026-07-12", "2026-07-19"]
   );
+});
+
+test("attributeRuleEarningsToOrders: upfront_percent recovers each order's own exact share", () => {
+  const rule: SalesBonusRule = {
+    id: "upfront",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "Full upfront payment commission",
+    type: "upfront_percent",
+    status: "active",
+    config: { percent: 5 },
+    display_order: 30
+  };
+  const result = run([rule], [
+    order("small", { amount: 20_000, full_upfront_paid: true }),
+    order("big", { amount: 30_000, full_upfront_paid: true })
+  ]);
+  const orderAmountById = new Map([["small", 20_000], ["big", 30_000]]);
+  const map = attributeRuleEarningsToOrders(result.rules[0]!, orderAmountById);
+
+  assert.equal(map.get("small"), 1_000);
+  assert.equal(map.get("big"), 1_500);
+  assert.equal([...map.values()].reduce((s, a) => s + a, 0), result.rules[0]!.earnedAmount);
+});
+
+test("attributeRuleEarningsToOrders: delivery_rate_per_delivered splits the exact flat rate evenly", () => {
+  const rule: SalesBonusRule = {
+    id: "delivery",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "Delivery-rate pay boost",
+    type: "delivery_rate_per_delivered",
+    status: "active",
+    config: { minOrders: 50, targetRatePercent: 70, fallbackPerDelivered: 200, qualifiedPerDelivered: 400 },
+    display_order: 40
+  };
+  const result = run([rule], [
+    ...Array.from({ length: 35 }, (_, index) => order(`d${index}`)),
+    ...Array.from({ length: 15 }, (_, index) => order(`p${index}`, { status: "Confirmed" }))
+  ]);
+  const map = attributeRuleEarningsToOrders(result.rules[0]!, new Map());
+
+  assert.equal(map.size, 35);
+  assert.ok([...map.values()].every((amount) => amount === 400));
+  assert.equal([...map.values()].reduce((s, a) => s + a, 0), result.rules[0]!.earnedAmount);
+});
+
+test("attributeRuleEarningsToOrders: step-function rule types even-split the flat payout across all qualifying orders", () => {
+  const rule: SalesBonusRule = {
+    id: "upgrade",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "Upgrade 5 customers",
+    type: "upgrade_count",
+    status: "active",
+    config: { fromQty: 3, toQtyMin: 4, targetCount: 5, amount: 2_000 },
+    display_order: 10
+  };
+  const result = run([rule], Array.from({ length: 5 }, (_, index) => order(`u${index}`, {
+    upsell_from_qty: 3,
+    upsell_to_qty: 4
+  })));
+  const map = attributeRuleEarningsToOrders(result.rules[0]!, new Map());
+
+  assert.equal(map.size, 5);
+  assert.ok([...map.values()].every((amount) => amount === 400));
+  assert.equal([...map.values()].reduce((s, a) => s + a, 0), 2_000);
+});
+
+test("attributeRuleEarningsToOrders: every_target_count repeat mode still splits across ALL qualifying orders, not just the first target", () => {
+  const rule: SalesBonusRule = {
+    id: "upgrade-repeat",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "Upgrade repeat bonus",
+    type: "upgrade_count",
+    status: "active",
+    config: { fromQty: 3, toQtyMin: 4, targetCount: 2, amount: 1_000, repeatMode: "every_target_count" },
+    display_order: 10
+  };
+  const result = run([rule], Array.from({ length: 5 }, (_, index) => order(`u${index}`, {
+    upsell_from_qty: 3,
+    upsell_to_qty: 4
+  })));
+  // floor(5/2) * 1000 = 2000 earned, but all 5 qualifying orders drove it.
+  assert.equal(result.rules[0]!.earnedAmount, 2_000);
+  const map = attributeRuleEarningsToOrders(result.rules[0]!, new Map());
+
+  assert.equal(map.size, 5);
+  assert.equal([...map.values()].reduce((s, a) => s + a, 0), 2_000);
+});
+
+test("attributeRuleEarningsToOrders: inactive rule or zero earnings yields an empty map", () => {
+  const rule: SalesBonusRule = {
+    id: "upgrade",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "Upgrade 5 customers",
+    type: "upgrade_count",
+    status: "active",
+    config: { fromQty: 3, toQtyMin: 4, targetCount: 5, amount: 2_000 },
+    display_order: 10
+  };
+  // Only 2 of 5 needed - qualifiedOrderIds is non-empty but earnedAmount is 0.
+  const partial = run([rule], Array.from({ length: 2 }, (_, index) => order(`u${index}`, {
+    upsell_from_qty: 3,
+    upsell_to_qty: 4
+  })));
+  assert.ok(partial.rules[0]!.qualifiedOrderIds.length > 0);
+  assert.equal(attributeRuleEarningsToOrders(partial.rules[0]!, new Map()).size, 0);
+
+  // Paused program - active is false even with qualifying orders.
+  const pausedProgram: SalesBonusProgram = { ...activeProgram, id: "paused-program", status: "paused" };
+  const pausedRule: SalesBonusRule = { ...rule, program_id: pausedProgram.id };
+  const paused = computeSalesBonusForRep({
+    rep,
+    weekStart: SALES_BONUS_LAUNCH_WEEK_START,
+    programs: [pausedProgram],
+    rules: [pausedRule],
+    orders: Array.from({ length: 5 }, (_, index) => order(`p${index}`, { upsell_from_qty: 3, upsell_to_qty: 4 }))
+  });
+  assert.equal(paused.rules[0]!.active, false);
+  assert.equal(attributeRuleEarningsToOrders(paused.rules[0]!, new Map()).size, 0);
 });
