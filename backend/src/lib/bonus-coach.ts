@@ -541,6 +541,7 @@ export const getRepBonusCoach = async (
         title: `Delivery rate is ${repProgress.deliveryRate}% this week`,
         subtitle: deliveryRule.helper,
         targetRate: deliveryRule.progressTarget,
+        amount: deliveryRule.remainingPotential > 0 ? deliveryRule.remainingPotential : undefined,
         priority: 90
       });
     }
