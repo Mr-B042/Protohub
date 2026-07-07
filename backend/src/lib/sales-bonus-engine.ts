@@ -728,6 +728,93 @@ export const salesBonusWeekStartsForPeriod = (periodStartDate: string, periodEnd
   return Array.from(new Set(starts));
 };
 
+// ── Net Profit / break-even integration ────────────────────────────────────
+// Every rule already tracks qualifiedOrderIds - the specific delivered orders
+// that earned its earnedAmount - so unlike salary (which has no natural
+// per-order basis and gets day-smoothed instead), a new-engine bonus CAN be
+// attributed back to real orders for P&L purposes. Only ever reads
+// rule.earnedAmount/qualifiedOrderIds - NEVER rep.manualAdjustments or
+// rep.earnedSoFar as a whole. manual_bonus_override/bonus_manually_adjusted
+// are the same order columns the legacy per-order bonus calc already fully
+// absorbs for that order; folding the new engine's manual-adjustment reducer
+// in here too would double-pay every manually-adjusted order.
+export const attributeRuleEarningsToOrders = (
+  rule: SalesBonusRuleProgress,
+  orderAmountById: Map<string, number>
+): Map<string, number> => {
+  const result = new Map<string, number>();
+  if (!rule.active || rule.earnedAmount <= 0 || rule.qualifiedOrderIds.length === 0) return result;
+  if (rule.type === "upfront_percent") {
+    // Exact, not an estimate: earnedAmount is already the sum of
+    // round(order.amount * percent/100) over these same orders.
+    const percent = Math.max(0, toNumber(rule.config.percent, 0));
+    for (const orderId of rule.qualifiedOrderIds) {
+      result.set(orderId, Math.round((orderAmountById.get(orderId) ?? 0) * (percent / 100)));
+    }
+    return result;
+  }
+  // delivery_rate_per_delivered: every qualifying order earns the identical
+  // flat rate, so an even split recovers the exact per-order amount.
+  // upgrade_count / cross_sell_count / cross_sell_offer: earnedAmount is a
+  // step-function payout (paid once a target count is reached), not
+  // naturally per-order - even split here is a documented accrual estimate,
+  // attributing the cost across the orders that drove earning it.
+  const perOrderShare = rule.earnedAmount / rule.qualifiedOrderIds.length;
+  for (const orderId of rule.qualifiedOrderIds) result.set(orderId, perOrderShare);
+  return result;
+};
+
+// Anchors the week search on each delivered order's OWN created_at (the
+// engine's actual cohort key) rather than the requested range - an order
+// created weeks before the range but delivered inside it still needs its
+// creation week queried, or its contribution is silently missed.
+export const perOrderBonusMapForDeliveredRange = async (
+  orgId: string,
+  deliveredFromDateInclusive: string,
+  deliveredToDateInclusive: string
+): Promise<Record<string, number>> => {
+  const clampedFrom = deliveredFromDateInclusive < SALES_BONUS_LAUNCH_WEEK_START
+    ? SALES_BONUS_LAUNCH_WEEK_START
+    : deliveredFromDateInclusive;
+  const exclusiveTo = addDaysToDateKey(deliveredToDateInclusive, 1);
+  if (clampedFrom >= exclusiveTo) return {};
+
+  const { data, error } = await supabase
+    .from("orders")
+    .select("id, amount, created_at")
+    .eq("org_id", orgId)
+    .eq("status", "Delivered")
+    .gte("delivered_date", clampedFrom)
+    .lt("delivered_date", exclusiveTo);
+  if (error) throw new Error(error.message);
+
+  const inRangeOrders = (data ?? []) as { id: string; amount: number | null; created_at: string | null }[];
+  if (inRangeOrders.length === 0) return {};
+  const inRangeIds = new Set(inRangeOrders.map((order) => order.id));
+  const orderAmountById = new Map(inRangeOrders.map((order) => [order.id, positiveAmount(order.amount)]));
+
+  const weeks = new Set<string>();
+  for (const order of inRangeOrders) {
+    if (!order.created_at) continue;
+    const weekStart = sundayWeekStartForDateKey(order.created_at.slice(0, 10));
+    if (weekStart && weekStart >= SALES_BONUS_LAUNCH_WEEK_START) weeks.add(weekStart);
+  }
+
+  const totals = new Map<string, number>();
+  for (const weekStart of weeks) {
+    const progress = await getSalesBonusProgress(orgId, weekStart);
+    for (const rep of progress.reps) {
+      for (const rule of rep.rules) {
+        for (const [orderId, amount] of attributeRuleEarningsToOrders(rule, orderAmountById)) {
+          if (!inRangeIds.has(orderId)) continue;
+          totals.set(orderId, (totals.get(orderId) ?? 0) + amount);
+        }
+      }
+    }
+  }
+  return Object.fromEntries(totals);
+};
+
 export const calculateSalesBonusPayroll = async (
   orgId: string,
   periodBounds: { periodStartDate: string; periodEndDate: string }
