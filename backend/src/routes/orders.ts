@@ -1472,6 +1472,20 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
   const effectiveAgentLocationId = agentLocationId !== undefined ? agentLocationId : existing?.agent_location_id;
   const orderQty = existing?.quantity ?? 1;
 
+  // STRICT: an order can never be marked Delivered without an agent assigned.
+  // The stock-deduction check right below this only ever RAN when
+  // effectiveAgentId was truthy - with no agent, that whole block was
+  // silently skipped, letting a delivery through with no hub/stock trail at
+  // all. Only blocks a genuine New->Delivered transition, not a same-day
+  // date correction on an order that's already (validly) Delivered.
+  if (!isDeliveredDateCorrection && status === "Delivered" && !effectiveAgentId) {
+    res.status(400).json({
+      error: "This order has no agent assigned. Assign an agent before marking it Delivered.",
+      code: "DELIVERED_REQUIRES_AGENT"
+    });
+    return;
+  }
+
   // Pre-check: if marking Delivered and an agent is assigned, verify stock
   if (!isDeliveredDateCorrection && status === "Delivered" && effectiveAgentId && inventoryLines.length > 0) {
     const resolvedLocation = effectiveAgentLocationId
