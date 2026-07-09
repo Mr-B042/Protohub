@@ -7,6 +7,7 @@ import { appendCartJourneyEvent } from "../lib/cart-journey.js";
 import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, refreshOrderFollowUpSummary, syncOrderFollowUpTask, taskStatusFor } from "../lib/follow-up-workflow.js";
 import { classifyFollowUpOutcome, FOLLOW_UP_RECOVERY_BUCKETS } from "../lib/follow-up-outcomes.js";
 import { buildPackageComponentSnapshot, orderInventoryLinesFromRow, primaryInventoryProductId, type OrderInventoryLine } from "../lib/order-inventory.js";
+import { describeOrderItemChanges } from "../lib/order-item-audit.js";
 import { formatOrderForWhatsAppDispatch, type WhatsAppDispatchOrderRow } from "../lib/order-whatsapp-dispatch.js";
 import { isPerUserWhatsAppDispatch } from "../lib/whatsapp-dispatch-mode.js";
 import { logger } from "../lib/logger.js";
@@ -2764,6 +2765,56 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep"), asyn
     }, "Assigned");
   }
 
+  // Keep a human-readable item audit alongside the raw per-field history.
+  // This makes add-on removals visible as an explicit action instead of only
+  // leaving an unexplained order-total change.
+  try {
+    const itemAuditNotes = [
+      ...(hasOwn(updates, "cross_sell_lines")
+        ? describeOrderItemChanges({
+            beforeLines: current.cross_sell_lines,
+            afterLines: (data as Record<string, unknown>).cross_sell_lines,
+            beforeAmount: current.amount,
+            afterAmount: (data as Record<string, unknown>).amount,
+            currency: (data as Record<string, unknown>).currency ?? current.currency,
+            kind: "add-on"
+          })
+        : []),
+      ...(hasOwn(updates, "free_gift_lines")
+        ? describeOrderItemChanges({
+            beforeLines: current.free_gift_lines,
+            afterLines: (data as Record<string, unknown>).free_gift_lines,
+            currency: (data as Record<string, unknown>).currency ?? current.currency,
+            kind: "free gift"
+          })
+        : [])
+    ];
+    if (itemAuditNotes.length > 0) {
+      const { error: itemAuditError } = await supabase.from("order_audit").insert(
+        itemAuditNotes.map((note) => ({
+          order_id: req.params.id,
+          org_id: req.user!.orgId,
+          changed_by: req.user!.id,
+          from_status: current.status ?? null,
+          to_status: (data as Record<string, unknown>).status ?? current.status ?? null,
+          note
+        }))
+      );
+      if (itemAuditError) {
+        logger.warn("order item audit insert failed", {
+          orderId: req.params.id,
+          noteCount: itemAuditNotes.length,
+          error: itemAuditError.message
+        });
+      }
+    }
+  } catch (itemAuditError) {
+    logger.warn("order item audit crashed", {
+      orderId: req.params.id,
+      error: (itemAuditError as Error).message
+    });
+  }
+
   // ── Per-field audit trail ────────────────────────────────
   // order_audit only tracks status changes. This catches everything else
   // (product/package/quantity/amount/customer/etc.) so manual edits like
@@ -2777,7 +2828,9 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep"), asyn
       "quantity", "amount", "currency",
       "logistics_cost", "amount_remitted", "remittance_status",
       "assigned_rep_id", "agent_id", "agent_location_id",
-      "delivered_date", "scheduled_date", "scheduled_at"
+      "delivered_date", "scheduled_date", "scheduled_at",
+      "cross_sell_lines", "free_gift_lines",
+      "upsell_from_qty", "upsell_to_qty", "upsell_note"
     ] as const;
     const normalize = (value: unknown) =>
       value === undefined || value === "" ? null : (value as any);
