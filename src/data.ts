@@ -14,6 +14,7 @@ import {
   ClipboardCheck,
   Phone,
   LayoutDashboard,
+  LayoutPanelTop,
   Megaphone,
   MessageCircle,
   Package,
@@ -31,6 +32,7 @@ import {
 
 export const navItems = [
   { label: "Dashboard", icon: LayoutDashboard, active: true },
+  { label: "Manager Dashboard", icon: LayoutPanelTop },
   { label: "Orders", icon: ShoppingBag },
   { label: "Follow-up Queue", icon: CalendarClock },
   { label: "Closed Orders", icon: Archive },
