@@ -15,9 +15,13 @@ router.use(requireAuth);
 
 // ── GET /api/stock/movements ──────────────────────────────
 router.get("/movements", async (req, res) => {
-  const { productId, type, from, to, page = "1", limit = "50" } = req.query;
+  const { productId, agentId, type, from, to, page = "1", limit = "50" } = req.query;
   const pageNum  = Math.max(1, parseInt(page as string, 10));
-  const pageSize = Math.min(200, parseInt(limit as string, 10));
+  // 1000 (not 200): a query scoped to one agent is naturally small - the
+  // busiest agent today has 251 lifetime rows - while the unscoped org-wide
+  // fetch used to silently truncate to the newest 200 rows company-wide,
+  // which for a busy org could be as little as a few days of history.
+  const pageSize = Math.min(1000, parseInt(limit as string, 10));
   const offset   = (pageNum - 1) * pageSize;
 
   let query = supabase
@@ -28,6 +32,7 @@ router.get("/movements", async (req, res) => {
     .range(offset, offset + pageSize - 1);
 
   if (productId) query = query.eq("product_id", productId as string);
+  if (agentId)   query = query.eq("agent_id", agentId as string);
   if (type && type !== "All Types") query = query.eq("type", type);
   if (from) query = query.gte("created_at", from as string);
   if (to)   query = query.lte("created_at", to as string);
