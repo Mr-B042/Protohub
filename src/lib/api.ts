@@ -700,6 +700,16 @@ export const managerBonusApi = {
   updateSettings: (body: unknown) => patch<any>("/api/manager-bonuses/settings", body)
 };
 
+export const upsellBonusApi = {
+  settings: () => get<any>("/api/upsell-bonuses/settings"),
+  updateSettings: (body: unknown) => patch<any>("/api/upsell-bonuses/settings", body)
+};
+
+export const repWeeklyTargetsApi = {
+  list: (weekStart: string) => get<any>(`/api/rep-weekly-targets?${new URLSearchParams({ weekStart }).toString()}`),
+  save: (body: unknown) => patch<any>("/api/rep-weekly-targets", body)
+};
+
 export const salesBonusesApi = {
   programs: (params?: { includeDeleted?: boolean }) => {
     const qs = new URLSearchParams();
