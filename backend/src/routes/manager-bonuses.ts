@@ -234,7 +234,12 @@ router.get("/summary", async (req, res) => {
 
     const deliveredInCohort = cohortOrders.filter((order) => order.status === "Delivered").length;
     const cancelledFailed = cohortOrders.filter((order) => order.status === "Cancelled" || order.status === "Failed").length;
-    const deliveryRate = cohortOrders.length > 0 ? Math.round((deliveredInCohort / cohortOrders.length) * 1000) / 10 : 0;
+    // Throughput rate, matching the main Dashboard's "Fulfillment Rate" card:
+    // delivered-by-delivery-date over orders-created-in-period, not a single
+    // cohort's own delivered share. Kept in sync deliberately so the Manager
+    // Dashboard's bonus gates never disagree with the number managers already
+    // see on the Dashboard.
+    const deliveryRate = cohortOrders.length > 0 ? Math.round((deliveredOrders.length / cohortOrders.length) * 1000) / 10 : 0;
     const revenue = deliveredOrders.reduce((sum, order) => sum + numericAmount(order.amount), 0);
     const cogs = deliveredOrders.reduce((sum, order) => sum + cogsForOrder(order, pricingMap), 0);
     const logisticsFromOrders = deliveredOrders.reduce((sum, order) => sum + numericAmount(order.logistics_cost), 0);
