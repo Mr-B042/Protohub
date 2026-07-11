@@ -694,6 +694,12 @@ export const bonusCoachApi = {
   rep: (repId: string, weekStart: string) => get<any>(`/api/bonus-coach/rep/${repId}?${new URLSearchParams({ weekStart }).toString()}`)
 };
 
+export const managerBonusApi = {
+  settings: () => get<any>("/api/manager-bonuses/settings"),
+  summary: (weekStart: string) => get<any>(`/api/manager-bonuses/summary?${new URLSearchParams({ weekStart }).toString()}`),
+  updateSettings: (body: unknown) => patch<any>("/api/manager-bonuses/settings", body)
+};
+
 export const salesBonusesApi = {
   programs: (params?: { includeDeleted?: boolean }) => {
     const qs = new URLSearchParams();
