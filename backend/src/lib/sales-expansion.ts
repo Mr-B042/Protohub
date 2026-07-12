@@ -607,3 +607,71 @@ export async function salesExpansionComplianceForRepWeek(orgId: string, repId: s
 export function expansionInventoryLines(order: ExpansionOrder) {
   return orderInventoryLinesFromRow(order);
 }
+
+const toWatUtcIso = (dateKey: string, time: "start" | "end") =>
+  new Date(`${dateKey}T${time === "start" ? "00:00:00.000" : "23:59:59.999"}+01:00`).toISOString();
+
+export type SalesExpansionDailyComplianceDay = {
+  date: string;
+  eligibleCount: number;
+  loggedCount: number;
+};
+
+// Same eligibility rule as complianceRateForRepWeek (assigned, created this
+// week, status Confirmed/In Process/Dispatched/Delivered) - just bucketed by
+// the order's WAT calendar day instead of summed for the whole week, so a
+// rep/manager can see which specific day compliance actually slipped rather
+// than only a flat weekly percentage. Monday-Saturday only, matching the
+// Sundays-off convention used everywhere else (Follow-up KPI, the
+// Sunday-scheduling guard) - Sunday is never one of the 6 days returned.
+export async function dailyComplianceBreakdownForWeek(
+  orgId: string,
+  weekStart: string,
+  repId?: string | null
+): Promise<SalesExpansionDailyComplianceDay[]> {
+  const { settings } = await loadSalesExpansionSettings(orgId);
+  const days = Array.from({ length: 6 }, (_, index) => addDays(weekStart, index + 1));
+
+  const weekStartIso = toWatUtcIso(days[0], "start");
+  const weekEndIso = toWatUtcIso(days[5], "end");
+  const rangeStart = new Date(weekStartIso).getTime() < new Date(settings.enforcementStartsAt).getTime()
+    ? settings.enforcementStartsAt
+    : weekStartIso;
+
+  let query = supabase
+    .from("orders")
+    .select("id, created_at, assigned_rep_id")
+    .eq("org_id", orgId)
+    .gte("created_at", rangeStart)
+    .lte("created_at", weekEndIso)
+    .in("status", ["Confirmed", "In Process", "Dispatched", "Delivered"]);
+  if (repId) query = query.eq("assigned_rep_id", repId);
+  const { data: orders, error } = await query;
+  if (error) throw error;
+
+  const orderIds = (orders ?? []).map((order: any) => order.id);
+  let loggedIds = new Set<string>();
+  if (orderIds.length > 0) {
+    const { data: attempts, error: attemptsError } = await supabase
+      .from("order_sales_expansion_attempts")
+      .select("order_id, audit_status")
+      .eq("org_id", orgId)
+      .eq("record_status", "active")
+      .in("order_id", orderIds);
+    if (attemptsError) throw attemptsError;
+    loggedIds = new Set(
+      (attempts ?? []).filter((attempt: any) => attempt.audit_status !== "flagged").map((attempt: any) => attempt.order_id)
+    );
+  }
+
+  return days.map((date) => {
+    const dayStartMs = new Date(toWatUtcIso(date, "start")).getTime();
+    const dayEndMs = new Date(toWatUtcIso(date, "end")).getTime();
+    const dayOrders = (orders ?? []).filter((order: any) => {
+      const createdMs = new Date(order.created_at).getTime();
+      return createdMs >= dayStartMs && createdMs <= dayEndMs;
+    });
+    const loggedCount = dayOrders.filter((order: any) => loggedIds.has(order.id)).length;
+    return { date, eligibleCount: dayOrders.length, loggedCount };
+  });
+}
