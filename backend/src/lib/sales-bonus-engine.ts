@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { salesExpansionComplianceForRepWeek, type SalesExpansionCompliance } from "./sales-expansion.js";
 
 export type SalesBonusRuleType =
   | "upgrade_count"
@@ -125,6 +126,9 @@ export type SalesBonusRepProgress = {
   manualAdjustments: number;
   rules: SalesBonusRuleProgress[];
   opportunities: SalesBonusOrderOpportunity[];
+  salesExpansionCompliance?: SalesExpansionCompliance;
+  performanceBonusBeforeCompliance?: number;
+  complianceReductionAmount?: number;
 };
 
 export type SalesBonusProgressResponse = {
@@ -151,6 +155,9 @@ export type SalesBonusPayrollRow = {
       earnedSoFar: number;
       manualAdjustments: number;
       rules: SalesBonusRuleProgress[];
+      salesExpansionCompliance?: SalesExpansionCompliance;
+      performanceBonusBeforeCompliance?: number;
+      complianceReductionAmount?: number;
     }>;
     totalProgramBonus: number;
     manualAdjustments: number;
@@ -692,12 +699,38 @@ export const getSalesBonusProgress = async (
     .filter((rep) => !options.repId || rep.id === options.repId);
   const flattened = flattenPrograms(programs);
   const orders = (ordersResult.data ?? []) as SalesBonusOrder[];
-  const repProgress = reps.map((rep) => computeSalesBonusForRep({
-    rep,
-    weekStart,
-    programs: flattened.programs,
-    rules: flattened.rules,
-    orders
+  const repProgress = await Promise.all(reps.map(async (rep) => {
+    const progress = computeSalesBonusForRep({
+      rep,
+      weekStart,
+      programs: flattened.programs,
+      rules: flattened.rules,
+      orders
+    });
+    const compliance = await salesExpansionComplianceForRepWeek(orgId, rep.id, weekStart);
+    const performanceBonusBeforeCompliance = progress.earnedSoFar - progress.manualAdjustments;
+    const adjustedRules = progress.rules.map((rule) => {
+      if (!rule.active || rule.earnedAmount <= 0 || compliance.bonusMultiplier >= 1) return rule;
+      const earnedAmount = Math.round(rule.earnedAmount * compliance.bonusMultiplier);
+      return {
+        ...rule,
+        earnedAmount,
+        remainingPotential: Math.max(0, rule.potentialAmount - earnedAmount),
+        helper: `${rule.helper} Sales-log compliance applied: ${compliance.compliancePct}% (${compliance.reductionPct}% performance-bonus reduction).`
+      };
+    });
+    const adjustedRuleEarnings = adjustedRules.reduce((sum, rule) => sum + rule.earnedAmount, 0);
+    const adjustedEarned = adjustedRuleEarnings + progress.manualAdjustments;
+    return {
+      ...progress,
+      rules: adjustedRules,
+      earnedSoFar: adjustedEarned,
+      lockedAmount: adjustedEarned,
+      pendingPotential: Math.max(0, progress.totalAvailable - adjustedEarned),
+      salesExpansionCompliance: compliance,
+      performanceBonusBeforeCompliance,
+      complianceReductionAmount: Math.max(0, performanceBonusBeforeCompliance - adjustedRuleEarnings)
+    };
   }));
 
   const totals = repProgress.reduce((acc, rep) => {
@@ -842,7 +875,10 @@ export const calculateSalesBonusPayroll = async (
         weekEnd: rep.weekEnd,
         earnedSoFar: rep.earnedSoFar,
         manualAdjustments: rep.manualAdjustments,
-        rules: rep.rules
+        rules: rep.rules,
+        salesExpansionCompliance: rep.salesExpansionCompliance,
+        performanceBonusBeforeCompliance: rep.performanceBonusBeforeCompliance,
+        complianceReductionAmount: rep.complianceReductionAmount
       });
       rows.set(rep.repId, current);
     }

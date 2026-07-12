@@ -361,7 +361,14 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
           .sort((a, b) => Number(b.threshold ?? 0) - Number(a.threshold ?? 0))[0]?.amount ?? 0)
         : 0;
       const bonusSnapshot = user.role === "Sales Rep" ? salesBonusByRep.get(user.id) : undefined;
-      const autoBonus = Number(bonusSnapshot?.autoBonus ?? 0) + Number(tierBonus ?? 0);
+      const complianceWeeks = ((bonusSnapshot?.bonusBreakdown as any)?.weeks ?? [])
+        .map((week: any) => week.salesExpansionCompliance)
+        .filter((value: any) => value && Number.isFinite(Number(value.bonusMultiplier)));
+      const legacyComplianceMultiplier = complianceWeeks.length > 0
+        ? complianceWeeks.reduce((sum: number, value: any) => sum + Number(value.bonusMultiplier), 0) / complianceWeeks.length
+        : 1;
+      const adjustedTierBonus = Math.round(Number(tierBonus ?? 0) * legacyComplianceMultiplier);
+      const autoBonus = Number(bonusSnapshot?.autoBonus ?? 0) + adjustedTierBonus;
       const deductions = penalties
         .filter((penalty) => penalty.rep_id === user.id)
         .reduce((sum, penalty) => sum + Number(penalty.amount ?? 0), 0);
@@ -373,7 +380,12 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
         fixedSalary,
         commission,
         autoBonus,
-        bonusBreakdown: bonusSnapshot?.bonusBreakdown as unknown,
+        bonusBreakdown: {
+          ...((bonusSnapshot?.bonusBreakdown as Record<string, unknown> | undefined) ?? {}),
+          legacyPerformanceTierBeforeCompliance: Number(tierBonus ?? 0),
+          legacyPerformanceTierAfterCompliance: adjustedTierBonus,
+          legacyPerformanceTierComplianceReduction: Math.max(0, Number(tierBonus ?? 0) - adjustedTierBonus)
+        },
         deductions,
         total
       };

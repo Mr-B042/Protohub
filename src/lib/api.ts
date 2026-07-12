@@ -555,6 +555,23 @@ export const ordersApi = {
   logContactAttempt: (id: string, body: unknown) => post<any>(`/api/orders/${id}/contact-attempts`, body)
 };
 
+export const salesExpansionApi = {
+  settings: () => get<any>("/api/sales-expansion/settings"),
+  updateSettings: (body: unknown) => patch<any>("/api/sales-expansion/settings", body),
+  context: (orderId: string) => get<any>(`/api/orders/${orderId}/sales-expansion-context`),
+  submit: (orderId: string, body: unknown) => post<any>(`/api/orders/${orderId}/sales-expansion-attempts`, body),
+  attempts: (params?: Record<string, string>) => {
+    const qs = params ? `?${new URLSearchParams(params).toString()}` : "";
+    return get<any[]>(`/api/sales-expansion/attempts${qs}`);
+  },
+  summary: (params?: Record<string, string>) => {
+    const qs = params ? `?${new URLSearchParams(params).toString()}` : "";
+    return get<any>(`/api/sales-expansion/summary${qs}`);
+  },
+  audit: (id: string, body: { status: "verified" | "flagged"; note: string }) => patch<any>(`/api/sales-expansion/attempts/${id}/audit`, body),
+  voidForCorrection: (id: string, reason: string) => patch<any>(`/api/sales-expansion/attempts/${id}/correction`, { reason })
+};
+
 // ── Follow-up KPI: daily logging scoreboard + miss review ────
 export const followUpKpiApi = {
   board: (params?: { repId?: string; date?: string }) => {

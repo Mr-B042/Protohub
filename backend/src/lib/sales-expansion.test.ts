@@ -1,0 +1,32 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { complianceBonusDecision, defaultSalesExpansionSettings, salesExpansionSummaryFromRows } from "./sales-expansion.js";
+
+test("compliance bonus tiers reduce performance bonus only at the configured thresholds", () => {
+  const settings = defaultSalesExpansionSettings();
+  assert.deepEqual(complianceBonusDecision(100, settings), { bonusMultiplier: 1, reductionPct: 0, level: "full", formalWarning: false });
+  assert.equal(complianceBonusDecision(98, settings).bonusMultiplier, 1);
+  assert.equal(complianceBonusDecision(97.9, settings).bonusMultiplier, 0.95);
+  assert.equal(complianceBonusDecision(94, settings).bonusMultiplier, 0.9);
+  assert.deepEqual(complianceBonusDecision(89.9, settings), { bonusMultiplier: 0, reductionPct: 100, level: "no_compliance_bonus", formalWarning: true });
+});
+
+test("delivered conversion counts only accepted add-ons still present on delivered orders", () => {
+  const attempts = [
+    { id: "a1", order_id: "o1", eligibility: "eligible", record_status: "active" },
+    { id: "a2", order_id: "o2", eligibility: "eligible", record_status: "active" },
+    { id: "a3", order_id: "o3", eligibility: "exempt", record_status: "active" }
+  ];
+  const lines = [
+    { order_id: "o1", offer_type: "cross_sell", response: "accepted", linked_order_item_id: "line-1", accepted_amount: 5000 },
+    { order_id: "o2", offer_type: "cross_sell", response: "accepted", linked_order_item_id: "line-2", accepted_amount: 7000 }
+  ];
+  const orders = [
+    { id: "o1", status: "Delivered", cross_sell_lines: [{ id: "line-1" }] },
+    { id: "o2", status: "Delivered", cross_sell_lines: [] }
+  ];
+  const summary = salesExpansionSummaryFromRows(attempts, orders, lines);
+  assert.equal(summary.crossSellAcceptedCount, 2);
+  assert.equal(summary.crossSellDeliveredCount, 1);
+  assert.equal(summary.deliveredAddOnValue, 5000);
+});

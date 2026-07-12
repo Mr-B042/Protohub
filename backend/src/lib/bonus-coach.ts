@@ -49,6 +49,9 @@ export type RepBonusSnapshot = {
   deliveriesNeededForRateTarget: number | null;
   topPerformerGap: number | null;
   topPerformerRank: number | null;
+  salesLogCompliancePct?: number;
+  salesLogBonusReductionPct?: number;
+  salesLogPipRecommended?: boolean;
 };
 
 export type RepBonusMotivator = {
@@ -554,6 +557,17 @@ export const getRepBonusCoach = async (
         priority: 80
       });
     }
+    if (repProgress.salesExpansionCompliance && repProgress.salesExpansionCompliance.compliancePct < 98) {
+      motivators.push({
+        type: "bonus_at_risk",
+        title: `Sales-log compliance is ${repProgress.salesExpansionCompliance.compliancePct}%`,
+        subtitle: repProgress.salesExpansionCompliance.pipRecommended
+          ? "Two or more consecutive weeks are below target. Manager review and a performance improvement plan are recommended."
+          : `${repProgress.salesExpansionCompliance.reductionPct}% of performance bonus is currently at risk. Basic salary is not affected.`,
+        amount: repProgress.complianceReductionAmount,
+        priority: 120
+      });
+    }
 
     return {
       snapshot: {
@@ -571,7 +585,10 @@ export const getRepBonusCoach = async (
         nextDeliveryRateTarget: deliveryRule?.completed ? null : deliveryRule?.progressTarget ?? null,
         deliveriesNeededForRateTarget: null,
         topPerformerGap: null,
-        topPerformerRank: null
+        topPerformerRank: null,
+        salesLogCompliancePct: repProgress.salesExpansionCompliance?.compliancePct,
+        salesLogBonusReductionPct: repProgress.salesExpansionCompliance?.reductionPct,
+        salesLogPipRecommended: repProgress.salesExpansionCompliance?.pipRecommended
       },
       motivators: motivators.sort((a, b) => b.priority - a.priority).slice(0, 3),
       orderOpportunities: repProgress.opportunities.map((opportunity) => ({
