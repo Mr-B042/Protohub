@@ -13,12 +13,18 @@ export type OrderAssignment = {
 async function pickAndAdvance(orgId: string): Promise<string | null> {
   const { data: reps } = await supabase
     .from("users")
-    .select("id, round_robin_position")
+    .select("id, round_robin_position, name")
     .eq("org_id", orgId)
     .eq("active", true)
     .eq("round_robin_excluded", false)
     .eq("role", "Sales Rep")
-    .order("round_robin_position", { ascending: true, nullsFirst: false });
+    .order("round_robin_position", { ascending: true, nullsFirst: false })
+    // Secondary tie-break, matching the frontend's roundRobinActiveRows sort
+    // exactly (round_robin_position asc, then name asc) - round_robin_position
+    // defaults to 0 for everyone until "Reset Sequence" is run, so ties are
+    // common, and without this the "Next in line" UI could silently disagree
+    // with which rep this actually picks.
+    .order("name", { ascending: true });
 
   const rep = (reps ?? [])[0] ?? null;
   if (!rep) return null;
