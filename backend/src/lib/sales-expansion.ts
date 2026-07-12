@@ -456,9 +456,9 @@ export async function submitSalesExpansionAttempt(args: {
     const offerAuditNotes = offerRows.map(({ inputLine, selected, acceptedAmount }) => {
       const label = inputLine.offerType === "upsell" ? "Upsell" : "Cross-sell";
       const offerName = selected ? `${selected.productName} - ${selected.packageName}` : "No approved offer available";
-      const refusal = inputLine.refusalReason ? ` Refusal reason: ${inputLine.refusalReason.replaceAll("_", " ")}.` : "";
+      const refusal = inputLine.refusalReason ? ` Refusal reason: ${inputLine.refusalReason.replace(/_/g, " ")}.` : "";
       const value = inputLine.response === "accepted" ? ` Accepted value: ${order.currency ?? "NGN"} ${number(acceptedAmount).toLocaleString()}.` : "";
-      return `${label} offered: ${offerName}. Response: ${inputLine.response.replaceAll("_", " ")}.${refusal}${value}`;
+      return `${label} offered: ${offerName}. Response: ${inputLine.response.replace(/_/g, " ")}.${refusal}${value}`;
     });
     await supabase.from("order_audit").insert([auditNote, ...offerAuditNotes].map((note) => ({ order_id: orderId, org_id: orgId, changed_by: actorId, from_status: order.status, to_status: order.status, note })));
     if (Object.keys(update).length > 0) {
