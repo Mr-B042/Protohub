@@ -569,7 +569,12 @@ export const salesExpansionApi = {
     return get<any>(`/api/sales-expansion/summary${qs}`);
   },
   audit: (id: string, body: { status: "verified" | "flagged"; note: string }) => patch<any>(`/api/sales-expansion/attempts/${id}/audit`, body),
-  voidForCorrection: (id: string, reason: string) => patch<any>(`/api/sales-expansion/attempts/${id}/correction`, { reason })
+  voidForCorrection: (id: string, reason: string) => patch<any>(`/api/sales-expansion/attempts/${id}/correction`, { reason }),
+  dailyCompliance: (params: { weekStart: string; repId?: string }) => {
+    const qs = new URLSearchParams({ weekStart: params.weekStart });
+    if (params.repId) qs.set("repId", params.repId);
+    return get<{ weekStart: string; days: Array<{ date: string; eligibleCount: number; loggedCount: number }> }>(`/api/sales-expansion/daily-compliance?${qs.toString()}`);
+  }
 };
 
 // ── Follow-up KPI: daily logging scoreboard + miss review ────

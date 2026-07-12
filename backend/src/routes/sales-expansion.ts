@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { defaultSalesExpansionSettings, loadSalesExpansionSettings, salesExpansionSettingsFromRow, salesExpansionSummaryFromRows } from "../lib/sales-expansion.js";
+import { dailyComplianceBreakdownForWeek, defaultSalesExpansionSettings, loadSalesExpansionSettings, salesExpansionSettingsFromRow, salesExpansionSummaryFromRows } from "../lib/sales-expansion.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
@@ -205,6 +205,21 @@ router.get("/summary", async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load sales expansion summary." });
+  }
+});
+
+const WEEK_START_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+router.get("/daily-compliance", async (req, res) => {
+  const weekStart = typeof req.query.weekStart === "string" && WEEK_START_PATTERN.test(req.query.weekStart) ? req.query.weekStart : null;
+  if (!weekStart) { res.status(400).json({ error: "weekStart (YYYY-MM-DD) is required." }); return; }
+  const role = req.user!.effectiveUserRole ?? req.user!.role;
+  const userId = req.user!.effectiveUserId ?? req.user!.id;
+  const repId = role === "Sales Rep" ? userId : (typeof req.query.repId === "string" ? req.query.repId : null);
+  try {
+    const days = await dailyComplianceBreakdownForWeek(req.user!.orgId, weekStart, repId);
+    res.json({ weekStart, days });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load daily compliance breakdown." });
   }
 });
 
