@@ -1284,25 +1284,66 @@ router.post("/", submitRateLimit, async (req, res) => {
 
   let order: any = null;
   let orderErr: any = null;
-  let insertPayload = { ...baseInsert };
-  for (let attempt = 0; attempt <= PUBLIC_ORDER_OPTIONAL_INSERT_COLUMNS.length; attempt += 1) {
-    const result = await supabase
-      .from("orders")
-      .insert(insertPayload)
-      .select()
-      .single();
-    order = result.data;
-    orderErr = result.error;
-    if (!orderErr || !isMissingPublicOrderOptionalColumnsError(orderErr)) break;
-    const missingColumn = missingPublicOrderOptionalColumn(orderErr, insertPayload);
-    if (!missingColumn) {
-      insertPayload = { ...legacyInsert };
-      continue;
+
+  // Primary path: atomic check-and-insert (migration 158). The duplicate
+  // check above (~line 881) only ever informed the pre-insert rep-assignment
+  // decision (line ~1218, held orders skip auto-assign) using a plain,
+  // non-atomic SELECT — this RPC re-runs the same check AND the insert
+  // inside one Postgres transaction, holding an advisory lock keyed on
+  // org+phone+product for its duration, so a second near-simultaneous
+  // request for the same key blocks until the first has committed instead
+  // of both seeing "no duplicate yet". This is the authoritative decision;
+  // `order.review_hold` below reflects it, not the pre-insert heuristic.
+  const duplicateGuardResult = await supabase.rpc("insert_order_with_duplicate_guard", {
+    p_org_id: product.org_id,
+    p_phone_last10: phoneLast10.length >= 10 ? phoneLast10 : null,
+    p_product_id: stampProductId,
+    p_window_start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    p_order: baseInsert
+  });
+  const guardUnavailable = Boolean(duplicateGuardResult.error) && (
+    duplicateGuardResult.error!.code === "PGRST202"
+    || /insert_order_with_duplicate_guard/i.test(duplicateGuardResult.error!.message ?? "")
+  );
+  if (!duplicateGuardResult.error) {
+    order = duplicateGuardResult.data;
+  } else if (!guardUnavailable) {
+    orderErr = duplicateGuardResult.error;
+  }
+
+  if (!order && (guardUnavailable || isMissingPublicOrderOptionalColumnsError(orderErr))) {
+    // Fallback for an environment that hasn't run migration 158 yet (e.g.
+    // local dev without the function deployed) — the old, non-atomic
+    // two-step path. Not race-condition-safe, but no worse than before this
+    // fix, and keeps order creation working rather than hard-failing on a
+    // deploy-ordering mistake. Logged loudly since this silently reopens the
+    // exact race this migration exists to close — it should never happen on
+    // prod once the migration has landed, so seeing this log means the
+    // migration is missing or the schema cache hasn't picked it up yet.
+    if (guardUnavailable) {
+      logger.error("public-orders: duplicate-guard RPC unavailable, falling back to non-atomic insert", { error: duplicateGuardResult.error?.message });
     }
-    const nextPayload = { ...insertPayload };
-    delete nextPayload[missingColumn];
-    if (Object.keys(nextPayload).length === Object.keys(insertPayload).length) break;
-    insertPayload = nextPayload;
+    orderErr = null;
+    let insertPayload = { ...baseInsert };
+    for (let attempt = 0; attempt <= PUBLIC_ORDER_OPTIONAL_INSERT_COLUMNS.length; attempt += 1) {
+      const result = await supabase
+        .from("orders")
+        .insert(insertPayload)
+        .select()
+        .single();
+      order = result.data;
+      orderErr = result.error;
+      if (!orderErr || !isMissingPublicOrderOptionalColumnsError(orderErr)) break;
+      const missingColumn = missingPublicOrderOptionalColumn(orderErr, insertPayload);
+      if (!missingColumn) {
+        insertPayload = { ...legacyInsert };
+        continue;
+      }
+      const nextPayload = { ...insertPayload };
+      delete nextPayload[missingColumn];
+      if (Object.keys(nextPayload).length === Object.keys(insertPayload).length) break;
+      insertPayload = nextPayload;
+    }
   }
 
   if (orderErr) {
@@ -1327,6 +1368,15 @@ router.post("/", submitRateLimit, async (req, res) => {
     res.status(500).json({ error: message });
     return;
   }
+
+  // The atomic RPC's recheck is authoritative and can disagree with the
+  // pre-insert heuristic above (that's the whole point of this fix) - resync
+  // every later use of reviewHold/reviewReason/assignedRepId to what was
+  // actually stored, so the Meta CAPI suppression, audit note, rep
+  // notification, and the response JSON all agree with the DB row.
+  reviewHold = Boolean(order.review_hold);
+  reviewReason = order.review_reason ?? null;
+  assignedRepId = order.assigned_rep_id ?? null;
 
   // 5. Mark linked abandoned cart as Converted (best-effort).
   // Race-condition repair: the cart capture may have been deduplicated into a

@@ -3190,7 +3190,14 @@ export default function PublicOrderFormPage() {
   }
 
   async function submitPublicOrder() {
-    if (publicOrderSubmitting) return;
+    // publicOrderSubmittingRef is set synchronously at the point of no return
+    // below (well before this function's first await) - checking only the
+    // React state here misses a second invocation that starts before that
+    // state update has actually committed (state updates are batched/async;
+    // the ref isn't). JS's single-threaded execution means a second call
+    // can only start after this one has run to its first await or returned,
+    // so by then the ref is already true for any invocation past that point.
+    if (publicOrderSubmittingRef.current || publicOrderSubmitting) return;
     if (publicHoneypot) {
       setPublicOrderSubmitted({ orderId: "blocked", customer: orderFormName.trim(), mode: "confirmed_order" });
       return;
