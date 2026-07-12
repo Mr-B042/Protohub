@@ -57,6 +57,7 @@ export const navItems = [
   { label: "Embed Form", icon: Code2 },
   { label: "Notifications", icon: Bell },
   { label: "Call Rep Console", icon: Phone },
+  { label: "Upsell & Cross-sell Log", icon: TrendingUp },
   { label: "Sales Rep Workspace", icon: Headphones },
   { label: "Bonuses", icon: HandCoins },
   { label: "Settings", icon: Settings }
