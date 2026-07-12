@@ -727,6 +727,10 @@ export const repWeeklyTargetsApi = {
   save: (body: unknown) => patch<any>("/api/rep-weekly-targets", body)
 };
 
+export const managerDashboardAlertsApi = {
+  stockMismatches: () => get<{ rows: any[] }>("/api/manager-dashboard/stock-mismatches")
+};
+
 export const salesBonusesApi = {
   programs: (params?: { includeDeleted?: boolean }) => {
     const qs = new URLSearchParams();
