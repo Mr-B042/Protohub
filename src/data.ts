@@ -42,6 +42,7 @@ export const navItems = [
   { label: "Inventory", icon: Box },
   { label: "Sales Reps", icon: Users },
   { label: "Sales Teams", icon: Users },
+  { label: "Upsell & Cross-sell Log", icon: TrendingUp },
   { label: "Weekend Stock Summary", icon: ClipboardCheck },
   { label: "Agents", icon: Truck },
   { label: "Waybill", icon: ArrowLeftRight },
@@ -57,7 +58,6 @@ export const navItems = [
   { label: "Embed Form", icon: Code2 },
   { label: "Notifications", icon: Bell },
   { label: "Call Rep Console", icon: Phone },
-  { label: "Upsell & Cross-sell Log", icon: TrendingUp },
   { label: "Sales Rep Workspace", icon: Headphones },
   { label: "Bonuses", icon: HandCoins },
   { label: "Settings", icon: Settings }
