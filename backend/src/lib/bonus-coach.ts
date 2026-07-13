@@ -517,8 +517,16 @@ export const getRepBonusCoach = async (
   const engineProgress = await getSalesBonusProgress(orgId, weekStart, { repId });
   const repProgress = engineProgress.reps[0];
   if (repProgress) {
+    // delivery_rate_per_delivered is deliberately excluded here - it's a rate
+    // target, not an order-count "tier", and must only ever flow through
+    // deliveryRule/nextDeliveryRateTarget below. Letting it win this pick
+    // (when it happens to have the largest remainingPotential) used to set
+    // nextTierTarget to a percentage like 70, which the frontend's tier-mode
+    // progress bar then misread as an order-count threshold - silently
+    // breaking the rate-target bar for any rep whose delivery-rate rule
+    // dominated their week.
     const nextRule = repProgress.rules
-      .filter((rule) => rule.active && !rule.completed && rule.remainingPotential > 0)
+      .filter((rule) => rule.active && !rule.completed && rule.remainingPotential > 0 && rule.type !== "delivery_rate_per_delivered")
       .sort((a, b) => b.remainingPotential - a.remainingPotential)[0];
     const deliveryRule = repProgress.rules.find((rule) => rule.type === "delivery_rate_per_delivered");
     const motivators: RepBonusMotivator[] = [];
@@ -528,13 +536,10 @@ export const getRepBonusCoach = async (
           ? "upsell_opportunity"
           : nextRule.type === "cross_sell_count" || nextRule.type === "cross_sell_offer"
             ? "cross_sell_opportunity"
-            : nextRule.type === "delivery_rate_per_delivered"
-              ? "delivery_rate_unlock"
-              : "next_delivered_unlock",
+            : "next_delivered_unlock",
         title: `${nextRule.name}: ${nextRule.helper}`,
         subtitle: `${formatAmount(nextRule.remainingPotential)} still up for grabs this week.`,
         amount: nextRule.remainingPotential,
-        targetRate: nextRule.type === "delivery_rate_per_delivered" ? nextRule.progressTarget : undefined,
         priority: 100
       });
     }
