@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { complianceBonusDecision, complianceBonusDecisionWithWaiver, complianceGraceWindow, defaultSalesExpansionSettings, salesExpansionSummaryFromRows } from "./sales-expansion.js";
+import { complianceBonusDecision, complianceBonusDecisionWithWaiver, complianceGraceWindow, defaultSalesExpansionSettings, isSalesExpansionTriggerOutcome, salesExpansionSummaryFromRows } from "./sales-expansion.js";
+
+test("sales expansion prompts only for Ready and Rescheduled outcomes", () => {
+  assert.equal(isSalesExpansionTriggerOutcome("Ready"), true);
+  assert.equal(isSalesExpansionTriggerOutcome(" rescheduled "), true);
+  assert.equal(isSalesExpansionTriggerOutcome("Pending"), false);
+  assert.equal(isSalesExpansionTriggerOutcome("Not Ready"), false);
+  assert.equal(isSalesExpansionTriggerOutcome("Call Back"), false);
+  assert.equal(isSalesExpansionTriggerOutcome(null), false);
+});
 
 test("compliance bonus tiers reduce performance bonus only at the configured thresholds", () => {
   const settings = defaultSalesExpansionSettings();

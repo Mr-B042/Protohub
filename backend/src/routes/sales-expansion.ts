@@ -1,6 +1,14 @@
 import { Router } from "express";
 import { z } from "zod";
-import { dailyComplianceBreakdownForWeek, defaultSalesExpansionSettings, loadSalesExpansionSettings, salesExpansionComplianceForRepWeek, salesExpansionSettingsFromRow, salesExpansionSummaryFromRows } from "../lib/sales-expansion.js";
+import {
+  dailyComplianceBreakdownForWeek,
+  defaultSalesExpansionSettings,
+  isSalesExpansionTriggerOutcome,
+  loadSalesExpansionSettings,
+  salesExpansionComplianceForRepWeek,
+  salesExpansionSettingsFromRow,
+  salesExpansionSummaryFromRows
+} from "../lib/sales-expansion.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
@@ -156,18 +164,21 @@ router.get("/summary", async (req, res) => {
       pairingCounts.set(key, current);
     }
 
-    let confirmedQuery = supabase.from("orders").select("id, assigned_rep_id, customer, product_name, created_at", { count: "exact" })
-      .eq("org_id", req.user!.orgId).gte("created_at", settingsResult.settings.enforcementStartsAt).in("status", ["Confirmed", "In Process", "Dispatched", "Delivered"]);
+    let confirmedQuery = supabase.from("orders").select("id, assigned_rep_id, customer, product_name, call_outcome, created_at")
+      .eq("org_id", req.user!.orgId).gte("created_at", settingsResult.settings.enforcementStartsAt).in("status", ["Confirmed", "In Process", "Dispatched", "Delivered", "Postponed"]);
     const role = req.user!.effectiveUserRole ?? req.user!.role;
     const userId = req.user!.effectiveUserId ?? req.user!.id;
     if (role === "Sales Rep") confirmedQuery = confirmedQuery.eq("assigned_rep_id", userId);
     else if (req.query.repId) confirmedQuery = confirmedQuery.eq("assigned_rep_id", String(req.query.repId));
     if (req.query.dateFrom) confirmedQuery = confirmedQuery.gte("created_at", `${req.query.dateFrom}T00:00:00.000Z`);
     if (req.query.dateTo) confirmedQuery = confirmedQuery.lte("created_at", `${req.query.dateTo}T23:59:59.999Z`);
-    const { data: confirmed, count: confirmedCount } = await confirmedQuery.limit(5000);
+    const { data: confirmedCandidates } = await confirmedQuery.limit(5000);
     const attemptedIds = new Set((attempts ?? []).filter((row: any) => row.record_status === "active").map((row: any) => row.order_id));
+    const confirmed = (confirmedCandidates ?? []).filter((order: any) =>
+      isSalesExpansionTriggerOutcome(order.call_outcome) || attemptedIds.has(order.id)
+    );
     const missingLogs = (confirmed ?? []).filter((order: any) => !attemptedIds.has(order.id));
-    const eligibleConfirmedCount = confirmedCount ?? (confirmed ?? []).length;
+    const eligibleConfirmedCount = confirmed.length;
     const repIds = [...new Set([...(confirmed ?? []).map((order: any) => order.assigned_rep_id), ...(attempts ?? []).map((attempt: any) => attempt.rep_id)].filter(Boolean))];
     const { data: repRows } = repIds.length ? await supabase.from("users").select("id, name").eq("org_id", req.user!.orgId).in("id", repIds) : { data: [] as any[] };
     const attemptById = new Map((attempts ?? []).map((attempt: any) => [attempt.id, attempt]));

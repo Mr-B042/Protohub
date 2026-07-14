@@ -1431,21 +1431,20 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     return;
   }
 
-  if (status === "Confirmed" && existing.status !== "Confirmed") {
-    try {
-      if (await confirmationNeedsSalesExpansionLog(req.user!.orgId, existing)) {
-        res.status(409).json({
-          error: "Complete the Upsell & Cross-sell Log before confirming this eligible order.",
-          code: "SALES_EXPANSION_LOG_REQUIRED",
-          orderId: existing.id
-        });
-        return;
-      }
-    } catch (error: any) {
-      logger.error("sales expansion confirmation gate failed", { orderId: existing.id, error: error?.message });
-      res.status(500).json({ error: "Could not verify the sales expansion log. Please retry." });
+  try {
+    if (await confirmationNeedsSalesExpansionLog(req.user!.orgId, existing, callOutcome)) {
+      res.status(409).json({
+        error: `Complete the Upsell & Cross-sell Log before marking this order ${callOutcome}.`,
+        code: "SALES_EXPANSION_LOG_REQUIRED",
+        orderId: existing.id,
+        callOutcome
+      });
       return;
     }
+  } catch (error: any) {
+    logger.error("sales expansion status gate failed", { orderId: existing.id, status, callOutcome, error: error?.message });
+    res.status(500).json({ error: "Could not verify the sales expansion log. Please retry." });
+    return;
   }
 
   // A re-save on an already-Delivered order is normally a date correction (no

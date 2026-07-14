@@ -24,6 +24,11 @@ export const SALES_EXPANSION_REFUSALS = [
   "other"
 ] as const;
 
+const SALES_EXPANSION_TRIGGER_OUTCOMES = new Set(["ready", "rescheduled"]);
+
+export const isSalesExpansionTriggerOutcome = (value: unknown) =>
+  typeof value === "string" && SALES_EXPANSION_TRIGGER_OUTCOMES.has(value.trim().toLowerCase());
+
 export type SalesExpansionSettings = {
   enabled: boolean;
   enforcementMode: "block_confirmation" | "flag_only" | "measure_only";
@@ -328,7 +333,7 @@ export async function submitSalesExpansionAttempt(args: {
   if (input.eligibility === "eligible") {
     for (const [type, available] of [["upsell", context.upsellOffers], ["cross_sell", context.crossSellOffers]] as const) {
       const line = offersByType.get(type);
-      if (available.length > 0 && !line) throw Object.assign(new Error(`Log the ${type === "upsell" ? "upsell" : "cross-sell"} offer before confirming.`), { status: 400 });
+      if (available.length > 0 && !line) throw Object.assign(new Error(`Log the ${type === "upsell" ? "upsell" : "cross-sell"} offer before marking the order Ready or Rescheduled.`), { status: 400 });
       if (available.length === 0 && line?.response !== "waived_no_offer" && line) throw Object.assign(new Error(`No approved ${type} offer is available.`), { status: 400 });
     }
   }
@@ -481,7 +486,8 @@ export async function submitSalesExpansionAttempt(args: {
   }
 }
 
-export async function confirmationNeedsSalesExpansionLog(orgId: string, order: ExpansionOrder) {
+export async function confirmationNeedsSalesExpansionLog(orgId: string, order: ExpansionOrder, nextCallOutcome?: unknown) {
+  if (!isSalesExpansionTriggerOutcome(nextCallOutcome)) return false;
   const { settings } = await loadSalesExpansionSettings(orgId);
   if (!settings.enabled || settings.enforcementMode !== "block_confirmation") return false;
   if (new Date(order.created_at ?? 0).getTime() < new Date(settings.enforcementStartsAt).getTime()) return false;
@@ -618,19 +624,25 @@ async function complianceRateForRepWeek(orgId: string, repId: string, weekStart:
   const rangeStart = new Date(`${weekStart}T00:00:00Z`).getTime() < new Date(settings.enforcementStartsAt).getTime()
     ? settings.enforcementStartsAt
     : `${weekStart}T00:00:00Z`;
-  const { data: orders, error } = await supabase.from("orders").select("id, customer, product_name, package_name, status, created_at")
+  const { data: orders, error } = await supabase.from("orders").select("id, customer, product_name, package_name, status, call_outcome, created_at")
     .eq("org_id", orgId).eq("assigned_rep_id", repId)
     .gte("created_at", rangeStart).lt("created_at", `${weekEndExclusive}T00:00:00Z`)
-    .in("status", ["Confirmed", "In Process", "Dispatched", "Delivered"]);
+    .in("status", ["Confirmed", "In Process", "Dispatched", "Delivered", "Postponed"]);
   if (error) throw error;
-  const orderIds = (orders ?? []).map((order: any) => order.id);
-  if (orderIds.length === 0) return { eligibleConfirmedCount: 0, loggedCount: 0, compliancePct: 100, missingOrders: [] as SalesExpansionComplianceOrder[] };
+  const candidateOrderIds = (orders ?? []).map((order: any) => order.id);
+  if (candidateOrderIds.length === 0) return { eligibleConfirmedCount: 0, loggedCount: 0, compliancePct: 100, missingOrders: [] as SalesExpansionComplianceOrder[] };
   const { data: attempts, error: attemptsError } = await supabase.from("order_sales_expansion_attempts").select("order_id, audit_status")
-    .eq("org_id", orgId).eq("rep_id", repId).eq("record_status", "active").in("order_id", orderIds);
+    .eq("org_id", orgId).eq("rep_id", repId).eq("record_status", "active").in("order_id", candidateOrderIds);
   if (attemptsError) throw attemptsError;
-  const loggedIds = new Set((attempts ?? []).filter((attempt: any) => attempt.audit_status !== "flagged").map((attempt: any) => attempt.order_id));
   const attemptedIds = new Set((attempts ?? []).map((attempt: any) => attempt.order_id));
-  const missingOrders = (orders ?? [])
+  const eligibleOrders = (orders ?? []).filter((order: any) =>
+    isSalesExpansionTriggerOutcome(order.call_outcome) || attemptedIds.has(order.id)
+  );
+  const eligibleOrderIds = new Set(eligibleOrders.map((order: any) => order.id));
+  const loggedIds = new Set((attempts ?? [])
+    .filter((attempt: any) => attempt.audit_status !== "flagged" && eligibleOrderIds.has(attempt.order_id))
+    .map((attempt: any) => attempt.order_id));
+  const missingOrders = eligibleOrders
     .filter((order: any) => !loggedIds.has(order.id))
     .map((order: any): SalesExpansionComplianceOrder => {
       const issueType = attemptedIds.has(order.id) ? "flagged_log" : "missing_log";
@@ -649,9 +661,9 @@ async function complianceRateForRepWeek(orgId: string, repId: string, weekStart:
     })
     .sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime());
   return {
-    eligibleConfirmedCount: orderIds.length,
+    eligibleConfirmedCount: eligibleOrders.length,
     loggedCount: loggedIds.size,
-    compliancePct: Math.round((loggedIds.size / orderIds.length) * 1000) / 10,
+    compliancePct: eligibleOrders.length > 0 ? Math.round((loggedIds.size / eligibleOrders.length) * 1000) / 10 : 100,
     missingOrders
   };
 }
@@ -787,17 +799,18 @@ export async function dailyComplianceBreakdownForWeek(
 
   let query = supabase
     .from("orders")
-    .select("id, created_at, assigned_rep_id")
+    .select("id, created_at, assigned_rep_id, call_outcome")
     .eq("org_id", orgId)
     .gte("created_at", rangeStart)
     .lte("created_at", weekEndIso)
-    .in("status", ["Confirmed", "In Process", "Dispatched", "Delivered"]);
+    .in("status", ["Confirmed", "In Process", "Dispatched", "Delivered", "Postponed"]);
   if (repId) query = query.eq("assigned_rep_id", repId);
   const { data: orders, error } = await query;
   if (error) throw error;
 
   const orderIds = (orders ?? []).map((order: any) => order.id);
   let loggedIds = new Set<string>();
+  let attemptedIds = new Set<string>();
   if (orderIds.length > 0) {
     const { data: attempts, error: attemptsError } = await supabase
       .from("order_sales_expansion_attempts")
@@ -809,12 +822,17 @@ export async function dailyComplianceBreakdownForWeek(
     loggedIds = new Set(
       (attempts ?? []).filter((attempt: any) => attempt.audit_status !== "flagged").map((attempt: any) => attempt.order_id)
     );
+    attemptedIds = new Set((attempts ?? []).map((attempt: any) => attempt.order_id));
   }
+
+  const eligibleOrders = (orders ?? []).filter((order: any) =>
+    isSalesExpansionTriggerOutcome(order.call_outcome) || attemptedIds.has(order.id)
+  );
 
   return days.map((date) => {
     const dayStartMs = new Date(toWatUtcIso(date, "start")).getTime();
     const dayEndMs = new Date(toWatUtcIso(date, "end")).getTime();
-    const dayOrders = (orders ?? []).filter((order: any) => {
+    const dayOrders = eligibleOrders.filter((order: any) => {
       const createdMs = new Date(order.created_at).getTime();
       return createdMs >= dayStartMs && createdMs <= dayEndMs;
     });
