@@ -383,7 +383,11 @@ const OrderBonusMapQuerySchema = z.object({
   dateTo: z.string().regex(DATE_KEY_PATTERN)
 });
 
-router.get("/order-bonus-map", allRepViewer, async (req, res) => {
+// coachViewer (not allRepViewer) so a Sales Rep can see their own per-order
+// attribution on their own order detail view - self-scoped below via repId,
+// same pattern as /progress, since perOrderBonusMapForDeliveredRange is
+// otherwise org-wide across every rep.
+router.get("/order-bonus-map", coachViewer, async (req, res) => {
   const parsed = OrderBonusMapQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -394,8 +398,9 @@ router.get("/order-bonus-map", allRepViewer, async (req, res) => {
     res.status(400).json({ error: "dateFrom must be on or before dateTo." });
     return;
   }
+  const repId = req.user!.role === "Sales Rep" ? (req.user!.effectiveUserId ?? req.user!.id) : undefined;
   try {
-    res.json(await perOrderBonusMapForDeliveredRange(req.user!.orgId, dateFrom, parsed.data.dateTo));
+    res.json(await perOrderBonusMapForDeliveredRange(req.user!.orgId, dateFrom, parsed.data.dateTo, { repId }));
   } catch (error: any) {
     res.status(400).json({ error: error?.message ?? "Failed to calculate order bonus map." });
   }

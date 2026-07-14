@@ -804,7 +804,8 @@ export const attributeRuleEarningsToOrders = (
 export const perOrderBonusMapForDeliveredRange = async (
   orgId: string,
   deliveredFromDateInclusive: string,
-  deliveredToDateInclusive: string
+  deliveredToDateInclusive: string,
+  options: { repId?: string } = {}
 ): Promise<Record<string, number>> => {
   const clampedFrom = deliveredFromDateInclusive < SALES_BONUS_LAUNCH_WEEK_START
     ? SALES_BONUS_LAUNCH_WEEK_START
@@ -835,7 +836,10 @@ export const perOrderBonusMapForDeliveredRange = async (
 
   const totals = new Map<string, number>();
   for (const weekStart of weeks) {
-    const progress = await getSalesBonusProgress(orgId, weekStart);
+    // Passing repId here (not just filtering the output afterward) scopes
+    // progress.reps to that one rep, so a Sales Rep caller only ever sees
+    // their own orders' attribution - never another rep's compensation.
+    const progress = await getSalesBonusProgress(orgId, weekStart, options.repId ? { repId: options.repId } : {});
     for (const rep of progress.reps) {
       for (const rule of rep.rules) {
         for (const [orderId, amount] of attributeRuleEarningsToOrders(rule, orderAmountById)) {
