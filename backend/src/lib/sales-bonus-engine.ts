@@ -87,6 +87,8 @@ export type SalesBonusRuleProgress = {
   programStatus: SalesBonusProgramStatus;
   active: boolean;
   earnedAmount: number;
+  earnedAmountBeforeCompliance?: number;
+  complianceReductionAmount?: number;
   potentialAmount: number;
   remainingPotential: number;
   progressCurrent: number;
@@ -710,11 +712,20 @@ export const getSalesBonusProgress = async (
     const compliance = await salesExpansionComplianceForRepWeek(orgId, rep.id, weekStart);
     const performanceBonusBeforeCompliance = progress.earnedSoFar - progress.manualAdjustments;
     const adjustedRules = progress.rules.map((rule) => {
-      if (!rule.active || rule.earnedAmount <= 0 || compliance.bonusMultiplier >= 1) return rule;
+      const earnedAmountBeforeCompliance = rule.earnedAmount;
+      if (!rule.active || rule.earnedAmount <= 0 || compliance.bonusMultiplier >= 1) {
+        return {
+          ...rule,
+          earnedAmountBeforeCompliance,
+          complianceReductionAmount: 0
+        };
+      }
       const earnedAmount = Math.round(rule.earnedAmount * compliance.bonusMultiplier);
       return {
         ...rule,
         earnedAmount,
+        earnedAmountBeforeCompliance,
+        complianceReductionAmount: Math.max(0, earnedAmountBeforeCompliance - earnedAmount),
         remainingPotential: Math.max(0, rule.potentialAmount - earnedAmount),
         helper: `${rule.helper} Sales-log compliance applied: ${compliance.compliancePct}% (${compliance.reductionPct}% performance-bonus reduction).`
       };
@@ -797,16 +808,48 @@ export const attributeRuleEarningsToOrders = (
   return result;
 };
 
+export type SalesBonusOrderSettlement = {
+  earnedBeforeCompliance: number;
+  payable: number;
+  complianceReduction: number;
+};
+
+export const attributeRuleSettlementToOrders = (
+  rule: SalesBonusRuleProgress,
+  orderAmountById: Map<string, number>
+): Map<string, SalesBonusOrderSettlement> => {
+  const payableByOrder = attributeRuleEarningsToOrders(rule, orderAmountById);
+  const earnedAmountBeforeCompliance = rule.earnedAmountBeforeCompliance ?? rule.earnedAmount;
+  const earnedByOrder = attributeRuleEarningsToOrders(
+    earnedAmountBeforeCompliance === rule.earnedAmount
+      ? rule
+      : { ...rule, earnedAmount: earnedAmountBeforeCompliance },
+    orderAmountById
+  );
+  const orderIds = new Set([...earnedByOrder.keys(), ...payableByOrder.keys()]);
+  const result = new Map<string, SalesBonusOrderSettlement>();
+  for (const orderId of orderIds) {
+    const earnedBeforeCompliance = earnedByOrder.get(orderId) ?? 0;
+    const payable = payableByOrder.get(orderId) ?? 0;
+    result.set(orderId, {
+      earnedBeforeCompliance,
+      payable,
+      complianceReduction: Math.max(0, earnedBeforeCompliance - payable)
+    });
+  }
+  return result;
+};
+
 // Anchors the week search on each delivered order's OWN created_at (the
 // engine's actual cohort key) rather than the requested range - an order
 // created weeks before the range but delivered inside it still needs its
 // creation week queried, or its contribution is silently missed.
-export const perOrderBonusMapForDeliveredRange = async (
+export const perOrderBonusSettlementMapForDeliveredRange = async (
   orgId: string,
   deliveredFromDateInclusive: string,
   deliveredToDateInclusive: string,
   options: { repId?: string } = {}
-): Promise<Record<string, number>> => {
+): Promise<Record<string, SalesBonusOrderSettlement>> => {
   const clampedFrom = deliveredFromDateInclusive < SALES_BONUS_LAUNCH_WEEK_START
     ? SALES_BONUS_LAUNCH_WEEK_START
     : deliveredFromDateInclusive;
@@ -834,7 +877,7 @@ export const perOrderBonusMapForDeliveredRange = async (
     if (weekStart && weekStart >= SALES_BONUS_LAUNCH_WEEK_START) weeks.add(weekStart);
   }
 
-  const totals = new Map<string, number>();
+  const totals = new Map<string, SalesBonusOrderSettlement>();
   for (const weekStart of weeks) {
     // Passing repId here (not just filtering the output afterward) scopes
     // progress.reps to that one rep, so a Sales Rep caller only ever sees
@@ -842,9 +885,14 @@ export const perOrderBonusMapForDeliveredRange = async (
     const progress = await getSalesBonusProgress(orgId, weekStart, options.repId ? { repId: options.repId } : {});
     for (const rep of progress.reps) {
       for (const rule of rep.rules) {
-        for (const [orderId, amount] of attributeRuleEarningsToOrders(rule, orderAmountById)) {
+        for (const [orderId, settlement] of attributeRuleSettlementToOrders(rule, orderAmountById)) {
           if (!inRangeIds.has(orderId)) continue;
-          totals.set(orderId, (totals.get(orderId) ?? 0) + amount);
+          const current = totals.get(orderId) ?? { earnedBeforeCompliance: 0, payable: 0, complianceReduction: 0 };
+          totals.set(orderId, {
+            earnedBeforeCompliance: current.earnedBeforeCompliance + settlement.earnedBeforeCompliance,
+            payable: current.payable + settlement.payable,
+            complianceReduction: current.complianceReduction + settlement.complianceReduction
+          });
         }
       }
     }
@@ -852,11 +900,32 @@ export const perOrderBonusMapForDeliveredRange = async (
   return Object.fromEntries(totals);
 };
 
+export const perOrderBonusMapForDeliveredRange = async (
+  orgId: string,
+  deliveredFromDateInclusive: string,
+  deliveredToDateInclusive: string,
+  options: { repId?: string } = {}
+): Promise<Record<string, number>> => {
+  const settlements = await perOrderBonusSettlementMapForDeliveredRange(
+    orgId,
+    deliveredFromDateInclusive,
+    deliveredToDateInclusive,
+    options
+  );
+  return Object.fromEntries(Object.entries(settlements).map(([orderId, settlement]) => [orderId, settlement.payable]));
+};
+
 // Itemized, single-order counterpart to perOrderBonusMapForDeliveredRange -
 // that function is deliberately a flat sum (it's consumed as a plain number
 // in several bulk-total call sites), so a rule-by-rule breakdown for one
 // specific order lives here instead of changing that shape.
-export type SalesBonusOrderBreakdownItem = { ruleName: string; ruleType: SalesBonusRuleType; amount: number };
+export type SalesBonusOrderBreakdownItem = {
+  ruleName: string;
+  ruleType: SalesBonusRuleType;
+  amount: number;
+  earnedBeforeCompliance: number;
+  complianceReduction: number;
+};
 
 export const perOrderSalesBonusBreakdown = async (
   orgId: string,
@@ -882,8 +951,16 @@ export const perOrderSalesBonusBreakdown = async (
   const items: SalesBonusOrderBreakdownItem[] = [];
   for (const rule of rep.rules) {
     if (!rule.qualifiedOrderIds.includes(order.id)) continue;
-    const share = attributeRuleEarningsToOrders(rule, orderAmountById).get(order.id) ?? 0;
-    if (share > 0) items.push({ ruleName: rule.name, ruleType: rule.type, amount: share });
+    const settlement = attributeRuleSettlementToOrders(rule, orderAmountById).get(order.id);
+    if (settlement && settlement.earnedBeforeCompliance > 0) {
+      items.push({
+        ruleName: rule.name,
+        ruleType: rule.type,
+        amount: settlement.payable,
+        earnedBeforeCompliance: settlement.earnedBeforeCompliance,
+        complianceReduction: settlement.complianceReduction
+      });
+    }
   }
   return items;
 };

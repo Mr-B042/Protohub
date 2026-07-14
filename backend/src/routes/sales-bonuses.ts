@@ -6,6 +6,7 @@ import {
   getSalesBonusProgress,
   listSalesBonusPrograms,
   perOrderBonusMapForDeliveredRange,
+  perOrderBonusSettlementMapForDeliveredRange,
   perOrderSalesBonusBreakdown,
   type SalesBonusRuleType
 } from "../lib/sales-bonus-engine.js";
@@ -404,6 +405,25 @@ router.get("/order-bonus-map", coachViewer, async (req, res) => {
     res.json(await perOrderBonusMapForDeliveredRange(req.user!.orgId, dateFrom, parsed.data.dateTo, { repId }));
   } catch (error: any) {
     res.status(400).json({ error: error?.message ?? "Failed to calculate order bonus map." });
+  }
+});
+
+router.get("/order-bonus-settlement-map", coachViewer, async (req, res) => {
+  const parsed = OrderBonusMapQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+  const dateFrom = parsed.data.dateFrom ?? SALES_BONUS_LAUNCH_WEEK_START;
+  if (dateFrom > parsed.data.dateTo) {
+    res.status(400).json({ error: "dateFrom must be on or before dateTo." });
+    return;
+  }
+  const repId = req.user!.role === "Sales Rep" ? (req.user!.effectiveUserId ?? req.user!.id) : undefined;
+  try {
+    res.json(await perOrderBonusSettlementMapForDeliveredRange(req.user!.orgId, dateFrom, parsed.data.dateTo, { repId }));
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message ?? "Failed to calculate order bonus settlements." });
   }
 });
 

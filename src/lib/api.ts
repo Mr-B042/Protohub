@@ -757,8 +757,22 @@ export const salesBonusesApi = {
     if (dateFrom) qs.set("dateFrom", dateFrom);
     return get<Record<string, number>>(`/api/sales-bonuses/order-bonus-map?${qs.toString()}`);
   },
+  orderBonusSettlementMap: (dateTo: string, dateFrom?: string) => {
+    const qs = new URLSearchParams({ dateTo });
+    if (dateFrom) qs.set("dateFrom", dateFrom);
+    return get<Record<string, { earnedBeforeCompliance: number; payable: number; complianceReduction: number }>>(
+      `/api/sales-bonuses/order-bonus-settlement-map?${qs.toString()}`
+    ).catch(async () => {
+      const payable = await get<Record<string, number>>(`/api/sales-bonuses/order-bonus-map?${qs.toString()}`);
+      return Object.fromEntries(Object.entries(payable).map(([orderId, amount]) => [orderId, {
+        earnedBeforeCompliance: amount,
+        payable: amount,
+        complianceReduction: 0
+      }]));
+    });
+  },
   orderAttribution: (orderId: string) =>
-    get<Array<{ ruleName: string; ruleType: string; amount: number }>>(`/api/sales-bonuses/order-attribution/${orderId}`)
+    get<Array<{ ruleName: string; ruleType: string; amount: number; earnedBeforeCompliance: number; complianceReduction: number }>>(`/api/sales-bonuses/order-attribution/${orderId}`)
 };
 
 // ── Customers ─────────────────────────────────────────────

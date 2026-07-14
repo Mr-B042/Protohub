@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   SALES_BONUS_LAUNCH_WEEK_START,
   attributeRuleEarningsToOrders,
+  attributeRuleSettlementToOrders,
   computeSalesBonusForRep,
   salesBonusWeekStartsForPeriod,
   type SalesBonusOrder,
@@ -454,4 +455,39 @@ test("attributeRuleEarningsToOrders: inactive rule or zero earnings yields an em
   });
   assert.equal(paused.rules[0]!.active, false);
   assert.equal(attributeRuleEarningsToOrders(paused.rules[0]!, new Map()).size, 0);
+});
+
+test("attributeRuleSettlementToOrders preserves earned bonus when compliance reduces payable to zero", () => {
+  const rule: SalesBonusRule = {
+    id: "upgrade-compliance",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "Upgrade 2 customers",
+    type: "upgrade_count",
+    status: "active",
+    config: { fromQty: 3, toQtyMin: 6, targetCount: 2, amount: 1_600 },
+    display_order: 10
+  };
+  const result = run([rule], [
+    order("u1", { upsell_from_qty: 3, upsell_to_qty: 6 }),
+    order("u2", { upsell_from_qty: 3, upsell_to_qty: 6 })
+  ]);
+  const adjustedRule = {
+    ...result.rules[0]!,
+    earnedAmount: 0,
+    earnedAmountBeforeCompliance: 1_600,
+    complianceReductionAmount: 1_600
+  };
+  const settlements = attributeRuleSettlementToOrders(adjustedRule, new Map());
+
+  assert.deepEqual(settlements.get("u1"), {
+    earnedBeforeCompliance: 800,
+    payable: 0,
+    complianceReduction: 800
+  });
+  assert.deepEqual(settlements.get("u2"), {
+    earnedBeforeCompliance: 800,
+    payable: 0,
+    complianceReduction: 800
+  });
 });
