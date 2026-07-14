@@ -6,6 +6,7 @@ import {
   getSalesBonusProgress,
   listSalesBonusPrograms,
   perOrderBonusMapForDeliveredRange,
+  perOrderSalesBonusBreakdown,
   type SalesBonusRuleType
 } from "../lib/sales-bonus-engine.js";
 import { supabase } from "../lib/supabase.js";
@@ -403,6 +404,39 @@ router.get("/order-bonus-map", coachViewer, async (req, res) => {
     res.json(await perOrderBonusMapForDeliveredRange(req.user!.orgId, dateFrom, parsed.data.dateTo, { repId }));
   } catch (error: any) {
     res.status(400).json({ error: error?.message ?? "Failed to calculate order bonus map." });
+  }
+});
+
+// Order ids in this app are plain text/numeric (e.g. "1992"), not UUIDs -
+// do not reuse UuidParamsSchema here.
+const OrderIdParamsSchema = z.object({ orderId: z.string().min(1) });
+
+router.get("/order-attribution/:orderId", coachViewer, async (req, res) => {
+  const parsed = OrderIdParamsSchema.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid order id." });
+    return;
+  }
+  try {
+    const items = await perOrderSalesBonusBreakdown(req.user!.orgId, parsed.data.orderId);
+    // Self-scope: a Sales Rep may only see their OWN order's breakdown - if
+    // the order isn't assigned to them, treat it as empty rather than
+    // leaking another rep's compensation figures.
+    if (req.user!.role === "Sales Rep" && items.length > 0) {
+      const { data: order } = await supabase
+        .from("orders")
+        .select("assigned_rep_id")
+        .eq("org_id", req.user!.orgId)
+        .eq("id", parsed.data.orderId)
+        .maybeSingle();
+      if (order?.assigned_rep_id !== (req.user!.effectiveUserId ?? req.user!.id)) {
+        res.json([]);
+        return;
+      }
+    }
+    res.json(items);
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message ?? "Failed to load order bonus breakdown." });
   }
 });
 
