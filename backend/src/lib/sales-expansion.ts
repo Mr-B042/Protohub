@@ -520,10 +520,36 @@ export type SalesExpansionCompliance = {
   compliancePct: number;
   bonusMultiplier: number;
   reductionPct: number;
+  policyBonusMultiplier: number;
+  policyReductionPct: number;
   level: "full" | "warning_5" | "warning_10" | "no_compliance_bonus";
   formalWarning: boolean;
   pipRecommended: boolean;
   previousWeekCompliancePct: number | null;
+  fullBonusCompliancePct: number;
+  logsNeededForFullBonus: number;
+  missingOrders: SalesExpansionComplianceOrder[];
+  waiver: SalesExpansionComplianceWaiver | null;
+};
+
+export type SalesExpansionComplianceOrder = {
+  orderId: string;
+  customerName: string;
+  productName: string;
+  packageName: string;
+  status: string;
+  createdAt: string | null;
+  issueType: "missing_log" | "flagged_log";
+  issueLabel: string;
+};
+
+export type SalesExpansionComplianceWaiver = {
+  id: string;
+  active: boolean;
+  reason: string;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
 };
 
 export function complianceBonusDecision(
@@ -552,6 +578,18 @@ export function complianceBonusDecision(
   return { bonusMultiplier: 0, reductionPct: 100, level: "no_compliance_bonus", formalWarning: true };
 }
 
+export function complianceBonusDecisionWithWaiver(
+  decision: ReturnType<typeof complianceBonusDecision>,
+  waiverActive: boolean
+) {
+  return {
+    bonusMultiplier: waiverActive ? 1 : decision.bonusMultiplier,
+    reductionPct: waiverActive ? 0 : decision.reductionPct,
+    policyBonusMultiplier: decision.bonusMultiplier,
+    policyReductionPct: decision.reductionPct
+  };
+}
+
 const addDays = (dateKey: string, days: number) => {
   const date = new Date(`${dateKey}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
@@ -563,30 +601,106 @@ async function complianceRateForRepWeek(orgId: string, repId: string, weekStart:
   const rangeStart = new Date(`${weekStart}T00:00:00Z`).getTime() < new Date(settings.enforcementStartsAt).getTime()
     ? settings.enforcementStartsAt
     : `${weekStart}T00:00:00Z`;
-  const { data: orders, error } = await supabase.from("orders").select("id")
+  const { data: orders, error } = await supabase.from("orders").select("id, customer, product_name, package_name, status, created_at")
     .eq("org_id", orgId).eq("assigned_rep_id", repId)
     .gte("created_at", rangeStart).lt("created_at", `${weekEndExclusive}T00:00:00Z`)
     .in("status", ["Confirmed", "In Process", "Dispatched", "Delivered"]);
   if (error) throw error;
   const orderIds = (orders ?? []).map((order: any) => order.id);
-  if (orderIds.length === 0) return { eligibleConfirmedCount: 0, loggedCount: 0, compliancePct: 100 };
+  if (orderIds.length === 0) return { eligibleConfirmedCount: 0, loggedCount: 0, compliancePct: 100, missingOrders: [] as SalesExpansionComplianceOrder[] };
   const { data: attempts, error: attemptsError } = await supabase.from("order_sales_expansion_attempts").select("order_id, audit_status")
     .eq("org_id", orgId).eq("rep_id", repId).eq("record_status", "active").in("order_id", orderIds);
   if (attemptsError) throw attemptsError;
   const loggedIds = new Set((attempts ?? []).filter((attempt: any) => attempt.audit_status !== "flagged").map((attempt: any) => attempt.order_id));
+  const attemptedIds = new Set((attempts ?? []).map((attempt: any) => attempt.order_id));
+  const missingOrders = (orders ?? [])
+    .filter((order: any) => !loggedIds.has(order.id))
+    .map((order: any): SalesExpansionComplianceOrder => {
+      const issueType = attemptedIds.has(order.id) ? "flagged_log" : "missing_log";
+      return {
+        orderId: order.id,
+        customerName: text(order.customer) || "Unnamed customer",
+        productName: text(order.product_name) || "Product not recorded",
+        packageName: text(order.package_name),
+        status: text(order.status) || "Confirmed",
+        createdAt: order.created_at ?? null,
+        issueType,
+        issueLabel: issueType === "flagged_log"
+          ? "Flagged log needs correction and a new valid log"
+          : "Upsell & Cross-sell Log is missing"
+      };
+    })
+    .sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime());
   return {
     eligibleConfirmedCount: orderIds.length,
     loggedCount: loggedIds.size,
-    compliancePct: Math.round((loggedIds.size / orderIds.length) * 1000) / 10
+    compliancePct: Math.round((loggedIds.size / orderIds.length) * 1000) / 10,
+    missingOrders
+  };
+}
+
+const isMissingComplianceWaiverTableError = (error: any) => {
+  if (!error) return false;
+  const message = typeof error.message === "string" ? error.message.toLowerCase() : "";
+  return error.code === "42P01"
+    || error.code === "PGRST205"
+    || (message.includes("sales_expansion_compliance_waivers") && message.includes("schema cache"));
+};
+
+export async function loadSalesExpansionComplianceWaiver(
+  orgId: string,
+  repId: string,
+  weekStart: string
+): Promise<SalesExpansionComplianceWaiver | null> {
+  const { data, error } = await supabase
+    .from("sales_expansion_compliance_waivers")
+    .select("id, active, reason, created_by, created_by_name, created_at")
+    .eq("org_id", orgId)
+    .eq("rep_id", repId)
+    .eq("week_start", weekStart)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    if (isMissingComplianceWaiverTableError(error)) return null;
+    throw error;
+  }
+  if (!data) return null;
+  return {
+    id: data.id,
+    active: data.active === true,
+    reason: text(data.reason),
+    createdBy: data.created_by,
+    createdByName: text(data.created_by_name) || "Owner",
+    createdAt: data.created_at
   };
 }
 
 export async function salesExpansionComplianceForRepWeek(orgId: string, repId: string, weekStart: string): Promise<SalesExpansionCompliance> {
   const { settings } = await loadSalesExpansionSettings(orgId);
   if (!settings.enabled) {
-    return { eligibleConfirmedCount: 0, loggedCount: 0, compliancePct: 100, bonusMultiplier: 1, reductionPct: 0, level: "full", formalWarning: false, pipRecommended: false, previousWeekCompliancePct: null };
+    return {
+      eligibleConfirmedCount: 0,
+      loggedCount: 0,
+      compliancePct: 100,
+      bonusMultiplier: 1,
+      reductionPct: 0,
+      policyBonusMultiplier: 1,
+      policyReductionPct: 0,
+      level: "full",
+      formalWarning: false,
+      pipRecommended: false,
+      previousWeekCompliancePct: null,
+      fullBonusCompliancePct: 100,
+      logsNeededForFullBonus: 0,
+      missingOrders: [],
+      waiver: null
+    };
   }
-  const current = await complianceRateForRepWeek(orgId, repId, weekStart, settings);
+  const [current, waiver] = await Promise.all([
+    complianceRateForRepWeek(orgId, repId, weekStart, settings),
+    loadSalesExpansionComplianceWaiver(orgId, repId, weekStart)
+  ]);
   const previousWeeks = [];
   for (let offset = 1; offset < settings.pipConsecutiveWeeks; offset += 1) {
     const previousWeekStart = addDays(weekStart, -7 * offset);
@@ -595,10 +709,19 @@ export async function salesExpansionComplianceForRepWeek(orgId: string, repId: s
   }
   const previous = previousWeeks[0] ?? null;
   const decision = complianceBonusDecision(current.compliancePct, settings);
+  const waiverActive = waiver?.active === true;
+  const payableDecision = complianceBonusDecisionWithWaiver(decision, waiverActive);
   return {
     ...current,
     ...decision,
+    ...payableDecision,
     previousWeekCompliancePct: previous?.compliancePct ?? null,
+    fullBonusCompliancePct: settings.fullBonusCompliancePct,
+    logsNeededForFullBonus: Math.max(
+      0,
+      Math.ceil(current.eligibleConfirmedCount * settings.fullBonusCompliancePct / 100) - current.loggedCount
+    ),
+    waiver,
     pipRecommended: previousWeeks.length === settings.pipConsecutiveWeeks - 1
       && [current, ...previousWeeks].every((week) => week.compliancePct < settings.fullBonusCompliancePct)
   };

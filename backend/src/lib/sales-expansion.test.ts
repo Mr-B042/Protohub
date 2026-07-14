@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { complianceBonusDecision, defaultSalesExpansionSettings, salesExpansionSummaryFromRows } from "./sales-expansion.js";
+import { complianceBonusDecision, complianceBonusDecisionWithWaiver, defaultSalesExpansionSettings, salesExpansionSummaryFromRows } from "./sales-expansion.js";
 
 test("compliance bonus tiers reduce performance bonus only at the configured thresholds", () => {
   const settings = defaultSalesExpansionSettings();
@@ -9,6 +9,22 @@ test("compliance bonus tiers reduce performance bonus only at the configured thr
   assert.equal(complianceBonusDecision(97.9, settings).bonusMultiplier, 0.95);
   assert.equal(complianceBonusDecision(94, settings).bonusMultiplier, 0.9);
   assert.deepEqual(complianceBonusDecision(89.9, settings), { bonusMultiplier: 0, reductionPct: 100, level: "no_compliance_bonus", formalWarning: true });
+});
+
+test("an Owner waiver restores pay without erasing the policy deduction evidence", () => {
+  const decision = complianceBonusDecision(89, defaultSalesExpansionSettings());
+  assert.deepEqual(complianceBonusDecisionWithWaiver(decision, true), {
+    bonusMultiplier: 1,
+    reductionPct: 0,
+    policyBonusMultiplier: 0,
+    policyReductionPct: 100
+  });
+  assert.deepEqual(complianceBonusDecisionWithWaiver(decision, false), {
+    bonusMultiplier: 0,
+    reductionPct: 100,
+    policyBonusMultiplier: 0,
+    policyReductionPct: 100
+  });
 });
 
 test("delivered conversion counts only accepted add-ons still present on delivered orders", () => {

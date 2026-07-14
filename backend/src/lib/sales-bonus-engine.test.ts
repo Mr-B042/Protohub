@@ -379,7 +379,7 @@ test("attributeRuleEarningsToOrders: delivery_rate_per_delivered splits the exac
   assert.equal([...map.values()].reduce((s, a) => s + a, 0), result.rules[0]!.earnedAmount);
 });
 
-test("attributeRuleEarningsToOrders: step-function rule types even-split the flat payout across all qualifying orders", () => {
+test("attributeRuleEarningsToOrders: count rule credits only the order that unlocks its target", () => {
   const rule: SalesBonusRule = {
     id: "upgrade",
     org_id: "org-1",
@@ -396,12 +396,12 @@ test("attributeRuleEarningsToOrders: step-function rule types even-split the fla
   })));
   const map = attributeRuleEarningsToOrders(result.rules[0]!, new Map());
 
-  assert.equal(map.size, 5);
-  assert.ok([...map.values()].every((amount) => amount === 400));
+  assert.equal(map.size, 1);
+  assert.equal(map.get("u4"), 2_000);
   assert.equal([...map.values()].reduce((s, a) => s + a, 0), 2_000);
 });
 
-test("attributeRuleEarningsToOrders: every_target_count repeat mode still splits across ALL qualifying orders, not just the first target", () => {
+test("attributeRuleEarningsToOrders: repeat mode credits each threshold-unlocking order", () => {
   const rule: SalesBonusRule = {
     id: "upgrade-repeat",
     org_id: "org-1",
@@ -416,12 +416,39 @@ test("attributeRuleEarningsToOrders: every_target_count repeat mode still splits
     upsell_from_qty: 3,
     upsell_to_qty: 4
   })));
-  // floor(5/2) * 1000 = 2000 earned, but all 5 qualifying orders drove it.
+  // floor(5/2) * 1000 = 2000 earned at the second and fourth orders.
   assert.equal(result.rules[0]!.earnedAmount, 2_000);
   const map = attributeRuleEarningsToOrders(result.rules[0]!, new Map());
 
-  assert.equal(map.size, 5);
+  assert.deepEqual(Object.fromEntries(map), { u1: 1_000, u3: 1_000 });
   assert.equal([...map.values()].reduce((s, a) => s + a, 0), 2_000);
+});
+
+test("attributeRuleEarningsToOrders: tiered upgrade rules stay on their own unlocking orders", () => {
+  const firstUpgrade: SalesBonusRule = {
+    id: "upgrade-first",
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: "Upgrade 1 customer",
+    type: "upgrade_count",
+    status: "active",
+    config: { fromQty: 6, toQtyMin: 7, targetCount: 1, amount: 750 },
+    display_order: 10
+  };
+  const secondUpgrade: SalesBonusRule = {
+    ...firstUpgrade,
+    id: "upgrade-second",
+    name: "Upgrade 2 customers",
+    config: { fromQty: 6, toQtyMin: 7, targetCount: 2, amount: 1_500 },
+    display_order: 20
+  };
+  const result = run([firstUpgrade, secondUpgrade], [
+    order("first", { created_at: "2026-07-06T10:00:00", upsell_from_qty: 6, upsell_to_qty: 7 }),
+    order("second", { created_at: "2026-07-07T10:00:00", upsell_from_qty: 6, upsell_to_qty: 7 })
+  ]);
+
+  assert.deepEqual(Object.fromEntries(attributeRuleEarningsToOrders(result.rules[0]!, new Map())), { first: 750 });
+  assert.deepEqual(Object.fromEntries(attributeRuleEarningsToOrders(result.rules[1]!, new Map())), { second: 1_500 });
 });
 
 test("attributeRuleEarningsToOrders: inactive rule or zero earnings yields an empty map", () => {
@@ -457,7 +484,7 @@ test("attributeRuleEarningsToOrders: inactive rule or zero earnings yields an em
   assert.equal(attributeRuleEarningsToOrders(paused.rules[0]!, new Map()).size, 0);
 });
 
-test("attributeRuleSettlementToOrders preserves earned bonus when compliance reduces payable to zero", () => {
+test("attributeRuleSettlementToOrders preserves the unlocking order's earned bonus when compliance reduces payable to zero", () => {
   const rule: SalesBonusRule = {
     id: "upgrade-compliance",
     org_id: "org-1",
@@ -480,14 +507,10 @@ test("attributeRuleSettlementToOrders preserves earned bonus when compliance red
   };
   const settlements = attributeRuleSettlementToOrders(adjustedRule, new Map());
 
-  assert.deepEqual(settlements.get("u1"), {
-    earnedBeforeCompliance: 800,
-    payable: 0,
-    complianceReduction: 800
-  });
+  assert.equal(settlements.get("u1"), undefined);
   assert.deepEqual(settlements.get("u2"), {
-    earnedBeforeCompliance: 800,
+    earnedBeforeCompliance: 1_600,
     payable: 0,
-    complianceReduction: 800
+    complianceReduction: 1_600
   });
 });

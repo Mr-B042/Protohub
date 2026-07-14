@@ -334,6 +334,18 @@ const isDelivered = (order: SalesBonusOrder) => (order.status ?? "") === "Delive
 const isOpenOrder = (order: SalesBonusOrder) =>
   !isDelivered(order) && !TERMINAL_LOST_STATUSES.has(order.status ?? "") && order.review_hold !== true;
 
+// Count-based bonuses belong to the specific order that crossed the target.
+// Keep the sequence deterministic so reloading a week never moves a milestone
+// payout between orders. delivered_date is the business event; created_at and
+// id provide stable tie-breakers when delivery is stored at date precision.
+const sortBonusMilestoneOrders = (orders: SalesBonusOrder[]) => orders.slice().sort((a, b) => {
+  const delivered = cleanText(a.delivered_date).localeCompare(cleanText(b.delivered_date));
+  if (delivered !== 0) return delivered;
+  const created = cleanText(a.created_at).localeCompare(cleanText(b.created_at));
+  if (created !== 0) return created;
+  return a.id.localeCompare(b.id, undefined, { numeric: true });
+});
+
 const appliesToRep = (program: SalesBonusProgram, repId: string) => {
   const ids = Array.isArray(program.applies_to_user_ids) ? program.applies_to_user_ids : [];
   return ids.length === 0 || ids.includes(repId);
@@ -418,11 +430,11 @@ export const computeSalesBonusForRep = (input: {
       const toQtyMin = Math.max(fromQty + 1, Math.round(toNumber(cfg.toQtyMin ?? cfg.toQty, fromQty + 1)));
       const targetCount = Math.max(1, Math.round(toNumber(cfg.targetCount, 1)));
       const amount = positiveAmount(cfg.amount);
-      const qualifying = scopedDeliveredOrders.filter((order) => {
+      const qualifying = sortBonusMilestoneOrders(scopedDeliveredOrders.filter((order) => {
         const from = typeof order.upsell_from_qty === "number" ? order.upsell_from_qty : null;
         const to = typeof order.upsell_to_qty === "number" ? order.upsell_to_qty : null;
         return from === fromQty && to !== null && to >= toQtyMin;
-      });
+      }));
       progressCurrent = qualifying.length;
       progressTarget = targetCount;
       qualifiedOrderIds = qualifying.map((order) => order.id);
@@ -435,7 +447,7 @@ export const computeSalesBonusForRep = (input: {
       const amount = positiveAmount(cfg.amount);
       const repDrivenOnly = cfg.repDrivenOnly !== false;
       const embedScoped = ruleScope(cfg).embedLabels.length > 0;
-      const qualifying = deliveredOrders.filter((order) => {
+      const qualifying = sortBonusMilestoneOrders(deliveredOrders.filter((order) => {
         const lines = arrayValue(order.cross_sell_lines);
         const baseOrderMatches = orderMatchesRuleScope(order, cfg);
         const scopedLines = lines.filter((line) => crossSellLineMatchesRuleScope(line, cfg));
@@ -446,7 +458,7 @@ export const computeSalesBonusForRep = (input: {
         return repDrivenOnly
           ? linesToCheck.some(isRepDrivenCrossSellLine)
           : linesToCheck.length > 0;
-      });
+      }));
       progressCurrent = qualifying.length;
       progressTarget = targetCount;
       qualifiedOrderIds = qualifying.map((order) => order.id);
@@ -476,10 +488,10 @@ export const computeSalesBonusForRep = (input: {
         if (qty < offerQty || lineAmount < offerAmount) return false;
         return repDrivenOnly ? isRepDrivenCrossSellLine(line) : true;
       };
-      const qualifying = deliveredOrders.filter((order) => {
+      const qualifying = sortBonusMilestoneOrders(deliveredOrders.filter((order) => {
         if (scope.embedLabels.length > 0 && !textMatchesAny(order.embed_label, scope.embedLabels)) return false;
         return arrayValue(order.cross_sell_lines).some(lineMeetsOffer);
-      });
+      }));
       progressCurrent = qualifying.length;
       progressTarget = targetCount;
       qualifiedOrderIds = qualifying.map((order) => order.id);
@@ -797,12 +809,31 @@ export const attributeRuleEarningsToOrders = (
     }
     return result;
   }
+  if (["upgrade_count", "cross_sell_count", "cross_sell_offer"].includes(rule.type)) {
+    const targetCount = Math.max(1, Math.round(toNumber(rule.config.targetCount, 1)));
+    if (rule.qualifiedOrderIds.length < targetCount) return result;
+    const milestoneCount = rule.config.repeatMode === "every_target_count"
+      ? Math.floor(rule.qualifiedOrderIds.length / targetCount)
+      : 1;
+    const milestoneOrderIds = Array.from({ length: milestoneCount }, (_, index) =>
+      rule.qualifiedOrderIds[((index + 1) * targetCount) - 1]
+    ).filter((orderId): orderId is string => Boolean(orderId));
+    if (milestoneOrderIds.length === 0) return result;
+
+    // Compliance can make the adjusted total non-divisible by the number of
+    // repeated milestones. Distribute the rounding remainder deterministically
+    // while preserving the exact weekly total.
+    const baseShare = Math.floor(rule.earnedAmount / milestoneOrderIds.length);
+    let remainder = rule.earnedAmount - (baseShare * milestoneOrderIds.length);
+    for (const orderId of milestoneOrderIds) {
+      const amount = baseShare + (remainder > 0 ? 1 : 0);
+      remainder = Math.max(0, remainder - 1);
+      result.set(orderId, amount);
+    }
+    return result;
+  }
   // delivery_rate_per_delivered: every qualifying order earns the identical
   // flat rate, so an even split recovers the exact per-order amount.
-  // upgrade_count / cross_sell_count / cross_sell_offer: earnedAmount is a
-  // step-function payout (paid once a target count is reached), not
-  // naturally per-order - even split here is a documented accrual estimate,
-  // attributing the cost across the orders that drove earning it.
   const perOrderShare = rule.earnedAmount / rule.qualifiedOrderIds.length;
   for (const orderId of rule.qualifiedOrderIds) result.set(orderId, perOrderShare);
   return result;

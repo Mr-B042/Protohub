@@ -336,6 +336,7 @@ export async function ensureFreshAuthSession(skewMs = BACKGROUND_REFRESH_SKEW_MS
 
 const get  = <T>(path: string)            => request<T>("GET",    path);
 const post = <T>(path: string, body: unknown) => request<T>("POST",   path, body);
+const put = <T>(path: string, body: unknown) => request<T>("PUT", path, body);
 const patch = <T>(path: string, body: unknown) => request<T>("PATCH",  path, body);
 const del  = <T>(path: string)            => request<T>("DELETE", path);
 
@@ -574,7 +575,9 @@ export const salesExpansionApi = {
     const qs = new URLSearchParams({ weekStart: params.weekStart });
     if (params.repId) qs.set("repId", params.repId);
     return get<{ weekStart: string; days: Array<{ date: string; eligibleCount: number; loggedCount: number }> }>(`/api/sales-expansion/daily-compliance?${qs.toString()}`);
-  }
+  },
+  setComplianceWaiver: (repId: string, weekStart: string, body: { active: boolean; reason: string }) =>
+    put<any>(`/api/sales-expansion/compliance-waivers/${repId}/${weekStart}`, body)
 };
 
 // ── Follow-up KPI: daily logging scoreboard + miss review ────

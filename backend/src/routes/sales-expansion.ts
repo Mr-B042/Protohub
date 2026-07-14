@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { dailyComplianceBreakdownForWeek, defaultSalesExpansionSettings, loadSalesExpansionSettings, salesExpansionSettingsFromRow, salesExpansionSummaryFromRows } from "../lib/sales-expansion.js";
+import { dailyComplianceBreakdownForWeek, defaultSalesExpansionSettings, loadSalesExpansionSettings, salesExpansionComplianceForRepWeek, salesExpansionSettingsFromRow, salesExpansionSummaryFromRows } from "../lib/sales-expansion.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
@@ -209,6 +209,61 @@ router.get("/summary", async (req, res) => {
 });
 
 const WEEK_START_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+const ComplianceWaiverParamsSchema = z.object({
+  repId: z.string().uuid(),
+  weekStart: z.string().regex(WEEK_START_PATTERN)
+});
+const ComplianceWaiverBodySchema = z.object({
+  active: z.boolean(),
+  reason: z.string().trim().min(5).max(2000)
+});
+
+router.put("/compliance-waivers/:repId/:weekStart", requireRole("Owner"), async (req, res) => {
+  const parsedParams = ComplianceWaiverParamsSchema.safeParse(req.params);
+  const parsedBody = ComplianceWaiverBodySchema.safeParse(req.body);
+  if (!parsedParams.success || !parsedBody.success) {
+    res.status(400).json({
+      error: {
+        ...(!parsedParams.success ? parsedParams.error.flatten().fieldErrors : {}),
+        ...(!parsedBody.success ? parsedBody.error.flatten().fieldErrors : {})
+      }
+    });
+    return;
+  }
+  try {
+    const { data: rep, error: repError } = await supabase
+      .from("users")
+      .select("id, name, role")
+      .eq("org_id", req.user!.orgId)
+      .eq("id", parsedParams.data.repId)
+      .maybeSingle();
+    if (repError) throw repError;
+    if (!rep || rep.role !== "Sales Rep") {
+      res.status(404).json({ error: "Sales rep not found in this organization." });
+      return;
+    }
+    const { data, error } = await supabase
+      .from("sales_expansion_compliance_waivers")
+      .insert({
+        org_id: req.user!.orgId,
+        rep_id: rep.id,
+        week_start: parsedParams.data.weekStart,
+        active: parsedBody.data.active,
+        reason: parsedBody.data.reason,
+        created_by: req.user!.id,
+        created_by_name: req.user!.name
+      })
+      .select("*")
+      .single();
+    if (error) throw error;
+    const compliance = await salesExpansionComplianceForRepWeek(req.user!.orgId, rep.id, parsedParams.data.weekStart);
+    res.json({ waiver: data, compliance });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update the compliance deduction waiver." });
+  }
+});
+
 router.get("/daily-compliance", async (req, res) => {
   const weekStart = typeof req.query.weekStart === "string" && WEEK_START_PATTERN.test(req.query.weekStart) ? req.query.weekStart : null;
   if (!weekStart) { res.status(400).json({ error: "weekStart (YYYY-MM-DD) is required." }); return; }
