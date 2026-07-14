@@ -566,10 +566,14 @@ export const getRepBonusCoach = async (
       motivators.push({
         type: "bonus_at_risk",
         title: `Sales-log compliance is ${repProgress.salesExpansionCompliance.compliancePct}%`,
-        subtitle: repProgress.salesExpansionCompliance.pipRecommended
+        subtitle: repProgress.salesExpansionCompliance.graceActive
+          ? `${formatAmount(repProgress.complianceAmountAtRisk ?? 0)} is protected until the Saturday logging deadline. Complete the listed orders in the Bonuses tab to keep it.`
+          : repProgress.salesExpansionCompliance.pipRecommended
           ? "Two or more consecutive weeks are below target. Manager review and a performance improvement plan are recommended."
           : `${repProgress.salesExpansionCompliance.reductionPct}% of performance bonus is currently at risk. Basic salary is not affected.`,
-        amount: repProgress.complianceReductionAmount,
+        amount: repProgress.salesExpansionCompliance.graceActive
+          ? repProgress.complianceAmountAtRisk
+          : repProgress.complianceReductionAmount,
         priority: 120
       });
     }

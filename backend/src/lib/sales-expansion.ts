@@ -528,6 +528,9 @@ export type SalesExpansionCompliance = {
   previousWeekCompliancePct: number | null;
   fullBonusCompliancePct: number;
   logsNeededForFullBonus: number;
+  graceActive: boolean;
+  deadlineAt: string;
+  deductionAppliesAt: string;
   missingOrders: SalesExpansionComplianceOrder[];
   waiver: SalesExpansionComplianceWaiver | null;
 };
@@ -580,11 +583,13 @@ export function complianceBonusDecision(
 
 export function complianceBonusDecisionWithWaiver(
   decision: ReturnType<typeof complianceBonusDecision>,
-  waiverActive: boolean
+  waiverActive: boolean,
+  graceActive = false
 ) {
+  const deductionProtected = waiverActive || graceActive;
   return {
-    bonusMultiplier: waiverActive ? 1 : decision.bonusMultiplier,
-    reductionPct: waiverActive ? 0 : decision.reductionPct,
+    bonusMultiplier: deductionProtected ? 1 : decision.bonusMultiplier,
+    reductionPct: deductionProtected ? 0 : decision.reductionPct,
     policyBonusMultiplier: decision.bonusMultiplier,
     policyReductionPct: decision.reductionPct
   };
@@ -595,6 +600,18 @@ const addDays = (dateKey: string, days: number) => {
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
 };
+
+export function complianceGraceWindow(weekStart: string, now: Date = new Date()) {
+  const weekEnd = addDays(weekStart, 6);
+  const nextWeekStart = addDays(weekStart, 7);
+  const deadlineAt = new Date(`${weekEnd}T23:59:59.999+01:00`).toISOString();
+  const deductionAppliesAt = new Date(`${nextWeekStart}T00:00:00.000+01:00`).toISOString();
+  return {
+    graceActive: now.getTime() < new Date(deductionAppliesAt).getTime(),
+    deadlineAt,
+    deductionAppliesAt
+  };
+}
 
 async function complianceRateForRepWeek(orgId: string, repId: string, weekStart: string, settings: SalesExpansionSettings) {
   const weekEndExclusive = addDays(weekStart, 7);
@@ -693,6 +710,9 @@ export async function salesExpansionComplianceForRepWeek(orgId: string, repId: s
       previousWeekCompliancePct: null,
       fullBonusCompliancePct: 100,
       logsNeededForFullBonus: 0,
+      graceActive: false,
+      deadlineAt: new Date(`${addDays(weekStart, 6)}T23:59:59.999+01:00`).toISOString(),
+      deductionAppliesAt: new Date(`${addDays(weekStart, 7)}T00:00:00.000+01:00`).toISOString(),
       missingOrders: [],
       waiver: null
     };
@@ -709,12 +729,15 @@ export async function salesExpansionComplianceForRepWeek(orgId: string, repId: s
   }
   const previous = previousWeeks[0] ?? null;
   const decision = complianceBonusDecision(current.compliancePct, settings);
+  const grace = complianceGraceWindow(weekStart);
   const waiverActive = waiver?.active === true;
-  const payableDecision = complianceBonusDecisionWithWaiver(decision, waiverActive);
+  const payableDecision = complianceBonusDecisionWithWaiver(decision, waiverActive, grace.graceActive);
   return {
     ...current,
     ...decision,
     ...payableDecision,
+    ...grace,
+    formalWarning: grace.graceActive ? false : decision.formalWarning,
     previousWeekCompliancePct: previous?.compliancePct ?? null,
     fullBonusCompliancePct: settings.fullBonusCompliancePct,
     logsNeededForFullBonus: Math.max(
@@ -722,7 +745,8 @@ export async function salesExpansionComplianceForRepWeek(orgId: string, repId: s
       Math.ceil(current.eligibleConfirmedCount * settings.fullBonusCompliancePct / 100) - current.loggedCount
     ),
     waiver,
-    pipRecommended: previousWeeks.length === settings.pipConsecutiveWeeks - 1
+    pipRecommended: !grace.graceActive
+      && previousWeeks.length === settings.pipConsecutiveWeeks - 1
       && [current, ...previousWeeks].every((week) => week.compliancePct < settings.fullBonusCompliancePct)
   };
 }

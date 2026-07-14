@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { complianceBonusDecision, complianceBonusDecisionWithWaiver, defaultSalesExpansionSettings, salesExpansionSummaryFromRows } from "./sales-expansion.js";
+import { complianceBonusDecision, complianceBonusDecisionWithWaiver, complianceGraceWindow, defaultSalesExpansionSettings, salesExpansionSummaryFromRows } from "./sales-expansion.js";
 
 test("compliance bonus tiers reduce performance bonus only at the configured thresholds", () => {
   const settings = defaultSalesExpansionSettings();
@@ -20,6 +20,30 @@ test("an Owner waiver restores pay without erasing the policy deduction evidence
     policyReductionPct: 100
   });
   assert.deepEqual(complianceBonusDecisionWithWaiver(decision, false), {
+    bonusMultiplier: 0,
+    reductionPct: 100,
+    policyBonusMultiplier: 0,
+    policyReductionPct: 100
+  });
+});
+
+test("the active week keeps earned bonus protected until Saturday night in Lagos", () => {
+  const decision = complianceBonusDecision(89, defaultSalesExpansionSettings());
+  assert.deepEqual(complianceBonusDecisionWithWaiver(decision, false, true), {
+    bonusMultiplier: 1,
+    reductionPct: 0,
+    policyBonusMultiplier: 0,
+    policyReductionPct: 100
+  });
+
+  const beforeDeadline = complianceGraceWindow("2026-07-12", new Date("2026-07-18T22:59:59.998Z"));
+  assert.equal(beforeDeadline.graceActive, true);
+  assert.equal(beforeDeadline.deadlineAt, "2026-07-18T22:59:59.999Z");
+  assert.equal(beforeDeadline.deductionAppliesAt, "2026-07-18T23:00:00.000Z");
+
+  const afterDeadline = complianceGraceWindow("2026-07-12", new Date("2026-07-18T23:00:00.000Z"));
+  assert.equal(afterDeadline.graceActive, false);
+  assert.deepEqual(complianceBonusDecisionWithWaiver(decision, false, afterDeadline.graceActive), {
     bonusMultiplier: 0,
     reductionPct: 100,
     policyBonusMultiplier: 0,

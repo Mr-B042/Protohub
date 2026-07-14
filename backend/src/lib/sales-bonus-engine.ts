@@ -89,6 +89,7 @@ export type SalesBonusRuleProgress = {
   earnedAmount: number;
   earnedAmountBeforeCompliance?: number;
   complianceReductionAmount?: number;
+  complianceAmountAtRisk?: number;
   potentialAmount: number;
   remainingPotential: number;
   progressCurrent: number;
@@ -131,6 +132,8 @@ export type SalesBonusRepProgress = {
   salesExpansionCompliance?: SalesExpansionCompliance;
   performanceBonusBeforeCompliance?: number;
   complianceReductionAmount?: number;
+  compliancePolicyReductionAmount?: number;
+  complianceAmountAtRisk?: number;
 };
 
 export type SalesBonusProgressResponse = {
@@ -160,6 +163,8 @@ export type SalesBonusPayrollRow = {
       salesExpansionCompliance?: SalesExpansionCompliance;
       performanceBonusBeforeCompliance?: number;
       complianceReductionAmount?: number;
+      compliancePolicyReductionAmount?: number;
+      complianceAmountAtRisk?: number;
     }>;
     totalProgramBonus: number;
     manualAdjustments: number;
@@ -725,11 +730,21 @@ export const getSalesBonusProgress = async (
     const performanceBonusBeforeCompliance = progress.earnedSoFar - progress.manualAdjustments;
     const adjustedRules = progress.rules.map((rule) => {
       const earnedAmountBeforeCompliance = rule.earnedAmount;
+      const policyPayable = !rule.active || rule.earnedAmount <= 0
+        ? rule.earnedAmount
+        : Math.round(rule.earnedAmount * compliance.policyBonusMultiplier);
+      const complianceAmountAtRisk = compliance.graceActive && compliance.waiver?.active !== true
+        ? Math.max(0, rule.earnedAmount - policyPayable)
+        : 0;
       if (!rule.active || rule.earnedAmount <= 0 || compliance.bonusMultiplier >= 1) {
         return {
           ...rule,
           earnedAmountBeforeCompliance,
-          complianceReductionAmount: 0
+          complianceReductionAmount: 0,
+          complianceAmountAtRisk,
+          helper: complianceAmountAtRisk > 0
+            ? `${rule.helper} ${complianceAmountAtRisk.toLocaleString("en-NG")} bonus is protected until the logging deadline.`
+            : rule.helper
         };
       }
       const earnedAmount = Math.round(rule.earnedAmount * compliance.bonusMultiplier);
@@ -738,11 +753,17 @@ export const getSalesBonusProgress = async (
         earnedAmount,
         earnedAmountBeforeCompliance,
         complianceReductionAmount: Math.max(0, earnedAmountBeforeCompliance - earnedAmount),
+        complianceAmountAtRisk: 0,
         remainingPotential: Math.max(0, rule.potentialAmount - earnedAmount),
         helper: `${rule.helper} Sales-log compliance applied: ${compliance.compliancePct}% (${compliance.reductionPct}% performance-bonus reduction).`
       };
     });
     const adjustedRuleEarnings = adjustedRules.reduce((sum, rule) => sum + rule.earnedAmount, 0);
+    const policyAdjustedRuleEarnings = progress.rules.reduce((sum, rule) => {
+      if (!rule.active || rule.earnedAmount <= 0) return sum + rule.earnedAmount;
+      return sum + Math.round(rule.earnedAmount * compliance.policyBonusMultiplier);
+    }, 0);
+    const compliancePolicyReductionAmount = Math.max(0, performanceBonusBeforeCompliance - policyAdjustedRuleEarnings);
     const adjustedEarned = adjustedRuleEarnings + progress.manualAdjustments;
     return {
       ...progress,
@@ -752,7 +773,11 @@ export const getSalesBonusProgress = async (
       pendingPotential: Math.max(0, progress.totalAvailable - adjustedEarned),
       salesExpansionCompliance: compliance,
       performanceBonusBeforeCompliance,
-      complianceReductionAmount: Math.max(0, performanceBonusBeforeCompliance - adjustedRuleEarnings)
+      complianceReductionAmount: Math.max(0, performanceBonusBeforeCompliance - adjustedRuleEarnings),
+      compliancePolicyReductionAmount,
+      complianceAmountAtRisk: compliance.graceActive && compliance.waiver?.active !== true
+        ? compliancePolicyReductionAmount
+        : 0
     };
   }));
 
@@ -1026,7 +1051,9 @@ export const calculateSalesBonusPayroll = async (
         rules: rep.rules,
         salesExpansionCompliance: rep.salesExpansionCompliance,
         performanceBonusBeforeCompliance: rep.performanceBonusBeforeCompliance,
-        complianceReductionAmount: rep.complianceReductionAmount
+        complianceReductionAmount: rep.complianceReductionAmount,
+        compliancePolicyReductionAmount: rep.compliancePolicyReductionAmount,
+        complianceAmountAtRisk: rep.complianceAmountAtRisk
       });
       rows.set(rep.repId, current);
     }
