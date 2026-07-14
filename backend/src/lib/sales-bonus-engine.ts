@@ -852,6 +852,42 @@ export const perOrderBonusMapForDeliveredRange = async (
   return Object.fromEntries(totals);
 };
 
+// Itemized, single-order counterpart to perOrderBonusMapForDeliveredRange -
+// that function is deliberately a flat sum (it's consumed as a plain number
+// in several bulk-total call sites), so a rule-by-rule breakdown for one
+// specific order lives here instead of changing that shape.
+export type SalesBonusOrderBreakdownItem = { ruleName: string; ruleType: SalesBonusRuleType; amount: number };
+
+export const perOrderSalesBonusBreakdown = async (
+  orgId: string,
+  orderId: string
+): Promise<SalesBonusOrderBreakdownItem[]> => {
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, assigned_rep_id, amount, created_at")
+    .eq("org_id", orgId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!order?.assigned_rep_id || !order.created_at) return [];
+
+  const weekStart = sundayWeekStartForDateKey(order.created_at.slice(0, 10));
+  if (!weekStart || weekStart < SALES_BONUS_LAUNCH_WEEK_START) return [];
+
+  const progress = await getSalesBonusProgress(orgId, weekStart, { repId: order.assigned_rep_id });
+  const rep = progress.reps[0];
+  if (!rep) return [];
+
+  const orderAmountById = new Map([[order.id, positiveAmount(order.amount)]]);
+  const items: SalesBonusOrderBreakdownItem[] = [];
+  for (const rule of rep.rules) {
+    if (!rule.qualifiedOrderIds.includes(order.id)) continue;
+    const share = attributeRuleEarningsToOrders(rule, orderAmountById).get(order.id) ?? 0;
+    if (share > 0) items.push({ ruleName: rule.name, ruleType: rule.type, amount: share });
+  }
+  return items;
+};
+
 export const calculateSalesBonusPayroll = async (
   orgId: string,
   periodBounds: { periodStartDate: string; periodEndDate: string }

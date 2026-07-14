@@ -756,7 +756,9 @@ export const salesBonusesApi = {
     const qs = new URLSearchParams({ dateTo });
     if (dateFrom) qs.set("dateFrom", dateFrom);
     return get<Record<string, number>>(`/api/sales-bonuses/order-bonus-map?${qs.toString()}`);
-  }
+  },
+  orderAttribution: (orderId: string) =>
+    get<Array<{ ruleName: string; ruleType: string; amount: number }>>(`/api/sales-bonuses/order-attribution/${orderId}`)
 };
 
 // ── Customers ─────────────────────────────────────────────
