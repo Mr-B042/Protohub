@@ -2,7 +2,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { supabase, supabaseAuth, supabaseAnon } from "../lib/supabase.js";
+import { createSupabaseAuthClient, supabase, supabaseAnon } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 import { normalizeWorkingDays } from "../lib/business-schedule.js";
@@ -243,12 +243,10 @@ router.post("/login", async (req, res) => {
   }
   const { email, password } = parsed.data;
 
-  let signInResult: Awaited<ReturnType<typeof supabaseAuth.auth.signInWithPassword>>;
+  let signInResult: Awaited<ReturnType<ReturnType<typeof createSupabaseAuthClient>["auth"]["signInWithPassword"]>>;
   try {
-    // Password sign-in is a public Supabase Auth flow. Use the anon client when
-    // configured; service-role clients are for admin/server operations and can
-    // behave poorly with end-user session flows in production.
-    const authClient = supabaseAnon ?? supabaseAuth;
+    // Auth clients hold mutable refresh state, so never share one between users.
+    const authClient = createSupabaseAuthClient();
     signInResult = await withLoginTimeout(
       authClient.auth.signInWithPassword({ email, password }),
       "Supabase password sign-in"
@@ -329,9 +327,9 @@ router.post("/refresh", async (req, res) => {
     res.status(400).json({ error: "refreshToken is required." });
     return;
   }
-  let refreshResult: Awaited<ReturnType<typeof supabaseAuth.auth.refreshSession>>;
+  let refreshResult: Awaited<ReturnType<ReturnType<typeof createSupabaseAuthClient>["auth"]["refreshSession"]>>;
   try {
-    const authClient = supabaseAnon ?? supabaseAuth;
+    const authClient = createSupabaseAuthClient();
     refreshResult = await withLoginTimeout(
       authClient.auth.refreshSession({ refresh_token: refreshToken }),
       "Supabase session refresh"

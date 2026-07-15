@@ -2,7 +2,7 @@
 // All requests go through `request()` which attaches the Bearer token
 // and auto-refreshes if the token has expired (401).
 
-import { auth } from "./auth";
+import { auth, type AuthSessionSnapshot } from "./auth";
 import { fetchWithApiFailover } from "./backend-origin";
 import { snakeToCamel } from "./normalize";
 const TRANSIENT_RETRYABLE_STATUSES = new Set([502, 503, 504]);
@@ -16,9 +16,15 @@ const AUTH_REFRESH_LOCK_POLL_MS = 250;
 const INVALID_REFRESH_GRACE_MS = 90_000;
 const REFRESH_LOCK_OWNER = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-type AuthRefreshResult =
+export type AuthRefreshResult =
   | { ok: true }
-  | { ok: false; reason: "missing" | "invalid" | "transient"; status?: number; message?: string };
+  | {
+      ok: false;
+      reason: "missing" | "invalid" | "transient";
+      session: AuthSessionSnapshot;
+      status?: number;
+      message?: string;
+    };
 
 let refreshInFlight: Promise<AuthRefreshResult> | null = null;
 
@@ -207,10 +213,13 @@ async function request<T>(
       token = auth.getAccessToken();
     } else if (auth.isAccessTokenExpired(30_000)) {
       if (refresh.reason === "invalid" || refresh.reason === "missing") {
-        auth.clear();
-        throw new ApiError(401, "Your session expired. Please sign in again.");
+        if (auth.clearIfSessionMatches(refresh.session)) {
+          throw new ApiError(401, "Your session expired. Please sign in again.");
+        }
+        token = auth.getAccessToken();
+      } else {
+        throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment - you have not been logged out.");
       }
-      throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment - you have not been logged out.");
     }
   }
   let res: Response;
@@ -242,13 +251,16 @@ async function request<T>(
   if (res.status === 401 && !retried && !isSessionStartEndpoint) {
     const refreshed = await refreshAuthSession();
     if (refreshed.ok) return request<T>(method, path, body, true, transientAttempt);
+    if (!auth.sessionMatches(refreshed.session)) {
+      return request<T>(method, path, body, true, transientAttempt);
+    }
     if (refreshed.reason === "transient") {
       throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment - you have not been logged out.");
     }
     if (refreshed.reason === "invalid" && !auth.isAccessTokenExpired(30_000)) {
       throw new ApiError(503, "Could not refresh your session right now. Please retry in a moment - you have not been logged out.");
     }
-    auth.clear();
+    auth.clearIfSessionMatches(refreshed.session);
     throw new ApiError(401, "Your session expired. Please sign in again.");
   }
 
@@ -270,16 +282,16 @@ export async function refreshAuthSession(): Promise<AuthRefreshResult> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
-    const accessToken = auth.getAccessToken();
-    const refreshToken = auth.getRefreshToken();
-    if (!refreshToken) return { ok: false, reason: "missing" };
+    const session = auth.getSessionSnapshot();
+    const { accessToken, refreshToken } = session;
+    if (!refreshToken) return { ok: false, reason: "missing", session };
     let lockAcquired = acquireAuthRefreshLock();
     if (!lockAcquired) {
       const otherTabRefreshed = await waitForOtherTabRefresh(accessToken, refreshToken);
       if (otherTabRefreshed) return { ok: true };
       lockAcquired = acquireAuthRefreshLock();
       if (!lockAcquired) {
-        return { ok: false, reason: "transient", message: "Another browser tab is refreshing your session." };
+        return { ok: false, reason: "transient", session, message: "Another browser tab is refreshing your session." };
       }
     }
     try {
@@ -296,13 +308,14 @@ export async function refreshAuthSession(): Promise<AuthRefreshResult> {
         return {
           ok: false,
           reason,
+          session,
           status: res.status,
           message: extractErrorMessage(payload, res.statusText || "Session refresh failed.")
         };
       }
       const data = await res.json();
       if (!data?.accessToken || !data?.refreshToken) {
-        return { ok: false, reason: "transient", message: "Session refresh response was incomplete." };
+        return { ok: false, reason: "transient", session, message: "Session refresh response was incomplete." };
       }
       // Fetch fresh profile so role/name stay in sync
       let user = auth.getUser();
@@ -315,10 +328,14 @@ export async function refreshAuthSession(): Promise<AuthRefreshResult> {
           if (me.user) user = snakeToCamel(me.user);
         }
       } catch { /* keep existing user if /me fails */ }
-      if (user) auth.save(data.accessToken, data.refreshToken, user);
+      // A login or another tab may have installed a newer session while this
+      // request was in flight. Never overwrite that session with stale tokens.
+      if (user && auth.sessionMatches(session)) {
+        auth.save(data.accessToken, data.refreshToken, user);
+      }
       return { ok: true };
     } catch (error: any) {
-      return { ok: false, reason: "transient", message: error?.message ?? "Session refresh failed." };
+      return { ok: false, reason: "transient", session, message: error?.message ?? "Session refresh failed." };
     } finally {
       if (lockAcquired) releaseAuthRefreshLock();
       refreshInFlight = null;
@@ -329,7 +346,9 @@ export async function refreshAuthSession(): Promise<AuthRefreshResult> {
 }
 
 export async function ensureFreshAuthSession(skewMs = BACKGROUND_REFRESH_SKEW_MS): Promise<AuthRefreshResult> {
-  if (!auth.getAccessToken()) return { ok: false, reason: "missing" };
+  if (!auth.getAccessToken()) {
+    return { ok: false, reason: "missing", session: auth.getSessionSnapshot() };
+  }
   if (!auth.isAccessTokenExpiringWithin(skewMs)) return { ok: true };
   return refreshAuthSession();
 }

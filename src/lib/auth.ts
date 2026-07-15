@@ -25,9 +25,26 @@ export interface AuthUser {
   role:  string;
 }
 
+export interface AuthSessionSnapshot {
+  accessToken: string | null;
+  refreshToken: string | null;
+}
+
 export const auth = {
   getAccessToken():  string | null { return localStorage.getItem(ACCESS_TOKEN_KEY); },
   getRefreshToken(): string | null { return localStorage.getItem(REFRESH_TOKEN_KEY); },
+
+  getSessionSnapshot(): AuthSessionSnapshot {
+    return {
+      accessToken: this.getAccessToken(),
+      refreshToken: this.getRefreshToken()
+    };
+  },
+
+  sessionMatches(snapshot: AuthSessionSnapshot): boolean {
+    return this.getAccessToken() === snapshot.accessToken &&
+      this.getRefreshToken() === snapshot.refreshToken;
+  },
 
   getAccessTokenExpiresAt(): number | null {
     const token = this.getAccessToken();
@@ -86,6 +103,12 @@ export const auth = {
     if (typeof window !== "undefined") {
       window.dispatchEvent(new Event("protohub:logout"));
     }
+  },
+
+  clearIfSessionMatches(snapshot: AuthSessionSnapshot): boolean {
+    if (!this.sessionMatches(snapshot)) return false;
+    this.clear();
+    return true;
   },
 
   isLoggedIn(): boolean {

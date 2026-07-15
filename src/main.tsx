@@ -129,8 +129,9 @@ function Root() {
       // request / interval tick will retry. Only a truly invalid/missing refresh
       // token means the browser can no longer extend the session.
       if (result.reason === "invalid" || result.reason === "missing") {
-        auth.clear();
-        setLoggedIn(false);
+        if (auth.clearIfSessionMatches(result.session)) {
+          setLoggedIn(false);
+        }
       }
     };
 

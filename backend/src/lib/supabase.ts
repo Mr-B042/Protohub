@@ -17,19 +17,22 @@ export const supabase = createClient(url, serviceKey, {
   auth: { persistSession: false }
 });
 
-// Dedicated client for signInWithPassword — keeps the shared service-role
-// client's auth state clean (signInWithPassword mutates the client's JWT).
-export const supabaseAuth = createClient(url, serviceKey, {
-  auth: { persistSession: false }
-});
-
 // Anon-key client. Required for flows that go through Supabase's public auth
 // API (e.g. resetPasswordForEmail, which only triggers email delivery from
 // the anon-key endpoint — admin.generateLink does not send mail).
 const anonKey = process.env.SUPABASE_ANON_KEY;
 export const supabaseAnon = anonKey
-  ? createClient(url, anonKey, { auth: { persistSession: false } })
+  ? createClient(url, anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+    })
   : null;
+
+// Supabase Auth clients keep an in-memory refresh promise. Sharing one client
+// between concurrent HTTP requests can make different users receive the same
+// in-flight refresh result. Login and refresh routes must use a fresh client.
+export const createSupabaseAuthClient = () => createClient(url, anonKey ?? serviceKey, {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+});
 
 // Create a client scoped to a specific user (respects RLS)
 export const supabaseAs = (accessToken: string) => {
