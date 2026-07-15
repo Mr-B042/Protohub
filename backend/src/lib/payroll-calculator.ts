@@ -99,18 +99,54 @@ type PeriodBounds = {
 };
 
 export const defaultBonusConfig = (): Required<ProductBonusConfig> => ({
-  baseDelivered: [],
-  manualOrderBonuses: [],
-  upgradeBonuses: [],
-  crossSellPercent: 0,
+  baseDelivered: [
+    { quantity: 3, amount: 200 },
+    { quantity: 5, amount: 200 },
+    { quantity: 7, amount: 200 },
+    { quantity: 10, amount: 200 },
+    { quantity: 15, amount: 200 },
+    { quantity: 20, amount: 200 }
+  ],
+  manualOrderBonuses: [
+    { quantity: 3, amount: 500 },
+    { quantity: 5, amount: 800 },
+    { quantity: 7, amount: 1_000 },
+    { quantity: 12, amount: 1_200 },
+    { quantity: 15, amount: 1_500 }
+  ],
+  upgradeBonuses: [
+    { fromQty: 3, toQty: 5, amount: 1_000 },
+    { fromQty: 3, toQty: 7, amount: 1_500 },
+    { fromQty: 3, toQty: 10, amount: 2_000 },
+    { fromQty: 3, toQty: 12, amount: 2_500 },
+    { fromQty: 3, toQty: 15, amount: 3_000 },
+    { fromQty: 5, toQty: 7, amount: 1_500 },
+    { fromQty: 5, toQty: 10, amount: 2_000 },
+    { fromQty: 5, toQty: 12, amount: 2_500 },
+    { fromQty: 5, toQty: 15, amount: 3_000 },
+    { fromQty: 7, toQty: 10, amount: 2_000 },
+    { fromQty: 7, toQty: 12, amount: 2_500 },
+    { fromQty: 7, toQty: 15, amount: 3_000 },
+    { fromQty: 10, toQty: 12, amount: 2_500 },
+    { fromQty: 10, toQty: 15, amount: 3_000 },
+    { fromQty: 12, toQty: 15, amount: 3_000 }
+  ],
+  crossSellPercent: 10,
   crossSellFixed: 0,
   freeGiftBonus: 0,
-  poorDeliveryRatePercent: 60,
-  deliveryRateMinOrders: 5,
+  poorDeliveryRatePercent: 55,
+  deliveryRateMinOrders: 50,
   upgradeRequiresMinDeliveryRate: 60,
   aovRequiresMinDeliveryRate: 60,
-  aovBonuses: [],
-  deliveryRateBonuses: []
+  aovBonuses: [
+    { threshold: 33_000, amount: 10_000 },
+    { threshold: 35_000, amount: 20_000 }
+  ],
+  deliveryRateBonuses: [
+    { ratePercent: 60, amount: 5_000 },
+    { ratePercent: 70, amount: 10_000 },
+    { ratePercent: 80, amount: 20_000 }
+  ]
 });
 
 const parsePayrollPeriod = (period: string): PeriodBounds | null => {
@@ -164,6 +200,54 @@ export const weekKeyForDateKey = (dateKey: string) => {
   const yearStart = new Date(date.getFullYear(), 0, 1);
   const weekIdx = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + yearStart.getDay() + 1) / 7);
   return `${date.getFullYear()}-W${weekIdx}`;
+};
+
+const sundayWeekStartForDateKey = (dateKey: string) => {
+  if (!dateKey) return "";
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setUTCDate(date.getUTCDate() - date.getUTCDay());
+  return date.toISOString().slice(0, 10);
+};
+
+const addDaysToDateKey = (dateKey: string, days: number) => {
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+type WeeklyBonusContext = { placed: number; delivered: number; finalized: number; amount: number };
+
+export const buildWeeklyBonusContextMap = (orders: PayrollOrder[]) => {
+  const contexts = new Map<string, WeeklyBonusContext>();
+  for (const order of orders) {
+    const weekStart = sundayWeekStartForDateKey(orderCreatedKey(order));
+    if (!weekStart) continue;
+    const key = `${order.assigned_rep_id ?? "__none__"}::${weekStart}`;
+    const current = contexts.get(key) ?? { placed: 0, delivered: 0, finalized: 0, amount: 0 };
+    current.placed += 1;
+    if (order.status === "Delivered") {
+      current.delivered += 1;
+      current.amount += Number(order.amount ?? 0);
+    }
+    if (["Delivered", "Cancelled", "Failed", "Rejected"].includes(order.status ?? "")) {
+      current.finalized += 1;
+    }
+    contexts.set(key, current);
+  }
+  return contexts;
+};
+
+const weeklyBonusContextForOrder = (order: PayrollOrder, contexts: Map<string, WeeklyBonusContext>) => {
+  const weekStart = sundayWeekStartForDateKey(orderCreatedKey(order));
+  const context = contexts.get(`${order.assigned_rep_id ?? "__none__"}::${weekStart}`);
+  if (!context || context.placed === 0) return { rate: 100, count: 0, aov: 0 };
+  return {
+    rate: context.finalized > 0 ? Math.round((context.delivered / context.finalized) * 100) : 100,
+    count: context.placed,
+    aov: context.delivered > 0 ? Math.round(context.amount / context.delivered) : 0
+  };
 };
 
 const quantityForOrder = (order: PayrollOrder) => {
@@ -285,7 +369,8 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     deliveredOrdersResult,
     deliveredFallbackOrdersResult,
     pendingOrdersResult,
-    penaltiesResult
+    penaltiesResult,
+    productsResult
   ] = await Promise.all([
     supabase.from("users").select("id, name, role").eq("org_id", orgId).eq("active", true),
     supabase.from("pay_structures").select("*").eq("org_id", orgId),
@@ -312,10 +397,11 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
       .neq("status", "Delivered")
       .gte("created_at", bounds.periodStartTs)
       .lt("created_at", bounds.periodEndTs),
-    supabase.from("rep_penalties").select("rep_id, amount, period, created_at").eq("org_id", orgId)
+    supabase.from("rep_penalties").select("rep_id, amount, period, created_at").eq("org_id", orgId),
+    supabase.from("products").select("id, bonus_config").eq("org_id", orgId)
   ]);
 
-  const settled = [usersResult, structuresResult, orgResult, deliveredOrdersResult, deliveredFallbackOrdersResult, pendingOrdersResult, penaltiesResult];
+  const settled = [usersResult, structuresResult, orgResult, deliveredOrdersResult, deliveredFallbackOrdersResult, pendingOrdersResult, penaltiesResult, productsResult];
   const firstError = settled.find((result) => result.error);
   if (firstError?.error) {
     throw new Error(firstError.error.message);
@@ -337,7 +423,29 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     deliveredOrders.set(order.id, order);
   }
   const payrollMonthDelivered = Array.from(deliveredOrders.values());
-  void pendingOrdersResult;
+  const productMap = buildProductBonusConfigMap((productsResult.data ?? []) as ProductRecord[]);
+
+  const deliveredCohortWeekStarts = payrollMonthDelivered
+    .map((order) => sundayWeekStartForDateKey(orderCreatedKey(order)))
+    .filter(Boolean)
+    .sort();
+  let weeklyContextOrders = [
+    ...payrollMonthDelivered,
+    ...((pendingOrdersResult.data ?? []) as PayrollOrder[])
+  ];
+  if (deliveredCohortWeekStarts.length > 0) {
+    const cohortStart = deliveredCohortWeekStarts[0]!;
+    const cohortEnd = addDaysToDateKey(deliveredCohortWeekStarts[deliveredCohortWeekStarts.length - 1]!, 7);
+    const { data: cohortData, error: cohortError } = await supabase
+      .from("orders")
+      .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date")
+      .eq("org_id", orgId)
+      .gte("created_at", `${cohortStart}T00:00:00`)
+      .lt("created_at", `${cohortEnd}T00:00:00`);
+    if (cohortError) throw new Error(cohortError.message);
+    weeklyContextOrders = (cohortData ?? []) as PayrollOrder[];
+  }
+  const weeklyBonusContexts = buildWeeklyBonusContextMap(weeklyContextOrders);
 
   const salesBonusByRep = await calculateSalesBonusPayroll(orgId, {
     periodStartDate: bounds.periodStartDate,
@@ -368,7 +476,15 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
         ? complianceWeeks.reduce((sum: number, value: any) => sum + Number(value.bonusMultiplier), 0) / complianceWeeks.length
         : 1;
       const adjustedTierBonus = Math.round(Number(tierBonus ?? 0) * legacyComplianceMultiplier);
-      const autoBonus = Number(bonusSnapshot?.autoBonus ?? 0) + adjustedTierBonus;
+      const engineManualAdjustments = Number((bonusSnapshot?.bonusBreakdown as any)?.manualAdjustments ?? 0);
+      const engineRuleBonus = Math.max(0, Number(bonusSnapshot?.autoBonus ?? 0) - engineManualAdjustments);
+      const legacyOrderBonus = payrollMonthDelivered
+        .filter((order) => order.assigned_rep_id === user.id)
+        .reduce((sum, order) => {
+          const context = weeklyBonusContextForOrder(order, weeklyBonusContexts);
+          return sum + computeOrderBonus(order, productMap, context.rate, context.aov, context.count);
+        }, 0);
+      const autoBonus = engineRuleBonus + legacyOrderBonus + adjustedTierBonus;
       const deductions = penalties
         .filter((penalty) => penalty.rep_id === user.id)
         .reduce((sum, penalty) => sum + Number(penalty.amount ?? 0), 0);
@@ -382,6 +498,10 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
         autoBonus,
         bonusBreakdown: {
           ...((bonusSnapshot?.bonusBreakdown as Record<string, unknown> | undefined) ?? {}),
+          engineRuleBonus,
+          engineManualAdjustmentsExcludedFromEngine: engineManualAdjustments,
+          legacyOrderBonus,
+          combinedSalesBonus: engineRuleBonus + legacyOrderBonus,
           legacyPerformanceTierBeforeCompliance: Number(tierBonus ?? 0),
           legacyPerformanceTierAfterCompliance: adjustedTierBonus,
           legacyPerformanceTierComplianceReduction: Math.max(0, Number(tierBonus ?? 0) - adjustedTierBonus)

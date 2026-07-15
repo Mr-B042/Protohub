@@ -451,6 +451,45 @@ test("attributeRuleEarningsToOrders: tiered upgrade rules stay on their own unlo
   assert.deepEqual(Object.fromEntries(attributeRuleEarningsToOrders(result.rules[1]!, new Map())), { second: 1_500 });
 });
 
+test("tiered upgrade ladder repeats and uses the stable order number within a delivery day", () => {
+  const rules: SalesBonusRule[] = [
+    { targetCount: 1, amount: 800 },
+    { targetCount: 2, amount: 1_600 },
+    { targetCount: 3, amount: 2_400 }
+  ].map(({ targetCount, amount }, index) => ({
+    id: `upgrade-tier-${targetCount}`,
+    org_id: "org-1",
+    program_id: activeProgram.id,
+    name: `Upgrade ${targetCount} customer${targetCount === 1 ? "" : "s"}`,
+    type: "upgrade_count",
+    status: "active",
+    config: { fromQty: 3, toQtyMin: 6, targetCount, amount },
+    display_order: (index + 1) * 10
+  }));
+  const result = run(rules, [
+    order("2024", { delivered_date: "2026-07-14", created_at: "2026-07-12T08:00:00", upsell_from_qty: 3, upsell_to_qty: 6 }),
+    // This order was edited later, but its immutable order number must keep it
+    // ahead of 2099 when both were delivered on the same date.
+    order("2087", { delivered_date: "2026-07-14", created_at: "2026-07-15T16:30:00", upsell_from_qty: 3, upsell_to_qty: 6 }),
+    order("2099", { delivered_date: "2026-07-14", created_at: "2026-07-13T09:00:00", upsell_from_qty: 3, upsell_to_qty: 15 }),
+    order("2162", { delivered_date: "2026-07-15", created_at: "2026-07-14T10:00:00", upsell_from_qty: 3, upsell_to_qty: 6 })
+  ]);
+
+  assert.equal(result.earnedSoFar, 5_600);
+  const attributed = new Map<string, number>();
+  for (const rule of result.rules) {
+    for (const [orderId, amount] of attributeRuleEarningsToOrders(rule, new Map())) {
+      attributed.set(orderId, (attributed.get(orderId) ?? 0) + amount);
+    }
+  }
+  assert.deepEqual(Object.fromEntries(attributed), {
+    "2024": 800,
+    "2087": 1_600,
+    "2099": 2_400,
+    "2162": 800
+  });
+});
+
 test("attributeRuleEarningsToOrders: inactive rule or zero earnings yields an empty map", () => {
   const rule: SalesBonusRule = {
     id: "upgrade",

@@ -340,16 +340,56 @@ const isOpenOrder = (order: SalesBonusOrder) =>
   !isDelivered(order) && !TERMINAL_LOST_STATUSES.has(order.status ?? "") && order.review_hold !== true;
 
 // Count-based bonuses belong to the specific order that crossed the target.
-// Keep the sequence deterministic so reloading a week never moves a milestone
-// payout between orders. delivered_date is the business event; created_at and
-// id provide stable tie-breakers when delivery is stored at date precision.
+// Keep the sequence deterministic so correcting an order's created_at later
+// cannot move a payout to another order. delivered_date is the business event;
+// the immutable order number is the tie-breaker when delivery is date-only.
 const sortBonusMilestoneOrders = (orders: SalesBonusOrder[]) => orders.slice().sort((a, b) => {
   const delivered = cleanText(a.delivered_date).localeCompare(cleanText(b.delivered_date));
   if (delivered !== 0) return delivered;
-  const created = cleanText(a.created_at).localeCompare(cleanText(b.created_at));
-  if (created !== 0) return created;
   return a.id.localeCompare(b.id, undefined, { numeric: true });
 });
+
+const upgradeTierLadderKey = (rule: SalesBonusRule) => {
+  if (rule.type !== "upgrade_count") return "";
+  const cfg = asConfig(rule);
+  const fromQty = Math.max(1, Math.round(toNumber(cfg.fromQty, 3)));
+  const toQtyMin = Math.max(fromQty + 1, Math.round(toNumber(cfg.toQtyMin ?? cfg.toQty, fromQty + 1)));
+  const scope = ruleScope(cfg);
+  return JSON.stringify({
+    programId: rule.program_id,
+    fromQty,
+    toQtyMin,
+    productIds: scope.productIds.slice().sort(),
+    packageIds: scope.packageIds.slice().sort(),
+    embedLabels: scope.embedLabels.slice().sort()
+  });
+};
+
+const upgradeTierCycleSizes = (rules: SalesBonusRule[]) => {
+  const targetsByKey = new Map<string, Set<number>>();
+  for (const rule of rules) {
+    const key = upgradeTierLadderKey(rule);
+    if (!key || rule.status !== "active") continue;
+    const target = Math.max(1, Math.round(toNumber(asConfig(rule).targetCount, 1)));
+    const targets = targetsByKey.get(key) ?? new Set<number>();
+    targets.add(target);
+    targetsByKey.set(key, targets);
+  }
+
+  const cycleSizes = new Map<string, number>();
+  for (const [key, targets] of targetsByKey) {
+    const ordered = Array.from(targets).sort((a, b) => a - b);
+    const contiguous = ordered.length > 1 && ordered.every((target, index) => target === index + 1);
+    if (contiguous) cycleSizes.set(key, ordered.length);
+  }
+  return cycleSizes;
+};
+
+const cyclicTierEarned = (current: number, target: number, cycleSize: number, amount: number) => {
+  if (current < target || target < 1 || cycleSize < 2 || amount <= 0) return 0;
+  const milestoneCount = 1 + Math.floor((current - target) / cycleSize);
+  return milestoneCount * amount;
+};
 
 const appliesToRep = (program: SalesBonusProgram, repId: string) => {
   const ids = Array.isArray(program.applies_to_user_ids) ? program.applies_to_user_ids : [];
@@ -407,6 +447,7 @@ export const computeSalesBonusForRep = (input: {
   const assignedCount = repOrders.length;
   const deliveredCount = deliveredOrders.length;
   const deliveryRate = assignedCount > 0 ? Math.round((deliveredCount / assignedCount) * 100) : 0;
+  const upgradeCycleSizes = upgradeTierCycleSizes(input.rules);
 
   const rules: SalesBonusRuleProgress[] = [];
 
@@ -444,9 +485,17 @@ export const computeSalesBonusForRep = (input: {
       progressTarget = targetCount;
       qualifiedOrderIds = qualifying.map((order) => order.id);
       completed = qualifying.length >= targetCount;
-      earnedAmount = active ? countEarnedForTarget(qualifying.length, targetCount, amount, cfg.repeatMode) : 0;
+      const tierCycleSize = upgradeCycleSizes.get(upgradeTierLadderKey(rule)) ?? 0;
+      earnedAmount = active
+        ? tierCycleSize > 0
+          ? cyclicTierEarned(qualifying.length, targetCount, tierCycleSize, amount)
+          : countEarnedForTarget(qualifying.length, targetCount, amount, cfg.repeatMode)
+        : 0;
       potentialAmount = amount;
-      helper = `${qualifying.length} / ${targetCount} scoped upgrades from ${fromQty}pcs to ${toQtyMin}+pcs`;
+      helper = tierCycleSize > 0
+        ? `${qualifying.length} scoped upgrades from ${fromQty}pcs to ${toQtyMin}+pcs · ${tierCycleSize}-step ladder repeats`
+        : `${qualifying.length} / ${targetCount} scoped upgrades from ${fromQty}pcs to ${toQtyMin}+pcs`;
+      if (tierCycleSize > 0) cfg.tierCycleSize = tierCycleSize;
     } else if (rule.type === "cross_sell_count") {
       const targetCount = Math.max(1, Math.round(toNumber(cfg.targetCount, 1)));
       const amount = positiveAmount(cfg.amount);
@@ -837,12 +886,17 @@ export const attributeRuleEarningsToOrders = (
   if (["upgrade_count", "cross_sell_count", "cross_sell_offer"].includes(rule.type)) {
     const targetCount = Math.max(1, Math.round(toNumber(rule.config.targetCount, 1)));
     if (rule.qualifiedOrderIds.length < targetCount) return result;
-    const milestoneCount = rule.config.repeatMode === "every_target_count"
-      ? Math.floor(rule.qualifiedOrderIds.length / targetCount)
-      : 1;
-    const milestoneOrderIds = Array.from({ length: milestoneCount }, (_, index) =>
-      rule.qualifiedOrderIds[((index + 1) * targetCount) - 1]
-    ).filter((orderId): orderId is string => Boolean(orderId));
+    const tierCycleSize = rule.type === "upgrade_count"
+      ? Math.max(0, Math.round(toNumber(rule.config.tierCycleSize, 0)))
+      : 0;
+    const milestoneOrderIds = tierCycleSize > 0
+      ? rule.qualifiedOrderIds.filter((_orderId, index) => index >= targetCount - 1 && (index - (targetCount - 1)) % tierCycleSize === 0)
+      : Array.from({
+          length: rule.config.repeatMode === "every_target_count"
+            ? Math.floor(rule.qualifiedOrderIds.length / targetCount)
+            : 1
+        }, (_, index) => rule.qualifiedOrderIds[((index + 1) * targetCount) - 1])
+        .filter((orderId): orderId is string => Boolean(orderId));
     if (milestoneOrderIds.length === 0) return result;
 
     // Compliance can make the adjusted total non-divisible by the number of
