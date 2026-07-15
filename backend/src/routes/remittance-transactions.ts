@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
+import { fetchAllRows } from "../lib/paginated-query.js";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
@@ -100,13 +101,18 @@ router.get("/", async (req, res) => {
   const receivedFrom = toWatUtcIso(dateFrom, "start");
   const receivedTo = toWatUtcIso(dateTo, "end");
 
-  const txResult = await supabase
-    .from("remittance_transactions")
-    .select("*")
-    .eq("org_id", req.user!.orgId)
-    .gte("received_at", receivedFrom)
-    .lte("received_at", receivedTo)
-    .order("received_at", { ascending: false });
+  const txResult = await fetchAllRows<any>(async (from, to) => {
+    const result = await supabase
+      .from("remittance_transactions")
+      .select("*")
+      .eq("org_id", req.user!.orgId)
+      .gte("received_at", receivedFrom)
+      .lte("received_at", receivedTo)
+      .order("received_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to);
+    return { data: result.data, error: result.error };
+  });
 
   if (txResult.error) {
     if (isMissingRemittanceTableError(txResult.error)) {
@@ -114,7 +120,12 @@ router.get("/", async (req, res) => {
         dateFrom,
         dateTo,
         generatedAt: new Date().toISOString(),
-        transactions: []
+        transactions: [],
+        ledgerGaps: [],
+        reconciliation: {
+          remittedOrdersChecked: 0,
+          missingLedgerCount: 0
+        }
       });
       return;
     }
@@ -131,30 +142,22 @@ router.get("/", async (req, res) => {
     )
   );
 
-  if (orderIds.length === 0) {
-    res.json({
-      dateFrom,
-      dateTo,
-      generatedAt: new Date().toISOString(),
-      transactions: []
-    });
-    return;
-  }
-
-  const ordersQuery = supabase
-    .from("orders")
-    .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status")
-    .eq("org_id", req.user!.orgId)
-    .in("id", orderIds);
-
-  const ordersResult = await ordersQuery;
-  if (ordersResult.error) {
-    res.status(500).json({ error: ordersResult.error.message });
-    return;
+  const receiptOrders: any[] = [];
+  for (const ids of chunk(orderIds, 500)) {
+    const result = await supabase
+      .from("orders")
+      .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status")
+      .eq("org_id", req.user!.orgId)
+      .in("id", ids);
+    if (result.error) {
+      res.status(500).json({ error: result.error.message });
+      return;
+    }
+    receiptOrders.push(...(result.data ?? []));
   }
 
   const orderMap = new Map(
-    (ordersResult.data ?? []).map((order: any) => [String(order.id), order])
+    receiptOrders.map((order: any) => [String(order.id), order])
   );
 
   const transactions = rows
@@ -187,7 +190,7 @@ router.get("/", async (req, res) => {
         orderDeliveredDate: row.order_delivered_date_snapshot ?? order?.delivered_date ?? null,
         assignedRepId,
         agentId: row.agent_id_snapshot ?? order?.agent_id ?? null,
-        agentName: order.agent_name_snapshot ?? null,
+        agentName: order?.agent_name_snapshot ?? null,
         orderAmount,
         logisticsCost,
         currentAmountRemitted,
@@ -198,11 +201,79 @@ router.get("/", async (req, res) => {
     })
     .filter(Boolean);
 
+  // Reconcile delivered-period orders that claim cash against the complete
+  // ledger (not just receipts inside the selected date range). This catches a
+  // genuinely missing historical ledger row without mislabeling a receipt
+  // entered in an earlier/later accounting period.
+  const remittedOrdersResult = await fetchAllRows<any>(async (from, to) => {
+    let query = supabase
+      .from("orders")
+      .select("id, customer, product_id, product_name, package_name, assigned_rep_id, agent_id, agent_name_snapshot, amount, logistics_cost, amount_remitted, remittance_status, delivered_date")
+      .eq("org_id", req.user!.orgId)
+      .eq("status", "Delivered")
+      .gt("amount_remitted", 0)
+      .gte("delivered_date", dateFrom)
+      .lte("delivered_date", dateTo)
+      .order("delivered_date", { ascending: false })
+      .order("id", { ascending: false });
+    if (req.user!.role === "Sales Rep") query = query.eq("assigned_rep_id", req.user!.id);
+    if (requestedProductIds.length > 0) query = query.in("product_id", requestedProductIds);
+    const result = await query.range(from, to);
+    return { data: result.data, error: result.error };
+  });
+  if (remittedOrdersResult.error) {
+    res.status(500).json({ error: remittedOrdersResult.error.message });
+    return;
+  }
+
+  const remittedOrders = remittedOrdersResult.data ?? [];
+  const ledgerOrderIds = new Set<string>();
+  for (const ids of chunk(remittedOrders.map((order: any) => String(order.id)), 500)) {
+    const ledgerResult = await fetchAllRows<any>(async (from, to) => {
+      const result = await supabase
+        .from("remittance_transactions")
+        .select("order_id")
+        .eq("org_id", req.user!.orgId)
+        .in("order_id", ids)
+        .order("id", { ascending: true })
+        .range(from, to);
+      return { data: result.data, error: result.error };
+    });
+    if (ledgerResult.error) {
+      res.status(500).json({ error: ledgerResult.error.message });
+      return;
+    }
+    (ledgerResult.data ?? []).forEach((row: any) => ledgerOrderIds.add(String(row.order_id)));
+  }
+
+  const ledgerGaps = remittedOrders
+    .filter((order: any) => !ledgerOrderIds.has(String(order.id)))
+    .map((order: any) => ({
+      orderId: String(order.id),
+      customer: order.customer ?? null,
+      productId: order.product_id ?? null,
+      productName: order.product_name ?? null,
+      packageName: order.package_name ?? null,
+      assignedRepId: order.assigned_rep_id ?? null,
+      agentId: order.agent_id ?? null,
+      agentName: order.agent_name_snapshot ?? null,
+      orderAmount: numericAmount(order.amount),
+      logisticsCost: numericAmount(order.logistics_cost),
+      amountRemitted: numericAmount(order.amount_remitted),
+      remittanceStatus: order.remittance_status ?? null,
+      deliveredDate: order.delivered_date ?? null
+    }));
+
   res.json({
     dateFrom,
     dateTo,
     generatedAt: new Date().toISOString(),
-    transactions
+    transactions,
+    ledgerGaps,
+    reconciliation: {
+      remittedOrdersChecked: remittedOrders.length,
+      missingLedgerCount: ledgerGaps.length
+    }
   });
 });
 
@@ -221,10 +292,15 @@ router.post("/backfill", async (req, res) => {
   const dryRun = parsed.data.dryRun === true;
   const dateMode = parsed.data.dateMode ?? "updated_at";
 
-  const existingResult = await supabase
-    .from("remittance_transactions")
-    .select("order_id")
-    .eq("org_id", req.user.orgId);
+  const existingResult = await fetchAllRows<any>(async (from, to) => {
+    const result = await supabase
+      .from("remittance_transactions")
+      .select("order_id")
+      .eq("org_id", req.user!.orgId)
+      .order("id", { ascending: true })
+      .range(from, to);
+    return { data: result.data, error: result.error };
+  });
 
   if (existingResult.error) {
     if (isMissingRemittanceTableError(existingResult.error)) {
@@ -241,11 +317,16 @@ router.post("/backfill", async (req, res) => {
       .filter(Boolean)
   );
 
-  const ordersResult = await supabase
-    .from("orders")
-    .select("id, customer, product_id, product_name, package_name, assigned_rep_id, agent_id, amount, logistics_cost, amount_remitted, remittance_status, created_at, updated_at, delivered_date")
-    .eq("org_id", req.user.orgId)
-    .gt("amount_remitted", 0);
+  const ordersResult = await fetchAllRows<any>(async (from, to) => {
+    const result = await supabase
+      .from("orders")
+      .select("id, customer, product_id, product_name, package_name, assigned_rep_id, agent_id, amount, logistics_cost, amount_remitted, remittance_status, created_at, updated_at, delivered_date")
+      .eq("org_id", req.user!.orgId)
+      .gt("amount_remitted", 0)
+      .order("id", { ascending: true })
+      .range(from, to);
+    return { data: result.data, error: result.error };
+  });
 
   if (ordersResult.error) {
     res.status(500).json({ error: ordersResult.error.message });

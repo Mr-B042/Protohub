@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
+import { fetchAllRows } from "../lib/paginated-query.js";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
@@ -61,36 +62,63 @@ router.get("/", async (req, res) => {
     )
   );
 
-  let cohortOrdersQuery = supabase
-    .from("orders")
-    .select("*")
-    .eq("org_id", req.user!.orgId)
-    .gte("created_at", createdFrom)
-    .lte("created_at", createdTo)
-    // Exclude held duplicates from the placed-this-week cohort (and the per-rep
-    // delivery rates it drives). null-safe for legacy rows; released orders
-    // (review_hold back to false) re-enter automatically.
-    .or("review_hold.is.null,review_hold.eq.false")
-    .order("created_at", { ascending: false });
+  const fetchCohortPage = async (from: number, to: number) => {
+    let query = supabase
+      .from("orders")
+      .select("*")
+      .eq("org_id", req.user!.orgId)
+      .gte("created_at", createdFrom)
+      .lte("created_at", createdTo)
+      .or("review_hold.is.null,review_hold.eq.false")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false });
+    if (req.user!.role === "Sales Rep") query = query.eq("assigned_rep_id", req.user!.id);
+    if (requestedProductIds.length > 0) query = query.in("product_id", requestedProductIds);
+    const result = await query.range(from, to);
+    return { data: result.data, error: result.error };
+  };
 
-  let deliveredOrdersQuery = supabase
-    .from("orders")
-    .select("*")
-    .eq("org_id", req.user!.orgId)
-    .eq("status", "Delivered")
-    .gte("delivered_date", weekStart)
-    .lte("delivered_date", weekEnd)
-    .order("delivered_date", { ascending: false });
+  const fetchDeliveredPage = async (from: number, to: number) => {
+    let query = supabase
+      .from("orders")
+      .select("*")
+      .eq("org_id", req.user!.orgId)
+      .eq("status", "Delivered")
+      .gte("delivered_date", weekStart)
+      .lte("delivered_date", weekEnd)
+      .order("delivered_date", { ascending: false })
+      .order("id", { ascending: false });
+    if (req.user!.role === "Sales Rep") query = query.eq("assigned_rep_id", req.user!.id);
+    if (requestedProductIds.length > 0) query = query.in("product_id", requestedProductIds);
+    const result = await query.range(from, to);
+    return { data: result.data, error: result.error };
+  };
 
-  if (req.user!.role === "Sales Rep") {
-    cohortOrdersQuery = cohortOrdersQuery.eq("assigned_rep_id", req.user!.id);
-    deliveredOrdersQuery = deliveredOrdersQuery.eq("assigned_rep_id", req.user!.id);
-  }
+  const fetchExpensesPage = async (from: number, to: number) => {
+    const result = await supabase
+      .from("expenses")
+      .select("*")
+      .eq("org_id", req.user!.orgId)
+      .gte("date", weekStart)
+      .lte("date", weekEnd)
+      .order("date", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to);
+    return { data: result.data, error: result.error };
+  };
 
-  if (requestedProductIds.length > 0) {
-    cohortOrdersQuery = cohortOrdersQuery.in("product_id", requestedProductIds);
-    deliveredOrdersQuery = deliveredOrdersQuery.in("product_id", requestedProductIds);
-  }
+  const fetchRemittancePage = async (from: number, to: number) => {
+    const result = await supabase
+      .from("remittance_transactions")
+      .select("*")
+      .eq("org_id", req.user!.orgId)
+      .gte("received_at", createdFrom)
+      .lte("received_at", createdTo)
+      .order("received_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to);
+    return { data: result.data, error: result.error };
+  };
 
   const [
     cohortOrdersResult,
@@ -98,22 +126,10 @@ router.get("/", async (req, res) => {
     expensesResult,
     remittanceTxResult
   ] = await Promise.all([
-    cohortOrdersQuery,
-    deliveredOrdersQuery,
-    supabase
-      .from("expenses")
-      .select("*")
-      .eq("org_id", req.user!.orgId)
-      .gte("date", weekStart)
-      .lte("date", weekEnd)
-      .order("date", { ascending: false }),
-    supabase
-      .from("remittance_transactions")
-      .select("*")
-      .eq("org_id", req.user!.orgId)
-      .gte("received_at", createdFrom)
-      .lte("received_at", createdTo)
-      .order("received_at", { ascending: false })
+    fetchAllRows<any>(fetchCohortPage),
+    fetchAllRows<any>(fetchDeliveredPage),
+    fetchAllRows<any>(fetchExpensesPage),
+    fetchAllRows<any>(fetchRemittancePage)
   ]);
 
   if (cohortOrdersResult.error) {
@@ -144,19 +160,22 @@ router.get("/", async (req, res) => {
 
   let remittanceOrderMap = new Map<string, any>();
   if (remittanceOrderIds.length > 0) {
-    const remittanceOrdersQuery = supabase
-      .from("orders")
-      .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id")
-      .eq("org_id", req.user!.orgId)
-      .in("id", remittanceOrderIds);
-
-    const { data: remittanceOrders, error: remittanceOrdersError } = await remittanceOrdersQuery;
-    if (remittanceOrdersError) {
-      res.status(500).json({ error: remittanceOrdersError.message });
-      return;
+    const remittanceOrders: any[] = [];
+    for (let index = 0; index < remittanceOrderIds.length; index += 500) {
+      const ids = remittanceOrderIds.slice(index, index + 500);
+      const result = await supabase
+        .from("orders")
+        .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id")
+        .eq("org_id", req.user!.orgId)
+        .in("id", ids);
+      if (result.error) {
+        res.status(500).json({ error: result.error.message });
+        return;
+      }
+      remittanceOrders.push(...(result.data ?? []));
     }
     remittanceOrderMap = new Map(
-      (remittanceOrders ?? []).map((row: any) => [String(row.id), row])
+      remittanceOrders.map((row: any) => [String(row.id), row])
     );
   }
 
