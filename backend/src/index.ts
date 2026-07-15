@@ -234,6 +234,7 @@ app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
+    gitCommit: process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT_SHA ?? null,
     dataMode: DATA_PROFILE.dataMode,
     localSandbox: DATA_PROFILE.localSandbox,
     backgroundJobsEnabled: ENABLE_BACKGROUND_JOBS,
