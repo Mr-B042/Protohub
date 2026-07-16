@@ -15,7 +15,7 @@ import {
   sendTestWhatsApp
 } from "../lib/whatsapp.js";
 import { beginWhatsAppConnection, disconnectWhatsAppConnection, sendConnectedWhatsApp, type WhatsAppPairingMode } from "../lib/whatsapp-runtime.js";
-import { generateOrderReceiptPdf } from "../lib/order-receipt-pdf.js";
+import { generateOrderReceiptPdf, fetchReceiptBranding } from "../lib/order-receipt-pdf.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -301,6 +301,7 @@ router.post("/test", requireOwner, async (req, res) => {
   if (!result.deferred) {
     setTimeout(async () => {
       try {
+        const { orgName, logoBuffer } = await fetchReceiptBranding(req.user!.orgId);
         const pdf = await generateOrderReceiptPdf({
           id: "TEST-001",
           customer: "Test Customer",
@@ -312,7 +313,7 @@ router.post("/test", requireOwner, async (req, res) => {
           city: "Lagos",
           state: "Lagos",
           source: "Test"
-        });
+        }, orgName, logoBuffer);
         await sendConnectedWhatsApp(req.user!.orgId, phone.replace(/\D/g, ""), "📋 Test PDF receipt attached — your customers will receive this after their order confirmation.", {
           pdfBuffer: pdf,
           pdfFileName: "Order-Receipt-TEST.pdf"

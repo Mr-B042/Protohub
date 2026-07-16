@@ -28,6 +28,7 @@ import {
   sendOrderDeliveredCustomerWhatsApp
 } from "../lib/whatsapp.js";
 import { applyOrderMarketingScope } from "../lib/marketing-attribution.js";
+import { generateOrderReceiptPdf, fetchReceiptBranding } from "../lib/order-receipt-pdf.js";
 import { sendConnectedUserWhatsAppToJid } from "../lib/whatsapp-runtime.js";
 import { confirmationNeedsSalesExpansionLog } from "../lib/sales-expansion.js";
 
@@ -3298,6 +3299,53 @@ router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, r
     } else {
       res.status(500).json({ error: msg || "Could not resend WhatsApp." });
     }
+  }
+});
+
+// ── GET /api/orders/:id/receipt ───────────────────────────────────────────────
+// Staff-facing PDF download (not a customer-facing route - customers get the
+// same receipt automatically via WhatsApp on order_new). Reuses the same
+// canDispatchWhatsAppOrder scoping as the WhatsApp dispatch routes: a Sales
+// Rep can only download the receipt for their own assigned orders.
+router.get("/:id/receipt", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, customer, phone, product_name, package_name, quantity, amount, currency, source, address, city, state, created_at, scheduled_date, cross_sell_lines, package_components_snapshot, assigned_rep_id")
+    .eq("id", req.params.id)
+    .eq("org_id", req.user!.orgId)
+    .single();
+  if (error || !order) { res.status(404).json({ error: "Order not found." }); return; }
+  if (!canDispatchWhatsAppOrder(req.user!.role, req.user!.id, order)) {
+    res.status(403).json({ error: "You can only download receipts for orders assigned to you." });
+    return;
+  }
+
+  try {
+    const { orgName, logoBuffer } = await fetchReceiptBranding(req.user!.orgId);
+    const pdf = await generateOrderReceiptPdf({
+      id: order.id,
+      customer: order.customer,
+      phone: order.phone,
+      productName: (order as any).product_name,
+      packageName: (order as any).package_name,
+      quantity: typeof (order as any).quantity === "number" ? (order as any).quantity : null,
+      amount: typeof order.amount === "number" ? order.amount : Number(order.amount ?? 0),
+      currency: order.currency ?? "NGN",
+      address: (order as any).address ?? null,
+      city: (order as any).city ?? null,
+      state: (order as any).state ?? null,
+      source: order.source ?? null,
+      createdAt: order.created_at ? new Date(order.created_at).toLocaleDateString("en-NG", { timeZone: "Africa/Lagos", day: "2-digit", month: "short", year: "numeric" }) : null,
+      scheduledDate: (order as any).scheduled_date ?? null,
+      crossSellLines: Array.isArray((order as any).cross_sell_lines) ? (order as any).cross_sell_lines : null,
+      packageComponentsSnapshot: Array.isArray((order as any).package_components_snapshot) ? (order as any).package_components_snapshot : null
+    }, orgName, logoBuffer);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="Receipt-${order.id}.pdf"`);
+    res.send(pdf);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Could not generate receipt." });
   }
 });
 

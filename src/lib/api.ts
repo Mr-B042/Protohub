@@ -572,7 +572,22 @@ export const ordersApi = {
   fieldEdits: (id: string) => get<any[]>(`/api/orders/${id}/field-edits`),
   followUpTasks: (id: string) => get<any[]>(`/api/orders/${id}/follow-up-tasks`),
   contactAttempts: (id: string) => get<any[]>(`/api/orders/${id}/contact-attempts`),
-  logContactAttempt: (id: string, body: unknown) => post<any>(`/api/orders/${id}/contact-attempts`, body)
+  logContactAttempt: (id: string, body: unknown) => post<any>(`/api/orders/${id}/contact-attempts`, body),
+  // Raw fetch (not the JSON `request` helper) — this endpoint returns a PDF
+  // buffer, not JSON, so it needs its own Authorization header + blob read.
+  downloadReceipt: async (id: string): Promise<Blob> => {
+    const token = auth.getAccessToken();
+    const res = await fetchWithApiFailover(`/api/orders/${encodeURIComponent(id)}/receipt`, {
+      method: "GET",
+      cache: "no-store",
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, extractErrorMessage(payload, res.statusText || "Could not download receipt."));
+    }
+    return res.blob();
+  }
 };
 
 export const salesExpansionApi = {
