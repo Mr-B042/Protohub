@@ -6,61 +6,62 @@ import {
   normalizeUpsellBonusSettings
 } from "./upsell-bonus.js";
 
-test("profit below gate pays nothing, regardless of delivery rate or expansion rate", () => {
-  const result = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 249_999, 80, 35, 1_000_000);
+test("profit below gate pays nothing, regardless of delivery rate or contribution profit", () => {
+  const result = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 249_999, 80, 1_000_000);
   assert.equal(result.status, "profit_gate_miss");
   assert.equal(result.finalAmount, 0);
   assert.equal(result.profitGateMet, false);
 });
 
 test("profit gate met but delivery rate below 60% pays nothing", () => {
-  const result = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 59.9, 35, 1_000_000);
+  const result = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 59.9, 1_000_000);
   assert.equal(result.status, "delivery_gate_miss");
   assert.equal(result.finalAmount, 0);
   assert.equal(result.profitGateMet, true);
   assert.equal(result.deliveryGateMet, false);
 });
 
-test("both gates met but expansion rate below first tier pays nothing", () => {
-  const result = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 9.9, 1_000_000);
+test("both gates met but negative contribution profit is below the first tier", () => {
+  const result = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, -1_000);
   assert.equal(result.status, "below_tier");
   assert.equal(result.finalAmount, 0);
 });
 
-test("expansion-rate tiers pay the configured amount once both gates are met (contribution profit huge, no cap bite)", () => {
-  const huge = 100_000_000;
-  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 10, huge).finalAmount, 5_000);
-  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 14.9, huge).finalAmount, 5_000);
-  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 15, huge).finalAmount, 10_000);
-  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 20, huge).finalAmount, 15_000);
-  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 25, huge).finalAmount, 20_000);
-  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 30, huge).finalAmount, 25_000);
-  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 100, huge).finalAmount, 25_000);
+test("contribution-profit tiers pay the configured amount once both gates are met and the cap doesn't bite", () => {
+  // Each sample profit sits comfortably inside its band so 20% of it still
+  // covers the tier amount - see the dedicated cap tests below for the case
+  // where it doesn't.
+  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 40_000).finalAmount, 5_000);
+  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 60_000).finalAmount, 10_000);
+  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 120_000).finalAmount, 15_000);
+  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 160_000).finalAmount, 20_000);
+  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 250_000).finalAmount, 25_000);
+  assert.equal(evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 100_000_000).finalAmount, 25_000);
 });
 
-test("Bright's own worked example: 25-29.9% tier (₦20,000) capped to ₦10,000 when contribution profit is only ₦50,000 (20% of 50k)", () => {
-  const result = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 27, 50_000);
-  assert.equal(result.tierAmount, 20_000);
-  assert.equal(result.cappedAmount, 10_000);
-  assert.equal(result.finalAmount, 10_000);
+test("the lowest tier's payout can still be capped when contribution profit is thin (₦10,000 profit caps ₦5,000 down to ₦2,000)", () => {
+  const result = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 10_000);
+  assert.equal(result.tierAmount, 5_000);
+  assert.equal(result.cappedAmount, 2_000);
+  assert.equal(result.finalAmount, 2_000);
   assert.equal(result.capApplied, true);
 });
 
-test("cap does not reduce the payout when contribution profit comfortably covers the tier", () => {
-  const result = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 27, 500_000);
-  assert.equal(result.tierAmount, 20_000);
-  assert.equal(result.cappedAmount, 20_000);
-  assert.equal(result.finalAmount, 20_000);
-  assert.equal(result.capApplied, false);
+test("higher tiers never get capped below their flat amount, because their minimum profit already clears 20%", () => {
+  // At each band's own floor, 20% of that floor already meets or exceeds the
+  // tier amount, so the cap only ever bites in the bottom tier.
+  const atFloor = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 50_000);
+  assert.equal(atFloor.tierAmount, 10_000);
+  assert.equal(atFloor.finalAmount, 10_000);
+  assert.equal(atFloor.capApplied, false);
 });
 
-test("zero or negative contribution profit caps the bonus to zero even when tier is hit", () => {
-  const zero = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 27, 0);
-  assert.equal(zero.finalAmount, 0);
-  assert.equal(zero.capApplied, true);
-
-  const negative = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 27, -10_000);
-  assert.equal(negative.finalAmount, 0);
+test("zero contribution profit still matches the first tier but is capped to zero", () => {
+  const result = evaluateUpsellBonus(DEFAULT_UPSELL_BONUS_SETTINGS, 300_000, 65, 0);
+  assert.equal(result.status, "tier_bonus");
+  assert.equal(result.tierAmount, 5_000);
+  assert.equal(result.finalAmount, 0);
+  assert.equal(result.capApplied, true);
 });
 
 test("owner-edited tiers, gates, and cap are normalized, sorted, and evaluated correctly", () => {
@@ -69,8 +70,8 @@ test("owner-edited tiers, gates, and cap are normalized, sorted, and evaluated c
     deliveryRateGatePct: 70,
     contributionCapPct: 25,
     tiers: [
-      { label: "Top", minRate: 40, maxRate: null, amount: 60_000 },
-      { label: "Start", minRate: 20, maxRate: 39.9, amount: 30_000 }
+      { label: "Top", minProfit: 300_000, maxProfit: null, amount: 60_000 },
+      { label: "Start", minProfit: 100_000, maxProfit: 299_999, amount: 30_000 }
     ]
   });
 
@@ -79,7 +80,7 @@ test("owner-edited tiers, gates, and cap are normalized, sorted, and evaluated c
   assert.equal(settings.contributionCapPct, 25);
   assert.deepEqual(settings.tiers.map((tier) => tier.label), ["Start", "Top"]);
 
-  const result = evaluateUpsellBonus(settings, 400_000, 72, 45, 1_000_000);
+  const result = evaluateUpsellBonus(settings, 400_000, 72, 1_000_000);
   assert.equal(result.tierAmount, 60_000);
   assert.equal(result.finalAmount, 60_000);
 });
