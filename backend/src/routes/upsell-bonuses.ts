@@ -25,8 +25,8 @@ router.use(requireAuth, requireRole("Owner", "Admin", "Manager"));
 const TierSchema = z.object({
   id: z.string().trim().max(80).optional(),
   label: z.string().trim().max(120).optional(),
-  minRate: z.coerce.number().min(0).max(100),
-  maxRate: z.coerce.number().min(0).max(100).nullable().optional(),
+  minProfit: z.coerce.number().min(0).max(1_000_000_000),
+  maxProfit: z.coerce.number().min(0).max(1_000_000_000).nullable().optional(),
   amount: z.coerce.number().min(0).max(1_000_000_000)
 });
 
@@ -108,8 +108,8 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
       tiers: parsed.data.tiers?.map((tier, index) => ({
         id: tier.id ?? `tier-${index + 1}`,
         label: tier.label ?? "",
-        minRate: tier.minRate,
-        maxRate: tier.maxRate ?? null,
+        minProfit: tier.minProfit,
+        maxProfit: tier.maxProfit ?? null,
         amount: tier.amount
       }))
     };
