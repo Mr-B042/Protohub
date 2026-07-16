@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import { supabase } from "./supabase.js";
 
 type ReceiptOrder = {
   id: string;
@@ -9,15 +10,46 @@ type ReceiptOrder = {
   quantity?: number | null;
   amount?: number | null;
   currency?: string | null;
+  address?: string | null;
   city?: string | null;
   state?: string | null;
   source?: string | null;
+  createdAt?: string | null;
   scheduledDate?: string | null;
   crossSellLines?: Array<{ productName?: string; quantity?: number; amount?: number }> | null;
   packageComponentsSnapshot?: Array<{ productName?: string | null; quantity?: number | null; isFreeGift?: boolean | null; hiddenFromCustomer?: boolean | null }> | null;
 };
 
-export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub"): Promise<Buffer> {
+async function fetchImageBufferSafe(url: string, timeoutMs = 4000): Promise<Buffer | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+// Real org name + logo for the receipt header, with safe fallbacks - a
+// branding lookup failure (missing logo, network hiccup) should never stop
+// the receipt itself from generating.
+export async function fetchReceiptBranding(orgId: string): Promise<{ orgName: string; logoBuffer: Buffer | null }> {
+  let orgName = "Protohub";
+  let logoBuffer: Buffer | null = null;
+  try {
+    const { data } = await supabase.from("organizations").select("name, logo_url").eq("id", orgId).maybeSingle();
+    if (data?.name) orgName = data.name;
+    if (data?.logo_url) logoBuffer = await fetchImageBufferSafe(data.logo_url);
+  } catch {
+    // keep defaults - a receipt without live branding is still useful
+  }
+  return { orgName, logoBuffer };
+}
+
+export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub", logoBuffer?: Buffer | null): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A6", margin: 28, info: { Title: `Order Receipt ${order.id}`, Author: orgName } });
     const chunks: Buffer[] = [];
@@ -33,10 +65,24 @@ export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub
 
     // ── Header bar ──────────────────────────────────────────────
     doc.rect(0, 0, doc.page.width, 44).fill(WA_GREEN);
-    doc.fillColor("#fff").fontSize(13).font("Helvetica-Bold")
-      .text(orgName, 28, 14, { width: W / 2 });
+    const hasLogo = Boolean(logoBuffer);
+    const textStartX = hasLogo ? 62 : 28;
+    if (logoBuffer) {
+      try {
+        doc.image(logoBuffer, 28, 7, { width: 30, height: 30, fit: [30, 30] });
+      } catch {
+        // corrupt/unsupported image bytes - skip the logo, keep the receipt going
+      }
+    }
+    // Reserve just enough room on the right for the short "#order-id" text -
+    // NOT half the page width, which left too little room for the org name
+    // once the logo pushed textStartX inward (it was wrapping to 3-4 lines).
+    const headerRightReserve = 60;
+    const headerTextWidth = doc.page.width - textStartX - headerRightReserve;
+    doc.fillColor("#fff").fontSize(hasLogo ? 11 : 13).font("Helvetica-Bold")
+      .text(orgName, textStartX, hasLogo ? 12 : 14, { width: headerTextWidth, ellipsis: true });
     doc.fillColor("#ffffff99").fontSize(8).font("Helvetica")
-      .text("Order Receipt", 28, 30, { width: W / 2 });
+      .text("Order Receipt", textStartX, hasLogo ? 27 : 30, { width: headerTextWidth });
     doc.fillColor("#fff").fontSize(9).font("Helvetica-Bold")
       .text(`#${order.id}`, doc.page.width / 2, 18, { width: W / 2, align: "right" });
 
@@ -52,9 +98,10 @@ export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub
         .text(`Tel: ${order.phone}`, 28, customerLineY);
       customerLineY += 12;
     }
-    if (order.city || order.state) {
+    const locationLine = [order.address, order.city, order.state].filter((part) => (part ?? "").trim()).join(", ");
+    if (locationLine) {
       doc.fillColor(MUTED).fontSize(8)
-        .text(`Location: ${[order.city, order.state].filter(Boolean).join(", ")}`, 28, customerLineY);
+        .text(`Address: ${locationLine}`, 28, customerLineY, { width: W });
       customerLineY += 12;
     }
 
@@ -80,6 +127,7 @@ export function generateOrderReceiptPdf(order: ReceiptOrder, orgName = "Protohub
       addRow("Quantity", `${order.quantity} pcs`);
     }
     if (order.source)       addRow("Channel", order.source);
+    if (order.createdAt)    addRow("Order date", order.createdAt);
     if (order.scheduledDate) addRow("Delivery date", order.scheduledDate);
 
     // What's inside the package (components + free gifts), customer-visible only.

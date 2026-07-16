@@ -2,7 +2,7 @@ import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { ensureWhatsAppReady, sendConnectedWhatsApp } from "./whatsapp-runtime.js";
 import { isWithinWorkingSchedule, nextWorkingScheduleAt, type WorkingSchedule } from "./business-schedule.js";
-import { generateOrderReceiptPdf } from "./order-receipt-pdf.js";
+import { generateOrderReceiptPdf, fetchReceiptBranding } from "./order-receipt-pdf.js";
 import { createShortLink } from "./short-links.js";
 import { dueIsoMoment, withinReminderWindow } from "./sms.js";
 
@@ -1756,6 +1756,7 @@ export async function sendOrderNewCustomerWhatsApp(
         try {
           let pdfBuffer: Buffer | undefined;
           try {
+            const { orgName, logoBuffer } = await fetchReceiptBranding(orgId);
             pdfBuffer = await generateOrderReceiptPdf({
               id: order.id,
               customer: order.customer,
@@ -1774,7 +1775,7 @@ export async function sendOrderNewCustomerWhatsApp(
                 amount: l.amount ?? undefined
               })) ?? null,
               packageComponentsSnapshot: order.packageComponentsSnapshot ?? null
-            });
+            }, orgName, logoBuffer);
           } catch (err) {
             logger.warn("wa order_new: pdf generation failed for follow-up", {
               orderId: order.id, error: (err as Error).message
