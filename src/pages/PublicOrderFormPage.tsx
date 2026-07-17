@@ -2304,8 +2304,29 @@ export default function PublicOrderFormPage() {
         .filter((companion) => !companionHiddenByComboOnly(companion, siblings, products))
         .map((companion) => companionSelectionKey(companion))
     );
-    setOrderFormCrossSells((prev) => prev.filter((line) => companionKeys.has(companionSelectionKey(line))));
-  }, [chosenPackage, companionHasRequiredStateStock, orderFormState, products]);
+    // This effect can silently drop an already-selected add-on the moment
+    // its package/state/stock validity check flips (e.g. a live stock
+    // re-check for the customer's state comes back unavailable). That used
+    // to leave zero trace - the cart total would just quietly shrink with
+    // no "additional_item_removed" event, so nobody could tell later
+    // whether the customer removed it themselves or it vanished on its
+    // own. Track it explicitly here, at the exact point it happens.
+    const dropped = orderFormCrossSells.filter((line) => !companionKeys.has(companionSelectionKey(line)));
+    if (dropped.length > 0) {
+      for (const line of dropped) {
+        const product = products.find((item) => item.id === line.productId);
+        trackCartJourney("additional_item_removed", {
+          companionProductId: line.productId,
+          companionPackageId: line.packageId ?? undefined,
+          metadata: {
+            productName: product?.name ?? "Additional item",
+            reason: "auto_removed_no_longer_valid_for_state_or_stock"
+          }
+        });
+      }
+      setOrderFormCrossSells((prev) => prev.filter((line) => companionKeys.has(companionSelectionKey(line))));
+    }
+  }, [chosenPackage, companionHasRequiredStateStock, orderFormState, products, orderFormCrossSells]);
 
   // Field-level touch + hesitation tracking. Watches all customer-typed
   // fields and (a) records the most recently touched one (for form_exited's
