@@ -49,7 +49,6 @@ export type SalesBonusRep = {
   email?: string | null;
   role?: string | null;
   active?: boolean | null;
-  gold_honor_earned?: boolean | null;
 };
 
 export type SalesBonusOrder = {
@@ -138,12 +137,6 @@ export type SalesBonusRepProgress = {
   manualAdjustments: number;
   rules: SalesBonusRuleProgress[];
   opportunities: SalesBonusOrderOpportunity[];
-  // Once true, stays true forever (persisted on users.gold_honor_earned) -
-  // the Gold Tier honor badge is a permanent achievement even in weeks the
-  // rep doesn't maintain the delivery-rate boost. Only the "N/Order
-  // Unlocked" amount + countdown are live/weekly, driven by the
-  // delivery_rate_per_delivered rule's `completed` flag for THIS week.
-  goldHonorEverEarned: boolean;
   salesExpansionCompliance?: SalesExpansionCompliance;
   performanceBonusBeforeCompliance?: number;
   complianceReductionAmount?: number;
@@ -714,11 +707,7 @@ export const computeSalesBonusForRep = (input: {
     lockedAmount: earnedFromRules + manualAdjustments,
     manualAdjustments,
     rules,
-    opportunities,
-    // Overwritten by getSalesBonusProgress, which is the only caller that
-    // knows the persisted users.gold_honor_earned value - this bare function
-    // has no DB access of its own.
-    goldHonorEverEarned: false
+    opportunities
   };
 };
 
@@ -777,7 +766,7 @@ export const getSalesBonusProgress = async (
     listSalesBonusPrograms(orgId, options.includeDeleted ?? false),
     supabase
       .from("users")
-      .select("id, name, email, role, active, gold_honor_earned")
+      .select("id, name, email, role, active")
       .eq("org_id", orgId)
       .eq("role", "Sales Rep")
       .eq("active", true),
@@ -844,31 +833,12 @@ export const getSalesBonusProgress = async (
     const compliancePolicyReductionAmount = Math.max(0, performanceBonusBeforeCompliance - policyAdjustedRuleEarnings);
     const adjustedEarned = adjustedRuleEarnings + progress.manualAdjustments;
 
-    // First time this rep ever fully qualifies for the delivery-rate boost,
-    // persist it so the Gold Tier honor badge stays on as an achievement in
-    // future weeks even if she doesn't maintain the rate/order-count - only
-    // check on the live current week so browsing a past week's history can't
-    // retroactively flip it.
-    let goldHonorEverEarned = rep.gold_honor_earned === true;
-    if (!goldHonorEverEarned && weekStart === currentSalesBonusWeekStart()) {
-      const justQualified = adjustedRules.some((rule) => rule.type === "delivery_rate_per_delivered" && rule.completed);
-      if (justQualified) {
-        const { error: goldHonorError } = await supabase
-          .from("users")
-          .update({ gold_honor_earned: true })
-          .eq("id", rep.id)
-          .eq("org_id", orgId);
-        if (!goldHonorError) goldHonorEverEarned = true;
-      }
-    }
-
     return {
       ...progress,
       rules: adjustedRules,
       earnedSoFar: adjustedEarned,
       lockedAmount: adjustedEarned,
       pendingPotential: Math.max(0, progress.totalAvailable - adjustedEarned),
-      goldHonorEverEarned,
       salesExpansionCompliance: compliance,
       performanceBonusBeforeCompliance,
       complianceReductionAmount: Math.max(0, performanceBonusBeforeCompliance - adjustedRuleEarnings),
