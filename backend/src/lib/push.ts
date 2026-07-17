@@ -309,7 +309,8 @@ const NOTIFICATION_ACCENT: Record<string, string> = {
   order_follow_up: "#7C3AED",  // violet
   abandoned_cart_new: "#F59E0B", // amber
   low_stock: "#EA580C",        // orange
-  remittance_overdue: "#DC2626" // red
+  remittance_overdue: "#DC2626", // red
+  needs_attention: "#F59E0B"    // amber
 };
 const DEFAULT_ACCENT = "#1F8FE0";
 const accentForKind = (kind?: string): string => (kind && NOTIFICATION_ACCENT[kind]) || DEFAULT_ACCENT;

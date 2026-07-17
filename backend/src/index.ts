@@ -22,6 +22,7 @@ import { dropDueDailySalaryForAllOrgs } from "./lib/salary-spread.js";
 import { supabase } from "./lib/supabase.js";
 import { processQueuedEmails, sendWeeklyReport } from "./lib/mailer.js";
 import { sendPushToRoles } from "./lib/push.js";
+import { computeNeedsAttentionSummary } from "./lib/manager-needs-attention.js";
 
 import { applySpyHeader } from "./middleware/auth.js";
 import authRoutes     from "./routes/auth.js";
@@ -624,6 +625,76 @@ cron.schedule("5 9 * * *", async () => {
     logger.info("cron: overdue remittances done", { orgsNotified: Object.keys(summaryByOrg).length });
   } catch (e) {
     logger.error("cron: overdue remittances job crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Manager Needs Attention digest cron — daily at 8:00 AM ──────────
+// Every check in the Manager Dashboard's "Needs Attention" tab (src/App.tsx,
+// renderNeedsAttentionPanel) is otherwise purely client-side, only visible
+// when someone has that tab open. This recomputes the same conditions
+// server-side (backend/src/lib/manager-needs-attention.ts) and fires one
+// consolidated digest notification per org if anything's flagged, so a real
+// leak (like a product+state combo with a majority-Failed delivery rate)
+// doesn't stay invisible until someone happens to go looking.
+cron.schedule("0 8 * * *", async () => {
+  logger.info("cron: checking manager needs-attention items");
+  try {
+    const { data: orgs, error } = await supabase.from("organizations").select("id");
+    if (error) { logger.error("cron: needs-attention org list query failed", { error: error.message }); return; }
+
+    let orgsNotified = 0;
+    for (const org of orgs ?? []) {
+      const orgId = org.id as string;
+      const summary = await computeNeedsAttentionSummary(orgId);
+      if (summary.total === 0) continue;
+
+      // Skip if an unread needs_attention notification was sent in the last 20h
+      const since = new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString();
+      const { data: existing } = await supabase
+        .from("system_notifications")
+        .select("id")
+        .eq("org_id", orgId)
+        .eq("type", "needs_attention")
+        .eq("read", false)
+        .gte("created_at", since)
+        .limit(1);
+      if (existing && existing.length > 0) continue;
+
+      const parts = [
+        summary.reviewHold > 0 ? `${summary.reviewHold} on review hold` : null,
+        summary.skippedDeduction > 0 ? `${summary.skippedDeduction} skipped stock deduction${summary.skippedDeduction === 1 ? "" : "s"}` : null,
+        summary.stockMismatch > 0 ? `${summary.stockMismatch} stock deduction mismatch${summary.stockMismatch === 1 ? "" : "es"}` : null,
+        summary.unassigned > 0 ? `${summary.unassigned} unassigned order${summary.unassigned === 1 ? "" : "s"}` : null,
+        summary.stuckInNew > 0 ? `${summary.stuckInNew} stuck in New` : null,
+        summary.thinFailedNotes > 0 ? `${summary.thinFailedNotes} thin failed-order note${summary.thinFailedNotes === 1 ? "" : "s"}` : null,
+        summary.feeTypos > 0 ? `${summary.feeTypos} excessive delivery fee${summary.feeTypos === 1 ? "" : "s"}` : null,
+        summary.upgradeGaps > 0 ? `${summary.upgradeGaps} upgrade${summary.upgradeGaps === 1 ? "" : "s"} outside any bonus rule` : null,
+        summary.deliveryLeaks > 0 ? `${summary.deliveryLeaks} low-delivery-rate product/state leak${summary.deliveryLeaks === 1 ? "" : "s"}` : null
+      ].filter(Boolean);
+      const message = `${summary.total} item${summary.total === 1 ? "" : "s"} need attention: ${parts.join(", ")}.`;
+
+      await supabase.from("system_notifications").insert({
+        org_id:  orgId,
+        type:    "needs_attention",
+        title:   "Manager Dashboard: Needs Attention",
+        message,
+        link:    "/dashboard/admin/manager-dashboard"
+      });
+      const branding = await getOrgPushBranding(orgId);
+      await sendPushToRoles(orgId, ["Owner", "Admin", "Manager"], {
+        title: "Manager Dashboard: Needs Attention",
+        body: message,
+        kind: "needs_attention",
+        url: "/dashboard/admin/manager-dashboard",
+        tag: `needs-attention-${orgId}`,
+        brandName: branding.brandName,
+        brandLogo: branding.brandLogo
+      });
+      orgsNotified += 1;
+    }
+    logger.info("cron: manager needs-attention digest done", { orgsNotified });
+  } catch (e) {
+    logger.error("cron: manager needs-attention digest job crashed", { error: (e as Error).message });
   }
 });
 
