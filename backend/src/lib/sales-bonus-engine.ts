@@ -95,6 +95,14 @@ export type SalesBonusRuleProgress = {
   progressCurrent: number;
   progressTarget: number;
   progressPercent: number;
+  // Second, independent progress bar - only populated for rule types that
+  // need TWO conditions met at once (e.g. delivery_rate_per_delivered needs
+  // both a minimum order count AND a rate). Undefined for single-condition
+  // rule types.
+  secondaryProgressCurrent?: number;
+  secondaryProgressTarget?: number;
+  secondaryProgressPercent?: number;
+  secondaryProgressLabel?: string;
   completed: boolean;
   helper: string;
   scopeLabel: string;
@@ -461,6 +469,9 @@ export const computeSalesBonusForRep = (input: {
     let potentialAmount = 0;
     let progressCurrent = 0;
     let progressTarget = 1;
+    let secondaryProgressCurrent: number | undefined;
+    let secondaryProgressTarget: number | undefined;
+    let secondaryProgressLabel: string | undefined;
     let completed = false;
     let helper = "";
     const scopeLabel = ruleScopeLabel(cfg);
@@ -574,6 +585,9 @@ export const computeSalesBonusForRep = (input: {
       const rate = qualified ? qualifiedPerDelivered : fallbackPerDelivered;
       progressCurrent = scopedDeliveryRate;
       progressTarget = targetRatePercent;
+      secondaryProgressCurrent = scopedAssignedCount;
+      secondaryProgressTarget = minOrders;
+      secondaryProgressLabel = `${scopedAssignedCount} / ${minOrders} assigned orders`;
       qualifiedOrderIds = scopedDeliveredOrders.map((order) => order.id);
       completed = qualified;
       earnedAmount = active ? scopedDeliveredCount * rate : 0;
@@ -598,6 +612,10 @@ export const computeSalesBonusForRep = (input: {
       progressCurrent,
       progressTarget,
       progressPercent: progress(progressCurrent, progressTarget),
+      secondaryProgressCurrent,
+      secondaryProgressTarget,
+      secondaryProgressPercent: secondaryProgressTarget != null ? progress(secondaryProgressCurrent ?? 0, secondaryProgressTarget) : undefined,
+      secondaryProgressLabel,
       completed,
       helper,
       scopeLabel,
