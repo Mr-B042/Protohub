@@ -808,6 +808,13 @@ export const salesBonusesApi = {
       }]));
     });
   },
+  orderExpansionAttributionMap: (dateTo: string, dateFrom?: string) => {
+    const qs = new URLSearchParams({ dateTo });
+    if (dateFrom) qs.set("dateFrom", dateFrom);
+    return get<Record<string, Array<{ ruleName: string; ruleType: string; amount: number; earnedBeforeCompliance: number; complianceReduction: number }>>>(
+      `/api/sales-bonuses/order-expansion-attribution-map?${qs.toString()}`
+    );
+  },
   orderAttribution: (orderId: string) =>
     get<Array<{ ruleName: string; ruleType: string; amount: number; earnedBeforeCompliance: number; complianceReduction: number }>>(`/api/sales-bonuses/order-attribution/${orderId}`)
 };

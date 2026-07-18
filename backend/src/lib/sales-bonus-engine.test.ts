@@ -5,12 +5,21 @@ import {
   attributeRuleEarningsToOrders,
   attributeRuleSettlementToOrders,
   computeSalesBonusForRep,
+  isExpansionCommissionRuleType,
   salesBonusWeekStartsForPeriod,
   type SalesBonusOrder,
   type SalesBonusProgram,
   type SalesBonusRep,
   type SalesBonusRule
 } from "./sales-bonus-engine.js";
+
+test("growth-profit commission includes expansion rules only", () => {
+  assert.equal(isExpansionCommissionRuleType("upgrade_count"), true);
+  assert.equal(isExpansionCommissionRuleType("cross_sell_count"), true);
+  assert.equal(isExpansionCommissionRuleType("cross_sell_offer"), true);
+  assert.equal(isExpansionCommissionRuleType("delivery_rate_per_delivered"), false);
+  assert.equal(isExpansionCommissionRuleType("upfront_percent"), false);
+});
 
 const rep: SalesBonusRep = {
   id: "rep-1",

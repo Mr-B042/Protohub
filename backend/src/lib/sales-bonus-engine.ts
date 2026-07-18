@@ -8,6 +8,15 @@ export type SalesBonusRuleType =
   | "delivery_rate_per_delivered"
   | "cross_sell_offer";
 
+const EXPANSION_COMMISSION_RULE_TYPES = new Set<SalesBonusRuleType>([
+  "upgrade_count",
+  "cross_sell_count",
+  "cross_sell_offer"
+]);
+
+export const isExpansionCommissionRuleType = (type: SalesBonusRuleType) =>
+  EXPANSION_COMMISSION_RULE_TYPES.has(type);
+
 export type SalesBonusProgramStatus = "draft" | "active" | "paused" | "deleted";
 export type SalesBonusRuleStatus = "active" | "paused" | "deleted";
 
@@ -1054,6 +1063,66 @@ export type SalesBonusOrderBreakdownItem = {
   amount: number;
   earnedBeforeCompliance: number;
   complianceReduction: number;
+};
+
+// Itemized range counterpart to perOrderBonusSettlementMapForDeliveredRange.
+// This intentionally excludes delivery-rate and upfront-payment rules: the
+// Growth Bonus table reconciles profit caused by an upsell/cross-sell, so only
+// commission caused by that expansion belongs in its contribution-profit cost.
+export const perOrderExpansionBonusBreakdownMapForDeliveredRange = async (
+  orgId: string,
+  deliveredFromDateInclusive: string,
+  deliveredToDateInclusive: string,
+  options: { repId?: string } = {}
+): Promise<Record<string, SalesBonusOrderBreakdownItem[]>> => {
+  const clampedFrom = deliveredFromDateInclusive < SALES_BONUS_LAUNCH_WEEK_START
+    ? SALES_BONUS_LAUNCH_WEEK_START
+    : deliveredFromDateInclusive;
+  const exclusiveTo = addDaysToDateKey(deliveredToDateInclusive, 1);
+  if (clampedFrom >= exclusiveTo) return {};
+
+  const { data, error } = await supabase
+    .from("orders")
+    .select("id, amount, created_at")
+    .eq("org_id", orgId)
+    .eq("status", "Delivered")
+    .gte("delivered_date", clampedFrom)
+    .lt("delivered_date", exclusiveTo);
+  if (error) throw new Error(error.message);
+
+  const inRangeOrders = (data ?? []) as { id: string; amount: number | null; created_at: string | null }[];
+  if (inRangeOrders.length === 0) return {};
+  const inRangeIds = new Set(inRangeOrders.map((order) => order.id));
+  const orderAmountById = new Map(inRangeOrders.map((order) => [order.id, positiveAmount(order.amount)]));
+  const weeks = new Set<string>();
+  for (const order of inRangeOrders) {
+    if (!order.created_at) continue;
+    const weekStart = sundayWeekStartForDateKey(order.created_at.slice(0, 10));
+    if (weekStart && weekStart >= SALES_BONUS_LAUNCH_WEEK_START) weeks.add(weekStart);
+  }
+
+  const itemsByOrder = new Map<string, SalesBonusOrderBreakdownItem[]>();
+  for (const weekStart of weeks) {
+    const progress = await getSalesBonusProgress(orgId, weekStart, options.repId ? { repId: options.repId } : {});
+    for (const rep of progress.reps) {
+      for (const rule of rep.rules) {
+        if (!isExpansionCommissionRuleType(rule.type)) continue;
+        for (const [orderId, settlement] of attributeRuleSettlementToOrders(rule, orderAmountById)) {
+          if (!inRangeIds.has(orderId) || settlement.earnedBeforeCompliance <= 0) continue;
+          const items = itemsByOrder.get(orderId) ?? [];
+          items.push({
+            ruleName: rule.name,
+            ruleType: rule.type,
+            amount: settlement.payable,
+            earnedBeforeCompliance: settlement.earnedBeforeCompliance,
+            complianceReduction: settlement.complianceReduction
+          });
+          itemsByOrder.set(orderId, items);
+        }
+      }
+    }
+  }
+  return Object.fromEntries(itemsByOrder);
 };
 
 export const perOrderSalesBonusBreakdown = async (
