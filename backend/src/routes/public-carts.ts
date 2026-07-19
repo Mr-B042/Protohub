@@ -67,6 +67,7 @@ const JourneyEventSchema = z.object({
     "submit_blocked_missing_delivery",
     "submit_blocked_missing_confirmation",
     "submit_blocked_missing_commitment",
+    "submit_failed",
     "order_submitted",
     "redirect_triggered",
     "form_exited"

@@ -217,6 +217,7 @@ type PublicCartJourneyEventType =
   | "submit_blocked_missing_delivery"
   | "submit_blocked_missing_confirmation"
   | "submit_blocked_missing_commitment"
+  | "submit_failed"
   | "order_submitted"
   | "redirect_triggered"
   | "form_exited";
@@ -3064,54 +3065,6 @@ export default function PublicOrderFormPage() {
     return "public_order_outage";
   }
 
-  async function refreshLiveProductBundleForSubmit(selectedPackageId: string) {
-    if (!publicProductId) return { refreshed: false, packageStillAvailable: true };
-    try {
-      const res = await productsApi.public(publicProductId);
-      if (!res?.product) return { refreshed: false, packageStillAvailable: true };
-      const resolvedProduct = res.product as PublicProduct;
-      const relatedProducts = (res.related ?? []) as PublicProduct[];
-      const merged = [resolvedProduct, ...relatedProducts] as PublicProduct[];
-      setProducts(merged);
-      setProductCacheStatus("live");
-      setLastLiveProductRefreshAt(Date.now());
-      writeCachedValue(publicProductCacheKey(publicProductId), {
-        products: merged,
-        orgId: resolvedProduct.orgId ?? null,
-      });
-
-      if (resolvedProduct.orgId) {
-        embedSettingsApi.public(resolvedProduct.orgId)
-          .then((next) => {
-            if (!next) return;
-            setSettings((prev) => ({ ...prev, ...next }));
-            setSettingsCacheStatus("live");
-            writeCachedValue(publicSettingsCacheKey(resolvedProduct.orgId), next as PublicEmbedSettings);
-          })
-          .catch(() => {
-            // Settings freshness should not block a customer's order attempt.
-          });
-      }
-
-      const liveMainProduct = merged.find((product) => product.id === publicProductId) ?? resolvedProduct;
-      const liveOrderablePackageIds = new Set(
-        activeProductPackages(liveMainProduct)
-          .filter((pkg) => !isAddOnOnlyPackage(pkg))
-          .filter((pkg) => packageMatchesSet(pkg, publicPackageSet))
-          .map((pkg) => pkg.id)
-      );
-      return {
-        refreshed: true,
-        packageStillAvailable: liveOrderablePackageIds.has(selectedPackageId)
-      };
-    } catch {
-      // If the product refresh itself flakes, still attempt the order POST. The
-      // POST has its own no-store request and will fall into recovery capture if
-      // the backend is also unavailable.
-      return { refreshed: false, packageStillAvailable: true };
-    }
-  }
-
   async function saveOutageCapturedCart(options: {
     cartId?: string;
     customerName: string;
@@ -3363,13 +3316,10 @@ export default function PublicOrderFormPage() {
     setPublicOrderSubmitting(true);
     publicOrderSubmittingRef.current = true;
     try {
-      const liveRefresh = await refreshLiveProductBundleForSubmit(submittedPackageId);
-      if (!liveRefresh.packageStillAvailable) {
-        const staleError = new Error("This order form changed while it was open. We saved your request so the team can confirm the latest package.");
-        Object.assign(staleError, { status: 409, staleFormRecovery: true });
-        throw staleError;
-      }
-
+      // Send the order immediately after validation. The backend is the
+      // authoritative package/state/stock gate; a separate refresh here created
+      // a window where an in-app browser could close after submit_attempted was
+      // recorded but before the actual order request had even started.
       const created = await publicOrdersApi.create(submissionBody);
       const upsellProductId = created.upsellOffer?.productId;
       const upsellPackageId = created.upsellOffer?.packageId;
@@ -3484,6 +3434,22 @@ export default function PublicOrderFormPage() {
       });
       return;
     } catch (error: any) {
+      const failureStatus = typeof error?.status === "number" ? error.status : null;
+      const failureMessage = String(error?.message ?? "Could not submit order.").slice(0, 500);
+      trackCartJourney("submit_failed", {
+        cartId: submissionCartId || undefined,
+        dedupeKey: `submit_failed:${submissionCartId || "draft"}:${failureStatus ?? "network"}`,
+        packageId: submittedPackageId,
+        state: submittedState || undefined,
+        keepalive: true,
+        metadata: {
+          customerName: customerName || "Customer",
+          packageName: submittedPackageName,
+          status: failureStatus,
+          message: failureMessage,
+          recoverable: shouldRecoverPublicOrderSubmission(error)
+        }
+      });
       if (shouldRecoverPublicOrderSubmission(error)) {
         const recoveryReason = publicOrderRecoveryReason(error);
         try {

@@ -1118,6 +1118,7 @@ export const publicOrdersApi = {
   create: async (body: unknown) => {
     const res = await fetchWithApiFailover("/api/public/orders", {
       method: "POST",
+      keepalive: true,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     });
