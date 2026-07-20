@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { buildSalesExpansionContext, SALES_EXPANSION_EXEMPTIONS, SALES_EXPANSION_REFUSALS, submitSalesExpansionAttempt } from "../lib/sales-expansion.js";
 import { requireAuth } from "../middleware/auth.js";
+import { isFrontlineRepRole } from "../lib/roles.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -25,7 +26,7 @@ const AttemptSchema = z.object({
 });
 
 const canAccessOrder = (role: string, userId: string, assignedRepId: string | null | undefined) =>
-  role !== "Sales Rep" || assignedRepId === userId;
+  !isFrontlineRepRole(role) || assignedRepId === userId;
 
 router.get("/:id/sales-expansion-context", async (req, res) => {
   try {

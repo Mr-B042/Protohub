@@ -17,6 +17,19 @@ const UNREACHABLE_OUTCOME_GROUP = "unreachable";
 // Africa/Lagos is UTC+1 year-round (no DST). Work the calendar in Lagos local time.
 const LAGOS_OFFSET_MS = 60 * 60 * 1000;
 
+// Customers who've asked to stop being contacted (customer_flags.blocks_followup)
+// are removed from the daily obligation set entirely - no miss penalty accrues
+// on a number staff are no longer allowed to call.
+async function optedOutPhoneSet(orgId: string): Promise<Set<string>> {
+  const { data } = await supabase
+    .from("customer_flags")
+    .select("phone")
+    .eq("org_id", orgId)
+    .eq("blocks_followup", true);
+  return new Set((data ?? []).map((row: { phone: string }) => row.phone));
+}
+const normalizedPhone = (phone: string | null | undefined) => (phone ?? "").replace(/\D/g, "");
+
 export function lagosDateKey(input: string | Date): string {
   const d = typeof input === "string" ? new Date(input) : input;
   return new Date(d.getTime() + LAGOS_OFFSET_MS).toISOString().slice(0, 10);
@@ -164,13 +177,13 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
     .not("assigned_rep_id", "is", null);
   if (repId) orderQuery = orderQuery.eq("assigned_rep_id", repId);
-  const { data: orders } = await orderQuery;
+  const [{ data: orders }, optedOutPhones] = await Promise.all([orderQuery, optedOutPhoneSet(orgId)]);
   const rawOrderRows = (orders ?? []) as Array<{
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
     status: string; created_at: string; updated_at: string | null; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
     call_outcome: string | null; buyer_health: string | null;
   }>;
-  const orderRows = rawOrderRows.filter((o) => !hasTerminalCustomerOutcome(o.call_outcome));
+  const orderRows = rawOrderRows.filter((o) => !hasTerminalCustomerOutcome(o.call_outcome) && !optedOutPhones.has(normalizedPhone(o.phone)));
   if (orderRows.length === 0) {
     return { date: dateKey, workingDay: true, obligations: [], dueCount: 0, attendedCount: 0, unattendedCount: 0, atRiskAmount: 0 };
   }
@@ -516,14 +529,14 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
     .not("assigned_rep_id", "is", null);
   if (repId) orderQuery = orderQuery.eq("assigned_rep_id", repId);
-  const { data: orders } = await orderQuery;
+  const [{ data: orders }, optedOutPhones] = await Promise.all([orderQuery, optedOutPhoneSet(orgId)]);
   const rawOrderRows = (orders ?? []) as Array<{
     id: string; assigned_rep_id: string | null; customer: string | null; phone: string | null;
     status: string; created_at: string; updated_at: string | null; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
     product_name: string | null; package_name: string | null; amount: number | null; currency: string | null; location: string | null;
     call_outcome: string | null; buyer_health: string | null;
   }>;
-  const orderRows = rawOrderRows.filter((o) => !hasTerminalCustomerOutcome(o.call_outcome));
+  const orderRows = rawOrderRows.filter((o) => !hasTerminalCustomerOutcome(o.call_outcome) && !optedOutPhones.has(normalizedPhone(o.phone)));
   const penaltyMeta = { penaltyStartDate: FOLLOW_UP_KPI_START_DATE, penaltyActive: todayKey >= FOLLOW_UP_KPI_START_DATE, missAmount: FOLLOW_UP_MISS_AMOUNT };
   if (orderRows.length === 0) return { weekStart, isCurrentWeek, ...penaltyMeta, days, summary, rows: [] };
   const orderIds = orderRows.map((o) => o.id);

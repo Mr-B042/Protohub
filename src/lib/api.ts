@@ -773,6 +773,22 @@ export const managerDashboardAlertsApi = {
   stockMismatches: () => get<{ rows: any[] }>("/api/manager-dashboard/stock-mismatches")
 };
 
+export const recoveryRepKpiApi = {
+  summary: (params: { repId?: string; month?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.repId) qs.set("repId", params.repId);
+    if (params.month) qs.set("month", params.month);
+    const suffix = qs.toString();
+    return get<any>(`/api/recovery-rep-kpi/summary${suffix ? `?${suffix}` : ""}`);
+  },
+  updateSettings: (body: unknown) => patch<any>("/api/recovery-rep-kpi/settings", body)
+};
+
+export const customerOptOutApi = {
+  optOut: (phone: string, reason?: string) => post<any>("/api/customers/opt-out", { phone, reason }),
+  clearOptOut: (phone: string) => del<void>(`/api/customers/opt-out/${encodeURIComponent(phone)}`)
+};
+
 export const salesBonusesApi = {
   programs: (params?: { includeDeleted?: boolean }) => {
     const qs = new URLSearchParams();

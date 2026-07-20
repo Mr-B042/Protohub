@@ -14,6 +14,7 @@ import {
   ClipboardCheck,
   Phone,
   LayoutDashboard,
+  RotateCcw,
   LayoutPanelTop,
   Megaphone,
   MessageCircle,
@@ -59,6 +60,7 @@ export const navItems = [
   { label: "Notifications", icon: Bell },
   { label: "Call Rep Console", icon: Phone },
   { label: "Sales Rep Workspace", icon: Headphones },
+  { label: "Recovery Rep Dashboard", icon: RotateCcw },
   { label: "Bonuses", icon: HandCoins },
   { label: "Settings", icon: Settings }
 ];
