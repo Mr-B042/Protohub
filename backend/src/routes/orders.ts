@@ -13,6 +13,7 @@ import { isPerUserWhatsAppDispatch } from "../lib/whatsapp-dispatch-mode.js";
 import { logger } from "../lib/logger.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { isFrontlineRepRole } from "../lib/roles.js";
 import {
   sendOrderStatusEmail, sendNewOrderEmail,
   sendInternalNewOrderEmail, sendOrderAssignedEmail,
@@ -679,7 +680,7 @@ router.get("/", async (req, res) => {
       .range(rFrom, rTo);
     if (scopeRole === "Marketer") {
       query = applyOrderMarketingScope(query, req.user!.marketingAttributionTags, scopeId);
-    } else if (scopeRole === "Sales Rep") {
+    } else if (isFrontlineRepRole(scopeRole)) {
       query = query.eq("assigned_rep_id", scopeId);
     } else if (repId) {
       query = query.eq("assigned_rep_id", repId as string);
@@ -752,7 +753,7 @@ const OrderSchema = z.object({
   timelineNotes:  z.array(TimelineNoteSchema).max(200).optional()
 });
 
-router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const parsed = OrderSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -1130,7 +1131,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (r
   res.status(201).json(data);
 });
 
-router.get("/:id/whatsapp-dispatch/preview", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+router.get("/:id/whatsapp-dispatch/preview", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   try {
     const order = await loadWhatsAppDispatchOrder(req.user!.orgId, String(req.params.id));
     if (!canDispatchWhatsAppOrder(req.user!.role, req.user!.id, order)) {
@@ -1186,7 +1187,7 @@ router.get("/:id/whatsapp-dispatch/preview", requireRole("Owner", "Admin", "Mana
   }
 });
 
-router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const parsed = WhatsAppDispatchSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -1399,7 +1400,7 @@ async function recordOrderDetailCallOutcomeLog(input: {
   await refreshOrderFollowUpSummary(input.orgId, input.orderId);
 }
 
-router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const parsed = StatusSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -1420,7 +1421,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
   // Sales Reps can only change status on their own orders (spy mode: use effective role/id)
   const patchScopeRole = req.user!.effectiveUserRole ?? req.user!.role;
   const patchScopeId   = req.user!.effectiveUserId   ?? req.user!.id;
-  if (patchScopeRole === "Sales Rep" && existing.assigned_rep_id !== patchScopeId) {
+  if (isFrontlineRepRole(patchScopeRole) && existing.assigned_rep_id !== patchScopeId) {
     res.status(403).json({ error: "You can only update orders assigned to you." });
     return;
   }
@@ -2405,7 +2406,7 @@ router.post("/open-remittance", requireRole("Owner"), async (req, res) => {
   res.json({ opened: (data ?? []).length });
 });
 
-router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const remittanceReceivedAt = remittanceReceivedAtToIso(
     req.body.remittance_received_at ?? req.body.remittanceReceivedAt
   );
@@ -2429,22 +2430,22 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep"), asyn
   const requestedKeys = Object.keys(req.body);
   const touchesManualBonus = requestedKeys.some((k) => MANUAL_BONUS_FIELDS.has(k));
 
-  if (req.user!.role === "Sales Rep" && touchesManualBonus) {
-    res.status(403).json({ error: "Sales reps cannot manually adjust bonuses." });
+  if (isFrontlineRepRole(req.user!.role) && touchesManualBonus) {
+    res.status(403).json({ error: "Reps cannot manually adjust bonuses." });
     return;
   }
 
   // Releasing / changing a manual-review hold is an Owner/Admin decision.
   const touchesReviewHold = requestedKeys.some((k) => REVIEW_HOLD_FIELDS.has(k));
-  if (req.user!.role === "Sales Rep" && touchesReviewHold) {
+  if (isFrontlineRepRole(req.user!.role) && touchesReviewHold) {
     res.status(403).json({ error: "Only an Owner or Admin can release a held order." });
     return;
   }
 
   if (req.body.delivered_date !== undefined || req.body.deliveredDate !== undefined) {
     const requestedDeliveredDate = req.body.delivered_date ?? req.body.deliveredDate;
-    if (req.user!.role === "Sales Rep") {
-      res.status(403).json({ error: "Sales reps cannot directly edit delivered dates." });
+    if (isFrontlineRepRole(req.user!.role)) {
+      res.status(403).json({ error: "Reps cannot directly edit delivered dates." });
       return;
     }
     if (current.status !== "Delivered") {
@@ -2992,7 +2993,7 @@ router.get("/:id/follow-up-tasks", async (req, res) => {
 
   if (orderError) { res.status(500).json({ error: orderError.message }); return; }
   if (!order) { res.status(404).json({ error: "Order not found." }); return; }
-  if (req.user!.role === "Sales Rep" && order.assigned_rep_id !== req.user!.id) {
+  if (isFrontlineRepRole(req.user!.role) && order.assigned_rep_id !== req.user!.id) {
     res.status(403).json({ error: "You can only view follow-up work on your own orders." });
     return;
   }
@@ -3021,7 +3022,7 @@ router.get("/:id/contact-attempts", async (req, res) => {
 
   if (orderError) { res.status(500).json({ error: orderError.message }); return; }
   if (!order) { res.status(404).json({ error: "Order not found." }); return; }
-  if (req.user!.role === "Sales Rep" && order.assigned_rep_id !== req.user!.id) {
+  if (isFrontlineRepRole(req.user!.role) && order.assigned_rep_id !== req.user!.id) {
     res.status(403).json({ error: "You can only view follow-up attempts on your own orders." });
     return;
   }
@@ -3052,7 +3053,7 @@ const ContactAttemptSchema = z.object({
   nextActionNote: z.string().trim().max(1000).optional().nullable()
 });
 
-router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const parsed = ContactAttemptSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
@@ -3068,7 +3069,7 @@ router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "S
 
   if (orderError) { res.status(500).json({ error: orderError.message }); return; }
   if (!order) { res.status(404).json({ error: "Order not found." }); return; }
-  if (req.user!.role === "Sales Rep" && order.assigned_rep_id !== req.user!.id) {
+  if (isFrontlineRepRole(req.user!.role) && order.assigned_rep_id !== req.user!.id) {
     res.status(403).json({ error: "You can only log follow-ups on your own orders." });
     return;
   }
@@ -3077,7 +3078,7 @@ router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "S
     const attempt = await recordContactAttemptAndNextAction({
       orgId: req.user!.orgId,
       orderId: String(req.params.id),
-      repId: req.user!.role === "Sales Rep" ? req.user!.id : (order.assigned_rep_id ?? req.user!.id),
+      repId: isFrontlineRepRole(req.user!.role) ? req.user!.id : (order.assigned_rep_id ?? req.user!.id),
       actorName: req.user!.name,
       channel: parsed.data.channel,
       channels: parsed.data.channels ?? [],
@@ -3307,7 +3308,7 @@ router.post("/:id/whatsapp-resend", requireRole("Owner", "Admin"), async (req, r
 // same receipt automatically via WhatsApp on order_new). Reuses the same
 // canDispatchWhatsAppOrder scoping as the WhatsApp dispatch routes: a Sales
 // Rep can only download the receipt for their own assigned orders.
-router.get("/:id/receipt", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+router.get("/:id/receipt", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const { data: order, error } = await supabase
     .from("orders")
     .select("id, customer, phone, product_name, package_name, quantity, amount, currency, source, address, city, state, created_at, scheduled_date, cross_sell_lines, package_components_snapshot, assigned_rep_id")

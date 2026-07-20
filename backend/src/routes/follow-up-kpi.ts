@@ -2,6 +2,7 @@ import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { isFrontlineRepRole } from "../lib/roles.js";
 import { FOLLOW_UP_KPI_START_DATE, getFollowUpBoard, getFollowUpGrid, lagosHourNow, logFollowUpEntry, runFollowUpClose } from "../lib/follow-up-kpi.js";
 import { sendUnreachableFollowUpSms } from "../lib/sms.js";
 
@@ -47,7 +48,7 @@ router.get("/grid", async (req, res) => {
 // ── POST /api/follow-up-kpi/log ──────────────────────────
 // Grid cell logging: append a dated line to the order's call_outcome + record a
 // structured attempt + optional promised date (auto-schedules the next follow-up).
-router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async (req, res) => {
+router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const orderId = typeof req.body?.orderId === "string" ? req.body.orderId : "";
   const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
   const channels = Array.isArray(req.body?.channels) ? req.body.channels.filter((c: unknown) => typeof c === "string") : [];
@@ -77,12 +78,12 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async
   if (!order) { res.status(404).json({ error: "Order not found." }); return; }
   const role = req.user!.effectiveUserRole ?? req.user!.role;
   const userId = req.user!.effectiveUserId ?? req.user!.id;
-  if (role === "Sales Rep" && order.assigned_rep_id !== userId) {
+  if (isFrontlineRepRole(role) && order.assigned_rep_id !== userId) {
     res.status(403).json({ error: "You can only log follow-ups on your own orders." });
     return;
   }
   try {
-    const repId = role === "Sales Rep" ? userId : (order.assigned_rep_id ?? userId);
+    const repId = isFrontlineRepRole(role) ? userId : (order.assigned_rep_id ?? userId);
     await logFollowUpEntry(req.user!.orgId, orderId, repId, text, channels, promisedDate, recoveryBucket, outcomeGroup, promisedTime, followUpSlot);
     res.status(201).json({ ok: true });
 
@@ -119,7 +120,7 @@ router.post("/log", requireRole("Owner", "Admin", "Manager", "Sales Rep"), async
 // ── GET /api/follow-up-kpi/misses ────────────────────────
 // Miss queue. Owner/Admin can review everyone; Sales Reps can only see their
 // own pending/approved/waived misses so their personal debt is visible.
-router.get("/misses", requireRole("Owner", "Admin", "Sales Rep"), async (req, res) => {
+router.get("/misses", requireRole("Owner", "Admin", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const state = typeof req.query.state === "string" ? req.query.state : "pending";
   const role = req.user!.effectiveUserRole ?? req.user!.role;
   const userId = req.user!.effectiveUserId ?? req.user!.id;
@@ -131,7 +132,7 @@ router.get("/misses", requireRole("Owner", "Admin", "Sales Rep"), async (req, re
     .order("miss_date", { ascending: false })
     .order("rep_name", { ascending: true });
   if (state !== "all") query = query.eq("state", state);
-  if (role === "Sales Rep") query = query.eq("rep_id", userId);
+  if (isFrontlineRepRole(role)) query = query.eq("rep_id", userId);
   const { data, error } = await query;
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json(data ?? []);

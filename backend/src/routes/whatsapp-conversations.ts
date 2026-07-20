@@ -59,7 +59,7 @@ router.get("/", async (req, res) => {
       ));
       if (adminPhones.length === 0) { res.json({ conversations: [] }); return; }
       query = query.in("normalized_phone", adminPhones);
-    } else if (role === "Sales Rep" || role === "Manager") {
+    } else if (role === "Sales Rep" || role === "Manager" || role === "Recovery Rep") {
       // Scope to orders assigned to this specific user
       const { data: myOrders } = await supabase
         .from("orders")
@@ -150,7 +150,7 @@ router.get("/:phone", async (req, res) => {
     //   Owner   → any thread
     //   Admin   → any order-linked thread
     //   Sales Rep / Manager → only their assigned order phones
-    if (role === "Sales Rep" || role === "Manager") {
+    if (role === "Sales Rep" || role === "Manager" || role === "Recovery Rep") {
       const { data: assignedOrders } = await supabase
         .from("orders").select("phone").eq("org_id", orgId).eq("assigned_rep_id", userId);
       const myPhones = new Set(
@@ -259,7 +259,7 @@ router.post("/:phone/send", async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
 
   // Rep/Manager can only message their assigned customers
-  if (role === "Sales Rep" || role === "Manager") {
+  if (role === "Sales Rep" || role === "Manager" || role === "Recovery Rep") {
     const { data: assignedOrders } = await supabase.from("orders").select("phone").eq("org_id", orgId).eq("assigned_rep_id", userId);
     const myPhones = new Set(
       (assignedOrders ?? []).map((o: any) => normalizeNgPhone(o.phone ?? "")).filter((p: string) => p.length >= 10)

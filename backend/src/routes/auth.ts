@@ -620,7 +620,7 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
   }
   // Frontend sends camelCase (e.g. extraPages); DB columns are snake_case.
   // Allow-list the DB column names and accept either casing on input.
-  const VALID_ROLES = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer"] as const;
+  const VALID_ROLES = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep"] as const;
   const VALID_AGENT_BALANCE_SCOPE_MODES = ["all", "states", "agents", "assigned_agents"] as const;
   if (req.body.role !== undefined && !VALID_ROLES.includes(req.body.role)) {
     res.status(400).json({ error: { role: [`Invalid role. Must be one of: ${VALID_ROLES.join(", ")}.`] } });
@@ -840,7 +840,7 @@ router.post("/invite", requireAuth, async (req, res) => {
     email: z.string().email().max(254),
     phone: z.string().trim().max(40).optional(),
     password: z.string().min(8).max(200),
-    role: z.enum(["Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer"]),
+    role: z.enum(["Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep"]),
     marketingAttributionTags: z.union([z.array(z.string()), z.string()]).optional(),
     marketing_attribution_tags: z.union([z.array(z.string()), z.string()]).optional()
   });
