@@ -1528,7 +1528,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       const agentName = agentRow?.name ?? effectiveAgentId;
       const available = availability.get(shortfall.productId) ?? 0;
       res.status(400).json({
-        error: `Cannot mark delivered — agent ${agentName} only has ${available} units of ${shortfall.productName}. This order needs ${shortfall.quantity}.`
+        error: `Not enough stock to mark this order Delivered. ${agentName} has ${available} unit${available === 1 ? "" : "s"} of ${shortfall.productName} in stock, but this order needs ${shortfall.quantity}. Restock ${agentName} or reassign this order to an agent with enough stock, then try again.`
       });
       return;
     }
