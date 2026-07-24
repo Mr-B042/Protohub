@@ -10708,6 +10708,55 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [density]);
   const [modal, setModal] = useState<ModalType>(null);
   const [toast, setToast] = useState("");
+  // Error-shaped toast messages ("Failed to...", "Cannot...", etc.) get a
+  // centered, manually-dismissed card instead of the small bottom-right
+  // toast - they were disappearing after 3s before anyone could finish
+  // reading a multi-clause message like a stock-shortfall explanation.
+  const isErrorToast = (message: string) => /^(failed|cannot|can't|couldn't|unable|error)\b/i.test(message.trim());
+  const renderToast = () => {
+    if (!toast) return null;
+    if (!isErrorToast(toast)) {
+      return (
+        <div className="toast" role="status" aria-live="polite">
+          <CheckCircle2 />
+          <span>{toast}</span>
+          <button aria-label="Dismiss message" onClick={() => setToast("")}><X /></button>
+        </div>
+      );
+    }
+    return createPortal(
+      <div
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+        role="alertdialog"
+        aria-live="assertive"
+        onClick={() => setToast("")}
+      >
+        <div
+          className="w-full max-w-md rounded-2xl border border-white/10 bg-gradient-to-b from-[#1c1428] to-[#0d0912] p-6 shadow-2xl"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start gap-3">
+            <div className="shrink-0 rounded-full bg-rose-500/15 p-2.5">
+              <AlertTriangle className="w-6 h-6 text-rose-400" />
+            </div>
+            <div className="min-w-0 flex-1 pt-0.5">
+              <h3 className="text-base font-black text-white">Something needs your attention</h3>
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm font-medium leading-relaxed text-rose-100/90">{toast}</p>
+            </div>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              className="!min-h-0 shrink-0 rounded-full p-1.5 text-white/50 hover:bg-white/10 hover:text-white"
+              onClick={() => setToast("")}
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  };
   const [notificationsRead, setNotificationsRead] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [orderWaStatus, setOrderWaStatus] = useState<{ messages: any[]; normalizedPhone: string } | null>(null);
@@ -26760,7 +26809,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || isErrorToast(toast)) return;
     const id = setTimeout(() => setToast(""), 3000);
     return () => clearTimeout(id);
   }, [toast]);
@@ -42015,13 +42064,7 @@ ${waybillLineItems(w).length > 1
             );
           })()}
         </section>
-        {toast && (
-          <div className="toast" role="status" aria-live="polite">
-            <CheckCircle2 />
-            <span>{toast}</span>
-            <button aria-label="Dismiss message" onClick={() => setToast("")}><X /></button>
-          </div>
-        )}
+        {renderToast()}
       </main>
     );
   }
@@ -65174,13 +65217,7 @@ ${waybillLineItems(w).length > 1
             )
           ) : null}
 
-          {toast && (
-            <div className="toast" role="status" aria-live="polite">
-              <CheckCircle2 />
-              <span>{toast}</span>
-              <button aria-label="Dismiss message" onClick={() => setToast("")}><X /></button>
-            </div>
-          )}
+          {renderToast()}
           </div>
         </main>
       </div>
