@@ -7710,6 +7710,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Manager Dashboard has its own period (like every other page), defaulting
   // to Today, so it never inherits or mutates the main Dashboard's period.
   const [managerPeriod, setManagerPeriod] = useState<Period>("Today");
+  // Owner-only: ticking a product on the Manager Dashboard's "Product
+  // performance" cards scopes every section above it (Today's Operations,
+  // Team performance, Finance summary, Fulfillment & stock health) down to
+  // just that product instead of the org-wide combined total. Empty = all
+  // products. Keyed the same way as productKeyForOrder ("id:<uuid>" or
+  // "name:<normalized name>") so both places agree on identity.
+  const [managerProductFilterKey, setManagerProductFilterKey] = useState("");
   const [conversion, setConversion] = useState(() =>
     readPref<number>("protohub.dashboard.conversion", 0, (raw) => {
       const n = Number(raw);
@@ -24592,19 +24599,40 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
   };
 
+  // Shared with the Manager Dashboard's product filter (managerProductFilterKey)
+  // so "which product is this order/expense for" is answered identically
+  // whether it's building the Product performance cards or scoping the rest
+  // of the dashboard down to whichever card is ticked.
+  const normalizeProductLabel = (value?: string | null) => String(value ?? "").trim().toLowerCase();
+  const catalogProductForOrder = (order: TrackedOrder) =>
+    (order.productId ? products.find((product) => product.id === order.productId) : undefined)
+    ?? products.find((product) => normalizeProductLabel(product.name) === normalizeProductLabel(order.productName));
+  const productKeyForOrder = (order: TrackedOrder) => {
+    const catalogProduct = catalogProductForOrder(order);
+    if (catalogProduct) return `id:${catalogProduct.id}`;
+    if (order.productId) return `id:${order.productId}`;
+    return `name:${normalizeProductLabel(order.productName) || "unknown-product"}`;
+  };
+  const productMatchesFilterKey = (product: Product, key: string) => {
+    if (!key) return true;
+    if (key.startsWith("id:")) return product.id === key.slice(3);
+    return normalizeProductLabel(product.name) === key.slice(5);
+  };
+  const expenseMatchesProductKey = (expense: ExpenseRecord, key: string) => {
+    if (!key) return true;
+    if (key.startsWith("id:")) {
+      const productId = key.slice(3);
+      if (expense.productId === productId) return true;
+      const product = products.find((p) => p.id === productId);
+      return Boolean(product && expense.productName && normalizeProductLabel(expense.productName) === normalizeProductLabel(product.name));
+    }
+    const name = key.slice(5);
+    return Boolean(expense.productName && normalizeProductLabel(expense.productName) === name);
+  };
+
   const renderManagerProductOverview = () => {
     const periodLabel = managerPeriod === "Today" ? "today" : managerPeriod.toLowerCase();
     const pipelineStatuses = new Set(["New", "Confirmed", "In Process", "Postponed", "Dispatched"]);
-    const normalizeProductLabel = (value?: string | null) => String(value ?? "").trim().toLowerCase();
-    const catalogProductForOrder = (order: TrackedOrder) =>
-      (order.productId ? products.find((product) => product.id === order.productId) : undefined)
-      ?? products.find((product) => normalizeProductLabel(product.name) === normalizeProductLabel(order.productName));
-    const productKeyForOrder = (order: TrackedOrder) => {
-      const catalogProduct = catalogProductForOrder(order);
-      if (catalogProduct) return `id:${catalogProduct.id}`;
-      if (order.productId) return `id:${order.productId}`;
-      return `name:${normalizeProductLabel(order.productName) || "unknown-product"}`;
-    };
 
     const placedInPeriod = trackedOrders.filter((order) =>
       !order.reviewHold && isInPeriod(orderCreatedKey(order), managerPeriod, managerDateRange)
@@ -24679,11 +24707,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             </div>
             <p className="mt-1 text-sm font-medium text-gray-500">
               One complete summary for every product that received an order in {periodLabel}.
+              {currentRole === "Owner" && " Tick a card's checkbox to scope the rest of this dashboard to just that product."}
             </p>
           </div>
-          <span className="inline-flex w-fit items-center rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-black text-[#1F8FE0]">
-            {productRows.length} product{productRows.length === 1 ? "" : "s"} with orders
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {managerProductFilterKey && (
+              <button
+                type="button"
+                className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-[#1F8FE0] bg-white px-3 py-1.5 text-xs font-black text-[#1F8FE0] hover:bg-blue-50"
+                onClick={() => setManagerProductFilterKey("")}
+              >
+                <X className="h-3.5 w-3.5" /> Clear product filter
+              </button>
+            )}
+            <span className="inline-flex w-fit items-center rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-black text-[#1F8FE0]">
+              {productRows.length} product{productRows.length === 1 ? "" : "s"} with orders
+            </span>
+          </div>
         </div>
 
         {productRows.length === 0 ? (
@@ -24696,10 +24736,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             {productRows.map((row, index) => {
               const tone = toneStyles[index % toneStyles.length];
+              const isActiveFilter = managerProductFilterKey === row.key;
               return (
-                <article key={row.key} className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+                <article key={row.key} className={`overflow-hidden rounded-lg border bg-white shadow-sm ${isActiveFilter ? "border-[#1F8FE0] ring-2 ring-[#1F8FE0]/40" : "border-gray-200"}`}>
                   <div className={`h-1 ${tone.line}`} />
                   <div className="flex items-center gap-3 px-4 py-4 sm:px-5">
+                    {currentRole === "Owner" && (
+                      <label
+                        className="flex shrink-0 cursor-pointer items-center"
+                        title={isActiveFilter ? "Showing only this product across the whole dashboard - untick to show all products" : "Tick to scope the whole dashboard to just this product"}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-5 w-5 cursor-pointer rounded border-gray-300 text-[#1F8FE0] focus:ring-[#1F8FE0]"
+                          checked={isActiveFilter}
+                          onChange={() => setManagerProductFilterKey((current) => current === row.key ? "" : row.key)}
+                        />
+                      </label>
+                    )}
                     {row.imageUrl ? (
                       <img src={row.imageUrl} alt="" className="h-14 w-14 shrink-0 rounded-lg border border-gray-100 object-cover" />
                     ) : (
@@ -44799,14 +44853,46 @@ ${waybillLineItems(w).length > 1
                   {renderWeekNav(managerNavStart, setManagerNavStart, managerNavSpan, setManagerNavSpan, setManagerPeriod, setManagerDateRange, managerPeriod, managerDateRange)}
                 </div>
 
+                {managerProductFilterKey && (() => {
+                  const filteredProductName = managerProductFilterKey.startsWith("id:")
+                    ? products.find((p) => p.id === managerProductFilterKey.slice(3))?.name ?? "this product"
+                    : managerProductFilterKey.slice(5);
+                  return (
+                    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#1F8FE0] bg-blue-50 px-4 py-2.5">
+                      <Filter className="h-4 w-4 text-[#1F8FE0]" />
+                      <span className="text-sm font-bold text-[#1F8FE0]">
+                        Every section below is scoped to <strong>{filteredProductName}</strong> only.
+                      </span>
+                      <button
+                        type="button"
+                        className="!min-h-0 ml-auto inline-flex items-center gap-1.5 rounded-full border border-[#1F8FE0] bg-white px-3 py-1 text-xs font-black text-[#1F8FE0] hover:bg-blue-100"
+                        onClick={() => setManagerProductFilterKey("")}
+                      >
+                        <X className="h-3.5 w-3.5" /> Show all products
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 {(() => {
                   const tKey = todayKey();
                   // Everything below follows the top period control (managerPeriod),
                   // using the same isInPeriod semantics as the Orders/Dashboard pages.
                   // "In pipeline" stays a right-now figure (open across all days).
                   const periodLabel = managerPeriod === "Today" ? "today" : managerPeriod.toLowerCase();
-                  const mgrPlaced = trackedOrders.filter((o) => !o.reviewHold && isInPeriod(orderCreatedKey(o), managerPeriod, managerDateRange));
-                  const mgrDeliveredInPeriod = trackedOrders.filter((o) => (o.status ?? "New") === "Delivered" && isInPeriod(orderDeliveredKey(o), managerPeriod, managerDateRange));
+                  // Owner-only product filter (managerProductFilterKey, ticked from a
+                  // Product performance card) narrows every section below from the
+                  // org-wide combined total down to just that one product.
+                  const mgrPlaced = trackedOrders.filter((o) =>
+                    !o.reviewHold
+                    && isInPeriod(orderCreatedKey(o), managerPeriod, managerDateRange)
+                    && (!managerProductFilterKey || productKeyForOrder(o) === managerProductFilterKey)
+                  );
+                  const mgrDeliveredInPeriod = trackedOrders.filter((o) =>
+                    (o.status ?? "New") === "Delivered"
+                    && isInPeriod(orderDeliveredKey(o), managerPeriod, managerDateRange)
+                    && (!managerProductFilterKey || productKeyForOrder(o) === managerProductFilterKey)
+                  );
 
                   // Finance summary - period-scoped like everything else on this
                   // page (NOT the Bonus tab's own fixed Sunday-Saturday week),
@@ -44815,7 +44901,10 @@ ${waybillLineItems(w).length > 1
                   // mgrPlaced/mgrDeliveredInPeriod, which are already the same
                   // created-date-vs-delivered-date "throughput" cohorts the
                   // main Dashboard uses - not a third delivery-rate definition.
-                  const mgrExpenses = expenses.filter((expense) => isInPeriod(expense.date, managerPeriod, managerDateRange));
+                  const mgrExpenses = expenses.filter((expense) =>
+                    isInPeriod(expense.date, managerPeriod, managerDateRange)
+                    && expenseMatchesProductKey(expense, managerProductFilterKey)
+                  );
                   const overviewFinanceProfit = summarizeRecognizedProfit(mgrDeliveredInPeriod, mgrExpenses, { placedRows: mgrPlaced, includeManagerBonus: true });
                   const overviewFinanceBreakEven = computeBreakEven(mgrPlaced, mgrExpenses, { includeManagerBonus: true });
                   const overviewDeliveryRate = mgrPlaced.length > 0 ? Math.round((mgrDeliveredInPeriod.length / mgrPlaced.length) * 100) : 0;
@@ -44864,7 +44953,11 @@ ${waybillLineItems(w).length > 1
                   const awaitingDispatch = mgrPlaced.filter((o) => (o.status ?? "New") === "Dispatched");
                   const pendingRemit = mgrDeliveredInPeriod.filter((o) => (o.remittanceStatus ?? "Pending") !== "Paid");
                   const pendingRemitTotal = pendingRemit.reduce((s, o) => s + Math.max(0, (o.amount - (o.logisticsCost ?? 0)) - orderAmountRemitted(o)), 0);
-                  const lowStockProducts = products.filter((p) => p.active !== false && (p.warehouseStock ?? 0) <= (p.reorderPoint ?? 0));
+                  const lowStockProducts = products.filter((p) =>
+                    p.active !== false
+                    && (p.warehouseStock ?? 0) <= (p.reorderPoint ?? 0)
+                    && productMatchesFilterKey(p, managerProductFilterKey)
+                  );
 
                   // Inventory truth has two levels. Agent gaps must stay separate
                   // so one stocked agent cannot hide another agent that is empty.
@@ -44872,7 +44965,9 @@ ${waybillLineItems(w).length > 1
                   // replenishment forecast. Demand is measured in real component
                   // units (including combos/add-ons/gifts), not order count.
                   const restockProductById = new Map(
-                    catalogProducts.filter((product) => product.active !== false).map((product) => [product.id, product])
+                    catalogProducts
+                      .filter((product) => product.active !== false && productMatchesFilterKey(product, managerProductFilterKey))
+                      .map((product) => [product.id, product])
                   );
                   const restockHubRows = activeAgents.flatMap((agent) =>
                     activeAgentLocationRows(agent).map((location) => ({ agent, location }))
