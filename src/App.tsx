@@ -24639,6 +24639,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const expenseMatchesProductKeys = (expense: ExpenseRecord, keys: Set<string>) => {
     if (keys.size === 0) return true;
+    // Shared/company-wide expenses (no product tag at all - salary, general
+    // ad spend, "Other") always count, regardless of which products are
+    // ticked - they're real overhead either way. Only an expense tagged to a
+    // SPECIFIC product that isn't in the selected set gets excluded. Without
+    // this, ticking every product still dropped these from Net Profit
+    // (nothing in the filter set could ever match a null/untagged expense),
+    // silently inflating "filtered" Net Profit above the true company total.
+    const hasProductTag = Boolean(expense.productId) || Boolean(expense.productName?.trim());
+    if (!hasProductTag) return true;
     if (expense.productId && keys.has(`id:${expense.productId}`)) return true;
     const product = expense.productId ? products.find((p) => p.id === expense.productId) : undefined;
     if (product && keys.has(`id:${product.id}`)) return true;
