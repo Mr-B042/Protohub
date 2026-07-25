@@ -755,7 +755,11 @@ export const bonusCoachApi = {
 
 export const managerBonusApi = {
   settings: () => get<any>("/api/manager-bonuses/settings"),
-  summary: (weekStart: string) => get<any>(`/api/manager-bonuses/summary?${new URLSearchParams({ weekStart }).toString()}`),
+  summary: (weekStart: string, productIds?: string[]) => {
+    const params = new URLSearchParams({ weekStart });
+    if (productIds && productIds.length > 0) params.set("productIds", productIds.join(","));
+    return get<any>(`/api/manager-bonuses/summary?${params.toString()}`);
+  },
   updateSettings: (body: unknown) => patch<any>("/api/manager-bonuses/settings", body)
 };
 
