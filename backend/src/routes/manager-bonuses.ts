@@ -220,11 +220,17 @@ router.get("/summary", async (req, res) => {
     if (filterProductIds.length > 0) {
       cohortOrdersQuery = cohortOrdersQuery.in("product_id", filterProductIds);
       deliveredOrdersQuery = deliveredOrdersQuery.in("product_id", filterProductIds);
-      // Only expenses directly tagged to one of the selected products count -
-      // shared/company-wide expenses (salary, general ad spend, etc.) aren't
-      // allocated across a subset of products. Same convention the Product
-      // performance cards already use for their own per-product profit.
-      expensesQuery = expensesQuery.in("product_id", filterProductIds);
+      // Shared/company-wide expenses (no product_id at all - salary, general
+      // ad spend, "Other") must still count regardless of the filter - they're
+      // real overhead either way. Only an expense tagged to a product OUTSIDE
+      // the selected set gets excluded. A plain .in() would wrongly drop every
+      // untagged expense too (NULL never matches IN), inflating net profit
+      // for any filtered view - including one where every product is ticked.
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const safeIds = filterProductIds.filter((id) => uuidPattern.test(id));
+      if (safeIds.length > 0) {
+        expensesQuery = expensesQuery.or(`product_id.is.null,product_id.in.(${safeIds.join(",")})`);
+      }
     }
 
     const [
