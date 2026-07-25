@@ -24630,6 +24630,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const renderManagerProductOverview = () => {
     const periodLabel = managerPeriod === "Today" ? "today" : managerPeriod.toLowerCase();
     const pipelineStatuses = new Set(["New", "Confirmed", "In Process", "Postponed", "Dispatched"]);
+    // Everyone who can even see the Manager Dashboard (Owner/Admin/Manager)
+    // can also use the product tick-filter - it was Owner-only at first, then
+    // widened to match the page's own access gate.
+    const canFilterManagerProducts = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
 
     const placedInPeriod = trackedOrders.filter((order) =>
       !order.reviewHold && isInPeriod(orderCreatedKey(order), managerPeriod, managerDateRange)
@@ -24704,7 +24708,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             </div>
             <p className="mt-1 text-sm font-medium text-gray-500">
               One complete summary for every product that received an order in {periodLabel}.
-              {currentRole === "Owner" && " Tick one or more cards to scope the rest of this dashboard to just those products."}
+              {canFilterManagerProducts && " Tick one or more cards to scope the rest of this dashboard to just those products."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -24738,7 +24742,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <article key={row.key} className={`overflow-hidden rounded-lg border bg-white shadow-sm ${isActiveFilter ? "border-[#1F8FE0] ring-2 ring-[#1F8FE0]/40" : "border-gray-200"}`}>
                   <div className={`h-1 ${tone.line}`} />
                   <div className="flex items-center gap-3 px-4 py-4 sm:px-5">
-                    {currentRole === "Owner" && (
+                    {canFilterManagerProducts && (
                       <label
                         className="flex shrink-0 cursor-pointer items-center"
                         title={isActiveFilter ? "Included in the dashboard filter - untick to remove this product" : "Tick to include this product in the dashboard filter"}
