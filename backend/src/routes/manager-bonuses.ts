@@ -16,7 +16,13 @@ router.use(requireAuth, requireRole("Owner", "Admin", "Manager"));
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const QuerySchema = z.object({
-  weekStart: z.string().regex(DATE_KEY_PATTERN)
+  weekStart: z.string().regex(DATE_KEY_PATTERN),
+  // Optional comma-separated product UUIDs (from the Manager Dashboard's
+  // product tick-filter) - when present, scopes the whole summary (cohort,
+  // delivered orders, and directly-tagged expenses) to just those products
+  // instead of the whole org. Preview-only: doesn't change settings/payout
+  // eligibility for anyone not viewing with the filter active.
+  productIds: z.string().optional()
 });
 
 const TierSchema = z.object({
@@ -188,8 +194,39 @@ router.get("/summary", async (req, res) => {
   const weekEnd = addDays(weekStart, 6);
   const createdFrom = toWatUtcIso(weekStart, "start");
   const createdTo = toWatUtcIso(weekEnd, "end");
+  const filterProductIds = (parsed.data.productIds ?? "").split(",").map((id) => id.trim()).filter(Boolean);
 
   try {
+    let cohortOrdersQuery = supabase
+      .from("orders")
+      .select("id, status, amount, quantity, currency, created_at, delivered_date, product_id, product_name, package_components_snapshot, cross_sell_lines, free_gift_lines, logistics_cost, review_hold")
+      .eq("org_id", req.user!.orgId)
+      .gte("created_at", createdFrom)
+      .lte("created_at", createdTo)
+      .or("review_hold.is.null,review_hold.eq.false");
+    let deliveredOrdersQuery = supabase
+      .from("orders")
+      .select("id, status, amount, quantity, currency, created_at, delivered_date, product_id, product_name, package_components_snapshot, cross_sell_lines, free_gift_lines, logistics_cost, review_hold")
+      .eq("org_id", req.user!.orgId)
+      .eq("status", "Delivered")
+      .gte("delivered_date", weekStart)
+      .lte("delivered_date", weekEnd);
+    let expensesQuery = supabase
+      .from("expenses")
+      .select("id, date, category, amount, currency, product_id")
+      .eq("org_id", req.user!.orgId)
+      .gte("date", weekStart)
+      .lte("date", weekEnd);
+    if (filterProductIds.length > 0) {
+      cohortOrdersQuery = cohortOrdersQuery.in("product_id", filterProductIds);
+      deliveredOrdersQuery = deliveredOrdersQuery.in("product_id", filterProductIds);
+      // Only expenses directly tagged to one of the selected products count -
+      // shared/company-wide expenses (salary, general ad spend, etc.) aren't
+      // allocated across a subset of products. Same convention the Product
+      // performance cards already use for their own per-product profit.
+      expensesQuery = expensesQuery.in("product_id", filterProductIds);
+    }
+
     const [
       settingsResult,
       cohortOrdersResult,
@@ -197,26 +234,9 @@ router.get("/summary", async (req, res) => {
       expensesResult
     ] = await Promise.all([
       loadSettings(req.user!.orgId),
-      supabase
-        .from("orders")
-        .select("id, status, amount, quantity, currency, created_at, delivered_date, product_id, product_name, package_components_snapshot, cross_sell_lines, free_gift_lines, logistics_cost, review_hold")
-        .eq("org_id", req.user!.orgId)
-        .gte("created_at", createdFrom)
-        .lte("created_at", createdTo)
-        .or("review_hold.is.null,review_hold.eq.false"),
-      supabase
-        .from("orders")
-        .select("id, status, amount, quantity, currency, created_at, delivered_date, product_id, product_name, package_components_snapshot, cross_sell_lines, free_gift_lines, logistics_cost, review_hold")
-        .eq("org_id", req.user!.orgId)
-        .eq("status", "Delivered")
-        .gte("delivered_date", weekStart)
-        .lte("delivered_date", weekEnd),
-      supabase
-        .from("expenses")
-        .select("id, date, category, amount, currency")
-        .eq("org_id", req.user!.orgId)
-        .gte("date", weekStart)
-        .lte("date", weekEnd)
+      cohortOrdersQuery,
+      deliveredOrdersQuery,
+      expensesQuery
     ]);
 
     if (cohortOrdersResult.error) throw cohortOrdersResult.error;
@@ -261,6 +281,7 @@ router.get("/summary", async (req, res) => {
       settings: settingsResult.settings,
       settingsIsDefault: settingsResult.isDefault,
       canEdit: req.user!.role === "Owner",
+      filteredProductIds: filterProductIds,
       evaluation,
       metrics: {
         cohortOrders: cohortOrders.length,

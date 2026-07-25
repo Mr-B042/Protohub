@@ -24249,7 +24249,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     setManagerBonusLoading(true);
     setManagerBonusError("");
-    return managerBonusApi.summary(managerBonusWeekStart)
+    return managerBonusApi.summary(managerBonusWeekStart, managerProductFilterIds(managerProductFilterKeys))
       .then((result) => {
         const summary = result as ManagerBonusSummary;
         setManagerBonusSummary(summary);
@@ -24286,7 +24286,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (managerDashboardTab !== "Bonus" && currentRole === "Owner") return;
     void refreshManagerBonus({ quiet: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, managerDashboardTab, managerBonusWeekStart, currentRole]);
+  }, [activePage, managerDashboardTab, managerBonusWeekStart, currentRole, managerProductFilterKeys]);
 
   useEffect(() => {
     const canView = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
@@ -24319,12 +24319,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return key >= managerBonusWeekStart && key <= weekEnd;
     };
     const bonusWeekPlacedOrders = trackedOrders.filter((order) =>
-      !order.reviewHold && inBonusWeek(orderCreatedKey(order))
+      !order.reviewHold
+      && inBonusWeek(orderCreatedKey(order))
+      && (managerProductFilterKeys.size === 0 || managerProductFilterKeys.has(productKeyForOrder(order)))
     );
     const bonusWeekDeliveredOrders = trackedOrders.filter((order) =>
-      !order.reviewHold && (order.status ?? "New") === "Delivered" && inBonusWeek(orderDeliveredKey(order))
+      !order.reviewHold
+      && (order.status ?? "New") === "Delivered"
+      && inBonusWeek(orderDeliveredKey(order))
+      && (managerProductFilterKeys.size === 0 || managerProductFilterKeys.has(productKeyForOrder(order)))
     );
-    const bonusWeekExpenses = expenses.filter((expense) => inBonusWeek(expense.date));
+    const bonusWeekExpenses = expenses.filter((expense) =>
+      inBonusWeek(expense.date) && expenseMatchesProductKeys(expense, managerProductFilterKeys)
+    );
     const dashboardAlignedProfit = summarizeRecognizedProfit(bonusWeekDeliveredOrders, bonusWeekExpenses, {
       placedRows: bonusWeekPlacedOrders,
       includeManagerBonus: true
@@ -24401,8 +24408,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {gateMet ? "Profit gate met" : "Support-only gate"}
             </span>
             {summary?.settingsIsDefault && <span className="rounded-full bg-white/80 border border-white px-3 py-1">Using default rules</span>}
+            {managerProductFilterKeys.size > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#1F8FE0] bg-white px-3 py-1 text-[#1F8FE0]">
+                <Filter className="h-3.5 w-3.5" /> Filtered to {managerProductFilterProductNames.join(", ")}
+              </span>
+            )}
           </div>
         </section>
+
+        {managerProductFilterKeys.size > 0 && managerProductFilterIds(managerProductFilterKeys).length === 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+            The ticked product{managerProductFilterKeys.size === 1 ? "" : "s"} couldn't be matched to a catalog ID, so this tab's Profit Gate/Delivery Rate still reflect the whole company. The Overview tab's per-product cards are unaffected.
+          </div>
+        )}
 
         {managerBonusError && (
           <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
@@ -24626,6 +24644,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (product && keys.has(`id:${product.id}`)) return true;
     return Boolean(expense.productName) && keys.has(`name:${normalizeProductLabel(expense.productName)}`);
   };
+  // Backend summary endpoints (Manager Bonus / Upsell Bonus profit+delivery
+  // gates) can only filter by real product UUIDs - "name:" keys (orders with
+  // no catalog product match) can't be translated server-side and are
+  // dropped here, same as they'd contribute nothing to those queries anyway.
+  const managerProductFilterIds = (keys: Set<string>) =>
+    [...keys].filter((key) => key.startsWith("id:")).map((key) => key.slice(3));
+  const managerProductFilterProductNames = [...managerProductFilterKeys].map((key) =>
+    key.startsWith("id:")
+      ? products.find((p) => p.id === key.slice(3))?.name ?? "this product"
+      : key.slice(5)
+  );
 
   const renderManagerProductOverview = () => {
     const periodLabel = managerPeriod === "Today" ? "today" : managerPeriod.toLowerCase();
@@ -24837,7 +24866,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const refreshUpsellGateMetrics = (options?: { quiet?: boolean }) => {
     if (!canViewUpsellBonus || activePage !== "Manager Dashboard") return Promise.resolve();
     setUpsellGateLoading(true);
-    return managerBonusApi.summary(upsellBonusWeekStart)
+    return managerBonusApi.summary(upsellBonusWeekStart, managerProductFilterIds(managerProductFilterKeys))
       .then((result: any) => {
         setUpsellGateMetrics({
           netProfitOps: Number(result?.metrics?.netProfitOps ?? 0),
@@ -24941,7 +24970,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     void refreshRepWeeklyTargets();
     void refreshUpsellBonusExpansionAttribution();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, managerDashboardTab, upsellBonusWeekStart, currentRole]);
+  }, [activePage, managerDashboardTab, upsellBonusWeekStart, currentRole, managerProductFilterKeys]);
 
   // Per-order profit generated by the upgrade/cross-sell itself (not the
   // whole order). Keep the visible drill-down and the headline totals on this
@@ -25054,7 +25083,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return key >= upsellBonusWeekStart && key <= weekEnd;
     };
     const deliveredThisWeek = trackedOrders.filter((order) =>
-      !order.reviewHold && (order.status ?? "New") === "Delivered" && inBonusWeek(orderDeliveredKey(order))
+      !order.reviewHold
+      && (order.status ?? "New") === "Delivered"
+      && inBonusWeek(orderDeliveredKey(order))
+      && (managerProductFilterKeys.size === 0 || managerProductFilterKeys.has(productKeyForOrder(order)))
     );
     const qualifyingOrders = deliveredThisWeek.filter((order) =>
       orderHasVerifiedUpsell(order) || (order.crossSellLines?.length ?? 0) > 0
@@ -25210,8 +25242,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               {gatesMet ? "Both gates met" : "Gate(s) not met"}
             </span>
             {upsellBonusIsDefault && <span className="rounded-full bg-white/80 border border-white px-3 py-1">Using default rules</span>}
+            {managerProductFilterKeys.size > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-white px-3 py-1 text-emerald-700">
+                <Filter className="h-3.5 w-3.5" /> Filtered to {managerProductFilterProductNames.join(", ")}
+              </span>
+            )}
           </div>
         </section>
+
+        {managerProductFilterKeys.size > 0 && managerProductFilterIds(managerProductFilterKeys).length === 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+            The ticked product{managerProductFilterKeys.size === 1 ? "" : "s"} couldn't be matched to a catalog ID, so the Profit Gate/Company Delivery Rate below still reflect the whole company. The qualifying-orders list further down is still scoped correctly.
+          </div>
+        )}
 
         {upsellBonusError && (
           <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{upsellBonusError}</div>
@@ -44859,16 +44902,11 @@ ${waybillLineItems(w).length > 1
                 </div>
 
                 {managerProductFilterKeys.size > 0 && (() => {
-                  const filteredProductNames = [...managerProductFilterKeys].map((key) =>
-                    key.startsWith("id:")
-                      ? products.find((p) => p.id === key.slice(3))?.name ?? "this product"
-                      : key.slice(5)
-                  );
                   return (
                     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#1F8FE0] bg-blue-50 px-4 py-2.5">
                       <Filter className="h-4 w-4 text-[#1F8FE0]" />
                       <span className="text-sm font-bold text-[#1F8FE0]">
-                        Every section below is scoped to <strong>{filteredProductNames.join(", ")}</strong> only.
+                        Every section below is scoped to <strong>{managerProductFilterProductNames.join(", ")}</strong> only.
                       </span>
                       <button
                         type="button"
