@@ -45174,6 +45174,30 @@ ${waybillLineItems(w).length > 1
                     .filter((d) => d.neverStocked && (d.orders > 0 || d.stillOpen > 0))
                     .sort((a, b) => b.openUnits - a.openUnits || b.recentUnits - a.recentUnits);
 
+                  // Ready, no agent assigned - a rep has logged the customer as ready
+                  // to receive the order, but nobody has picked it up for agent/hub
+                  // dispatch yet. Live point-in-time (not period-scoped), same as
+                  // the rest of Fulfillment & stock health, but still respects the
+                  // Owner's product tick-filter above.
+                  const readyNoAgentOrders = trackedOrders
+                    .filter((o) =>
+                      !o.reviewHold
+                      && (o.status ?? "New") === "Confirmed"
+                      && (o.callOutcome ?? "").trim() === "Ready"
+                      && !o.agentId
+                      && (managerProductFilterKeys.size === 0 || managerProductFilterKeys.has(productKeyForOrder(o)))
+                    )
+                    .map((o) => {
+                      const createdMs = new Date(o.createdAt ?? "").getTime();
+                      const ageDays = Number.isFinite(createdMs) ? Math.max(0, Math.floor((Date.now() - createdMs) / 86400000)) : 0;
+                      return {
+                        order: o,
+                        repName: users.find((u) => u.id === o.assignedRepId)?.name ?? "Unassigned",
+                        ageDays
+                      };
+                    })
+                    .sort((a, b) => b.ageDays - a.ageDays);
+
                   const overviewCardAccentThemes = {
                     blue: { ring: "border-blue-100/80", glow: "bg-blue-400/25", badge: "bg-blue-100 text-blue-600", value: "text-gray-950" },
                     violet: { ring: "border-violet-100/80", glow: "bg-violet-400/25", badge: "bg-violet-100 text-violet-600", value: "text-gray-950" },
@@ -45497,6 +45521,55 @@ ${waybillLineItems(w).length > 1
                             </div>
                           </div>
                         )}
+                        <div className={`overflow-hidden rounded-xl border bg-white shadow-sm ${readyNoAgentOrders.length > 0 ? "border-amber-200" : "border-emerald-200"}`}>
+                          <div className={`flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${readyNoAgentOrders.length > 0 ? "border-amber-100 bg-amber-50/50" : "border-emerald-100 bg-emerald-50/40"}`}>
+                            <div>
+                              <h3 className="text-sm font-bold text-gray-900">Ready, no agent assigned</h3>
+                              <p className="mt-0.5 text-[11px] text-gray-500">Rep has marked the customer ready to receive, but no agent/hub has been assigned for dispatch yet. Live, not period-scoped.</p>
+                            </div>
+                            <span className={`inline-flex self-start rounded-full px-3 py-1 text-xs font-bold ${readyNoAgentOrders.length > 0 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
+                              {readyNoAgentOrders.length} order{readyNoAgentOrders.length === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                          {readyNoAgentOrders.length === 0 ? (
+                            <p className="px-4 py-6 text-center text-sm text-emerald-700">No Ready order is waiting on an agent assignment.</p>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full min-w-[760px] text-sm">
+                                <thead>
+                                  <tr className="border-b border-gray-100 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                                    <th className="px-4 py-2.5">Order</th>
+                                    <th className="px-4 py-2.5">Sales rep</th>
+                                    <th className="px-4 py-2.5">Product</th>
+                                    <th className="px-4 py-2.5">State</th>
+                                    <th className="px-4 py-2.5 text-right">Age</th>
+                                    <th className="px-4 py-2.5">Scheduled</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {readyNoAgentOrders.map(({ order, repName, ageDays }) => (
+                                    <tr key={order.id} className="border-b border-gray-50 last:border-0">
+                                      <td className="px-4 py-3">
+                                        <button type="button" className="!min-h-0 font-bold text-[#1F8FE0] hover:underline" onClick={() => { setSelectedOrderId(order.id); setModal("orderDetails"); }}>
+                                          #{order.id}
+                                        </button>
+                                      </td>
+                                      <td className="px-4 py-3 font-medium text-gray-700">{repName}</td>
+                                      <td className="px-4 py-3 text-gray-700">{order.productName}</td>
+                                      <td className="px-4 py-3 text-gray-500">{order.state || "-"}</td>
+                                      <td className={`px-4 py-3 text-right font-bold ${ageDays >= 3 ? "text-rose-700" : "text-amber-700"}`}>{ageDays}d</td>
+                                      <td className="px-4 py-3">
+                                        {order.scheduledDate
+                                          ? <span className="font-semibold text-emerald-700">{order.scheduledDate}</span>
+                                          : <span className="text-gray-400">Not scheduled</span>}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
                       </section>
 
                     </>
