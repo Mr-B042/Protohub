@@ -17,7 +17,8 @@ const DEFAULT_KPI_SETTINGS = {
   minDeliveryRatePct: 65,
   upsellAttemptRatePct: 85,
   documentationRatePct: 95,
-  repMonthlySalary: 70000
+  repMonthlySalary: 70000,
+  surplusBonusPct: 20
 };
 
 async function loadKpiSettings(orgId: string) {
@@ -34,7 +35,8 @@ async function loadKpiSettings(orgId: string) {
     minDeliveryRatePct: Number(data.min_delivery_rate_pct ?? DEFAULT_KPI_SETTINGS.minDeliveryRatePct),
     upsellAttemptRatePct: Number(data.upsell_attempt_rate_pct ?? DEFAULT_KPI_SETTINGS.upsellAttemptRatePct),
     documentationRatePct: Number(data.documentation_rate_pct ?? DEFAULT_KPI_SETTINGS.documentationRatePct),
-    repMonthlySalary: Number(data.rep_monthly_salary ?? DEFAULT_KPI_SETTINGS.repMonthlySalary)
+    repMonthlySalary: Number(data.rep_monthly_salary ?? DEFAULT_KPI_SETTINGS.repMonthlySalary),
+    surplusBonusPct: Number(data.surplus_bonus_pct ?? DEFAULT_KPI_SETTINGS.surplusBonusPct)
   };
 }
 
@@ -198,6 +200,20 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
 
     const companyLevelContribution = netContribution - settings.repMonthlySalary;
 
+    // Surplus bonus: a real, direct payout on net contribution ABOVE the
+    // monthly floor - not just a pass/fail gate. The floor (₦380k) already
+    // covers the rep's own salary + their share of existing staff cost, so
+    // everything past it is genuine upside for the company; sharing a cut
+    // of that with the rep gives them a direct, personal reason to keep
+    // pushing past the minimum instead of stopping once they clear it.
+    // Gated on the other 3 quality KPIs so the surplus can't be chased by
+    // neglecting delivery rate, upsell attempts, or documentation.
+    const surplusGatesMet = deliveryRatePct >= settings.minDeliveryRatePct
+      && upsellAttemptRatePct >= settings.upsellAttemptRatePct
+      && documentation.ratePct >= settings.documentationRatePct;
+    const netContributionSurplus = Math.max(0, netContribution - settings.monthlyTargetMin);
+    const surplusBonusValue = surplusGatesMet ? Math.round(netContributionSurplus * (settings.surplusBonusPct / 100)) : 0;
+
     res.json({
       month: monthKey,
       repId,
@@ -241,6 +257,15 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
       companyLevelContribution: {
         value: Math.round(companyLevelContribution),
         note: "For company reporting only - not the rep-facing metric."
+      },
+      surplusBonus: {
+        value: surplusBonusValue,
+        pct: settings.surplusBonusPct,
+        surplusBase: Math.round(netContributionSurplus),
+        gatesMet: surplusGatesMet,
+        note: surplusGatesMet
+          ? `${settings.surplusBonusPct}% of net contribution above the ${settings.monthlyTargetMin.toLocaleString()} floor.`
+          : "Withheld - delivery rate, upsell attempt rate, and documentation must all meet their targets first."
       }
     });
   } catch (error: any) {
@@ -259,6 +284,7 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
     upsell_attempt_rate_pct: Number(body.upsellAttemptRatePct ?? DEFAULT_KPI_SETTINGS.upsellAttemptRatePct),
     documentation_rate_pct: Number(body.documentationRatePct ?? DEFAULT_KPI_SETTINGS.documentationRatePct),
     rep_monthly_salary: Number(body.repMonthlySalary ?? DEFAULT_KPI_SETTINGS.repMonthlySalary),
+    surplus_bonus_pct: Number(body.surplusBonusPct ?? DEFAULT_KPI_SETTINGS.surplusBonusPct),
     updated_by: req.user!.id,
     updated_at: new Date().toISOString()
   };

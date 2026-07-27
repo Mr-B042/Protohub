@@ -10991,6 +10991,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     upsellAttemptRatePct: number;
     documentationRatePct: number;
     repMonthlySalary: number;
+    surplusBonusPct: number;
   } | null>(null);
   const [recoveryRepSettingsSaving, setRecoveryRepSettingsSaving] = useState(false);
   const [salesExpansionSummary, setSalesExpansionSummary] = useState<any | null>(null);
@@ -39475,7 +39476,8 @@ ${waybillLineItems(w).length > 1
         minDeliveryRatePct: summary.deliveryRate.target,
         upsellAttemptRatePct: summary.upsellAttemptRate.target,
         documentationRatePct: summary.documentation.target,
-        repMonthlySalary: summary.repMonthlySalary
+        repMonthlySalary: summary.repMonthlySalary,
+        surplusBonusPct: summary.surplusBonus?.pct ?? 20
       });
     } catch (err: any) {
       setRecoveryRepKpiError(err?.message ?? "Could not load the recovery rep KPI summary.");
@@ -39597,7 +39599,8 @@ ${waybillLineItems(w).length > 1
                 ["minDeliveryRatePct", "Minimum delivery rate (%)"],
                 ["upsellAttemptRatePct", "Upsell/cross-sell attempt rate (%)"],
                 ["documentationRatePct", "Documentation completeness (%)"],
-                ["repMonthlySalary", "Rep monthly salary (₦)"]
+                ["repMonthlySalary", "Rep monthly salary (₦)"],
+                ["surplusBonusPct", "Surplus bonus (% of net contribution above the minimum)"]
               ] as const).map(([key, label]) => (
                 <label key={key} className="space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">{label}</span>
@@ -39628,6 +39631,23 @@ ${waybillLineItems(w).length > 1
           </div>
         ) : (
           <>
+            {summary.surplusBonus && (
+              <section className={`overflow-hidden rounded-2xl border-2 p-5 shadow-sm ${summary.surplusBonus.gatesMet ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white" : "border-amber-300 bg-gradient-to-br from-amber-50 to-white"}`}>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Your recovery bonus this month</p>
+                    <strong className={`mt-1 block text-3xl font-black ${summary.surplusBonus.gatesMet ? "text-emerald-700" : "text-amber-700"}`}>
+                      {formatMoney(summary.surplusBonus.value)}
+                    </strong>
+                    <p className="mt-1 text-sm font-semibold text-gray-600">{summary.surplusBonus.note}</p>
+                  </div>
+                  <div className="rounded-xl border border-gray-200 bg-white/70 px-4 py-3 text-xs font-semibold text-gray-500">
+                    <p className="m-0">Surplus above {formatMoney(summary.netContribution.targetMin)}: <span className="font-black text-gray-900">{formatMoney(summary.surplusBonus.surplusBase)}</span></p>
+                    <p className="m-0 mt-1">Every extra ₦ you recover this month earns you {summary.surplusBonus.pct}% more - the floor is just the starting line.</p>
+                  </div>
+                </div>
+              </section>
+            )}
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {kpiCard(
                 "Monthly net contribution",
