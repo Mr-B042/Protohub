@@ -31558,7 +31558,11 @@ ${waybillLineItems(w).length > 1
     }
     // Re-sync the delivery-fee expense so a Failed/Cancelled flip turns the
     // line into a "Failed Delivery" expense, and a recovery flips it back.
-    syncOrderDeliveryExpense({ ...order, status: nextStatus });
+    // Also carries the corrected deliveredDate through - without this, a
+    // same-day-Delivered-then-later-backdated-date correction (isDeliveryDateOnly)
+    // left the already-synced expense on its original (wrong) date, so the
+    // cost landed in a different week than the order's real delivery date.
+    syncOrderDeliveryExpense({ ...order, status: nextStatus, deliveredDate: nextStatus === "Delivered" ? effectiveDeliveredDate : order.deliveredDate });
     // Backend already inserts notifications for New / Confirmed / Delivered /
     // Cancelled. Surface the other meaningful transitions client-side so the
     // bell still updates for Postponed / Failed.
