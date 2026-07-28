@@ -854,7 +854,7 @@ export interface RetentionBonusSettings {
 export interface RetentionTouchpointPayload {
   orderId: string;
   stage: "satisfaction_check" | "review_referral" | "retention_sale";
-  reachStatus?: "reached" | "not_reached" | "not_reachable";
+  reachStatus?: "reached" | "not_reached" | "not_reachable" | "wrong_number";
   customerResponse?: "satisfied" | "neutral" | "complaint";
   nextAction?: "request_review" | "request_referral" | "offer_another_product" | "schedule_follow_up" | "needs_resolution" | "not_interested" | "do_not_contact";
   nextActionAt?: string;
