@@ -119,7 +119,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, customerOptOutApi, customerRetentionApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11041,6 +11041,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionOutcomeFollowUpDate, setRetentionOutcomeFollowUpDate] = useState("");
   const [retentionOutcomeFollowUpTime, setRetentionOutcomeFollowUpTime] = useState("");
   const [retentionOutcomeSaving, setRetentionOutcomeSaving] = useState(false);
+  const [retentionDrawerPhone, setRetentionDrawerPhone] = useState<string | null>(null);
+  const [retentionCustomerDetail, setRetentionCustomerDetail] = useState<RetentionCustomerDetail | null>(null);
+  const [retentionCustomerDetailLoading, setRetentionCustomerDetailLoading] = useState(false);
   const [salesExpansionSummary, setSalesExpansionSummary] = useState<any | null>(null);
   // Known independently of salesExpansionSummary (which only loads once the
   // Upsell tab is actually opened) - fetched once on mount so the nav tab and
@@ -39666,6 +39669,16 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, recoveryRepDashboardTab, retentionStageFilter, retentionPeriod, retentionDateRange]);
 
+  useEffect(() => {
+    if (!retentionDrawerPhone) { setRetentionCustomerDetail(null); return; }
+    setRetentionCustomerDetailLoading(true);
+    customerRetentionApi.customerDetail(retentionDrawerPhone)
+      .then(setRetentionCustomerDetail)
+      .catch((err: any) => { showToast(err?.message ?? "Could not load customer detail."); setRetentionDrawerPhone(null); })
+      .finally(() => setRetentionCustomerDetailLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retentionDrawerPhone]);
+
   const renderCustomerRetentionTab = () => {
     const resetRetentionForm = () => {
       setRetentionSatisfactionOutcome("");
@@ -40118,7 +40131,7 @@ ${waybillLineItems(w).length > 1
                   return (
                     <article key={row.orderId} className="px-4 py-4 flex flex-col gap-3">
                       <div className="flex items-start justify-between gap-3">
-                        <button type="button" className="!min-h-0 flex min-w-0 items-start gap-3 text-left" onClick={() => toggleLogging(row.orderId, row.dueStage)}>
+                        <button type="button" className="!min-h-0 flex min-w-0 items-start gap-3 text-left" onClick={() => setRetentionDrawerPhone(row.phone)}>
                           <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
                           <div className="min-w-0">
                             <div className="font-bold text-gray-900 truncate">{row.customerName}</div>
@@ -40162,13 +40175,13 @@ ${waybillLineItems(w).length > 1
                         <tr key={row.orderId} className="align-top hover:bg-gray-50">
                           <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span></td>
                           <td className="px-4 py-3">
-                            <div className="flex items-center gap-2.5">
+                            <button type="button" className="!min-h-0 flex items-center gap-2.5 text-left" onClick={() => setRetentionDrawerPhone(row.phone)}>
                               <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
                               <div className="min-w-0">
                                 <div className="font-bold text-gray-900">{row.customerName}</div>
                                 <div className="text-xs text-gray-500">{row.phone}</div>
                               </div>
-                            </div>
+                            </button>
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-600">#{row.orderId}<br />{row.productName}</td>
                           <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
@@ -40359,6 +40372,115 @@ ${waybillLineItems(w).length > 1
           </section>
         </div>
       )}
+
+      {retentionDrawerPhone && (() => {
+        const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+          <div className="px-5 py-4 border-t border-gray-100 first:border-t-0">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">{title}</p>
+            {children}
+          </div>
+        );
+        const Field: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+          <div className="flex justify-between items-start gap-3 py-1.5 text-sm">
+            <span className="text-gray-500 text-xs">{label}</span>
+            <span className="text-gray-900 font-semibold text-right">{value || "-"}</span>
+          </div>
+        );
+        const detail = retentionCustomerDetail;
+        return (
+          <>
+            <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setRetentionDrawerPhone(null)} />
+            <aside className="fixed right-0 top-0 bottom-0 z-50 w-full sm:w-[440px] bg-white shadow-2xl overflow-y-auto">
+              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Customer</p>
+                  <h3 className="text-base font-extrabold text-gray-900">{detail?.customer.name ?? "Loading…"}</h3>
+                </div>
+                <button onClick={() => setRetentionDrawerPhone(null)} className="!min-h-0 p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700"><X className="w-4 h-4" /></button>
+              </div>
+
+              {retentionCustomerDetailLoading && !detail ? (
+                <div className="px-5 py-10 text-center text-sm text-gray-400">Loading…</div>
+              ) : detail ? (
+                <>
+                  <Section title="Customer">
+                    <Field label="Phone" value={detail.customer.phone} />
+                    <Field label="Location" value={`${detail.customer.city}${detail.customer.state ? ", " + detail.customer.state : ""}`} />
+                    <Field label="Customer since" value={new Date(detail.customer.customerSince).toLocaleDateString()} />
+                  </Section>
+
+                  <Section title="Customer Summary">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                        <div className="text-[10px] font-bold uppercase text-gray-400">Total Orders</div>
+                        <div className="text-lg font-black text-gray-900">{detail.summary.totalOrders}</div>
+                      </div>
+                      <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                        <div className="text-[10px] font-bold uppercase text-gray-400">Total Spent</div>
+                        <div className="text-lg font-black text-gray-900">{formatMoney(detail.summary.totalSpent)}</div>
+                      </div>
+                      <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                        <div className="text-[10px] font-bold uppercase text-gray-400">Delivered</div>
+                        <div className="text-lg font-black text-gray-900">{detail.summary.delivered}</div>
+                      </div>
+                      <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2" title="Protohub has no order-level 'Returns' concept - this counts satisfaction checks that reported a wrong/damaged/incomplete order.">
+                        <div className="text-[10px] font-bold uppercase text-gray-400">Wrong/Damaged Reports</div>
+                        <div className="text-lg font-black text-gray-900">{detail.summary.wrongDamagedReportsCount}</div>
+                      </div>
+                    </div>
+                  </Section>
+
+                  {detail.latestOrder && (
+                    <Section title="Latest Order">
+                      <Field label="Product" value={`${detail.latestOrder.product}${detail.latestOrder.package ? " · " + detail.latestOrder.package : ""}`} />
+                      <Field label="Order" value={detail.latestOrder.orderId} />
+                      <Field label="Price" value={formatMoney(detail.latestOrder.amount)} />
+                      <Field label="Delivered" value={detail.latestOrder.deliveredDate ? new Date(detail.latestOrder.deliveredDate).toLocaleDateString() : "-"} />
+                      <Field label="Status" value={detail.latestOrder.status} />
+                    </Section>
+                  )}
+
+                  <Section title="Customer Timeline">
+                    {detail.timeline.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic">No retention activity logged yet.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {detail.timeline.map((event, idx) => (
+                          <div key={`${event.at}-${idx}`} className="flex gap-2">
+                            <div className="w-1.5 h-1.5 mt-1.5 rounded-full bg-[#1F8FE0] shrink-0" />
+                            <div>
+                              <p className="text-xs text-gray-400">{new Date(event.at).toLocaleString()}</p>
+                              <p className="text-sm text-gray-800">{event.detail}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Section>
+
+                  <div className="px-5 py-4 border-t border-gray-100 bg-gray-50">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Next Action</p>
+                    <p className="mt-1 text-sm font-bold text-gray-900">{detail.nextAction.recommendedText}</p>
+                    <div className="mt-3 flex gap-2">
+                      <a href={`tel:${detail.customer.phone}`} className="!min-h-0 flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1560a8]"><Phone className="w-3.5 h-3.5" /> Call Customer</a>
+                      <a href={buildWhatsAppTargets(detail.customer.phone, `Hello ${detail.customer.name}, this is Protohub following up on your order.`).normalUrl ?? undefined} target="_blank" rel="noreferrer" className="!min-h-0 flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp</a>
+                    </div>
+                    {detail.nextAction.orderId && (
+                      <button
+                        type="button"
+                        className="!min-h-0 mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"
+                        onClick={() => { setRetentionDrawerPhone(null); toggleLogging(detail.nextAction.orderId as string, detail.nextAction.dueStage); }}
+                      >
+                        Log Outcome
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : null}
+            </aside>
+          </>
+        );
+      })()}
       </>
     );
   };
