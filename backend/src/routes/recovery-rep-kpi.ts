@@ -95,23 +95,47 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     const settings = await loadKpiSettings(orgId);
     const { monthKey, start, exclusiveEnd } = monthBounds(typeof req.query.month === "string" ? req.query.month : undefined);
 
-    // Orders assigned to this rep, created in-month - the delivery-rate and
-    // documentation-completeness denominator (mirrors the app's existing
-    // "delivered / assigned" cohort convention).
-    const { data: assignedOrders, error: assignedError } = await supabase
-      .from("orders")
-      .select("id, status, currency, amount, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines, manual_bonus_override, bonus_manually_adjusted, upsell_from_qty, upsell_to_qty, source, delivered_date, created_at, call_outcome, next_follow_up_at, scheduled_at, scheduled_date, review_hold")
-      .eq("org_id", orgId)
-      .eq("assigned_rep_id", repId)
-      .gte("created_at", `${start}T00:00:00`)
-      .lt("created_at", `${exclusiveEnd}T00:00:00`)
-      .neq("review_hold", true);
-    if (assignedError) { res.status(500).json({ error: assignedError.message }); return; }
-    const assigned = assignedOrders ?? [];
+    // A Recovery Rep's orders never arrive as fresh leads - every order in
+    // their queue is an OLD order (cancelled/postponed/rejected weeks or
+    // months earlier) reassigned to them, so its created_at is almost never
+    // in the month being viewed. Scoping this cohort by created_at (like a
+    // normal Sales Rep's month) would silently exclude nearly everything a
+    // Recovery Rep actually works. Scope by what happened THIS month instead:
+    // delivered orders by delivered_date, cancelled/failed by updated_at
+    // (when they most recently reached that terminal status) - matching the
+    // same "delivered in period" convention Weekly Pace already uses below.
+    const ORDER_COLUMNS = "id, status, currency, amount, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines, manual_bonus_override, bonus_manually_adjusted, upsell_from_qty, upsell_to_qty, source, delivered_date, created_at, call_outcome, next_follow_up_at, scheduled_at, scheduled_date, review_hold";
+    const [deliveredThisMonthResult, closedNonDeliveredResult] = await Promise.all([
+      supabase
+        .from("orders")
+        .select(ORDER_COLUMNS)
+        .eq("org_id", orgId)
+        .eq("assigned_rep_id", repId)
+        .eq("status", "Delivered")
+        .gte("delivered_date", start)
+        .lt("delivered_date", exclusiveEnd)
+        .neq("review_hold", true),
+      supabase
+        .from("orders")
+        .select(ORDER_COLUMNS)
+        .eq("org_id", orgId)
+        .eq("assigned_rep_id", repId)
+        .in("status", ["Cancelled", "Failed"])
+        .gte("updated_at", `${start}T00:00:00`)
+        .lt("updated_at", `${exclusiveEnd}T00:00:00`)
+        .neq("review_hold", true)
+    ]);
+    if (deliveredThisMonthResult.error) { res.status(500).json({ error: deliveredThisMonthResult.error.message }); return; }
+    if (closedNonDeliveredResult.error) { res.status(500).json({ error: closedNonDeliveredResult.error.message }); return; }
+    const delivered = deliveredThisMonthResult.data ?? [];
+    const closedNonDelivered = closedNonDeliveredResult.data ?? [];
+    // Documentation completeness scores every order that reached a final
+    // outcome this month - the rep's full "did I leave a proper trail"
+    // cohort, not just the delivered slice.
+    const assigned = [...delivered, ...closedNonDelivered];
 
-    const delivered = assigned.filter((order) => order.status === "Delivered");
     const deliveredCount = delivered.length;
-    const closedCount = assigned.filter((order) => ["Delivered", "Cancelled", "Failed"].includes(order.status ?? "")).length;
+    const closedCount = assigned.length;
     const deliveryRatePct = closedCount > 0 ? Math.round((deliveredCount / closedCount) * 1000) / 10 : 0;
 
     // Net contribution = revenue - product cost - delivery/logistics -
