@@ -11037,7 +11037,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionPriorityFilter, setRetentionPriorityFilter] = useState("all");
   const [retentionProductFilter, setRetentionProductFilter] = useState("all");
   const [retentionAssignedRepFilter, setRetentionAssignedRepFilter] = useState("all");
-  const [retentionOutcomeReachStatus, setRetentionOutcomeReachStatus] = useState<"" | "reached" | "not_reached" | "not_reachable">("");
+  const [retentionOutcomeReachStatus, setRetentionOutcomeReachStatus] = useState<"" | "reached" | "not_reached" | "not_reachable" | "wrong_number">("");
   const [retentionOutcomeResponse, setRetentionOutcomeResponse] = useState<"" | "satisfied" | "neutral" | "complaint">("");
   const [retentionOutcomeNextAction, setRetentionOutcomeNextAction] = useState<"" | "request_review" | "request_referral" | "offer_another_product" | "schedule_follow_up" | "needs_resolution" | "not_interested" | "do_not_contact">("");
   const [retentionOutcomeNote, setRetentionOutcomeNote] = useState("");
@@ -40379,7 +40379,8 @@ ${waybillLineItems(w).length > 1
                   {([
                     ["reached", "Reached"],
                     ["not_reached", "Not Reached"],
-                    ["not_reachable", "Number Not Reachable"]
+                    ["not_reachable", "Number Not Reachable"],
+                    ["wrong_number", "Wrong Number"]
                   ] as const).map(([value, label]) => (
                     <button key={value} type="button" onClick={() => setRetentionOutcomeReachStatus(value)} className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionOutcomeReachStatus === value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}>{label}</button>
                   ))}

@@ -15,6 +15,7 @@ const router = Router();
 router.use(requireAuth);
 
 const RETENTION_ROLES = ["Owner", "Admin", "Manager", "Recovery Rep"] as const;
+const NON_REACH_STATUSES = new Set(["not_reached", "not_reachable", "wrong_number"]);
 
 // Real per-order COGS lookup, same pattern as manager-bonuses.ts's
 // loadPricingMap/cogsForOrder and recovery-rep-kpi.ts's costForOrders -
@@ -350,7 +351,7 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
 });
 
 const OutcomeFields = {
-  reachStatus: z.enum(["reached", "not_reached", "not_reachable"]).optional(),
+  reachStatus: z.enum(["reached", "not_reached", "not_reachable", "wrong_number"]).optional(),
   customerResponse: z.enum(["satisfied", "neutral", "complaint"]).optional(),
   nextAction: z.enum([
     "request_review", "request_referral", "offer_another_product",
@@ -637,9 +638,9 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     // "Contacted" = a real reach happened (rows logged before this
     // migration have no reach_status and represent a real logged
     // touchpoint, so they count too - only an explicit not-reached/
-    // not-reachable attempt is excluded).
+    // not-reachable/wrong-number attempt is excluded).
     const contactedOrderIds = new Set(
-      activity.filter((r) => r.reach_status !== "not_reached" && r.reach_status !== "not_reachable").map((r) => r.order_id)
+      activity.filter((r) => !NON_REACH_STATUSES.has(r.reach_status as string)).map((r) => r.order_id)
     );
 
     // "Issues Resolved" = a positive satisfaction check logged in this
@@ -721,7 +722,7 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     );
     const tasksCompleted = completedStageOrderIds.size;
     const repCustomersReached = new Set(
-      repActivity.filter((r) => r.reach_status !== "not_reached" && r.reach_status !== "not_reachable").map((r) => r.order_id)
+      repActivity.filter((r) => !NON_REACH_STATUSES.has(r.reach_status as string)).map((r) => r.order_id)
     ).size;
     const repIssuesResolved = await deriveIssuesResolved(repActivity);
     const repReviewsReceived = repActivity.filter((r) => r.stage === "review_referral" && r.review_collected).length;
