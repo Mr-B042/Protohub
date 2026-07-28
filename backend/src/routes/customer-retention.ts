@@ -8,7 +8,7 @@ import { resolveDateBounds } from "../lib/date-bounds.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import {
   dueStageFor, priorityBandFor, compareByPriority, dayKey, daysBetween, NEGATIVE_SATISFACTION_OUTCOMES,
-  type RetentionTouchpointRecord
+  DEFAULT_RETENTION_TIMING, type RetentionTouchpointRecord, type RetentionTiming
 } from "../lib/customer-retention-logic.js";
 
 const router = Router();
@@ -152,10 +152,22 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
     touchpointsByOrder.set(row.order_id, list);
   }
 
+  // Per-product configurable lifecycle timing - a product's override
+  // (any subset of the 5 fields) merges over the org-wide defaults; a
+  // product with no override (the common case) just uses the defaults.
+  const productIds = [...new Set(orders.map((o) => o.product_id).filter(Boolean))] as string[];
+  const { data: productTimingRows } = productIds.length > 0
+    ? await supabase.from("products").select("id, retention_timing_overrides").in("id", productIds)
+    : { data: [] as { id: string; retention_timing_overrides: Partial<RetentionTiming> | null }[] };
+  const timingByProductId = new Map(
+    (productTimingRows ?? []).map((p) => [p.id, { ...DEFAULT_RETENTION_TIMING, ...(p.retention_timing_overrides ?? {}) }])
+  );
+
   return orders.map((order) => {
     const tps = (touchpointsByOrder.get(order.id) ?? []) as (RetentionTouchpointRecord & Record<string, any>)[];
     const deliveredKey = String(order.delivered_date).slice(0, 10);
-    const { dueStage, overdueBy } = dueStageFor(deliveredKey, today, tps);
+    const timing = (order.product_id && timingByProductId.get(order.product_id)) || DEFAULT_RETENTION_TIMING;
+    const { dueStage, overdueBy } = dueStageFor(deliveredKey, today, tps, timing);
     const orderAmount = Number(order.amount ?? 0);
     const priorityBand = priorityBandFor({ dueStage, overdueBy, orderAmount }, settings);
     const last = tps.length > 0 ? tps[tps.length - 1] : null;
@@ -917,6 +929,51 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Failed to load the retention activity log." });
   }
+});
+
+// GET/PATCH /product-timing - per-product lifecycle timing overrides
+// (migration 175). Read is available to all retention roles (the worklist
+// needs it); write is Owner-only, same gating as the bonus settings.
+router.get("/product-timing", requireRole(...RETENTION_ROLES), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { data, error } = await supabase
+      .from("products")
+      .select("id, name, retention_timing_overrides")
+      .eq("org_id", orgId)
+      .eq("active", true)
+      .order("name", { ascending: true });
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({
+      products: (data ?? []).map((p) => ({ id: p.id, name: p.name, timing: p.retention_timing_overrides ?? null }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load per-product retention timing." });
+  }
+});
+
+const ProductTimingSchema = z.object({
+  satisfactionDays: z.number().int().min(0).max(365).optional(),
+  reviewDays: z.number().int().min(0).max(365).optional(),
+  repeatSaleStartDays: z.number().int().min(0).max(365).optional(),
+  repeatSaleEndDays: z.number().int().min(0).max(365).optional(),
+  winBackEndDays: z.number().int().min(0).max(365).optional()
+});
+
+router.patch("/product-timing/:productId", requireRole("Owner"), async (req, res) => {
+  const parsed = ProductTimingSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const hasAnyOverride = Object.keys(parsed.data).length > 0;
+  const { data, error } = await supabase
+    .from("products")
+    .update({ retention_timing_overrides: hasAnyOverride ? parsed.data : null })
+    .eq("org_id", req.user!.orgId)
+    .eq("id", req.params.productId)
+    .select("id, name, retention_timing_overrides")
+    .maybeSingle();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (!data) { res.status(404).json({ error: "Product not found." }); return; }
+  res.json({ product: { id: data.id, name: data.name, timing: data.retention_timing_overrides ?? null } });
 });
 
 router.get("/settings", requireRole(...RETENTION_ROLES), async (req, res) => {

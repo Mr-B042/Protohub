@@ -8,6 +8,7 @@ import {
   type RetentionTouchpointRecord,
   type PriorityBand
 } from "./customer-retention-logic.js";
+import type { RetentionTiming } from "./customer-retention-logic.js";
 
 const tp = (overrides: Partial<RetentionTouchpointRecord>): RetentionTouchpointRecord => ({
   stage: "satisfaction_check",
@@ -23,6 +24,13 @@ test("no touchpoints: satisfaction_check due once delivered >= 3 days", () => {
   assert.deepEqual(dueStageFor("2026-01-01", "2026-01-03", []), { dueStage: null, overdueBy: 0 });
   assert.deepEqual(dueStageFor("2026-01-01", "2026-01-04", []), { dueStage: "satisfaction_check", overdueBy: 0 });
   assert.deepEqual(dueStageFor("2026-01-01", "2026-01-06", []), { dueStage: "satisfaction_check", overdueBy: 2 });
+});
+
+test("dueStageFor: a per-product timing override changes the satisfaction-check threshold", () => {
+  const fastTiming: RetentionTiming = { satisfactionDays: 1, reviewDays: 7, repeatSaleStartDays: 21, repeatSaleEndDays: 45, winBackEndDays: 90 };
+  assert.deepEqual(dueStageFor("2026-01-01", "2026-01-02", [], fastTiming), { dueStage: "satisfaction_check", overdueBy: 0 });
+  // Same age is NOT yet due under the org-wide default (3 days).
+  assert.deepEqual(dueStageFor("2026-01-01", "2026-01-02", []), { dueStage: null, overdueBy: 0 });
 });
 
 test("negative satisfaction outcome routes to needs_resolution", () => {
