@@ -918,6 +918,22 @@ export interface RetentionDashboardSummary {
     retentionRepCost: number;
     roi: number | null;
   };
+  repPerformance: {
+    tasksAssigned: number;
+    tasksCompleted: number;
+    completionRatePct: number;
+    customersReached: number;
+    contactRatePct: number;
+    issuesResolved: number;
+    reviewsReceived: number;
+    referralsGenerated: number;
+    repeatPurchases: number;
+    retentionRevenue: number;
+    avgRepeatOrder: number;
+    roi: number | null;
+    revenueOverTime: Array<{ label: string; current: number }>;
+    revenueBySource: Array<{ label: string; amount: number; pct: number }>;
+  };
   bonus: { earned: number; target: number; progressPct: number };
 }
 
