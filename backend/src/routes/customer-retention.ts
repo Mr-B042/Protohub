@@ -776,6 +776,52 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
       revenueBySource
     };
 
+    // Manager/Owner-only cross-rep workload breakdown for the Reports page -
+    // reuses the already-fetched `activity` + the resulting-order amounts
+    // already looked up for the org-wide bonus breakdown, so no extra
+    // per-rep queries beyond one rep-name lookup.
+    let repBreakdown: Array<{
+      repId: string; repName: string; tasksAssigned: number; tasksCompleted: number; completionRatePct: number;
+      issuesResolved: number; reviewConversionPct: number | null; referralConversionPct: number | null; retentionRevenue: number;
+    }> | undefined;
+    if (["Owner", "Admin", "Manager"].includes(req.user!.role)) {
+      const amountByResultingOrderId = new Map(bonusResult.retentionSalesConverted.map((r) => [r.resultingOrderId, r.amount]));
+      const distinctReps = [...new Set(activity.map((r) => r.logged_by).filter(Boolean))] as string[];
+      const { data: breakdownUsers } = distinctReps.length > 0
+        ? await supabase.from("users").select("id, name").in("id", distinctReps)
+        : { data: [] as { id: string; name: string }[] };
+      const breakdownNameById = new Map((breakdownUsers ?? []).map((u) => [u.id, u.name]));
+      repBreakdown = await Promise.all(distinctReps.map(async (id) => {
+        const rows = activity.filter((r) => r.logged_by === id);
+        const assigned = new Set(rows.map((r) => r.order_id)).size;
+        const completed = new Set(rows.filter((r) =>
+          (r.stage === "satisfaction_check" && r.satisfaction_outcome) ||
+          (r.stage === "review_referral" && (r.review_collected || r.referral_collected)) ||
+          (r.stage === "retention_sale" && r.retention_outcome)
+        ).map((r) => r.order_id)).size;
+        const repIssuesResolvedForBreakdown = await deriveIssuesResolved(rows);
+        const reviewsReq = rows.filter((r) => r.stage === "review_referral" && r.review_requested_at).length;
+        const reviewsRecv = rows.filter((r) => r.stage === "review_referral" && r.review_collected).length;
+        const referralsReq = rows.filter((r) => r.stage === "review_referral" && r.referral_requested_at).length;
+        const referralsRecv = rows.filter((r) => r.stage === "review_referral" && r.referral_collected).length;
+        const revenue = rows
+          .filter((r) => r.stage === "retention_sale" && r.retention_outcome === "accepted" && r.resulting_order_id)
+          .reduce((sum, r) => sum + (amountByResultingOrderId.get(r.resulting_order_id as string) ?? 0), 0);
+        return {
+          repId: id,
+          repName: breakdownNameById.get(id) ?? "Unknown",
+          tasksAssigned: assigned,
+          tasksCompleted: completed,
+          completionRatePct: assigned > 0 ? Math.round((completed / assigned) * 100) : 0,
+          issuesResolved: repIssuesResolvedForBreakdown,
+          reviewConversionPct: reviewsReq > 0 ? Math.round((reviewsRecv / reviewsReq) * 100) : null,
+          referralConversionPct: referralsReq > 0 ? Math.round((referralsRecv / referralsReq) * 100) : null,
+          retentionRevenue: revenue
+        };
+      }));
+      repBreakdown.sort((a, b) => b.retentionRevenue - a.retentionRevenue);
+    }
+
     res.json({
       dateFrom: start,
       dateTo: exclusiveEnd,
@@ -790,6 +836,7 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
       reviewsReferrals: { reviewsRequested, reviewsReceived: reviews, reviewConversionPct, referralsRequested, referralsReceived: referrals, referralConversionPct },
       retentionRevenue: { repeatSalesRevenue, repeatCustomers, avgRepeatOrder, grossContribution, retentionRepCost, roi },
       repPerformance,
+      repBreakdown,
       bonus: {
         earned: bonusResult.breakdown.total,
         target: settings.monthlyBonusTarget,

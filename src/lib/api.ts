@@ -936,6 +936,10 @@ export interface RetentionDashboardSummary {
     revenueOverTime: Array<{ label: string; current: number }>;
     revenueBySource: Array<{ label: string; amount: number; pct: number }>;
   };
+  repBreakdown?: Array<{
+    repId: string; repName: string; tasksAssigned: number; tasksCompleted: number; completionRatePct: number;
+    issuesResolved: number; reviewConversionPct: number | null; referralConversionPct: number | null; retentionRevenue: number;
+  }>;
   bonus: { earned: number; target: number; progressPct: number };
 }
 
