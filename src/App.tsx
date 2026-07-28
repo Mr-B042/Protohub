@@ -40431,6 +40431,36 @@ ${waybillLineItems(w).length > 1
         </div>
       );
 
+      if (retentionSubPage === "Repeat Sales") return (
+        <div className="space-y-4">
+          {retentionDashboardSummary && (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Repeat Customers</div>
+                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.retentionRevenue.repeatCustomers}</div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Revenue</div>
+                <div className="text-xl font-black text-emerald-700 mt-1">{formatMoney(retentionDashboardSummary.retentionRevenue.repeatSalesRevenue)}</div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Avg Order</div>
+                <div className="text-xl font-black text-gray-900 mt-1">{formatMoney(retentionDashboardSummary.retentionRevenue.avgRepeatOrder)}</div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Gross Contribution</div>
+                <div className="text-xl font-black text-gray-900 mt-1">{formatMoney(retentionDashboardSummary.retentionRevenue.grossContribution)}</div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">ROI</div>
+                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.retentionRevenue.roi === null ? "—" : `${retentionDashboardSummary.retentionRevenue.roi}x`}</div>
+              </div>
+            </div>
+          )}
+          {renderActivityFeed("Repeat Sales", "No retention-sale activity logged in this period yet.")}
+        </div>
+      );
+
       if (retentionSubPage === "Reports") return (
         <div className="space-y-6">
           {retentionDashboardSummary && (
@@ -40497,6 +40527,40 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
                 </div>
+              </div>
+            </section>
+          )}
+
+          {retentionDashboardSummary?.repBreakdown && retentionDashboardSummary.repBreakdown.length > 0 && (
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-200">
+                <h2 className="text-base font-bold text-gray-900">Workload by Rep</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Owner/Manager view — every rep who logged activity this period.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                      {["Rep", "Assigned", "Completed", "Completion Rate", "Issues Resolved", "Review Conv.", "Referral Conv.", "Retention Revenue"].map((h) => (
+                        <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {retentionDashboardSummary.repBreakdown.map((rep) => (
+                      <tr key={rep.repId} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-bold text-gray-900">{rep.repName}</td>
+                        <td className="px-4 py-3 text-gray-600">{rep.tasksAssigned}</td>
+                        <td className="px-4 py-3 text-gray-600">{rep.tasksCompleted}</td>
+                        <td className="px-4 py-3 text-gray-600">{rep.completionRatePct}%</td>
+                        <td className="px-4 py-3 text-gray-600">{rep.issuesResolved}</td>
+                        <td className="px-4 py-3 text-gray-600">{rep.reviewConversionPct === null ? "—" : `${rep.reviewConversionPct}%`}</td>
+                        <td className="px-4 py-3 text-gray-600">{rep.referralConversionPct === null ? "—" : `${rep.referralConversionPct}%`}</td>
+                        <td className="px-4 py-3 font-semibold text-gray-800">{formatMoney(rep.retentionRevenue)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </section>
           )}
