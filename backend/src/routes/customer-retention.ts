@@ -393,13 +393,14 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
     updated_by: req.user!.id,
     updated_at: new Date().toISOString()
   };
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from("customer_retention_bonus_settings")
-    .upsert(payload, { onConflict: "org_id" })
-    .select()
-    .single();
+    .upsert(payload, { onConflict: "org_id" });
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json(data);
+  // Re-load through the same camelCase mapping GET uses, so both endpoints
+  // return an identical shape - the raw upserted row is snake_case.
+  const settings = await loadBonusSettings(req.user!.orgId);
+  res.json({ settings });
 });
 
 export default router;
