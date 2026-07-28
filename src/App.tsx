@@ -11034,6 +11034,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionSettingsSaving, setRetentionSettingsSaving] = useState(false);
   const [retentionDashboardSummary, setRetentionDashboardSummary] = useState<RetentionDashboardSummary | null>(null);
   const [retentionSearch, setRetentionSearch] = useState("");
+  const [retentionPriorityFilter, setRetentionPriorityFilter] = useState("all");
+  const [retentionProductFilter, setRetentionProductFilter] = useState("all");
+  const [retentionAssignedRepFilter, setRetentionAssignedRepFilter] = useState("all");
   const [retentionOutcomeReachStatus, setRetentionOutcomeReachStatus] = useState<"" | "reached" | "not_reached" | "not_reachable">("");
   const [retentionOutcomeResponse, setRetentionOutcomeResponse] = useState<"" | "satisfied" | "neutral" | "complaint">("");
   const [retentionOutcomeNextAction, setRetentionOutcomeNextAction] = useState<"" | "request_review" | "request_referral" | "offer_another_product" | "schedule_follow_up" | "needs_resolution" | "not_interested" | "do_not_contact">("");
@@ -39908,14 +39911,30 @@ ${waybillLineItems(w).length > 1
       : row.dueStage === "win_back" ? "Attempt win-back"
       : "—";
 
+    // Concrete, time-aware instruction ("Call now — 2d overdue" / "Due
+    // today") rather than a static label - the underlying data is
+    // day-granular (delivered_date, no time-of-day), so this reads in days
+    // rather than the doc's illustrative hours, but carries the same
+    // "act now, here's how urgent" intent.
+    const nextActionInstructionFor = (row: RetentionWorklistRow) => {
+      const label = nextActionLabelFor(row);
+      if (label === "—") return label;
+      if (row.dueStage === "needs_resolution") return `Call now — ${label.toLowerCase()}`;
+      if (row.overdueBy > 0) return `Call now — ${row.overdueBy}d overdue`;
+      if (row.dueStage !== null) return `${label} — due today`;
+      return label;
+    };
+
     const retentionSearchQuery = retentionSearch.trim().toLowerCase();
-    const filteredRetentionWorklist = retentionSearchQuery
-      ? retentionWorklist.filter((row) =>
-          row.customerName.toLowerCase().includes(retentionSearchQuery) ||
-          row.phone.includes(retentionSearchQuery) ||
-          row.orderId.toLowerCase().includes(retentionSearchQuery)
-        )
-      : retentionWorklist;
+    const retentionProductOptions = Array.from(new Set(retentionWorklist.map((r) => r.productName))).sort();
+    const retentionRepOptions = Array.from(
+      new Map(retentionWorklist.filter((r) => r.assignedRepId).map((r) => [r.assignedRepId as string, r.assignedRepName ?? "Unknown"])).entries()
+    ).sort((a, b) => a[1].localeCompare(b[1]));
+    const filteredRetentionWorklist = retentionWorklist
+      .filter((row) => !retentionSearchQuery || row.customerName.toLowerCase().includes(retentionSearchQuery) || row.phone.includes(retentionSearchQuery) || row.orderId.toLowerCase().includes(retentionSearchQuery))
+      .filter((row) => retentionPriorityFilter === "all" || row.priorityBand === retentionPriorityFilter)
+      .filter((row) => retentionProductFilter === "all" || row.productName === retentionProductFilter)
+      .filter((row) => retentionAssignedRepFilter === "all" || row.assignedRepId === retentionAssignedRepFilter);
 
     const logOutcomeRow = retentionWorklist.find((r) => r.orderId === retentionLoggingOrderId) ?? null;
 
@@ -40201,13 +40220,50 @@ ${waybillLineItems(w).length > 1
                 </button>
               )}
             </div>
-            <input
-              type="text"
-              value={retentionSearch}
-              onChange={(e) => setRetentionSearch(e.target.value)}
-              placeholder="Search customer, phone, or order ID"
-              className="!min-h-0 w-full sm:w-72 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={retentionSearch}
+                onChange={(e) => setRetentionSearch(e.target.value)}
+                placeholder="Search customer, phone, or order ID"
+                className="!min-h-0 w-full sm:w-64 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              />
+              <select
+                value={retentionPriorityFilter}
+                onChange={(e) => setRetentionPriorityFilter(e.target.value)}
+                className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              >
+                <option value="all">Priority: All</option>
+                {(["critical", "overdue", "high_value", "due", "opportunity"] as const).map((band) => (
+                  <option key={band} value={band}>{priorityBadge(band).label}</option>
+                ))}
+              </select>
+              <select
+                value={retentionProductFilter}
+                onChange={(e) => setRetentionProductFilter(e.target.value)}
+                className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              >
+                <option value="all">Product: All</option>
+                {retentionProductOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <select
+                value={retentionAssignedRepFilter}
+                onChange={(e) => setRetentionAssignedRepFilter(e.target.value)}
+                className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              >
+                <option value="all">Assigned: All</option>
+                {retentionRepOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
+              {(retentionPriorityFilter !== "all" || retentionProductFilter !== "all" || retentionAssignedRepFilter !== "all" || retentionSearch) && (
+                <button
+                  type="button"
+                  onClick={() => { setRetentionPriorityFilter("all"); setRetentionProductFilter("all"); setRetentionAssignedRepFilter("all"); setRetentionSearch(""); }}
+                  className="!min-h-0 text-xs font-bold text-gray-500 hover:text-gray-700"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
           </div>
 
           {retentionWorklistLoading && retentionWorklist.length === 0 ? (
@@ -40239,7 +40295,7 @@ ${waybillLineItems(w).length > 1
                       <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 space-y-0.5">
                         <div>Stage: <strong className="text-gray-800">{stageLabel(row.dueStage)}</strong></div>
                         <div>Last contact: {row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</div>
-                        <div>Next action: <strong className="text-gray-800">{nextActionLabelFor(row)}</strong></div>
+                        <div>Next action: <strong className="text-gray-800">{nextActionInstructionFor(row)}</strong></div>
                         <div>Value: {formatMoney(row.orderAmount)}</div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -40281,7 +40337,7 @@ ${waybillLineItems(w).length > 1
                           <td className="px-4 py-3 text-xs text-gray-600">#{row.orderId}<br />{row.productName}</td>
                           <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
                           <td className="px-4 py-3 text-xs text-gray-600">{row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</td>
-                          <td className="px-4 py-3 text-xs font-semibold text-gray-800">{nextActionLabelFor(row)}</td>
+                          <td className={`px-4 py-3 text-xs font-semibold ${row.overdueBy > 0 || row.dueStage === "needs_resolution" ? "text-red-600" : "text-gray-800"}`}>{nextActionInstructionFor(row)}</td>
                           <td className="px-4 py-3 text-xs font-semibold text-gray-800">{formatMoney(row.orderAmount)}</td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1.5">
@@ -40487,9 +40543,18 @@ ${waybillLineItems(w).length > 1
             <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setRetentionDrawerPhone(null)} />
             <aside className="fixed right-0 top-0 bottom-0 z-50 w-full sm:w-[440px] bg-white shadow-2xl overflow-y-auto">
               <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Customer</p>
-                  <h3 className="text-base font-extrabold text-gray-900">{detail?.customer.name ?? "Loading…"}</h3>
+                <div className="flex items-center gap-2">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Customer</p>
+                    <h3 className="text-base font-extrabold text-gray-900">{detail?.customer.name ?? "Loading…"}</h3>
+                  </div>
+                  {detail && (
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                      detail.customer.status === "Needs Attention" ? "border-rose-200 bg-rose-50 text-rose-700"
+                      : detail.customer.status === "Repeat Buyer" ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-sky-200 bg-sky-50 text-sky-700"
+                    }`}>{detail.customer.status}</span>
+                  )}
                 </div>
                 <button onClick={() => setRetentionDrawerPhone(null)} className="!min-h-0 p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700"><X className="w-4 h-4" /></button>
               </div>

@@ -808,6 +808,8 @@ export interface RetentionWorklistRow {
   orderAmount: number;
   orderCurrency: string;
   productName: string;
+  assignedRepId: string | null;
+  assignedRepName: string | null;
   lastTouchpoint: { stage: string; loggedAt: string; satisfactionOutcome: string | null } | null;
   lastContactAt: string | null;
   nextActionAt: string | null;
@@ -938,7 +940,7 @@ export interface RetentionDashboardSummary {
 }
 
 export interface RetentionCustomerDetail {
-  customer: { name: string; phone: string; city: string; state: string; customerSince: string };
+  customer: { name: string; phone: string; city: string; state: string; customerSince: string; status: string };
   summary: { totalOrders: number; totalSpent: number; delivered: number; wrongDamagedReportsCount: number; ltv: number };
   latestOrder: { orderId: string; product: string; package: string; amount: number; currency: string; deliveredDate: string | null; status: string } | null;
   timeline: Array<{ type: string; at: string; detail: string }>;
@@ -955,11 +957,14 @@ export const customerRetentionApi = {
     const suffix = qs.toString();
     return get<RetentionDashboardSummary>(`/api/customer-retention/dashboard-summary${suffix ? `?${suffix}` : ""}`);
   },
-  worklist: (params: { stage?: string; search?: string; minValue?: number } = {}) => {
+  worklist: (params: { stage?: string; search?: string; minValue?: number; priority?: string; product?: string; assignedRepId?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.stage && params.stage !== "all") qs.set("stage", params.stage);
     if (params.search) qs.set("search", params.search);
     if (typeof params.minValue === "number") qs.set("minValue", String(params.minValue));
+    if (params.priority && params.priority !== "all") qs.set("priority", params.priority);
+    if (params.product && params.product !== "all") qs.set("product", params.product);
+    if (params.assignedRepId && params.assignedRepId !== "all") qs.set("assignedRepId", params.assignedRepId);
     const suffix = qs.toString();
     return get<{ rows: RetentionWorklistRow[] }>(`/api/customer-retention/worklist${suffix ? `?${suffix}` : ""}`);
   },
