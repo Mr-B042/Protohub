@@ -1,0 +1,112 @@
+// Pure, unit-tested customer-retention worklist logic - no Supabase/Express
+// imports here on purpose, so this stays trivially testable. Everything is
+// derived from delivered_date + which touchpoint rows already exist; nothing
+// is stored as a "next due" column (see backend/supabase/migrations/172).
+
+export type RetentionStage = "satisfaction_check" | "review_referral" | "retention_sale";
+export type DueStage = RetentionStage | "needs_resolution" | "win_back" | null;
+export type PriorityBand = "critical" | "overdue" | "high_value" | "due" | "opportunity";
+
+export const NEGATIVE_SATISFACTION_OUTCOMES = new Set([
+  "has_not_used_it", "needs_usage_guidance", "wrong_damaged_or_incomplete", "not_satisfied"
+]);
+
+// Band rank for sorting - lower is more urgent. Mirrors the spec's
+// approximate 8-point ranking, collapsed into discrete bands (like
+// follow-up-workflow.ts's derivePriority) rather than a fragile weighted
+// score: 1) unresolved complaints, 2) overdue, 3) high-value, 4-7) due
+// (satisfaction/review/referral/retention, treated as one tier), 8) win-back.
+export const PRIORITY_BAND_RANK: Record<PriorityBand, number> = {
+  critical: 0, overdue: 1, high_value: 2, due: 3, opportunity: 4
+};
+
+export const dayKey = (isoOrDate: string) => isoOrDate.slice(0, 10);
+export const daysBetween = (fromKey: string, toKey: string) =>
+  Math.floor((new Date(`${toKey}T00:00:00Z`).getTime() - new Date(`${fromKey}T00:00:00Z`).getTime()) / 86400000);
+
+export interface RetentionTouchpointRecord {
+  stage: RetentionStage;
+  satisfaction_outcome: string | null;
+  review_collected: boolean | null;
+  referral_collected: boolean | null;
+  retention_outcome: "accepted" | "declined" | "no_response" | null;
+  logged_at: string;
+}
+
+// A stage only counts as "handled" once a row carries a real completion
+// signal, not merely because a row of that stage exists. This is what lets
+// a "Not Reached" attempt (reach_status set, nothing else) or a bare
+// "review requested" row (review_requested_at set, review_collected still
+// false) exist without prematurely closing out the stage.
+function stageCompleted(rows: RetentionTouchpointRecord[], stage: RetentionStage): boolean {
+  if (stage === "satisfaction_check") return rows.some((t) => t.stage === stage && !!t.satisfaction_outcome);
+  if (stage === "review_referral") return rows.some((t) => t.stage === stage && (!!t.review_collected || !!t.referral_collected));
+  return rows.some((t) => t.stage === stage && !!t.retention_outcome);
+}
+
+// Uses the LATEST satisfaction row with a real outcome (not the first) so a
+// customer isn't trapped in Needs Resolution forever after one early
+// negative check - a later positive re-check moves them back into normal
+// progression. `touchpoints` is expected in ascending logged_at order
+// (the existing worklist query already orders this way).
+function latestSatisfactionOutcome(touchpoints: RetentionTouchpointRecord[]): string | null {
+  const withOutcome = touchpoints.filter((t) => t.stage === "satisfaction_check" && t.satisfaction_outcome);
+  return withOutcome.length > 0 ? withOutcome[withOutcome.length - 1].satisfaction_outcome : null;
+}
+
+export function dueStageFor(
+  deliveredDateKey: string,
+  todayKey: string,
+  touchpoints: RetentionTouchpointRecord[]
+): { dueStage: DueStage; overdueBy: number } {
+  const age = daysBetween(deliveredDateKey, todayKey);
+
+  if (!stageCompleted(touchpoints, "satisfaction_check")) {
+    return age >= 3 ? { dueStage: "satisfaction_check", overdueBy: age - 3 } : { dueStage: null, overdueBy: 0 };
+  }
+
+  const latestOutcome = latestSatisfactionOutcome(touchpoints);
+  if (latestOutcome && NEGATIVE_SATISFACTION_OUTCOMES.has(latestOutcome)) {
+    return { dueStage: "needs_resolution", overdueBy: age };
+  }
+
+  if (!stageCompleted(touchpoints, "review_referral")) {
+    return age >= 7 ? { dueStage: "review_referral", overdueBy: age - 7 } : { dueStage: null, overdueBy: 0 };
+  }
+
+  if (!stageCompleted(touchpoints, "retention_sale")) {
+    if (age >= 21 && age <= 45) return { dueStage: "retention_sale", overdueBy: age - 21 };
+    if (age > 45 && age <= 90) return { dueStage: "win_back", overdueBy: age - 45 };
+    return { dueStage: null, overdueBy: 0 };
+  }
+
+  return { dueStage: null, overdueBy: 0 };
+}
+
+export interface PriorityInput {
+  dueStage: DueStage;
+  overdueBy: number;
+  orderAmount: number;
+}
+export interface PrioritySettings {
+  highValueOrderThreshold: number;
+}
+
+export function priorityBandFor(row: PriorityInput, settings: PrioritySettings): PriorityBand {
+  if (row.dueStage === "needs_resolution") return "critical";
+  if (row.dueStage === null) return "opportunity";
+  if (row.overdueBy > 0) return "overdue";
+  if (row.orderAmount >= settings.highValueOrderThreshold) return "high_value";
+  if (row.dueStage === "win_back") return "opportunity";
+  return "due";
+}
+
+export function compareByPriority(
+  a: { priorityBand: PriorityBand; overdueBy: number; orderAmount: number },
+  b: { priorityBand: PriorityBand; overdueBy: number; orderAmount: number }
+): number {
+  const bandDiff = PRIORITY_BAND_RANK[a.priorityBand] - PRIORITY_BAND_RANK[b.priorityBand];
+  if (bandDiff !== 0) return bandDiff;
+  if (b.overdueBy !== a.overdueBy) return b.overdueBy - a.overdueBy;
+  return b.orderAmount - a.orderAmount;
+}

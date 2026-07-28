@@ -4,6 +4,11 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
+import { resolveDateBounds } from "../lib/date-bounds.js";
+import {
+  dueStageFor, priorityBandFor, compareByPriority, dayKey, daysBetween,
+  type RetentionTouchpointRecord
+} from "../lib/customer-retention-logic.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -16,7 +21,9 @@ const DEFAULT_BONUS_SETTINGS = {
   videoTestimonialBonus: 1500,
   referralBonus: 1000,
   retentionSaleBonusPct: 10,
-  customerDiscountPct: 10
+  customerDiscountPct: 10,
+  highValueOrderThreshold: 50000,
+  monthlyBonusTarget: 30000
 };
 
 async function loadBonusSettings(orgId: string) {
@@ -32,7 +39,9 @@ async function loadBonusSettings(orgId: string) {
     videoTestimonialBonus: Number(data.video_testimonial_bonus ?? DEFAULT_BONUS_SETTINGS.videoTestimonialBonus),
     referralBonus: Number(data.referral_bonus ?? DEFAULT_BONUS_SETTINGS.referralBonus),
     retentionSaleBonusPct: Number(data.retention_sale_bonus_pct ?? DEFAULT_BONUS_SETTINGS.retentionSaleBonusPct),
-    customerDiscountPct: Number(data.customer_discount_pct ?? DEFAULT_BONUS_SETTINGS.customerDiscountPct)
+    customerDiscountPct: Number(data.customer_discount_pct ?? DEFAULT_BONUS_SETTINGS.customerDiscountPct),
+    highValueOrderThreshold: Number(data.high_value_order_threshold ?? DEFAULT_BONUS_SETTINGS.highValueOrderThreshold),
+    monthlyBonusTarget: Number(data.monthly_bonus_target ?? DEFAULT_BONUS_SETTINGS.monthlyBonusTarget)
   };
 }
 
@@ -40,70 +49,47 @@ const SATISFACTION_OUTCOMES = [
   "satisfied", "has_not_used_it", "needs_usage_guidance", "wrong_damaged_or_incomplete",
   "not_satisfied", "potential_repeat_buyer", "potential_referral_customer"
 ] as const;
-const NEGATIVE_SATISFACTION_OUTCOMES = new Set(["has_not_used_it", "needs_usage_guidance", "wrong_damaged_or_incomplete", "not_satisfied"]);
-
-const dayKey = (isoOrDate: string) => isoOrDate.slice(0, 10);
-const daysBetween = (fromKey: string, toKey: string) =>
-  Math.floor((new Date(`${toKey}T00:00:00Z`).getTime() - new Date(`${fromKey}T00:00:00Z`).getTime()) / 86400000);
-
-type Touchpoint = {
-  order_id: string;
-  stage: "satisfaction_check" | "review_referral" | "retention_sale";
-  satisfaction_outcome: string | null;
-  review_is_video: boolean;
-  logged_at: string;
-};
-
-// Pure due-stage logic: derived entirely from delivered_date + which
-// touchpoint rows already exist - no stored "next due" column. A negative
-// satisfaction outcome routes an order to "needs_resolution" instead of
-// progressing toward review/referral, matching the spec's own framing
-// ("separates genuine customers from people who need assistance").
-function dueStageFor(deliveredDateKey: string, todayKey: string, touchpoints: Touchpoint[]) {
-  const age = daysBetween(deliveredDateKey, todayKey);
-  const satisfaction = touchpoints.find((t) => t.stage === "satisfaction_check");
-  const review = touchpoints.find((t) => t.stage === "review_referral");
-  const retention = touchpoints.find((t) => t.stage === "retention_sale");
-
-  if (!satisfaction) {
-    return age >= 3 ? { dueStage: "satisfaction_check" as const, overdueBy: age - 3 } : { dueStage: null, overdueBy: 0 };
-  }
-  if (satisfaction.satisfaction_outcome && NEGATIVE_SATISFACTION_OUTCOMES.has(satisfaction.satisfaction_outcome)) {
-    return { dueStage: "needs_resolution" as const, overdueBy: age };
-  }
-  if (!review) {
-    return age >= 7 ? { dueStage: "review_referral" as const, overdueBy: age - 7 } : { dueStage: null, overdueBy: 0 };
-  }
-  if (!retention) {
-    if (age >= 21 && age <= 45) return { dueStage: "retention_sale" as const, overdueBy: age - 21 };
-    return { dueStage: null, overdueBy: 0 };
-  }
-  return { dueStage: null, overdueBy: 0 };
-}
 
 router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const stageFilter = typeof req.query.stage === "string" ? req.query.stage : "all";
+    const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
+    const minValue = typeof req.query.minValue === "string" && !Number.isNaN(Number(req.query.minValue)) ? Number(req.query.minValue) : null;
     const today = dayKey(new Date().toISOString());
     const oldestRelevant = new Date();
-    oldestRelevant.setUTCDate(oldestRelevant.getUTCDate() - 60);
+    oldestRelevant.setUTCDate(oldestRelevant.getUTCDate() - 90);
+
+    const settings = await loadBonusSettings(orgId);
 
     const { data: deliveredOrders, error: ordersError } = await supabase
       .from("orders")
-      .select("id, customer, phone, delivered_date, product_id, package_id")
+      .select("id, customer, phone, delivered_date, product_id, package_id, amount, currency, product_name")
       .eq("org_id", orgId)
       .eq("status", "Delivered")
       .gte("delivered_date", oldestRelevant.toISOString().slice(0, 10))
       .not("delivered_date", "is", null);
     if (ordersError) { res.status(500).json({ error: ordersError.message }); return; }
-    const orders = deliveredOrders ?? [];
+    let orders = deliveredOrders ?? [];
+    if (orders.length === 0) { res.json({ rows: [] }); return; }
+
+    // Opted-out customers must leave the worklist - blocks_followup already
+    // suppresses follow-up obligations elsewhere (customers.ts), but the
+    // retention worklist never checked it, so an opted-out phone stayed in
+    // the queue forever.
+    const { data: optOuts } = await supabase
+      .from("customer_flags")
+      .select("phone")
+      .eq("org_id", orgId)
+      .eq("blocks_followup", true);
+    const optedOutPhones = new Set((optOuts ?? []).map((f) => f.phone));
+    orders = orders.filter((o) => !optedOutPhones.has(String(o.phone).replace(/\D/g, "")));
     if (orders.length === 0) { res.json({ rows: [] }); return; }
 
     const orderIds = orders.map((o) => o.id);
     const { data: touchpointRows, error: touchpointsError } = await supabase
       .from("customer_retention_touchpoints")
-      .select("order_id, stage, satisfaction_outcome, review_is_video, customer_discount_owed, customer_discount_cleared_at, logged_at")
+      .select("order_id, stage, satisfaction_outcome, review_collected, referral_collected, review_is_video, review_requested_at, referral_requested_at, retention_outcome, customer_discount_owed, customer_discount_cleared_at, next_action, next_action_at, next_action_note, reach_status, logged_at")
       .eq("org_id", orgId)
       .in("order_id", orderIds)
       .order("logged_at", { ascending: true });
@@ -117,13 +103,18 @@ router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
     }
 
     const rows = orders.map((order) => {
-      const tps = (touchpointsByOrder.get(order.id) ?? []) as Touchpoint[];
+      const tps = (touchpointsByOrder.get(order.id) ?? []) as (RetentionTouchpointRecord & Record<string, any>)[];
       const deliveredKey = String(order.delivered_date).slice(0, 10);
       const { dueStage, overdueBy } = dueStageFor(deliveredKey, today, tps);
+      const orderAmount = Number(order.amount ?? 0);
+      const priorityBand = priorityBandFor({ dueStage, overdueBy, orderAmount }, settings);
       const last = tps.length > 0 ? tps[tps.length - 1] : null;
-      const discountOwed = (touchpointsByOrder.get(order.id) ?? []).some(
-        (t: any) => t.customer_discount_owed && !t.customer_discount_cleared_at
-      );
+      const discountOwed = tps.some((t) => t.customer_discount_owed && !t.customer_discount_cleared_at);
+      const reviewRequested = tps.some((t) => !!t.review_requested_at);
+      const reviewCollected = tps.some((t) => t.review_collected);
+      const referralRequested = tps.some((t) => !!t.referral_requested_at);
+      const referralCollected = tps.some((t) => t.referral_collected);
+      const lastContactAt = tps.length > 0 ? tps.reduce((max, t) => (t.logged_at > max ? t.logged_at : max), tps[0].logged_at) : null;
       return {
         orderId: order.id,
         customerName: order.customer,
@@ -132,11 +123,25 @@ router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
         daysSinceDelivery: daysBetween(deliveredKey, today),
         dueStage,
         overdueBy,
+        priorityBand,
+        orderAmount,
+        orderCurrency: order.currency,
+        productName: order.product_name,
         lastTouchpoint: last ? { stage: last.stage, loggedAt: last.logged_at, satisfactionOutcome: last.satisfaction_outcome } : null,
-        discountOwed
+        lastContactAt,
+        nextActionAt: last?.next_action_at ?? null,
+        nextActionNote: last?.next_action_note ?? null,
+        discountOwed,
+        reviewRequested, reviewCollected, referralRequested, referralCollected
       };
-    }).filter((row) => stageFilter === "all" || row.dueStage === stageFilter)
-      .sort((a, b) => b.overdueBy - a.overdueBy);
+    })
+      // "all" means "everything actionable" - rows with no due stage (fully
+      // progressed / not yet eligible) are noise in a work queue and are
+      // still reachable individually via the stage-specific filters.
+      .filter((row) => (stageFilter === "all" ? row.dueStage !== null : row.dueStage === stageFilter))
+      .filter((row) => !search || row.customerName.toLowerCase().includes(search) || String(row.phone).includes(search) || row.orderId.toLowerCase().includes(search))
+      .filter((row) => minValue === null || row.orderAmount >= minValue)
+      .sort(compareByPriority);
 
     res.json({ rows });
   } catch (error: any) {
@@ -312,10 +317,10 @@ router.get("/bonus-summary", requireRole(...RETENTION_ROLES), async (req, res) =
   try {
     const orgId = req.user!.orgId;
     const settings = await loadBonusSettings(orgId);
-    const now = new Date();
-    const defaultFrom = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`;
-    const dateFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom : defaultFrom;
-    const dateTo = typeof req.query.dateTo === "string" ? req.query.dateTo : dayKey(now.toISOString());
+    const { start, exclusiveEnd } = resolveDateBounds(req.query as Record<string, unknown>);
+    const inclusiveEndDate = new Date(`${exclusiveEnd}T00:00:00Z`);
+    inclusiveEndDate.setUTCDate(inclusiveEndDate.getUTCDate() - 1);
+    const dateTo = inclusiveEndDate.toISOString().slice(0, 10);
     const userId = typeof req.query.userId === "string" ? req.query.userId : req.user!.id;
 
     const { data: touchpoints, error } = await supabase
@@ -323,8 +328,8 @@ router.get("/bonus-summary", requireRole(...RETENTION_ROLES), async (req, res) =
       .select("stage, satisfaction_outcome, review_collected, review_is_video, referral_collected, retention_outcome, resulting_order_id, logged_by, logged_at")
       .eq("org_id", orgId)
       .eq("logged_by", userId)
-      .gte("logged_at", `${dateFrom}T00:00:00`)
-      .lt("logged_at", `${dateTo}T23:59:59.999`);
+      .gte("logged_at", `${start}T00:00:00`)
+      .lt("logged_at", `${exclusiveEnd}T00:00:00`);
     if (error) { res.status(500).json({ error: error.message }); return; }
     const rows = touchpoints ?? [];
 
@@ -354,7 +359,7 @@ router.get("/bonus-summary", requireRole(...RETENTION_ROLES), async (req, res) =
     const total = satisfactionBonus + reviewBonus + videoBonus + referralBonus + retentionSaleBonus;
 
     res.json({
-      dateFrom, dateTo, userId,
+      dateFrom: start, dateTo, userId,
       satisfactionChecksLogged, writtenReviewsCollected, videoTestimonialsCollected, referralsCollected,
       retentionSalesConverted,
       breakdown: { satisfactionBonus, reviewBonus, videoBonus, referralBonus, retentionSaleBonus, total }
@@ -383,6 +388,8 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
     referral_bonus: Number(body.referralBonus ?? DEFAULT_BONUS_SETTINGS.referralBonus),
     retention_sale_bonus_pct: Number(body.retentionSaleBonusPct ?? DEFAULT_BONUS_SETTINGS.retentionSaleBonusPct),
     customer_discount_pct: Number(body.customerDiscountPct ?? DEFAULT_BONUS_SETTINGS.customerDiscountPct),
+    high_value_order_threshold: Number(body.highValueOrderThreshold ?? DEFAULT_BONUS_SETTINGS.highValueOrderThreshold),
+    monthly_bonus_target: Number(body.monthlyBonusTarget ?? DEFAULT_BONUS_SETTINGS.monthlyBonusTarget),
     updated_by: req.user!.id,
     updated_at: new Date().toISOString()
   };
