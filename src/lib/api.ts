@@ -880,7 +880,48 @@ export interface RetentionTouchpointPayload {
   resultingOrderId?: string;
 }
 
+export interface RetentionDashboardSummary {
+  dateFrom: string;
+  dateTo: string;
+  kpis: {
+    dueToday: number;
+    overdue: number;
+    contacted: number;
+    issuesResolved: number;
+    reviews: number;
+    referrals: number;
+    repeatCustomers: number;
+    repeatSalesRevenue: number;
+  };
+  lifecyclePipeline: {
+    delivered: number;
+    satisfactionDue: number;
+    reviewDue: number;
+    referralDue: number;
+    retentionSaleDue: number;
+    winBack: number;
+    needsResolution: number;
+  };
+  retentionRevenue: {
+    repeatSalesRevenue: number;
+    repeatCustomers: number;
+    avgRepeatOrder: number;
+    grossContribution: number;
+    retentionRepCost: number;
+    roi: number | null;
+  };
+  bonus: { earned: number; target: number; progressPct: number };
+}
+
 export const customerRetentionApi = {
+  dashboardSummary: (params: { dateFrom?: string; dateTo?: string; repId?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.dateFrom) qs.set("dateFrom", params.dateFrom);
+    if (params.dateTo) qs.set("dateTo", params.dateTo);
+    if (params.repId) qs.set("repId", params.repId);
+    const suffix = qs.toString();
+    return get<RetentionDashboardSummary>(`/api/customer-retention/dashboard-summary${suffix ? `?${suffix}` : ""}`);
+  },
   worklist: (params: { stage?: string; search?: string; minValue?: number } = {}) => {
     const qs = new URLSearchParams();
     if (params.stage && params.stage !== "all") qs.set("stage", params.stage);

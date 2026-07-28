@@ -6,7 +6,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 import { resolveDateBounds } from "../lib/date-bounds.js";
 import {
-  dueStageFor, priorityBandFor, compareByPriority, dayKey, daysBetween,
+  dueStageFor, priorityBandFor, compareByPriority, dayKey, daysBetween, NEGATIVE_SATISFACTION_OUTCOMES,
   type RetentionTouchpointRecord
 } from "../lib/customer-retention-logic.js";
 
@@ -50,91 +50,111 @@ const SATISFACTION_OUTCOMES = [
   "not_satisfied", "potential_repeat_buyer", "potential_referral_customer"
 ] as const;
 
+type WorklistRow = {
+  orderId: string; customerName: string; phone: string; deliveredDate: string; daysSinceDelivery: number;
+  dueStage: ReturnType<typeof dueStageFor>["dueStage"]; overdueBy: number; priorityBand: ReturnType<typeof priorityBandFor>;
+  orderAmount: number; orderCurrency: string; productName: string;
+  lastTouchpoint: { stage: string; loggedAt: string; satisfactionOutcome: string | null } | null;
+  lastContactAt: string | null; nextActionAt: string | null; nextActionNote: string | null;
+  discountOwed: boolean; reviewRequested: boolean; reviewCollected: boolean; referralRequested: boolean; referralCollected: boolean;
+};
+
+// Shared point-in-time worklist computation - used by both /worklist
+// (filtered/sorted for the rep-facing queue) and /dashboard-summary (raw
+// rows aggregated into KPI/lifecycle-pipeline counts). Kept as one function
+// so both endpoints agree on exactly which orders are "in the retention
+// lifecycle" and how their due-stage is derived.
+async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<typeof loadBonusSettings>>): Promise<WorklistRow[]> {
+  const today = dayKey(new Date().toISOString());
+  const oldestRelevant = new Date();
+  oldestRelevant.setUTCDate(oldestRelevant.getUTCDate() - 90);
+
+  const { data: deliveredOrders, error: ordersError } = await supabase
+    .from("orders")
+    .select("id, customer, phone, delivered_date, product_id, package_id, amount, currency, product_name")
+    .eq("org_id", orgId)
+    .eq("status", "Delivered")
+    .gte("delivered_date", oldestRelevant.toISOString().slice(0, 10))
+    .not("delivered_date", "is", null);
+  if (ordersError) throw new Error(ordersError.message);
+  let orders = deliveredOrders ?? [];
+  if (orders.length === 0) return [];
+
+  // Opted-out customers must leave the worklist - blocks_followup already
+  // suppresses follow-up obligations elsewhere (customers.ts), but the
+  // retention worklist never checked it, so an opted-out phone stayed in
+  // the queue forever.
+  const { data: optOuts } = await supabase
+    .from("customer_flags")
+    .select("phone")
+    .eq("org_id", orgId)
+    .eq("blocks_followup", true);
+  const optedOutPhones = new Set((optOuts ?? []).map((f) => f.phone));
+  orders = orders.filter((o) => !optedOutPhones.has(String(o.phone).replace(/\D/g, "")));
+  if (orders.length === 0) return [];
+
+  const orderIds = orders.map((o) => o.id);
+  const { data: touchpointRows, error: touchpointsError } = await supabase
+    .from("customer_retention_touchpoints")
+    .select("order_id, stage, satisfaction_outcome, review_collected, referral_collected, review_is_video, review_requested_at, referral_requested_at, retention_outcome, customer_discount_owed, customer_discount_cleared_at, next_action, next_action_at, next_action_note, reach_status, logged_at")
+    .eq("org_id", orgId)
+    .in("order_id", orderIds)
+    .order("logged_at", { ascending: true });
+  if (touchpointsError) throw new Error(touchpointsError.message);
+
+  const touchpointsByOrder = new Map<string, typeof touchpointRows>();
+  for (const row of touchpointRows ?? []) {
+    const list = touchpointsByOrder.get(row.order_id) ?? [];
+    list.push(row);
+    touchpointsByOrder.set(row.order_id, list);
+  }
+
+  return orders.map((order) => {
+    const tps = (touchpointsByOrder.get(order.id) ?? []) as (RetentionTouchpointRecord & Record<string, any>)[];
+    const deliveredKey = String(order.delivered_date).slice(0, 10);
+    const { dueStage, overdueBy } = dueStageFor(deliveredKey, today, tps);
+    const orderAmount = Number(order.amount ?? 0);
+    const priorityBand = priorityBandFor({ dueStage, overdueBy, orderAmount }, settings);
+    const last = tps.length > 0 ? tps[tps.length - 1] : null;
+    const discountOwed = tps.some((t) => t.customer_discount_owed && !t.customer_discount_cleared_at);
+    const reviewRequested = tps.some((t) => !!t.review_requested_at);
+    const reviewCollected = tps.some((t) => t.review_collected);
+    const referralRequested = tps.some((t) => !!t.referral_requested_at);
+    const referralCollected = tps.some((t) => t.referral_collected);
+    const lastContactAt = tps.length > 0 ? tps.reduce((max, t) => (t.logged_at > max ? t.logged_at : max), tps[0].logged_at) : null;
+    return {
+      orderId: order.id,
+      customerName: order.customer,
+      phone: order.phone,
+      deliveredDate: deliveredKey,
+      daysSinceDelivery: daysBetween(deliveredKey, today),
+      dueStage,
+      overdueBy,
+      priorityBand,
+      orderAmount,
+      orderCurrency: order.currency,
+      productName: order.product_name,
+      lastTouchpoint: last ? { stage: last.stage, loggedAt: last.logged_at, satisfactionOutcome: last.satisfaction_outcome } : null,
+      lastContactAt,
+      nextActionAt: last?.next_action_at ?? null,
+      nextActionNote: last?.next_action_note ?? null,
+      discountOwed,
+      reviewRequested, reviewCollected, referralRequested, referralCollected
+    };
+  });
+}
+
 router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const stageFilter = typeof req.query.stage === "string" ? req.query.stage : "all";
     const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
     const minValue = typeof req.query.minValue === "string" && !Number.isNaN(Number(req.query.minValue)) ? Number(req.query.minValue) : null;
-    const today = dayKey(new Date().toISOString());
-    const oldestRelevant = new Date();
-    oldestRelevant.setUTCDate(oldestRelevant.getUTCDate() - 90);
 
     const settings = await loadBonusSettings(orgId);
+    const allRows = await loadWorklistRows(orgId, settings);
 
-    const { data: deliveredOrders, error: ordersError } = await supabase
-      .from("orders")
-      .select("id, customer, phone, delivered_date, product_id, package_id, amount, currency, product_name")
-      .eq("org_id", orgId)
-      .eq("status", "Delivered")
-      .gte("delivered_date", oldestRelevant.toISOString().slice(0, 10))
-      .not("delivered_date", "is", null);
-    if (ordersError) { res.status(500).json({ error: ordersError.message }); return; }
-    let orders = deliveredOrders ?? [];
-    if (orders.length === 0) { res.json({ rows: [] }); return; }
-
-    // Opted-out customers must leave the worklist - blocks_followup already
-    // suppresses follow-up obligations elsewhere (customers.ts), but the
-    // retention worklist never checked it, so an opted-out phone stayed in
-    // the queue forever.
-    const { data: optOuts } = await supabase
-      .from("customer_flags")
-      .select("phone")
-      .eq("org_id", orgId)
-      .eq("blocks_followup", true);
-    const optedOutPhones = new Set((optOuts ?? []).map((f) => f.phone));
-    orders = orders.filter((o) => !optedOutPhones.has(String(o.phone).replace(/\D/g, "")));
-    if (orders.length === 0) { res.json({ rows: [] }); return; }
-
-    const orderIds = orders.map((o) => o.id);
-    const { data: touchpointRows, error: touchpointsError } = await supabase
-      .from("customer_retention_touchpoints")
-      .select("order_id, stage, satisfaction_outcome, review_collected, referral_collected, review_is_video, review_requested_at, referral_requested_at, retention_outcome, customer_discount_owed, customer_discount_cleared_at, next_action, next_action_at, next_action_note, reach_status, logged_at")
-      .eq("org_id", orgId)
-      .in("order_id", orderIds)
-      .order("logged_at", { ascending: true });
-    if (touchpointsError) { res.status(500).json({ error: touchpointsError.message }); return; }
-
-    const touchpointsByOrder = new Map<string, typeof touchpointRows>();
-    for (const row of touchpointRows ?? []) {
-      const list = touchpointsByOrder.get(row.order_id) ?? [];
-      list.push(row);
-      touchpointsByOrder.set(row.order_id, list);
-    }
-
-    const rows = orders.map((order) => {
-      const tps = (touchpointsByOrder.get(order.id) ?? []) as (RetentionTouchpointRecord & Record<string, any>)[];
-      const deliveredKey = String(order.delivered_date).slice(0, 10);
-      const { dueStage, overdueBy } = dueStageFor(deliveredKey, today, tps);
-      const orderAmount = Number(order.amount ?? 0);
-      const priorityBand = priorityBandFor({ dueStage, overdueBy, orderAmount }, settings);
-      const last = tps.length > 0 ? tps[tps.length - 1] : null;
-      const discountOwed = tps.some((t) => t.customer_discount_owed && !t.customer_discount_cleared_at);
-      const reviewRequested = tps.some((t) => !!t.review_requested_at);
-      const reviewCollected = tps.some((t) => t.review_collected);
-      const referralRequested = tps.some((t) => !!t.referral_requested_at);
-      const referralCollected = tps.some((t) => t.referral_collected);
-      const lastContactAt = tps.length > 0 ? tps.reduce((max, t) => (t.logged_at > max ? t.logged_at : max), tps[0].logged_at) : null;
-      return {
-        orderId: order.id,
-        customerName: order.customer,
-        phone: order.phone,
-        deliveredDate: deliveredKey,
-        daysSinceDelivery: daysBetween(deliveredKey, today),
-        dueStage,
-        overdueBy,
-        priorityBand,
-        orderAmount,
-        orderCurrency: order.currency,
-        productName: order.product_name,
-        lastTouchpoint: last ? { stage: last.stage, loggedAt: last.logged_at, satisfactionOutcome: last.satisfaction_outcome } : null,
-        lastContactAt,
-        nextActionAt: last?.next_action_at ?? null,
-        nextActionNote: last?.next_action_note ?? null,
-        discountOwed,
-        reviewRequested, reviewCollected, referralRequested, referralCollected
-      };
-    })
+    const rows = allRows
       // "all" means "everything actionable" - rows with no due stage (fully
       // progressed / not yet eligible) are noise in a work queue and are
       // still reachable individually via the stage-specific filters.
@@ -313,6 +333,59 @@ router.post("/media/upload", requireRole(...RETENTION_ROLES), async (req, res) =
   res.status(201).json({ url: publicData.publicUrl, path: objectName });
 });
 
+// Shared bonus-breakdown computation - used by /bonus-summary (single rep,
+// "my bonus this period") and /dashboard-summary (org-wide retention
+// revenue/ROI, which needs the same total-payout figure as its "cost").
+async function computeBonusBreakdown(
+  orgId: string,
+  settings: Awaited<ReturnType<typeof loadBonusSettings>>,
+  start: string,
+  exclusiveEnd: string,
+  logged_by: string | null
+) {
+  let query = supabase
+    .from("customer_retention_touchpoints")
+    .select("stage, satisfaction_outcome, review_collected, review_is_video, referral_collected, retention_outcome, resulting_order_id, logged_by, logged_at")
+    .eq("org_id", orgId)
+    .gte("logged_at", `${start}T00:00:00`)
+    .lt("logged_at", `${exclusiveEnd}T00:00:00`);
+  if (logged_by) query = query.eq("logged_by", logged_by);
+  const { data: touchpoints, error } = await query;
+  if (error) throw new Error(error.message);
+  const rows = touchpoints ?? [];
+
+  const satisfactionChecksLogged = rows.filter((r) => r.stage === "satisfaction_check").length;
+  const writtenReviewsCollected = rows.filter((r) => r.stage === "review_referral" && r.review_collected && !r.review_is_video).length;
+  const videoTestimonialsCollected = rows.filter((r) => r.stage === "review_referral" && r.review_is_video).length;
+  const referralsCollected = rows.filter((r) => r.stage === "review_referral" && r.referral_collected).length;
+  const retentionSaleRows = rows.filter((r) => r.stage === "retention_sale" && r.retention_outcome === "accepted" && r.resulting_order_id);
+
+  let retentionSaleBonus = 0;
+  const retentionSalesConverted: Array<{ resultingOrderId: string; amount: number }> = [];
+  if (retentionSaleRows.length > 0) {
+    const resultingIds = retentionSaleRows.map((r) => r.resulting_order_id as string);
+    const { data: resultOrders } = await supabase.from("orders").select("id, amount").in("id", resultingIds);
+    for (const r of retentionSaleRows) {
+      const matched = (resultOrders ?? []).find((o) => o.id === r.resulting_order_id);
+      const amount = Number(matched?.amount ?? 0);
+      retentionSalesConverted.push({ resultingOrderId: r.resulting_order_id as string, amount });
+      retentionSaleBonus += Math.round(amount * (settings.retentionSaleBonusPct / 100));
+    }
+  }
+
+  const satisfactionBonus = satisfactionChecksLogged * settings.satisfactionCheckBonus;
+  const reviewBonus = writtenReviewsCollected * settings.writtenReviewBonus;
+  const videoBonus = videoTestimonialsCollected * settings.videoTestimonialBonus;
+  const referralBonus = referralsCollected * settings.referralBonus;
+  const total = satisfactionBonus + reviewBonus + videoBonus + referralBonus + retentionSaleBonus;
+
+  return {
+    satisfactionChecksLogged, writtenReviewsCollected, videoTestimonialsCollected, referralsCollected,
+    retentionSalesConverted,
+    breakdown: { satisfactionBonus, reviewBonus, videoBonus, referralBonus, retentionSaleBonus, total }
+  };
+}
+
 router.get("/bonus-summary", requireRole(...RETENTION_ROLES), async (req, res) => {
   try {
     const orgId = req.user!.orgId;
@@ -323,49 +396,116 @@ router.get("/bonus-summary", requireRole(...RETENTION_ROLES), async (req, res) =
     const dateTo = inclusiveEndDate.toISOString().slice(0, 10);
     const userId = typeof req.query.userId === "string" ? req.query.userId : req.user!.id;
 
-    const { data: touchpoints, error } = await supabase
-      .from("customer_retention_touchpoints")
-      .select("stage, satisfaction_outcome, review_collected, review_is_video, referral_collected, retention_outcome, resulting_order_id, logged_by, logged_at")
-      .eq("org_id", orgId)
-      .eq("logged_by", userId)
-      .gte("logged_at", `${start}T00:00:00`)
-      .lt("logged_at", `${exclusiveEnd}T00:00:00`);
-    if (error) { res.status(500).json({ error: error.message }); return; }
-    const rows = touchpoints ?? [];
-
-    const satisfactionChecksLogged = rows.filter((r) => r.stage === "satisfaction_check").length;
-    const writtenReviewsCollected = rows.filter((r) => r.stage === "review_referral" && r.review_collected && !r.review_is_video).length;
-    const videoTestimonialsCollected = rows.filter((r) => r.stage === "review_referral" && r.review_is_video).length;
-    const referralsCollected = rows.filter((r) => r.stage === "review_referral" && r.referral_collected).length;
-    const retentionSaleRows = rows.filter((r) => r.stage === "retention_sale" && r.retention_outcome === "accepted" && r.resulting_order_id);
-
-    let retentionSaleBonus = 0;
-    const retentionSalesConverted: Array<{ resultingOrderId: string; amount: number }> = [];
-    if (retentionSaleRows.length > 0) {
-      const resultingIds = retentionSaleRows.map((r) => r.resulting_order_id as string);
-      const { data: resultOrders } = await supabase.from("orders").select("id, amount").in("id", resultingIds);
-      for (const r of retentionSaleRows) {
-        const matched = (resultOrders ?? []).find((o) => o.id === r.resulting_order_id);
-        const amount = Number(matched?.amount ?? 0);
-        retentionSalesConverted.push({ resultingOrderId: r.resulting_order_id as string, amount });
-        retentionSaleBonus += Math.round(amount * (settings.retentionSaleBonusPct / 100));
-      }
-    }
-
-    const satisfactionBonus = satisfactionChecksLogged * settings.satisfactionCheckBonus;
-    const reviewBonus = writtenReviewsCollected * settings.writtenReviewBonus;
-    const videoBonus = videoTestimonialsCollected * settings.videoTestimonialBonus;
-    const referralBonus = referralsCollected * settings.referralBonus;
-    const total = satisfactionBonus + reviewBonus + videoBonus + referralBonus + retentionSaleBonus;
-
-    res.json({
-      dateFrom: start, dateTo, userId,
-      satisfactionChecksLogged, writtenReviewsCollected, videoTestimonialsCollected, referralsCollected,
-      retentionSalesConverted,
-      breakdown: { satisfactionBonus, reviewBonus, videoBonus, referralBonus, retentionSaleBonus, total }
-    });
+    const result = await computeBonusBreakdown(orgId, settings, start, exclusiveEnd, userId);
+    res.json({ dateFrom: start, dateTo, userId, ...result });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Failed to load the retention bonus summary." });
+  }
+});
+
+router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const settings = await loadBonusSettings(orgId);
+    const { start, exclusiveEnd } = resolveDateBounds(req.query as Record<string, unknown>);
+    const repId = typeof req.query.repId === "string" && req.query.repId ? req.query.repId : null;
+
+    // Point-in-time snapshot (NOT date-ranged) - "Due Today"/"Overdue" and
+    // the lifecycle pipeline describe the current state of every order in
+    // the retention window, same rows the worklist itself uses.
+    const allRows = await loadWorklistRows(orgId, settings);
+    const dueToday = allRows.filter((r) => r.dueStage !== null && r.dueStage !== "needs_resolution" && r.overdueBy === 0).length;
+    const overdue = allRows.filter((r) => r.overdueBy > 0).length;
+    const lifecyclePipeline = {
+      delivered: allRows.length,
+      satisfactionDue: allRows.filter((r) => r.dueStage === "satisfaction_check").length,
+      reviewDue: allRows.filter((r) => r.dueStage === "review_referral" && !r.reviewCollected).length,
+      referralDue: allRows.filter((r) => r.dueStage === "review_referral" && !r.referralCollected).length,
+      retentionSaleDue: allRows.filter((r) => r.dueStage === "retention_sale").length,
+      winBack: allRows.filter((r) => r.dueStage === "win_back").length,
+      needsResolution: allRows.filter((r) => r.dueStage === "needs_resolution").length
+    };
+
+    // Date-range-scoped activity (what actually happened in the selected
+    // period), optionally scoped to one rep's own logged_by rows.
+    const bonusResult = await computeBonusBreakdown(orgId, settings, start, exclusiveEnd, repId);
+
+    let contactedQuery = supabase
+      .from("customer_retention_touchpoints")
+      .select("order_id, reach_status, satisfaction_outcome, stage, logged_at, logged_by, retention_outcome, resulting_order_id")
+      .eq("org_id", orgId)
+      .gte("logged_at", `${start}T00:00:00`)
+      .lt("logged_at", `${exclusiveEnd}T00:00:00`);
+    if (repId) contactedQuery = contactedQuery.eq("logged_by", repId);
+    const { data: activityRows, error: activityError } = await contactedQuery;
+    if (activityError) { res.status(500).json({ error: activityError.message }); return; }
+    const activity = activityRows ?? [];
+
+    // "Contacted" = a real reach happened (rows logged before this
+    // migration have no reach_status and represent a real logged
+    // touchpoint, so they count too - only an explicit not-reached/
+    // not-reachable attempt is excluded).
+    const contactedOrderIds = new Set(
+      activity.filter((r) => r.reach_status !== "not_reached" && r.reach_status !== "not_reachable").map((r) => r.order_id)
+    );
+
+    // "Issues Resolved" = a positive satisfaction check logged in this
+    // period, for an order that has ALSO had a negative satisfaction
+    // outcome at some point (i.e. this check actually resolved a prior
+    // complaint, not just a first-time check).
+    const positiveInRangeOrderIds = [...new Set(
+      activity.filter((r) => r.stage === "satisfaction_check" && r.satisfaction_outcome && !NEGATIVE_SATISFACTION_OUTCOMES.has(r.satisfaction_outcome)).map((r) => r.order_id)
+    )];
+    let issuesResolved = 0;
+    if (positiveInRangeOrderIds.length > 0) {
+      const { data: allSatisfactionRows } = await supabase
+        .from("customer_retention_touchpoints")
+        .select("order_id, satisfaction_outcome")
+        .eq("org_id", orgId)
+        .eq("stage", "satisfaction_check")
+        .in("order_id", positiveInRangeOrderIds);
+      const everHadNegative = new Set(
+        (allSatisfactionRows ?? []).filter((r) => r.satisfaction_outcome && NEGATIVE_SATISFACTION_OUTCOMES.has(r.satisfaction_outcome)).map((r) => r.order_id)
+      );
+      issuesResolved = positiveInRangeOrderIds.filter((id) => everHadNegative.has(id)).length;
+    }
+
+    const reviews = activity.filter((r) => r.stage === "review_referral" && (r as any).review_collected).length;
+    const referrals = activity.filter((r) => r.stage === "review_referral" && (r as any).referral_collected).length;
+
+    const repeatSaleRows = activity.filter((r) => r.stage === "retention_sale" && r.retention_outcome === "accepted" && r.resulting_order_id);
+    const repeatSalesRevenue = bonusResult.retentionSalesConverted.reduce((sum, r) => sum + r.amount, 0);
+    const repeatCustomers = repeatSaleRows.length;
+    const avgRepeatOrder = repeatCustomers > 0 ? Math.round(repeatSalesRevenue / repeatCustomers) : 0;
+    const retentionRepCost = bonusResult.breakdown.total;
+    // ROI/"Retention Rep Cost" deliberately does NOT charge a second rep
+    // salary - this isn't a new role, and repMonthlySalary is already
+    // charged as a cost in the Recovery Rep Overview tab's own net-
+    // contribution math. Cost here is the actual bonus paid out for this
+    // period's retention work, so this never double-counts.
+    const grossContribution = repeatSalesRevenue - retentionRepCost;
+    const roi = retentionRepCost > 0 ? Math.round((repeatSalesRevenue / retentionRepCost) * 100) / 100 : null;
+
+    res.json({
+      dateFrom: start,
+      dateTo: exclusiveEnd,
+      kpis: {
+        dueToday, overdue,
+        contacted: contactedOrderIds.size,
+        issuesResolved,
+        reviews, referrals,
+        repeatCustomers, repeatSalesRevenue
+      },
+      lifecyclePipeline,
+      retentionRevenue: { repeatSalesRevenue, repeatCustomers, avgRepeatOrder, grossContribution, retentionRepCost, roi },
+      bonus: {
+        earned: bonusResult.breakdown.total,
+        target: settings.monthlyBonusTarget,
+        progressPct: settings.monthlyBonusTarget > 0 ? Math.min(100, Math.round((bonusResult.breakdown.total / settings.monthlyBonusTarget) * 100)) : 0
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Failed to load the customer retention dashboard summary." });
   }
 });
 
