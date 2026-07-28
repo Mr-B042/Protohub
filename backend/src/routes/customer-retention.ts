@@ -54,6 +54,7 @@ type WorklistRow = {
   orderId: string; customerName: string; phone: string; deliveredDate: string; daysSinceDelivery: number;
   dueStage: ReturnType<typeof dueStageFor>["dueStage"]; overdueBy: number; priorityBand: ReturnType<typeof priorityBandFor>;
   orderAmount: number; orderCurrency: string; productName: string;
+  assignedRepId: string | null; assignedRepName: string | null;
   lastTouchpoint: { stage: string; loggedAt: string; satisfactionOutcome: string | null } | null;
   lastContactAt: string | null; nextActionAt: string | null; nextActionNote: string | null;
   discountOwed: boolean; reviewRequested: boolean; reviewCollected: boolean; referralRequested: boolean; referralCollected: boolean;
@@ -71,7 +72,7 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
 
   const { data: deliveredOrders, error: ordersError } = await supabase
     .from("orders")
-    .select("id, customer, phone, delivered_date, product_id, package_id, amount, currency, product_name")
+    .select("id, customer, phone, delivered_date, product_id, package_id, amount, currency, product_name, assigned_rep_id")
     .eq("org_id", orgId)
     .eq("status", "Delivered")
     .gte("delivered_date", oldestRelevant.toISOString().slice(0, 10))
@@ -79,6 +80,12 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
   if (ordersError) throw new Error(ordersError.message);
   let orders = deliveredOrders ?? [];
   if (orders.length === 0) return [];
+
+  const repIds = [...new Set(orders.map((o) => o.assigned_rep_id).filter(Boolean))] as string[];
+  const { data: repUsers } = repIds.length > 0
+    ? await supabase.from("users").select("id, name").in("id", repIds)
+    : { data: [] as { id: string; name: string }[] };
+  const repNameById = new Map((repUsers ?? []).map((u) => [u.id, u.name]));
 
   // Opted-out customers must leave the worklist - blocks_followup already
   // suppresses follow-up obligations elsewhere (customers.ts), but the
@@ -134,6 +141,8 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
       orderAmount,
       orderCurrency: order.currency,
       productName: order.product_name,
+      assignedRepId: order.assigned_rep_id ?? null,
+      assignedRepName: order.assigned_rep_id ? (repNameById.get(order.assigned_rep_id) ?? null) : null,
       lastTouchpoint: last ? { stage: last.stage, loggedAt: last.logged_at, satisfactionOutcome: last.satisfaction_outcome } : null,
       lastContactAt,
       nextActionAt: last?.next_action_at ?? null,
@@ -150,6 +159,9 @@ router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
     const stageFilter = typeof req.query.stage === "string" ? req.query.stage : "all";
     const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
     const minValue = typeof req.query.minValue === "string" && !Number.isNaN(Number(req.query.minValue)) ? Number(req.query.minValue) : null;
+    const priorityFilter = typeof req.query.priority === "string" && req.query.priority !== "all" ? req.query.priority : null;
+    const productFilter = typeof req.query.product === "string" && req.query.product !== "all" ? req.query.product : null;
+    const assignedRepFilter = typeof req.query.assignedRepId === "string" && req.query.assignedRepId !== "all" ? req.query.assignedRepId : null;
 
     const settings = await loadBonusSettings(orgId);
     const allRows = await loadWorklistRows(orgId, settings);
@@ -161,6 +173,9 @@ router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
       .filter((row) => (stageFilter === "all" ? row.dueStage !== null : row.dueStage === stageFilter))
       .filter((row) => !search || row.customerName.toLowerCase().includes(search) || String(row.phone).includes(search) || row.orderId.toLowerCase().includes(search))
       .filter((row) => minValue === null || row.orderAmount >= minValue)
+      .filter((row) => !priorityFilter || row.priorityBand === priorityFilter)
+      .filter((row) => !productFilter || row.productName === productFilter)
+      .filter((row) => !assignedRepFilter || row.assignedRepId === assignedRepFilter)
       .sort(compareByPriority);
 
     res.json({ rows });
@@ -221,7 +236,7 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
     const orderIds = orders.map((o) => o.id);
     const { data: touchpointRows } = await supabase
       .from("customer_retention_touchpoints")
-      .select("order_id, stage, satisfaction_outcome, satisfaction_notes, review_collected, review_is_video, referral_collected, retention_outcome, resulting_order_id, logged_at, reach_status")
+      .select("order_id, stage, satisfaction_outcome, satisfaction_notes, review_collected, review_is_video, referral_collected, retention_outcome, resulting_order_id, logged_at, reach_status, review_requested_at, referral_requested_at")
       .eq("org_id", orgId)
       .in("order_id", orderIds)
       .order("logged_at", { ascending: true });
@@ -240,9 +255,18 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
       if (t.stage === "satisfaction_check" && t.satisfaction_outcome) {
         timeline.push({ type: "satisfaction_check", at: t.logged_at, detail: `Satisfaction check: ${String(t.satisfaction_outcome).replace(/_/g, " ")}${t.satisfaction_notes ? " — " + t.satisfaction_notes : ""}` });
       } else if (t.stage === "review_referral") {
+        // A request and its eventual collection are two distinct moments
+        // (Decision D) - show "requested" only while still outstanding, so
+        // the exact scenario the spec describes ("Review requested;
+        // customer agreed but hasn't sent it") renders correctly instead
+        // of falling through to a generic contact-attempt line.
+        if (t.review_requested_at && !t.review_collected) timeline.push({ type: "review_requested", at: t.review_requested_at, detail: "Review requested" });
+        if (t.referral_requested_at && !t.referral_collected) timeline.push({ type: "referral_requested", at: t.referral_requested_at, detail: "Referral requested" });
         if (t.review_collected) timeline.push({ type: "review_collected", at: t.logged_at, detail: t.review_is_video ? "Video testimonial collected" : "Written review collected" });
         if (t.referral_collected) timeline.push({ type: "referral_collected", at: t.logged_at, detail: "Referral collected" });
-        if (!t.review_collected && !t.referral_collected && t.reach_status) timeline.push({ type: "note", at: t.logged_at, detail: `Contact attempt (${String(t.reach_status).replace("_", " ")})` });
+        if (!t.review_collected && !t.referral_collected && !t.review_requested_at && !t.referral_requested_at && t.reach_status) {
+          timeline.push({ type: "note", at: t.logged_at, detail: `Contact attempt (${String(t.reach_status).replace("_", " ")})` });
+        }
       } else if (t.stage === "retention_sale" && t.retention_outcome) {
         timeline.push({ type: "retention_sale_attempt", at: t.logged_at, detail: `Retention sale ${t.retention_outcome}${t.resulting_order_id ? " — order #" + t.resulting_order_id : ""}` });
       }
@@ -255,19 +279,28 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
     if (latestDelivered?.delivered_date) {
       const today = dayKey(new Date().toISOString());
       const relevantTps = tps.filter((t) => t.order_id === latestDelivered.id) as any;
-      const { dueStage } = dueStageFor(String(latestDelivered.delivered_date).slice(0, 10), today, relevantTps);
-      const recommendedText =
-        dueStage === "needs_resolution" ? "Resolve this customer's complaint."
-        : dueStage === "satisfaction_check" ? "Run a satisfaction check."
-        : dueStage === "review_referral" ? "Ask for a review or referral."
-        : dueStage === "retention_sale" ? "Offer a repeat-purchase product."
-        : dueStage === "win_back" ? "Attempt a win-back offer."
-        : "No action currently due.";
+      const { dueStage, overdueBy } = dueStageFor(String(latestDelivered.delivered_date).slice(0, 10), today, relevantTps);
+      const action =
+        dueStage === "needs_resolution" ? "Resolve this customer's complaint"
+        : dueStage === "satisfaction_check" ? "Run a satisfaction check"
+        : dueStage === "review_referral" ? "Ask for a review or referral"
+        : dueStage === "retention_sale" ? "Offer a repeat-purchase product"
+        : dueStage === "win_back" ? "Attempt a win-back offer"
+        : null;
+      const recommendedText = action === null ? "No action currently due."
+        : dueStage === "needs_resolution" ? `${action} now.`
+        : overdueBy > 0 ? `${action} — ${overdueBy}d overdue.`
+        : `${action} — due today.`;
       nextAction = { recommendedText, dueStage, orderId: latestDelivered.id };
     }
 
+    // Simple, defensible status label (not a stored field) - "Needs
+    // Attention" takes priority since an open complaint matters more than
+    // order count.
+    const customerStatus = nextAction.dueStage === "needs_resolution" ? "Needs Attention" : delivered.length > 1 ? "Repeat Buyer" : "New Customer";
+
     res.json({
-      customer: { name: first.customer, phone: first.phone, city: first.city, state: first.state, customerSince: first.created_at },
+      customer: { name: first.customer, phone: first.phone, city: first.city, state: first.state, customerSince: first.created_at, status: customerStatus },
       summary: { totalOrders: orders.length, totalSpent, delivered: delivered.length, wrongDamagedReportsCount, ltv: totalSpent },
       latestOrder: latestOrder ? {
         orderId: latestOrder.id, product: latestOrder.product_name, package: latestOrder.package_name,
