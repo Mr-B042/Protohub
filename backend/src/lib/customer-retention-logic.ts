@@ -5,19 +5,21 @@
 
 export type RetentionStage = "satisfaction_check" | "review_referral" | "retention_sale";
 export type DueStage = RetentionStage | "needs_resolution" | "win_back" | null;
-export type PriorityBand = "critical" | "overdue" | "high_value" | "due" | "opportunity";
+
+// The spec's P1-P6 smart priority system, matched exactly:
+// P1 unresolved complaint, P2 overdue follow-up, P3 high-value customer,
+// P4 satisfaction check, P5 review/referral opportunity, P6 repeat-sale/
+// win-back (the spec explicitly groups these last two into one tier -
+// "revenue opportunity after service obligations are covered").
+export type PriorityBand = "critical" | "overdue" | "high_value" | "satisfaction_due" | "review_referral_due" | "revenue_opportunity";
 
 export const NEGATIVE_SATISFACTION_OUTCOMES = new Set([
   "has_not_used_it", "needs_usage_guidance", "wrong_damaged_or_incomplete", "not_satisfied"
 ]);
 
-// Band rank for sorting - lower is more urgent. Mirrors the spec's
-// approximate 8-point ranking, collapsed into discrete bands (like
-// follow-up-workflow.ts's derivePriority) rather than a fragile weighted
-// score: 1) unresolved complaints, 2) overdue, 3) high-value, 4-7) due
-// (satisfaction/review/referral/retention, treated as one tier), 8) win-back.
+// Band rank for sorting - lower is more urgent, P1 through P6.
 export const PRIORITY_BAND_RANK: Record<PriorityBand, number> = {
-  critical: 0, overdue: 1, high_value: 2, due: 3, opportunity: 4
+  critical: 0, overdue: 1, high_value: 2, satisfaction_due: 3, review_referral_due: 4, revenue_opportunity: 5
 };
 
 export const dayKey = (isoOrDate: string) => isoOrDate.slice(0, 10);
@@ -94,11 +96,12 @@ export interface PrioritySettings {
 
 export function priorityBandFor(row: PriorityInput, settings: PrioritySettings): PriorityBand {
   if (row.dueStage === "needs_resolution") return "critical";
-  if (row.dueStage === null) return "opportunity";
+  if (row.dueStage === null) return "revenue_opportunity";
   if (row.overdueBy > 0) return "overdue";
   if (row.orderAmount >= settings.highValueOrderThreshold) return "high_value";
-  if (row.dueStage === "win_back") return "opportunity";
-  return "due";
+  if (row.dueStage === "satisfaction_check") return "satisfaction_due";
+  if (row.dueStage === "review_referral") return "review_referral_due";
+  return "revenue_opportunity"; // retention_sale, win_back
 }
 
 export function compareByPriority(

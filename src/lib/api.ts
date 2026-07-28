@@ -794,7 +794,7 @@ export const recoveryRepKpiApi = {
 };
 
 export type RetentionDueStage = "satisfaction_check" | "review_referral" | "retention_sale" | "needs_resolution" | "win_back" | null;
-export type RetentionPriorityBand = "critical" | "overdue" | "high_value" | "due" | "opportunity";
+export type RetentionPriorityBand = "critical" | "overdue" | "high_value" | "satisfaction_due" | "review_referral_due" | "revenue_opportunity";
 
 export interface RetentionWorklistRow {
   orderId: string;
