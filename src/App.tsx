@@ -40111,7 +40111,7 @@ ${waybillLineItems(w).length > 1
                 <span>Gross contribution {formatMoney(retentionDashboardSummary.retentionRevenue.grossContribution)}</span>
                 <span>ROI {retentionDashboardSummary.retentionRevenue.roi === null ? "—" : `${retentionDashboardSummary.retentionRevenue.roi}x`}</span>
               </div>
-              <p className="mt-2 text-[11px] text-gray-400">Cost = retention bonus actually paid this period ({formatMoney(retentionDashboardSummary.retentionRevenue.retentionRepCost)}), not a duplicate salary charge.</p>
+              <p className="mt-2 text-[11px] text-gray-400">Gross contribution = revenue − product cost − delivery cost. ROI = gross contribution ÷ team cost (retention bonus actually paid this period, {formatMoney(retentionDashboardSummary.retentionRevenue.retentionRepCost)} — not a duplicate salary charge).</p>
             </section>
           )}
         </div>

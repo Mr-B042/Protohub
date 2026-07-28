@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 import { resolveDateBounds } from "../lib/date-bounds.js";
+import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import {
   dueStageFor, priorityBandFor, compareByPriority, dayKey, daysBetween, NEGATIVE_SATISFACTION_OUTCOMES,
   type RetentionTouchpointRecord
@@ -14,6 +15,40 @@ const router = Router();
 router.use(requireAuth);
 
 const RETENTION_ROLES = ["Owner", "Admin", "Manager", "Recovery Rep"] as const;
+
+// Real per-order COGS lookup, same pattern as manager-bonuses.ts's
+// loadPricingMap/cogsForOrder and recovery-rep-kpi.ts's costForOrders -
+// duplicated locally (small, ~20 lines) rather than refactoring those
+// working files to export it, to keep this change scoped to retention.
+type PricingMap = Map<string, { byCurrency: Map<string, number>; primary: number; hasPrimary: boolean }>;
+const numericAmount = (value: unknown) => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+async function loadPricingMap(productIds: string[]): Promise<PricingMap> {
+  const map: PricingMap = new Map();
+  if (productIds.length === 0) return map;
+  const { data } = await supabase.from("product_pricings").select("product_id, currency, unit_cost, is_primary").in("product_id", productIds);
+  for (const row of data ?? []) {
+    let entry = map.get(row.product_id);
+    if (!entry) { entry = { byCurrency: new Map(), primary: 0, hasPrimary: false }; map.set(row.product_id, entry); }
+    const cost = numericAmount(row.unit_cost);
+    if (row.currency) entry.byCurrency.set(row.currency, cost);
+    if (row.is_primary) { entry.primary = cost; entry.hasPrimary = true; }
+  }
+  return map;
+}
+const unitCostFor = (pricingMap: PricingMap, productId?: string | null, currency?: string | null) => {
+  if (!productId) return 0;
+  const entry = pricingMap.get(productId);
+  if (!entry) return 0;
+  if (currency && entry.byCurrency.has(currency)) return entry.byCurrency.get(currency) ?? 0;
+  if (entry.hasPrimary) return entry.primary;
+  const first = entry.byCurrency.values().next();
+  return first.done ? 0 : first.value;
+};
+const cogsForOrder = (order: any, pricingMap: PricingMap) =>
+  orderInventoryLinesFromRow(order).reduce((sum, line) => sum + line.quantity * unitCostFor(pricingMap, line.productId, order.currency), 0);
 
 const DEFAULT_BONUS_SETTINGS = {
   satisfactionCheckBonus: 200,
@@ -646,13 +681,28 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     const repeatCustomers = repeatSaleRows.length;
     const avgRepeatOrder = repeatCustomers > 0 ? Math.round(repeatSalesRevenue / repeatCustomers) : 0;
     const retentionRepCost = bonusResult.breakdown.total;
+
+    // Real Gross Contribution = revenue - COGS - delivery cost, using the
+    // same per-order cost lookup already relied on elsewhere (product_pricings
+    // .unit_cost + orders.logistics_cost), not a fabricated margin number.
+    let cogsAndLogistics = 0;
+    const resultingIds = bonusResult.retentionSalesConverted.map((r) => r.resultingOrderId);
+    if (resultingIds.length > 0) {
+      const { data: resultOrdersFull } = await supabase
+        .from("orders")
+        .select("id, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines")
+        .in("id", resultingIds);
+      const productIds = [...new Set((resultOrdersFull ?? []).flatMap((o) => orderInventoryLinesFromRow(o).map((l) => l.productId)))];
+      const pricingMap = await loadPricingMap(productIds);
+      cogsAndLogistics = (resultOrdersFull ?? []).reduce((sum, o) => sum + cogsForOrder(o, pricingMap) + numericAmount(o.logistics_cost), 0);
+    }
     // ROI/"Retention Rep Cost" deliberately does NOT charge a second rep
     // salary - this isn't a new role, and repMonthlySalary is already
     // charged as a cost in the Recovery Rep Overview tab's own net-
     // contribution math. Cost here is the actual bonus paid out for this
     // period's retention work, so this never double-counts.
-    const grossContribution = repeatSalesRevenue - retentionRepCost;
-    const roi = retentionRepCost > 0 ? Math.round((repeatSalesRevenue / retentionRepCost) * 100) / 100 : null;
+    const grossContribution = repeatSalesRevenue - cogsAndLogistics;
+    const roi = retentionRepCost > 0 ? Math.round((grossContribution / retentionRepCost) * 100) / 100 : null;
 
     // "My Retention Performance" - always scoped to a specific rep
     // (defaults to the caller), independent of whether the figures above
