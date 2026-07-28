@@ -40927,7 +40927,7 @@ ${waybillLineItems(w).length > 1
         return (
           <>
             <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setRetentionDrawerPhone(null)} />
-            <aside className="fixed right-0 top-0 bottom-0 z-50 w-full sm:w-[440px] bg-white shadow-2xl overflow-y-auto">
+            <aside className={`fixed right-0 bottom-0 z-50 w-full sm:w-[440px] bg-white shadow-2xl overflow-y-auto ${isSpying ? "top-[5.75rem]" : "top-14"}`}>
               <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
                 <div className="flex items-center gap-2">
                   <div>
@@ -44128,7 +44128,7 @@ ${waybillLineItems(w).length > 1
                   {!collapsed && <span className="truncate">{item.label}</span>}
                 </button>
                 {showRetentionSubnav && (
-                  <div className="ml-4 pl-3 border-l border-white/10 space-y-0.5 py-1">
+                  <div className="ml-4 mt-1 mb-1.5 pl-3.5 border-l border-white/10 space-y-1">
                     {RETENTION_SUBNAV_ITEMS.filter((sub) => !sub.ownerOnly || currentRole === "Owner").map((sub) => {
                       const subActive = retentionSubPage === sub.key;
                       const badge = sub.key === "Tasks" ? retentionWorklist.filter((r) => r.priorityBand !== "revenue_opportunity").length : 0;
@@ -44140,9 +44140,9 @@ ${waybillLineItems(w).length > 1
                             setRetentionSubPage(sub.key);
                             if (window.matchMedia("(max-width: 1024px)").matches) setMobileMenuOpen(false);
                           }}
-                          className={`w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors ${subActive ? "bg-[#1F8FE0]/15 text-[#1F8FE0] font-bold" : "text-gray-400 font-medium hover:bg-white/5 hover:text-white"}`}
+                          className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition-colors ${subActive ? "bg-[#1F8FE0]/15 text-[#1F8FE0] font-bold" : "text-gray-400 font-medium hover:bg-white/5 hover:text-white"}`}
                         >
-                          <sub.icon className="w-3.5 h-3.5 shrink-0" />
+                          <sub.icon className="w-4 h-4 shrink-0" />
                           <span className="flex-1 truncate text-left">{sub.label}</span>
                           {badge > 0 && <span className={`rounded-full px-1.5 text-[10px] font-bold ${subActive ? "bg-[#1F8FE0]/20" : "bg-red-500/20 text-red-400"}`}>{badge}</span>}
                         </button>
@@ -52282,7 +52282,7 @@ ${waybillLineItems(w).length > 1
                     return (
                       <>
                         <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setLedgerDetailRow(null)} />
-                        <aside className="fixed right-0 top-0 bottom-0 z-50 w-full sm:w-[440px] bg-white shadow-2xl overflow-y-auto">
+                        <aside className={`fixed right-0 bottom-0 z-50 w-full sm:w-[440px] bg-white shadow-2xl overflow-y-auto ${isSpying ? "top-[5.75rem]" : "top-14"}`}>
                           <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
                             <div>
                               <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{m.type}</p>
