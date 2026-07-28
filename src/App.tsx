@@ -39896,12 +39896,17 @@ ${waybillLineItems(w).length > 1
     if (needsResolutionCount > 0) todaysFocusLines.push(`${needsResolutionCount} unresolved customer complaint${needsResolutionCount === 1 ? "" : "s"}`);
     if (highValueOpportunityCount > 0) todaysFocusLines.push(`${highValueOpportunityCount} high-value repeat-sale opportunit${highValueOpportunityCount === 1 ? "y" : "ies"}`);
 
+    // P1-P6, matching the spec's smart priority system exactly. Color
+    // discipline per the spec: "use red only for true urgency... use amber
+    // for attention-needed... green for revenue opportunities... do not
+    // make every status colorful" - so this is 3 color families, not 6.
     const priorityBadge = (band: RetentionWorklistRow["priorityBand"]) =>
-      band === "critical" ? { emoji: "🔴", label: "Critical", class: "bg-red-50 text-red-700 border-red-200" }
-      : band === "overdue" ? { emoji: "🔥", label: "Overdue", class: "bg-orange-50 text-orange-700 border-orange-200" }
-      : band === "high_value" ? { emoji: "💰", label: "High Value", class: "bg-emerald-50 text-emerald-700 border-emerald-200" }
-      : band === "due" ? { emoji: "🟠", label: "Due", class: "bg-amber-50 text-amber-700 border-amber-200" }
-      : { emoji: "🟢", label: "Opportunity", class: "bg-sky-50 text-sky-700 border-sky-200" };
+      band === "critical" ? { emoji: "🔴", label: "Complaint (P1)", class: "bg-red-50 text-red-700 border-red-200" }
+      : band === "overdue" ? { emoji: "🔴", label: "Overdue (P2)", class: "bg-red-50 text-red-700 border-red-200" }
+      : band === "high_value" ? { emoji: "💰", label: "High Value (P3)", class: "bg-emerald-50 text-emerald-700 border-emerald-200" }
+      : band === "satisfaction_due" ? { emoji: "🟠", label: "Satisfaction (P4)", class: "bg-amber-50 text-amber-700 border-amber-200" }
+      : band === "review_referral_due" ? { emoji: "🟠", label: "Review/Referral (P5)", class: "bg-amber-50 text-amber-700 border-amber-200" }
+      : { emoji: "🟢", label: "Revenue Opportunity (P6)", class: "bg-emerald-50 text-emerald-700 border-emerald-200" };
 
     const nextActionLabelFor = (row: RetentionWorklistRow) =>
       row.dueStage === "needs_resolution" ? "Resolve complaint"
@@ -40234,7 +40239,7 @@ ${waybillLineItems(w).length > 1
                 className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
               >
                 <option value="all">Priority: All</option>
-                {(["critical", "overdue", "high_value", "due", "opportunity"] as const).map((band) => (
+                {(["critical", "overdue", "high_value", "satisfaction_due", "review_referral_due", "revenue_opportunity"] as const).map((band) => (
                   <option key={band} value={band}>{priorityBadge(band).label}</option>
                 ))}
               </select>

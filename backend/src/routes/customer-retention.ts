@@ -574,7 +574,11 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
       delivered: allRows.length,
       satisfactionDue: allRows.filter((r) => r.dueStage === "satisfaction_check").length,
       reviewDue: allRows.filter((r) => r.dueStage === "review_referral" && !r.reviewCollected).length,
-      referralDue: allRows.filter((r) => r.dueStage === "review_referral" && !r.referralCollected).length,
+      // Referral has its own later window (Day 14-30, vs Review's Day 7-14)
+      // per the spec's lifecycle model - it only counts as "due" once that
+      // window opens, even though both share one underlying touchpoints
+      // stage (Decision A).
+      referralDue: allRows.filter((r) => r.dueStage === "review_referral" && !r.referralCollected && r.daysSinceDelivery >= 14).length,
       retentionSaleDue: allRows.filter((r) => r.dueStage === "retention_sale").length,
       winBack: allRows.filter((r) => r.dueStage === "win_back").length,
       needsResolution: allRows.filter((r) => r.dueStage === "needs_resolution").length

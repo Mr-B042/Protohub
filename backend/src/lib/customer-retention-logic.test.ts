@@ -81,33 +81,40 @@ test("a retention_sale row with any outcome closes out that stage (no win_back a
   assert.deepEqual(dueStageFor("2026-01-01", "2026-03-01", rows), { dueStage: null, overdueBy: 0 });
 });
 
-test("priorityBandFor: needs_resolution is always critical regardless of value/overdue", () => {
+test("priorityBandFor: needs_resolution is always critical (P1) regardless of value/overdue", () => {
   assert.equal(priorityBandFor({ dueStage: "needs_resolution", overdueBy: 0, orderAmount: 1000 }, { highValueOrderThreshold: 50000 }), "critical");
 });
 
-test("priorityBandFor: overdue beats high-value", () => {
+test("priorityBandFor: overdue (P2) beats high-value (P3)", () => {
   const band = priorityBandFor({ dueStage: "satisfaction_check", overdueBy: 1, orderAmount: 999999 }, { highValueOrderThreshold: 50000 });
   assert.equal(band, "overdue");
 });
 
-test("priorityBandFor: high-value beats plain due", () => {
+test("priorityBandFor: high-value (P3) beats satisfaction_due (P4)", () => {
   assert.equal(priorityBandFor({ dueStage: "satisfaction_check", overdueBy: 0, orderAmount: 60000 }, { highValueOrderThreshold: 50000 }), "high_value");
-  assert.equal(priorityBandFor({ dueStage: "satisfaction_check", overdueBy: 0, orderAmount: 10000 }, { highValueOrderThreshold: 50000 }), "due");
+  assert.equal(priorityBandFor({ dueStage: "satisfaction_check", overdueBy: 0, orderAmount: 10000 }, { highValueOrderThreshold: 50000 }), "satisfaction_due");
 });
 
-test("priorityBandFor: win_back (not overdue/high-value) is opportunity", () => {
-  assert.equal(priorityBandFor({ dueStage: "win_back", overdueBy: 0, orderAmount: 10000 }, { highValueOrderThreshold: 50000 }), "opportunity");
+test("priorityBandFor: satisfaction_due (P4) and review_referral_due (P5) are distinct tiers", () => {
+  assert.equal(priorityBandFor({ dueStage: "satisfaction_check", overdueBy: 0, orderAmount: 10000 }, { highValueOrderThreshold: 50000 }), "satisfaction_due");
+  assert.equal(priorityBandFor({ dueStage: "review_referral", overdueBy: 0, orderAmount: 10000 }, { highValueOrderThreshold: 50000 }), "review_referral_due");
 });
 
-test("compareByPriority: bands rank critical < overdue < high_value < due < opportunity, then overdueBy desc, then amount desc", () => {
+test("priorityBandFor: retention_sale and win_back (not overdue/high-value) both collapse into revenue_opportunity (P6), per spec", () => {
+  assert.equal(priorityBandFor({ dueStage: "retention_sale", overdueBy: 0, orderAmount: 10000 }, { highValueOrderThreshold: 50000 }), "revenue_opportunity");
+  assert.equal(priorityBandFor({ dueStage: "win_back", overdueBy: 0, orderAmount: 10000 }, { highValueOrderThreshold: 50000 }), "revenue_opportunity");
+});
+
+test("compareByPriority: bands rank P1-P6 in order, then overdueBy desc, then amount desc", () => {
   const rows: Array<{ priorityBand: PriorityBand; overdueBy: number; orderAmount: number }> = [
-    { priorityBand: "due", overdueBy: 0, orderAmount: 5000 },
+    { priorityBand: "satisfaction_due", overdueBy: 0, orderAmount: 5000 },
     { priorityBand: "critical", overdueBy: 0, orderAmount: 1000 },
     { priorityBand: "overdue", overdueBy: 10, orderAmount: 2000 },
     { priorityBand: "overdue", overdueBy: 20, orderAmount: 1000 },
-    { priorityBand: "opportunity", overdueBy: 0, orderAmount: 100000 }
+    { priorityBand: "revenue_opportunity", overdueBy: 0, orderAmount: 100000 },
+    { priorityBand: "review_referral_due", overdueBy: 0, orderAmount: 5000 }
   ];
   const sorted = [...rows].sort(compareByPriority);
-  assert.deepEqual(sorted.map((r) => r.priorityBand), ["critical", "overdue", "overdue", "due", "opportunity"]);
+  assert.deepEqual(sorted.map((r) => r.priorityBand), ["critical", "overdue", "overdue", "satisfaction_due", "review_referral_due", "revenue_opportunity"]);
   assert.equal(sorted[1].overdueBy, 20); // more-overdue row ranks first within the same band
 });
