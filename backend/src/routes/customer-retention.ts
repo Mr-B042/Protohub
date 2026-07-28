@@ -193,6 +193,94 @@ router.get("/order/:orderId/retention-suggestion", requireRole(...RETENTION_ROLE
   }
 });
 
+// GET /customer/:phone - Customer Detail Drawer aggregation. No existing
+// endpoint does this (customers.ts only does org-list-level aggregation);
+// reuses its phone-digits-only normalization convention.
+router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const targetPhone = String(req.params.phone).replace(/\D/g, "");
+    if (!targetPhone) { res.status(400).json({ error: "Invalid phone." }); return; }
+
+    const { data: allOrders, error } = await supabase
+      .from("orders")
+      .select("id, customer, phone, city, state, product_name, package_name, amount, currency, status, delivered_date, created_at")
+      .eq("org_id", orgId);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    const orders = (allOrders ?? []).filter((o) => String(o.phone).replace(/\D/g, "") === targetPhone);
+    if (orders.length === 0) { res.status(404).json({ error: "No orders found for this customer." }); return; }
+
+    const byCreatedAsc = [...orders].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    const byCreatedDesc = [...orders].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    const first = byCreatedAsc[0];
+    const latestOrder = byCreatedDesc[0];
+    const delivered = orders.filter((o) => o.status === "Delivered");
+    const totalSpent = delivered.reduce((sum, o) => sum + Number(o.amount ?? 0), 0);
+    const latestDelivered = [...delivered].sort((a, b) => String(b.delivered_date ?? "").localeCompare(String(a.delivered_date ?? "")))[0] ?? null;
+
+    const orderIds = orders.map((o) => o.id);
+    const { data: touchpointRows } = await supabase
+      .from("customer_retention_touchpoints")
+      .select("order_id, stage, satisfaction_outcome, satisfaction_notes, review_collected, review_is_video, referral_collected, retention_outcome, resulting_order_id, logged_at, reach_status")
+      .eq("org_id", orgId)
+      .in("order_id", orderIds)
+      .order("logged_at", { ascending: true });
+    const tps = touchpointRows ?? [];
+
+    // Decision B: Protohub has no order-level "Returned" concept - this is
+    // a real, defensible proxy, never silently labeled "Returns" on the
+    // frontend.
+    const wrongDamagedReportsCount = tps.filter((t) => t.stage === "satisfaction_check" && t.satisfaction_outcome === "wrong_damaged_or_incomplete").length;
+
+    const timeline: Array<{ type: string; at: string; detail: string }> = [];
+    for (const o of delivered) {
+      if (o.delivered_date) timeline.push({ type: "order_delivered", at: `${o.delivered_date}T00:00:00`, detail: `Order #${o.id} delivered (${o.product_name})` });
+    }
+    for (const t of tps) {
+      if (t.stage === "satisfaction_check" && t.satisfaction_outcome) {
+        timeline.push({ type: "satisfaction_check", at: t.logged_at, detail: `Satisfaction check: ${String(t.satisfaction_outcome).replace(/_/g, " ")}${t.satisfaction_notes ? " — " + t.satisfaction_notes : ""}` });
+      } else if (t.stage === "review_referral") {
+        if (t.review_collected) timeline.push({ type: "review_collected", at: t.logged_at, detail: t.review_is_video ? "Video testimonial collected" : "Written review collected" });
+        if (t.referral_collected) timeline.push({ type: "referral_collected", at: t.logged_at, detail: "Referral collected" });
+        if (!t.review_collected && !t.referral_collected && t.reach_status) timeline.push({ type: "note", at: t.logged_at, detail: `Contact attempt (${String(t.reach_status).replace("_", " ")})` });
+      } else if (t.stage === "retention_sale" && t.retention_outcome) {
+        timeline.push({ type: "retention_sale_attempt", at: t.logged_at, detail: `Retention sale ${t.retention_outcome}${t.resulting_order_id ? " — order #" + t.resulting_order_id : ""}` });
+      }
+    }
+    timeline.sort((a, b) => b.at.localeCompare(a.at));
+
+    let nextAction: { recommendedText: string; dueStage: string | null; orderId: string | null } = {
+      recommendedText: "No delivered order to follow up on yet.", dueStage: null, orderId: null
+    };
+    if (latestDelivered?.delivered_date) {
+      const today = dayKey(new Date().toISOString());
+      const relevantTps = tps.filter((t) => t.order_id === latestDelivered.id) as any;
+      const { dueStage } = dueStageFor(String(latestDelivered.delivered_date).slice(0, 10), today, relevantTps);
+      const recommendedText =
+        dueStage === "needs_resolution" ? "Resolve this customer's complaint."
+        : dueStage === "satisfaction_check" ? "Run a satisfaction check."
+        : dueStage === "review_referral" ? "Ask for a review or referral."
+        : dueStage === "retention_sale" ? "Offer a repeat-purchase product."
+        : dueStage === "win_back" ? "Attempt a win-back offer."
+        : "No action currently due.";
+      nextAction = { recommendedText, dueStage, orderId: latestDelivered.id };
+    }
+
+    res.json({
+      customer: { name: first.customer, phone: first.phone, city: first.city, state: first.state, customerSince: first.created_at },
+      summary: { totalOrders: orders.length, totalSpent, delivered: delivered.length, wrongDamagedReportsCount, ltv: totalSpent },
+      latestOrder: latestOrder ? {
+        orderId: latestOrder.id, product: latestOrder.product_name, package: latestOrder.package_name,
+        amount: Number(latestOrder.amount ?? 0), currency: latestOrder.currency, deliveredDate: latestOrder.delivered_date, status: latestOrder.status
+      } : null,
+      timeline,
+      nextAction
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Failed to load customer detail." });
+  }
+});
+
 const OutcomeFields = {
   reachStatus: z.enum(["reached", "not_reached", "not_reachable"]).optional(),
   customerResponse: z.enum(["satisfied", "neutral", "complaint"]).optional(),

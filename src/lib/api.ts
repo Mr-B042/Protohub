@@ -913,7 +913,16 @@ export interface RetentionDashboardSummary {
   bonus: { earned: number; target: number; progressPct: number };
 }
 
+export interface RetentionCustomerDetail {
+  customer: { name: string; phone: string; city: string; state: string; customerSince: string };
+  summary: { totalOrders: number; totalSpent: number; delivered: number; wrongDamagedReportsCount: number; ltv: number };
+  latestOrder: { orderId: string; product: string; package: string; amount: number; currency: string; deliveredDate: string | null; status: string } | null;
+  timeline: Array<{ type: string; at: string; detail: string }>;
+  nextAction: { recommendedText: string; dueStage: string | null; orderId: string | null };
+}
+
 export const customerRetentionApi = {
+  customerDetail: (phone: string) => get<RetentionCustomerDetail>(`/api/customer-retention/customer/${encodeURIComponent(phone)}`),
   dashboardSummary: (params: { dateFrom?: string; dateTo?: string; repId?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.dateFrom) qs.set("dateFrom", params.dateFrom);
