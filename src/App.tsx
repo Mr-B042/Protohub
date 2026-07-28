@@ -119,7 +119,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, customerOptOutApi, customerRetentionApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionActivityLogRow } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11039,6 +11039,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionAssignedRepFilter, setRetentionAssignedRepFilter] = useState("all");
   const [retentionSubPage, setRetentionSubPage] = useState<RetentionSubPage>("Overview");
   const [retentionCustomerSearch, setRetentionCustomerSearch] = useState("");
+  const [retentionActivityLog, setRetentionActivityLog] = useState<RetentionActivityLogRow[]>([]);
+  const [retentionActivityLogLoading, setRetentionActivityLogLoading] = useState(false);
   const [retentionOutcomeReachStatus, setRetentionOutcomeReachStatus] = useState<"" | "reached" | "not_reached" | "not_reachable" | "wrong_number">("");
   const [retentionOutcomeResponse, setRetentionOutcomeResponse] = useState<"" | "satisfied" | "neutral" | "complaint">("");
   const [retentionOutcomeNextAction, setRetentionOutcomeNextAction] = useState<"" | "request_review" | "request_referral" | "offer_another_product" | "schedule_follow_up" | "needs_resolution" | "not_interested" | "do_not_contact">("");
@@ -39688,6 +39690,21 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [retentionDrawerPhone]);
 
+  // Backs Calls & Outcomes (all activity) and the Reviews/Referrals/Repeat
+  // Sales pages (each just narrows to one stage) - one shared feed endpoint.
+  const ACTIVITY_LOG_PAGES: RetentionSubPage[] = ["Calls & Outcomes", "Reviews", "Referrals", "Repeat Sales"];
+  useEffect(() => {
+    if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || !ACTIVITY_LOG_PAGES.includes(retentionSubPage)) return;
+    const stage = retentionSubPage === "Reviews" || retentionSubPage === "Referrals" ? "review_referral" : retentionSubPage === "Repeat Sales" ? "retention_sale" : undefined;
+    setRetentionActivityLogLoading(true);
+    const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
+    customerRetentionApi.activityLog(bounds ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo, stage } : { stage })
+      .then((result) => setRetentionActivityLog(result.rows ?? []))
+      .catch((err: any) => showToast(err?.message ?? "Could not load the activity log."))
+      .finally(() => setRetentionActivityLogLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, recoveryRepDashboardTab, retentionSubPage, retentionPeriod, retentionDateRange]);
+
   const renderCustomerRetentionTab = () => {
     const resetRetentionForm = () => {
       setRetentionSatisfactionOutcome("");
@@ -40320,6 +40337,55 @@ ${waybillLineItems(w).length > 1
           </section>
         );
       }
+
+      const activityDetailFor = (row: RetentionActivityLogRow) => {
+        if (row.stage === "satisfaction_check" && row.satisfactionOutcome) {
+          return `Satisfaction: ${row.satisfactionOutcome.replace(/_/g, " ")}${row.satisfactionNotes ? " — " + row.satisfactionNotes : ""}`;
+        }
+        if (row.stage === "review_referral") {
+          const parts: string[] = [];
+          if (row.reviewCollected) parts.push(row.reviewIsVideo ? "Video testimonial collected" : "Written review collected");
+          if (row.referralCollected) parts.push(`Referral collected${row.referralContactName ? " (" + row.referralContactName + ")" : ""}`);
+          if (parts.length === 0) parts.push("Review/referral contact attempt");
+          return parts.join(" · ");
+        }
+        if (row.stage === "retention_sale" && row.retentionOutcome) {
+          return `Retention sale ${row.retentionOutcome}${row.resultingOrderId ? ` — order #${row.resultingOrderId}` : ""}`;
+        }
+        return "Contact attempt";
+      };
+
+      const renderActivityFeed = (title: string, emptyMessage: string) => (
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-200">
+            <h2 className="text-base font-bold text-gray-900">{title}</h2>
+            <p className="text-xs text-gray-500 mt-0.5">For the selected period ({retentionPeriod}).</p>
+          </div>
+          {retentionActivityLogLoading && retentionActivityLog.length === 0 ? (
+            <div className="px-5 py-10 text-sm text-gray-400 text-center">Loading…</div>
+          ) : retentionActivityLog.length === 0 ? (
+            <div className="px-5 py-10 text-sm text-gray-400 text-center">{emptyMessage}</div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {retentionActivityLog.map((row) => (
+                <button key={row.id} type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 w-full flex items-start justify-between gap-3 px-5 py-3 text-left hover:bg-gray-50">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${stageTone(row.stage)}`}>{stageLabel(row.stage)}</span>
+                      <span className="font-bold text-gray-900 truncate">{row.customerName}</span>
+                    </div>
+                    <p className="text-xs text-gray-600 mt-1">{activityDetailFor(row)}</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">#{row.orderId} · {row.productName} · by {row.loggedByName}</p>
+                  </div>
+                  <span className="shrink-0 text-xs text-gray-400">{new Date(row.loggedAt).toLocaleString()}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      );
+
+      if (retentionSubPage === "Calls & Outcomes") return renderActivityFeed("Calls & Outcomes", "No touchpoints logged in this period yet.");
 
       if (retentionSubPage === "Reports") return (
         <div className="space-y-6">
