@@ -193,12 +193,27 @@ router.get("/order/:orderId/retention-suggestion", requireRole(...RETENTION_ROLE
   }
 });
 
+const OutcomeFields = {
+  reachStatus: z.enum(["reached", "not_reached", "not_reachable"]).optional(),
+  customerResponse: z.enum(["satisfied", "neutral", "complaint"]).optional(),
+  nextAction: z.enum([
+    "request_review", "request_referral", "offer_another_product",
+    "schedule_follow_up", "needs_resolution", "not_interested", "do_not_contact"
+  ]).optional(),
+  nextActionAt: z.string().optional(),
+  nextActionNote: z.string().max(500).optional()
+};
+
 const TouchpointSchema = z.discriminatedUnion("stage", [
   z.object({
     orderId: z.string().min(1),
     stage: z.literal("satisfaction_check"),
-    satisfactionOutcome: z.enum(SATISFACTION_OUTCOMES),
-    satisfactionNotes: z.string().max(2000).optional()
+    // Optional (not just for the original satisfaction-check flow) - a
+    // "Not Reached" attempt against this stage logs reachStatus alone,
+    // with no outcome yet.
+    satisfactionOutcome: z.enum(SATISFACTION_OUTCOMES).optional(),
+    satisfactionNotes: z.string().max(2000).optional(),
+    ...OutcomeFields
   }),
   z.object({
     orderId: z.string().min(1),
@@ -212,15 +227,20 @@ const TouchpointSchema = z.discriminatedUnion("stage", [
     referralContactName: z.string().max(160).optional(),
     referralContactPhone: z.string().max(40).optional(),
     customerDiscountOwed: z.boolean().optional(),
-    customerDiscountNote: z.string().max(300).optional()
+    customerDiscountNote: z.string().max(300).optional(),
+    ...OutcomeFields
   }),
   z.object({
     orderId: z.string().min(1),
     stage: z.literal("retention_sale"),
     offeredProductId: z.string().uuid().optional(),
     offeredPackageId: z.string().uuid().optional(),
-    retentionOutcome: z.enum(["accepted", "declined", "no_response"]),
-    resultingOrderId: z.string().optional()
+    // Optional for the same reason as satisfactionOutcome above - a
+    // "Not Reached" or "Schedule Follow-up" attempt against this stage
+    // doesn't have an outcome yet.
+    retentionOutcome: z.enum(["accepted", "declined", "no_response"]).optional(),
+    resultingOrderId: z.string().optional(),
+    ...OutcomeFields
   })
 ]);
 
@@ -247,10 +267,15 @@ router.post("/touchpoints", requireRole(...RETENTION_ROLES), async (req, res) =>
     order_id: d.orderId,
     stage: d.stage,
     logged_by: req.user!.id,
-    logged_at: new Date().toISOString()
+    logged_at: new Date().toISOString(),
+    reach_status: d.reachStatus ?? null,
+    customer_response: d.customerResponse ?? null,
+    next_action: d.nextAction ?? null,
+    next_action_at: d.nextActionAt ?? null,
+    next_action_note: d.nextActionNote ?? null
   };
   if (d.stage === "satisfaction_check") {
-    row.satisfaction_outcome = d.satisfactionOutcome;
+    row.satisfaction_outcome = d.satisfactionOutcome ?? null;
     row.satisfaction_notes = d.satisfactionNotes ?? null;
   } else if (d.stage === "review_referral") {
     row.review_collected = d.reviewCollected ?? false;
@@ -266,7 +291,7 @@ router.post("/touchpoints", requireRole(...RETENTION_ROLES), async (req, res) =>
   } else {
     row.offered_product_id = d.offeredProductId ?? null;
     row.offered_package_id = d.offeredPackageId ?? null;
-    row.retention_outcome = d.retentionOutcome;
+    row.retention_outcome = d.retentionOutcome ?? null;
     row.resulting_order_id = d.resultingOrderId ?? null;
   }
 

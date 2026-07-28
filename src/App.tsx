@@ -11034,6 +11034,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionSettingsSaving, setRetentionSettingsSaving] = useState(false);
   const [retentionDashboardSummary, setRetentionDashboardSummary] = useState<RetentionDashboardSummary | null>(null);
   const [retentionSearch, setRetentionSearch] = useState("");
+  const [retentionOutcomeReachStatus, setRetentionOutcomeReachStatus] = useState<"" | "reached" | "not_reached" | "not_reachable">("");
+  const [retentionOutcomeResponse, setRetentionOutcomeResponse] = useState<"" | "satisfied" | "neutral" | "complaint">("");
+  const [retentionOutcomeNextAction, setRetentionOutcomeNextAction] = useState<"" | "request_review" | "request_referral" | "offer_another_product" | "schedule_follow_up" | "needs_resolution" | "not_interested" | "do_not_contact">("");
+  const [retentionOutcomeNote, setRetentionOutcomeNote] = useState("");
+  const [retentionOutcomeFollowUpDate, setRetentionOutcomeFollowUpDate] = useState("");
+  const [retentionOutcomeFollowUpTime, setRetentionOutcomeFollowUpTime] = useState("");
+  const [retentionOutcomeSaving, setRetentionOutcomeSaving] = useState(false);
   const [salesExpansionSummary, setSalesExpansionSummary] = useState<any | null>(null);
   // Known independently of salesExpansionSummary (which only loads once the
   // Upsell tab is actually opened) - fetched once on mount so the nav tab and
@@ -39679,14 +39686,29 @@ ${waybillLineItems(w).length > 1
       setRetentionResultingOrderId("");
     };
 
-    const toggleLogging = (orderId: string, stage: string | null) => {
-      if (retentionLoggingOrderId === orderId) {
-        setRetentionLoggingOrderId(null);
-        return;
-      }
+    const resetLogOutcomeForm = () => {
       resetRetentionForm();
+      setRetentionOutcomeReachStatus("");
+      setRetentionOutcomeResponse("");
+      setRetentionOutcomeNextAction("");
+      setRetentionOutcomeNote("");
+      setRetentionOutcomeFollowUpDate("");
+      setRetentionOutcomeFollowUpTime("");
+    };
+
+    const toggleLogging = (orderId: string, _stage: string | null) => {
+      resetLogOutcomeForm();
       setRetentionLoggingOrderId(orderId);
-      if (stage === "retention_sale") {
+    };
+
+    const closeLogOutcome = () => {
+      setRetentionLoggingOrderId(null);
+      resetLogOutcomeForm();
+    };
+
+    const selectNextAction = (action: typeof retentionOutcomeNextAction, orderId: string) => {
+      setRetentionOutcomeNextAction(action);
+      if (action === "offer_another_product") {
         void customerRetentionApi.retentionSuggestion(orderId).then((result) => {
           if (result.suggestion) {
             setRetentionOfferedProductId(result.suggestion.productId);
@@ -39710,63 +39732,110 @@ ${waybillLineItems(w).length > 1
       reader.readAsDataURL(file);
     };
 
-    const afterLogSuccess = () => {
-      setRetentionLoggingOrderId(null);
-      void loadRetentionWorklist();
-      void loadRetentionBonusSummary();
-    };
+    // Maps a lifecycle dueStage onto the underlying touchpoints.stage
+    // column (which only knows satisfaction_check/review_referral/
+    // retention_sale) - needs_resolution/win_back are derived buckets on
+    // top of those, not their own stage values.
+    const baseStageFor = (dueStage: string | null): "satisfaction_check" | "review_referral" | "retention_sale" =>
+      dueStage === "needs_resolution" ? "satisfaction_check"
+      : dueStage === "win_back" ? "retention_sale"
+      : dueStage === "review_referral" ? "review_referral"
+      : dueStage === "retention_sale" ? "retention_sale"
+      : "satisfaction_check";
 
-    const submitSatisfactionCheck = async (orderId: string) => {
-      if (!retentionSatisfactionOutcome) { showToast("Choose an outcome."); return; }
+    // Unified Log Outcome flow: Reach Status -> [Reached] Customer Response
+    // -> Next Action -> Save. Every reachable path produces exactly one
+    // POST /touchpoints call (or, for Do Not Contact, one opt-out call) -
+    // see the mapping table in the Customer Retention v2 plan.
+    const submitLogOutcome = async (row: RetentionWorklistRow) => {
+      if (!retentionOutcomeReachStatus) { showToast("Choose whether the customer was reached."); return; }
+      setRetentionOutcomeSaving(true);
       try {
-        await customerRetentionApi.logTouchpoint({
-          orderId, stage: "satisfaction_check",
-          satisfactionOutcome: retentionSatisfactionOutcome,
-          satisfactionNotes: retentionSatisfactionNotes.trim() || undefined
-        });
-        showToast("Satisfaction check logged.");
-        afterLogSuccess();
-      } catch (err: any) {
-        showToast(err?.message ?? "Could not log the satisfaction check.");
-      }
-    };
+        if (retentionOutcomeReachStatus !== "reached") {
+          await customerRetentionApi.logTouchpoint({
+            orderId: row.orderId,
+            stage: baseStageFor(row.dueStage),
+            reachStatus: retentionOutcomeReachStatus,
+            nextActionNote: retentionOutcomeNote.trim() || undefined
+          });
+          showToast("Contact attempt logged.");
+          closeLogOutcome();
+          void loadRetentionWorklist(); void loadRetentionBonusSummary(); void loadRetentionDashboardSummary();
+          return;
+        }
 
-    const submitReviewReferral = async (orderId: string) => {
-      try {
-        await customerRetentionApi.logTouchpoint({
-          orderId, stage: "review_referral",
-          reviewCollected: retentionReviewCollected,
-          reviewText: retentionReviewText.trim() || undefined,
-          reviewIsVideo: retentionReviewIsVideo,
-          mediaUrls: retentionMediaUrls.length ? retentionMediaUrls : undefined,
-          adPermissionGranted: retentionAdPermission,
-          referralCollected: retentionReferralCollected,
-          referralContactName: retentionReferralName.trim() || undefined,
-          referralContactPhone: retentionReferralPhone.trim() || undefined,
-          customerDiscountOwed: retentionDiscountOwed,
-          customerDiscountNote: retentionDiscountOwed ? (retentionDiscountNote.trim() || undefined) : undefined
-        });
-        showToast("Review & referral logged.");
-        afterLogSuccess();
-      } catch (err: any) {
-        showToast(err?.message ?? "Could not log the review/referral.");
-      }
-    };
+        if (!retentionOutcomeResponse) { showToast("Choose the customer's response."); setRetentionOutcomeSaving(false); return; }
+        if (!retentionOutcomeNextAction) { showToast("Choose a next action."); setRetentionOutcomeSaving(false); return; }
 
-    const submitRetentionSale = async (orderId: string) => {
-      if (!retentionOutcome) { showToast("Choose an outcome."); return; }
-      try {
-        await customerRetentionApi.logTouchpoint({
-          orderId, stage: "retention_sale",
-          offeredProductId: retentionOfferedProductId || undefined,
-          offeredPackageId: retentionOfferedPackageId || undefined,
-          retentionOutcome,
-          resultingOrderId: retentionOutcome === "accepted" ? (retentionResultingOrderId.trim() || undefined) : undefined
-        });
-        showToast("Retention sale logged.");
-        afterLogSuccess();
+        if (retentionOutcomeNextAction === "do_not_contact") {
+          await customerOptOutApi.optOut(row.phone, retentionOutcomeNote.trim() || "Requested via Customer Retention Log Outcome");
+          showToast("Customer marked do-not-contact.");
+          closeLogOutcome();
+          void loadRetentionWorklist();
+          return;
+        }
+
+        let nextActionAt: string | undefined;
+        if (retentionOutcomeNextAction === "schedule_follow_up") {
+          if (!retentionOutcomeFollowUpDate) { showToast("Choose a follow-up date."); setRetentionOutcomeSaving(false); return; }
+          nextActionAt = `${retentionOutcomeFollowUpDate}T${retentionOutcomeFollowUpTime || "09:00"}:00`;
+        }
+
+        const common = {
+          reachStatus: "reached" as const,
+          customerResponse: retentionOutcomeResponse,
+          nextAction: retentionOutcomeNextAction,
+          nextActionAt,
+          nextActionNote: retentionOutcomeNote.trim() || undefined
+        };
+
+        if (retentionOutcomeNextAction === "needs_resolution") {
+          if (!retentionSatisfactionOutcome) { showToast("Choose the specific issue."); setRetentionOutcomeSaving(false); return; }
+          await customerRetentionApi.logTouchpoint({
+            orderId: row.orderId, stage: "satisfaction_check",
+            satisfactionOutcome: retentionSatisfactionOutcome,
+            satisfactionNotes: retentionSatisfactionNotes.trim() || undefined,
+            ...common
+          });
+        } else if (retentionOutcomeNextAction === "offer_another_product") {
+          if (!retentionOutcome) { showToast("Choose an outcome for the offer."); setRetentionOutcomeSaving(false); return; }
+          await customerRetentionApi.logTouchpoint({
+            orderId: row.orderId, stage: "retention_sale",
+            offeredProductId: retentionOfferedProductId || undefined,
+            offeredPackageId: retentionOfferedPackageId || undefined,
+            retentionOutcome,
+            resultingOrderId: retentionOutcome === "accepted" ? (retentionResultingOrderId.trim() || undefined) : undefined,
+            ...common
+          });
+        } else if (retentionOutcomeNextAction === "not_interested") {
+          await customerRetentionApi.logTouchpoint({ orderId: row.orderId, stage: "retention_sale", retentionOutcome: "declined", ...common });
+        } else if (retentionOutcomeNextAction === "request_review" || retentionOutcomeNextAction === "request_referral") {
+          await customerRetentionApi.logTouchpoint({
+            orderId: row.orderId, stage: "review_referral",
+            reviewCollected: retentionReviewCollected,
+            reviewText: retentionReviewText.trim() || undefined,
+            reviewIsVideo: retentionReviewIsVideo,
+            mediaUrls: retentionMediaUrls.length ? retentionMediaUrls : undefined,
+            adPermissionGranted: retentionAdPermission,
+            referralCollected: retentionReferralCollected,
+            referralContactName: retentionReferralName.trim() || undefined,
+            referralContactPhone: retentionReferralPhone.trim() || undefined,
+            customerDiscountOwed: retentionDiscountOwed,
+            customerDiscountNote: retentionDiscountOwed ? (retentionDiscountNote.trim() || undefined) : undefined,
+            ...common
+          });
+        } else {
+          // schedule_follow_up with no other action chosen yet.
+          await customerRetentionApi.logTouchpoint({ orderId: row.orderId, stage: baseStageFor(row.dueStage), ...common });
+        }
+
+        showToast("Outcome logged.");
+        closeLogOutcome();
+        void loadRetentionWorklist(); void loadRetentionBonusSummary(); void loadRetentionDashboardSummary();
       } catch (err: any) {
-        showToast(err?.message ?? "Could not log the retention sale.");
+        showToast(err?.message ?? "Could not log the outcome.");
+      } finally {
+        setRetentionOutcomeSaving(false);
       }
     };
 
@@ -39774,6 +39843,7 @@ ${waybillLineItems(w).length > 1
       stage === "satisfaction_check" ? "Satisfaction Check Due"
       : stage === "review_referral" ? "Review & Referral Due"
       : stage === "retention_sale" ? "Retention Sale Due"
+      : stage === "win_back" ? "Win-back"
       : stage === "needs_resolution" ? "Needs Resolution"
       : "Not due yet";
 
@@ -39782,6 +39852,7 @@ ${waybillLineItems(w).length > 1
       : stage === "retention_sale" ? "border-violet-200 bg-violet-50 text-violet-700"
       : stage === "review_referral" ? "border-blue-200 bg-blue-50 text-blue-700"
       : stage === "satisfaction_check" ? "border-amber-200 bg-amber-50 text-amber-700"
+      : stage === "win_back" ? "border-slate-200 bg-slate-50 text-slate-700"
       : "border-gray-200 bg-gray-50 text-gray-500";
 
     const satisfactionOptions: Array<{ value: string; label: string }> = [
@@ -39831,117 +39902,10 @@ ${waybillLineItems(w).length > 1
         )
       : retentionWorklist;
 
-    const renderInlineLoggingForm = (row: RetentionWorklistRow) => (
-      <div className="border-t border-gray-100 bg-gray-50/60 p-4">
-        {row.dueStage === "satisfaction_check" || row.dueStage === "needs_resolution" ? (
-          <div className="space-y-3">
-            <div className="flex flex-wrap gap-2">
-              {satisfactionOptions.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionSatisfactionOutcome === opt.value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}
-                  onClick={() => setRetentionSatisfactionOutcome(opt.value)}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            <textarea
-              className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
-              placeholder="Notes (optional)"
-              value={retentionSatisfactionNotes}
-              onChange={(e) => setRetentionSatisfactionNotes(e.target.value)}
-            />
-            <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitSatisfactionCheck(row.orderId)}>
-              Log satisfaction check
-            </button>
-          </div>
-        ) : row.dueStage === "review_referral" ? (
-          <div className="space-y-3">
-            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-              <input type="checkbox" checked={retentionReviewCollected} onChange={(e) => setRetentionReviewCollected(e.target.checked)} /> Written review collected
-            </label>
-            {retentionReviewCollected && (
-              <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Review text" value={retentionReviewText} onChange={(e) => setRetentionReviewText(e.target.value)} />
-            )}
-            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-              <input type="checkbox" checked={retentionReviewIsVideo} onChange={(e) => setRetentionReviewIsVideo(e.target.checked)} /> Video testimonial collected
-            </label>
-            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-              <input type="checkbox" checked={retentionAdPermission} onChange={(e) => setRetentionAdPermission(e.target.checked)} /> Permission to use in advertising
-            </label>
-            <div>
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">Photo / video (customer sends via WhatsApp, upload it here)</span>
-              <input type="file" accept="image/*,video/*" disabled={retentionMediaUploading} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleMediaFileSelected(f); }} />
-              {retentionMediaUploading && <span className="ml-2 text-xs text-gray-400">Uploading…</span>}
-              {retentionMediaUrls.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {retentionMediaUrls.map((url) => (
-                    <a key={url} href={url} target="_blank" rel="noreferrer" className="text-xs font-semibold text-[#1F8FE0] hover:underline">Attachment</a>
-                  ))}
-                </div>
-              )}
-            </div>
-            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-              <input type="checkbox" checked={retentionReferralCollected} onChange={(e) => setRetentionReferralCollected(e.target.checked)} /> Referral collected
-            </label>
-            {retentionReferralCollected && (
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral name" value={retentionReferralName} onChange={(e) => setRetentionReferralName(e.target.value)} />
-                <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral phone" value={retentionReferralPhone} onChange={(e) => setRetentionReferralPhone(e.target.value)} />
-              </div>
-            )}
-            {retentionReviewIsVideo && (
-              <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-                <input type="checkbox" checked={retentionDiscountOwed} onChange={(e) => setRetentionDiscountOwed(e.target.checked)} /> Reward with discount on next order
-              </label>
-            )}
-            {retentionDiscountOwed && (
-              <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Discount note (e.g. 10% off next order)" value={retentionDiscountNote} onChange={(e) => setRetentionDiscountNote(e.target.value)} />
-            )}
-            <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitReviewReferral(row.orderId)}>
-              Log review & referral
-            </button>
-          </div>
-        ) : row.dueStage === "retention_sale" || row.dueStage === "win_back" ? (
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <label className="space-y-1">
-                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Suggested product ID</span>
-                <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedProductId} onChange={(e) => setRetentionOfferedProductId(e.target.value)} placeholder="Product UUID" />
-              </label>
-              <label className="space-y-1">
-                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Package ID</span>
-                <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedPackageId} onChange={(e) => setRetentionOfferedPackageId(e.target.value)} placeholder="Package UUID (optional)" />
-              </label>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {(["accepted", "declined", "no_response"] as const).map((opt) => (
-                <button
-                  key={opt}
-                  type="button"
-                  className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold capitalize ${retentionOutcome === opt ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}
-                  onClick={() => setRetentionOutcome(opt)}
-                >
-                  {opt.replace("_", " ")}
-                </button>
-              ))}
-            </div>
-            {retentionOutcome === "accepted" && (
-              <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Resulting order ID" value={retentionResultingOrderId} onChange={(e) => setRetentionResultingOrderId(e.target.value)} />
-            )}
-            <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitRetentionSale(row.orderId)}>
-              Log retention sale
-            </button>
-          </div>
-        ) : (
-          <p className="text-sm text-gray-400">This order isn&apos;t due for a stage-specific action yet.</p>
-        )}
-      </div>
-    );
+    const logOutcomeRow = retentionWorklist.find((r) => r.orderId === retentionLoggingOrderId) ?? null;
 
     return (
+      <>
       <div className="space-y-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -40175,7 +40139,6 @@ ${waybillLineItems(w).length > 1
                         <a href={`tel:${row.phone}`} className="!min-h-0 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"><Phone className="w-3.5 h-3.5" /> Call</a>
                         <button type="button" className="!min-h-0 ml-auto inline-flex items-center gap-1 rounded-md bg-[#1F8FE0] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8]" onClick={() => toggleLogging(row.orderId, row.dueStage)}>Log Outcome</button>
                       </div>
-                      {retentionLoggingOrderId === row.orderId && renderInlineLoggingForm(row)}
                     </article>
                   );
                 })}
@@ -40196,37 +40159,30 @@ ${waybillLineItems(w).length > 1
                       const badge = priorityBadge(row.priorityBand);
                       const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
                       return (
-                        <Fragment key={row.orderId}>
-                          <tr className="align-top hover:bg-gray-50">
-                            <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span></td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-2.5">
-                                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
-                                <div className="min-w-0">
-                                  <div className="font-bold text-gray-900">{row.customerName}</div>
-                                  <div className="text-xs text-gray-500">{row.phone}</div>
-                                </div>
+                        <tr key={row.orderId} className="align-top hover:bg-gray-50">
+                          <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span></td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2.5">
+                              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
+                              <div className="min-w-0">
+                                <div className="font-bold text-gray-900">{row.customerName}</div>
+                                <div className="text-xs text-gray-500">{row.phone}</div>
                               </div>
-                            </td>
-                            <td className="px-4 py-3 text-xs text-gray-600">#{row.orderId}<br />{row.productName}</td>
-                            <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
-                            <td className="px-4 py-3 text-xs text-gray-600">{row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</td>
-                            <td className="px-4 py-3 text-xs font-semibold text-gray-800">{nextActionLabelFor(row)}</td>
-                            <td className="px-4 py-3 text-xs font-semibold text-gray-800">{formatMoney(row.orderAmount)}</td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-1.5">
-                                <a href={whatsappUrl} target="_blank" rel="noreferrer" className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /></a>
-                                <a href={`tel:${row.phone}`} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><Phone className="w-3.5 h-3.5" /></a>
-                                <button type="button" className="!min-h-0 inline-flex items-center rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8]" onClick={() => toggleLogging(row.orderId, row.dueStage)}>Log Outcome</button>
-                              </div>
-                            </td>
-                          </tr>
-                          {retentionLoggingOrderId === row.orderId && (
-                            <tr>
-                              <td colSpan={8} className="p-0">{renderInlineLoggingForm(row)}</td>
-                            </tr>
-                          )}
-                        </Fragment>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-gray-600">#{row.orderId}<br />{row.productName}</td>
+                          <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
+                          <td className="px-4 py-3 text-xs text-gray-600">{row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</td>
+                          <td className="px-4 py-3 text-xs font-semibold text-gray-800">{nextActionLabelFor(row)}</td>
+                          <td className="px-4 py-3 text-xs font-semibold text-gray-800">{formatMoney(row.orderAmount)}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1.5">
+                              <a href={whatsappUrl} target="_blank" rel="noreferrer" className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /></a>
+                              <a href={`tel:${row.phone}`} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><Phone className="w-3.5 h-3.5" /></a>
+                              <button type="button" className="!min-h-0 inline-flex items-center rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8]" onClick={() => toggleLogging(row.orderId, row.dueStage)}>Log Outcome</button>
+                            </div>
+                          </td>
+                        </tr>
                       );
                     })}
                   </tbody>
@@ -40236,6 +40192,174 @@ ${waybillLineItems(w).length > 1
           )}
         </section>
       </div>
+
+      {logOutcomeRow && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4 overflow-y-auto" onClick={closeLogOutcome}>
+          <section className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 bg-white px-5 py-4 border-b border-gray-100 flex items-center justify-between z-10">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Log Outcome</p>
+                <h3 className="text-base font-black text-gray-900">{logOutcomeRow.customerName} · #{logOutcomeRow.orderId}</h3>
+              </div>
+              <button type="button" className="!min-h-0 rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600" onClick={closeLogOutcome}><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Reach Status</span>
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    ["reached", "Reached"],
+                    ["not_reached", "Not Reached"],
+                    ["not_reachable", "Number Not Reachable"]
+                  ] as const).map(([value, label]) => (
+                    <button key={value} type="button" onClick={() => setRetentionOutcomeReachStatus(value)} className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionOutcomeReachStatus === value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}>{label}</button>
+                  ))}
+                </div>
+              </div>
+
+              {retentionOutcomeReachStatus === "reached" && (
+                <>
+                  <div>
+                    <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Customer Response</span>
+                    <div className="flex flex-wrap gap-2">
+                      {([
+                        ["satisfied", "😊 Satisfied"],
+                        ["neutral", "😐 Neutral"],
+                        ["complaint", "😡 Complaint"]
+                      ] as const).map(([value, label]) => (
+                        <button key={value} type="button" onClick={() => setRetentionOutcomeResponse(value)} className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionOutcomeResponse === value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {retentionOutcomeResponse && (
+                    <div>
+                      <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Next Action</span>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          ["request_review", "Request Review"],
+                          ["request_referral", "Request Referral"],
+                          ["offer_another_product", "Offer Another Product"],
+                          ["schedule_follow_up", "Schedule Follow-up"],
+                          ["needs_resolution", "Needs Resolution"],
+                          ["not_interested", "Not Interested"],
+                          ["do_not_contact", "Do Not Contact"]
+                        ] as const).map(([value, label]) => (
+                          <button key={value} type="button" onClick={() => selectNextAction(value, logOutcomeRow.orderId)} className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionOutcomeNextAction === value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}>{label}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {retentionOutcomeNextAction === "needs_resolution" && (
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 space-y-2">
+                      <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">What&apos;s the specific issue?</span>
+                      <div className="flex flex-wrap gap-2">
+                        {satisfactionOptions.map((opt) => (
+                          <button key={opt.value} type="button" onClick={() => setRetentionSatisfactionOutcome(opt.value)} className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionSatisfactionOutcome === opt.value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}>{opt.label}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(retentionOutcomeNextAction === "request_review" || retentionOutcomeNextAction === "request_referral") && (
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 space-y-3">
+                      <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                        <input type="checkbox" checked={retentionReviewCollected} onChange={(e) => setRetentionReviewCollected(e.target.checked)} /> Written review already collected
+                      </label>
+                      {retentionReviewCollected && (
+                        <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Review text" value={retentionReviewText} onChange={(e) => setRetentionReviewText(e.target.value)} />
+                      )}
+                      <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                        <input type="checkbox" checked={retentionReviewIsVideo} onChange={(e) => setRetentionReviewIsVideo(e.target.checked)} /> Video testimonial
+                      </label>
+                      <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                        <input type="checkbox" checked={retentionAdPermission} onChange={(e) => setRetentionAdPermission(e.target.checked)} /> Permission to use in advertising
+                      </label>
+                      <div>
+                        <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">Photo / video (customer sends via WhatsApp, upload it here)</span>
+                        <input type="file" accept="image/*,video/*" disabled={retentionMediaUploading} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleMediaFileSelected(f); }} />
+                        {retentionMediaUploading && <span className="ml-2 text-xs text-gray-400">Uploading…</span>}
+                        {retentionMediaUrls.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {retentionMediaUrls.map((url) => (
+                              <a key={url} href={url} target="_blank" rel="noreferrer" className="text-xs font-semibold text-[#1F8FE0] hover:underline">Attachment</a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                        <input type="checkbox" checked={retentionReferralCollected} onChange={(e) => setRetentionReferralCollected(e.target.checked)} /> Referral already collected
+                      </label>
+                      {retentionReferralCollected && (
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral name" value={retentionReferralName} onChange={(e) => setRetentionReferralName(e.target.value)} />
+                          <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral phone" value={retentionReferralPhone} onChange={(e) => setRetentionReferralPhone(e.target.value)} />
+                        </div>
+                      )}
+                      {retentionReviewIsVideo && (
+                        <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                          <input type="checkbox" checked={retentionDiscountOwed} onChange={(e) => setRetentionDiscountOwed(e.target.checked)} /> Reward with discount on next order
+                        </label>
+                      )}
+                      {retentionDiscountOwed && (
+                        <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Discount note (e.g. 10% off next order)" value={retentionDiscountNote} onChange={(e) => setRetentionDiscountNote(e.target.value)} />
+                      )}
+                    </div>
+                  )}
+
+                  {retentionOutcomeNextAction === "offer_another_product" && (
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 space-y-3">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <label className="space-y-1">
+                          <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Suggested product ID</span>
+                          <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedProductId} onChange={(e) => setRetentionOfferedProductId(e.target.value)} placeholder="Product UUID" />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Package ID</span>
+                          <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedPackageId} onChange={(e) => setRetentionOfferedPackageId(e.target.value)} placeholder="Package UUID (optional)" />
+                        </label>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {(["accepted", "declined", "no_response"] as const).map((opt) => (
+                          <button key={opt} type="button" className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold capitalize ${retentionOutcome === opt ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`} onClick={() => setRetentionOutcome(opt)}>{opt.replace("_", " ")}</button>
+                        ))}
+                      </div>
+                      {retentionOutcome === "accepted" && (
+                        <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Resulting order ID" value={retentionResultingOrderId} onChange={(e) => setRetentionResultingOrderId(e.target.value)} />
+                      )}
+                    </div>
+                  )}
+
+                  {retentionOutcomeNextAction === "schedule_follow_up" && (
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <label className="space-y-1">
+                        <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Date</span>
+                        <input type="date" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOutcomeFollowUpDate} onChange={(e) => setRetentionOutcomeFollowUpDate(e.target.value)} />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Time</span>
+                        <input type="time" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOutcomeFollowUpTime} onChange={(e) => setRetentionOutcomeFollowUpTime(e.target.value)} />
+                      </label>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <label className="space-y-1 block">
+                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Notes (optional)</span>
+                <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOutcomeNote} onChange={(e) => setRetentionOutcomeNote(e.target.value)} />
+              </label>
+
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end pt-2">
+                <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={closeLogOutcome}>Cancel</button>
+                <button type="button" disabled={retentionOutcomeSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white disabled:opacity-60" onClick={() => submitLogOutcome(logOutcomeRow)}>{retentionOutcomeSaving ? "Saving..." : "Save Outcome"}</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+      </>
     );
   };
 
