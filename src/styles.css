@@ -9196,7 +9196,7 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
    lockstep so white utility classes and focus states do not leak light
    backgrounds or invisible text across desktop/mobile pages.
    ============================================================= */
-.app-shell[data-theme="dark"] :is(section, article, div, label, button, select, input, textarea).bg-white {
+.app-shell[data-theme="dark"] :is(section, article, div, label, button, select, input, textarea, aside).bg-white {
   background:
     linear-gradient(180deg, hsl(var(--surface-card-elevated)), hsl(var(--surface-card))) !important;
   border-color: hsl(var(--border)) !important;

@@ -40107,7 +40107,7 @@ ${waybillLineItems(w).length > 1
                           <div className="text-xs font-semibold text-gray-400">#{row.orderId} · {row.productName}</div>
                         </div>
                       </button>
-                      <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span>
+                      <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span>
                     </div>
                     <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 space-y-0.5">
                       <div>Stage: <strong className="text-gray-800">{stageLabel(row.dueStage)}</strong></div>
@@ -40141,7 +40141,7 @@ ${waybillLineItems(w).length > 1
                     const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
                     return (
                       <tr key={row.orderId} className="align-top hover:bg-gray-50">
-                        <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span></td>
+                        <td className="px-4 py-3"><span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span></td>
                         <td className="px-4 py-3">
                           <button type="button" className="!min-h-0 flex items-center gap-2.5 text-left" onClick={() => setRetentionDrawerPhone(row.phone)}>
                             <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
@@ -40152,7 +40152,7 @@ ${waybillLineItems(w).length > 1
                           </button>
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">#{row.orderId}<br />{row.productName}</td>
-                        <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
+                        <td className="px-4 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
                         <td className="px-4 py-3 text-xs text-gray-600">{row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</td>
                         <td className={`px-4 py-3 text-xs font-semibold ${row.overdueBy > 0 || row.dueStage === "needs_resolution" ? "text-red-600" : "text-gray-800"}`}>{nextActionInstructionFor(row)}</td>
                         <td className="px-4 py-3 text-xs font-semibold text-gray-800">{formatMoney(row.orderAmount)}</td>
@@ -40358,7 +40358,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
-                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span>
+                      <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span>
                       <span className="text-xs font-semibold text-gray-600 hidden sm:inline">{formatMoney(row.orderAmount)}</span>
                     </div>
                   </button>
@@ -40402,7 +40402,7 @@ ${waybillLineItems(w).length > 1
                 <button key={row.id} type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 w-full flex items-start justify-between gap-3 px-5 py-3 text-left hover:bg-gray-50">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${stageTone(row.stage)}`}>{stageLabel(row.stage)}</span>
+                      <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${stageTone(row.stage)}`}>{stageLabel(row.stage)}</span>
                       <span className="font-bold text-gray-900 truncate">{row.customerName}</span>
                     </div>
                     <p className="text-xs text-gray-600 mt-1">{activityDetailFor(row)}</p>
