@@ -11006,7 +11006,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // (not scoped to any one rep's own orders).
   const [retentionWorklist, setRetentionWorklist] = useState<RetentionWorklistRow[]>([]);
   const [retentionWorklistLoading, setRetentionWorklistLoading] = useState(false);
-  const [retentionStageFilter, setRetentionStageFilter] = useState<"all" | "satisfaction_check" | "review_referral" | "retention_sale" | "needs_resolution">("all");
+  const [retentionStageFilter, setRetentionStageFilter] = useState<"all" | "satisfaction_check" | "review_referral" | "retention_sale" | "win_back" | "needs_resolution">("all");
   const [retentionBonusSummary, setRetentionBonusSummary] = useState<RetentionBonusSummary | null>(null);
   const [retentionLoggingOrderId, setRetentionLoggingOrderId] = useState<string | null>(null);
   const [retentionMediaUploading, setRetentionMediaUploading] = useState(false);
@@ -39953,25 +39953,43 @@ ${waybillLineItems(w).length > 1
           )}
         </div>
 
+        {retentionDashboardSummary && (
+          <section className="space-y-2">
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Customer Lifecycle Pipeline</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+              {([
+                ["all", "Delivered", retentionDashboardSummary.lifecyclePipeline.delivered, "border-gray-200 bg-white"],
+                ["needs_resolution", "Needs Resolution", retentionDashboardSummary.lifecyclePipeline.needsResolution, "border-rose-200 bg-rose-50"],
+                ["satisfaction_check", "Satisfaction Check", retentionDashboardSummary.lifecyclePipeline.satisfactionDue, "border-amber-200 bg-amber-50"],
+                ["review_referral", "Review", retentionDashboardSummary.lifecyclePipeline.reviewDue, "border-blue-200 bg-blue-50"],
+                ["review_referral", "Referral", retentionDashboardSummary.lifecyclePipeline.referralDue, "border-indigo-200 bg-indigo-50"],
+                ["retention_sale", "Repeat Sale", retentionDashboardSummary.lifecyclePipeline.retentionSaleDue, "border-violet-200 bg-violet-50"],
+                ["win_back", "Win-back", retentionDashboardSummary.lifecyclePipeline.winBack, "border-slate-200 bg-slate-50"]
+              ] as const).map(([stage, label, count, tone], idx) => (
+                <button
+                  key={`${stage}-${label}-${idx}`}
+                  type="button"
+                  onClick={() => setRetentionStageFilter(stage)}
+                  className={`!min-h-0 text-left rounded-xl border px-2.5 py-2 transition-shadow ${tone} ${count > 0 ? "" : "opacity-60"} ${stage !== "all" && retentionStageFilter === stage ? "ring-2 ring-[#1F8FE0]" : ""}`}
+                >
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">{label}</div>
+                  <div className="text-lg font-black text-gray-900 mt-0.5">{count}</div>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
         <section className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            {([
-              ["all", "All"],
-              ["needs_resolution", "Needs Resolution"],
-              ["satisfaction_check", "Satisfaction Check Due"],
-              ["review_referral", "Review & Referral Due"],
-              ["retention_sale", "Retention Sale Due"]
-            ] as const).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                className={`!min-h-0 rounded-full px-3 py-1.5 text-xs font-bold ${retentionStageFilter === value ? "bg-[#1F8FE0] text-white" : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
-                onClick={() => setRetentionStageFilter(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {retentionStageFilter !== "all" && (
+            <button
+              type="button"
+              onClick={() => setRetentionStageFilter("all")}
+              className="!min-h-0 text-xs font-bold text-gray-500 hover:text-gray-700"
+            >
+              ← Clear stage filter
+            </button>
+          )}
 
           {retentionWorklistLoading && retentionWorklist.length === 0 ? (
             <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-gray-400">Loading worklist…</div>
