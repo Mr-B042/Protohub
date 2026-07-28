@@ -11026,6 +11026,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionOfferedPackageId, setRetentionOfferedPackageId] = useState("");
   const [retentionOutcome, setRetentionOutcome] = useState<"accepted" | "declined" | "no_response" | "">("");
   const [retentionResultingOrderId, setRetentionResultingOrderId] = useState("");
+  const [retentionPeriod, setRetentionPeriod] = useState<Period>("This Month");
+  const [retentionDateRange, setRetentionDateRange] = useState<DateRange>({ start: "", end: "" });
+  const [showRetentionDateRange, setShowRetentionDateRange] = useState(false);
+  const [retentionSettingsOpen, setRetentionSettingsOpen] = useState(false);
+  const [retentionSettingsDraft, setRetentionSettingsDraft] = useState<RetentionBonusSettings | null>(null);
+  const [retentionSettingsSaving, setRetentionSettingsSaving] = useState(false);
   const [salesExpansionSummary, setSalesExpansionSummary] = useState<any | null>(null);
   // Known independently of salesExpansionSummary (which only loads once the
   // Upsell tab is actually opened) - fetched once on mount so the nav tab and
@@ -27061,6 +27067,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast(`Recovery Rep Dashboard range set to ${recoveryRepDateRange.start} to ${recoveryRepDateRange.end}.`);
   };
 
+  const handleRetentionPeriodChange = (nextPeriod: Period) => {
+    setRetentionPeriod(nextPeriod);
+    setShowRetentionDateRange(false);
+  };
+
+  const applyRetentionDateRange = () => {
+    if (!retentionDateRange.start || !retentionDateRange.end) {
+      showToast("Choose both a start date and an end date.");
+      return;
+    }
+    if (!isDateValue(retentionDateRange.start) || !isDateValue(retentionDateRange.end)) {
+      showToast("Use YYYY-MM-DD for both dates.");
+      return;
+    }
+    if (retentionDateRange.start > retentionDateRange.end) {
+      showToast("Start date must be before the end date.");
+      return;
+    }
+    setRetentionPeriod("Custom");
+    setShowRetentionDateRange(false);
+    showToast(`Customer Retention range set to ${retentionDateRange.start} to ${retentionDateRange.end}.`);
+  };
+
   const clearOrdersDateRange = () => {
     setOrdersDateRange({ start: "", end: "" });
     setOrdersPeriod("This Month");
@@ -39578,10 +39607,34 @@ ${waybillLineItems(w).length > 1
 
   const loadRetentionBonusSummary = async () => {
     try {
-      const result = await customerRetentionApi.bonusSummary();
+      const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
+      const result = await customerRetentionApi.bonusSummary(bounds ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo } : {});
       setRetentionBonusSummary(result);
     } catch {
       // Non-fatal - the bonus banner just won't render.
+    }
+  };
+
+  const loadRetentionSettings = async () => {
+    try {
+      const result = await customerRetentionApi.settings();
+      setRetentionSettingsDraft(result.settings);
+    } catch {
+      // Non-fatal - the gear panel just won't have current values to edit yet.
+    }
+  };
+
+  const saveRetentionSettings = async () => {
+    if (!retentionSettingsDraft || currentRole !== "Owner") return;
+    setRetentionSettingsSaving(true);
+    try {
+      const result = await customerRetentionApi.updateSettings(retentionSettingsDraft);
+      setRetentionSettingsDraft(result.settings);
+      showToast("Customer retention bonus settings saved.");
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not save retention settings.");
+    } finally {
+      setRetentionSettingsSaving(false);
     }
   };
 
@@ -39589,8 +39642,9 @@ ${waybillLineItems(w).length > 1
     if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention") return;
     void loadRetentionWorklist();
     void loadRetentionBonusSummary();
+    void loadRetentionSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, recoveryRepDashboardTab, retentionStageFilter]);
+  }, [activePage, recoveryRepDashboardTab, retentionStageFilter, retentionPeriod, retentionDateRange]);
 
   const renderCustomerRetentionTab = () => {
     const resetRetentionForm = () => {
@@ -39729,9 +39783,89 @@ ${waybillLineItems(w).length > 1
 
     return (
       <div className="space-y-6">
+        <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-black text-gray-900">Customer Retention</h2>
+            <p className="text-sm font-medium text-gray-500">Post-delivery satisfaction, reviews, referrals and repeat sales.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              className="h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+              value={retentionPeriod}
+              onChange={(event) => handleRetentionPeriodChange(event.target.value as Period)}
+            >
+              {periods.map((item) => <option key={item} value={item}>{item}</option>)}
+              <option value="Custom">Custom</option>
+            </select>
+            <div className="relative">
+              <button
+                type="button"
+                className="!min-h-0 h-9 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => setShowRetentionDateRange((open) => !open)}
+              >
+                <CalendarDays className="w-4 h-4" /> {retentionPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+              </button>
+              {showRetentionDateRange && renderDateRangeCalendar("retention-date-range-panel", retentionDateRange, setRetentionDateRange, applyRetentionDateRange, () => setShowRetentionDateRange(false))}
+            </div>
+            {currentRole === "Owner" && (
+              <button
+                type="button"
+                className="!min-h-0 h-9 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-gray-50"
+                onClick={() => setRetentionSettingsOpen((open) => !open)}
+              >
+                <Settings className="w-4 h-4" /> Bonus Settings
+              </button>
+            )}
+          </div>
+        </header>
+
+        {currentRole === "Owner" && retentionSettingsOpen && retentionSettingsDraft && (
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-base font-black text-gray-900">Customer Retention Bonus Settings</h3>
+                <p className="text-sm text-gray-500">Org-wide rates used to compute every retention bonus payout.</p>
+              </div>
+              <button
+                type="button"
+                className="!min-h-0 inline-flex items-center justify-center gap-2 rounded-xl bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-[#1560a8] disabled:opacity-60"
+                disabled={retentionSettingsSaving}
+                onClick={saveRetentionSettings}
+              >
+                <Settings className="w-4 h-4" /> {retentionSettingsSaving ? "Saving..." : "Save settings"}
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {([
+                ["satisfactionCheckBonus", "Satisfaction check bonus (₦)"],
+                ["writtenReviewBonus", "Written review bonus (₦)"],
+                ["videoTestimonialBonus", "Video testimonial bonus (₦)"],
+                ["referralBonus", "Referral bonus (₦)"],
+                ["retentionSaleBonusPct", "Retention sale bonus (% of order)"],
+                ["customerDiscountPct", "Customer discount reward (%)"],
+                ["highValueOrderThreshold", "High-value order threshold (₦)"],
+                ["monthlyBonusTarget", "Monthly bonus target (₦)"]
+              ] as const).map(([key, label]) => (
+                <label key={key} className="space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">{label}</span>
+                  <input
+                    type="number"
+                    className="w-full h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                    value={retentionSettingsDraft[key]}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      setRetentionSettingsDraft((draft) => draft ? { ...draft, [key]: Number.isFinite(value) ? value : 0 } : draft);
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          </section>
+        )}
+
         {retentionBonusSummary && (
           <section className="overflow-hidden rounded-2xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-sm">
-            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Your customer retention bonus this month</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Your customer retention bonus this period</p>
             <strong className="mt-1 block text-3xl font-black text-emerald-700">{formatMoney(retentionBonusSummary.breakdown?.total ?? 0)}</strong>
             <p className="mt-1 text-sm font-semibold text-gray-600">
               {retentionBonusSummary.satisfactionChecksLogged} satisfaction checks · {retentionBonusSummary.writtenReviewsCollected} reviews · {retentionBonusSummary.videoTestimonialsCollected} videos · {retentionBonusSummary.referralsCollected} referrals · {retentionBonusSummary.retentionSalesConverted?.length ?? 0} retention sales
