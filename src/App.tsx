@@ -40387,6 +40387,50 @@ ${waybillLineItems(w).length > 1
 
       if (retentionSubPage === "Calls & Outcomes") return renderActivityFeed("Calls & Outcomes", "No touchpoints logged in this period yet.");
 
+      if (retentionSubPage === "Reviews") return (
+        <div className="space-y-4">
+          {retentionDashboardSummary && (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Requested</div>
+                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.reviewsRequested}</div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Received</div>
+                <div className="text-xl font-black text-emerald-600 mt-1">{retentionDashboardSummary.reviewsReferrals.reviewsReceived}</div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Conversion</div>
+                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.reviewConversionPct === null ? "—" : `${retentionDashboardSummary.reviewsReferrals.reviewConversionPct}%`}</div>
+              </div>
+            </div>
+          )}
+          {renderActivityFeed("Reviews", "No review activity logged in this period yet.")}
+        </div>
+      );
+
+      if (retentionSubPage === "Referrals") return (
+        <div className="space-y-4">
+          {retentionDashboardSummary && (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Requested</div>
+                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.referralsRequested}</div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Received</div>
+                <div className="text-xl font-black text-emerald-600 mt-1">{retentionDashboardSummary.reviewsReferrals.referralsReceived}</div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Conversion</div>
+                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.referralConversionPct === null ? "—" : `${retentionDashboardSummary.reviewsReferrals.referralConversionPct}%`}</div>
+              </div>
+            </div>
+          )}
+          {renderActivityFeed("Referrals", "No referral activity logged in this period yet.")}
+        </div>
+      );
+
       if (retentionSubPage === "Reports") return (
         <div className="space-y-6">
           {retentionDashboardSummary && (
