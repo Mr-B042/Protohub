@@ -11033,6 +11033,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionSettingsDraft, setRetentionSettingsDraft] = useState<RetentionBonusSettings | null>(null);
   const [retentionSettingsSaving, setRetentionSettingsSaving] = useState(false);
   const [retentionDashboardSummary, setRetentionDashboardSummary] = useState<RetentionDashboardSummary | null>(null);
+  const [retentionSearch, setRetentionSearch] = useState("");
   const [salesExpansionSummary, setSalesExpansionSummary] = useState<any | null>(null);
   // Known independently of salesExpansionSummary (which only loads once the
   // Upsell tab is actually opened) - fetched once on mount so the nav tab and
@@ -39806,6 +39807,140 @@ ${waybillLineItems(w).length > 1
     if (needsResolutionCount > 0) todaysFocusLines.push(`${needsResolutionCount} unresolved customer complaint${needsResolutionCount === 1 ? "" : "s"}`);
     if (highValueOpportunityCount > 0) todaysFocusLines.push(`${highValueOpportunityCount} high-value repeat-sale opportunit${highValueOpportunityCount === 1 ? "y" : "ies"}`);
 
+    const priorityBadge = (band: RetentionWorklistRow["priorityBand"]) =>
+      band === "critical" ? { emoji: "🔴", label: "Critical", class: "bg-red-50 text-red-700 border-red-200" }
+      : band === "overdue" ? { emoji: "🔥", label: "Overdue", class: "bg-orange-50 text-orange-700 border-orange-200" }
+      : band === "high_value" ? { emoji: "💰", label: "High Value", class: "bg-emerald-50 text-emerald-700 border-emerald-200" }
+      : band === "due" ? { emoji: "🟠", label: "Due", class: "bg-amber-50 text-amber-700 border-amber-200" }
+      : { emoji: "🟢", label: "Opportunity", class: "bg-sky-50 text-sky-700 border-sky-200" };
+
+    const nextActionLabelFor = (row: RetentionWorklistRow) =>
+      row.dueStage === "needs_resolution" ? "Resolve complaint"
+      : row.dueStage === "satisfaction_check" ? "Run satisfaction check"
+      : row.dueStage === "review_referral" ? (!row.reviewCollected ? "Request review" : "Request referral")
+      : row.dueStage === "retention_sale" ? "Offer another product"
+      : row.dueStage === "win_back" ? "Attempt win-back"
+      : "—";
+
+    const retentionSearchQuery = retentionSearch.trim().toLowerCase();
+    const filteredRetentionWorklist = retentionSearchQuery
+      ? retentionWorklist.filter((row) =>
+          row.customerName.toLowerCase().includes(retentionSearchQuery) ||
+          row.phone.includes(retentionSearchQuery) ||
+          row.orderId.toLowerCase().includes(retentionSearchQuery)
+        )
+      : retentionWorklist;
+
+    const renderInlineLoggingForm = (row: RetentionWorklistRow) => (
+      <div className="border-t border-gray-100 bg-gray-50/60 p-4">
+        {row.dueStage === "satisfaction_check" || row.dueStage === "needs_resolution" ? (
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {satisfactionOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionSatisfactionOutcome === opt.value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}
+                  onClick={() => setRetentionSatisfactionOutcome(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <textarea
+              className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+              placeholder="Notes (optional)"
+              value={retentionSatisfactionNotes}
+              onChange={(e) => setRetentionSatisfactionNotes(e.target.value)}
+            />
+            <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitSatisfactionCheck(row.orderId)}>
+              Log satisfaction check
+            </button>
+          </div>
+        ) : row.dueStage === "review_referral" ? (
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+              <input type="checkbox" checked={retentionReviewCollected} onChange={(e) => setRetentionReviewCollected(e.target.checked)} /> Written review collected
+            </label>
+            {retentionReviewCollected && (
+              <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Review text" value={retentionReviewText} onChange={(e) => setRetentionReviewText(e.target.value)} />
+            )}
+            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+              <input type="checkbox" checked={retentionReviewIsVideo} onChange={(e) => setRetentionReviewIsVideo(e.target.checked)} /> Video testimonial collected
+            </label>
+            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+              <input type="checkbox" checked={retentionAdPermission} onChange={(e) => setRetentionAdPermission(e.target.checked)} /> Permission to use in advertising
+            </label>
+            <div>
+              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">Photo / video (customer sends via WhatsApp, upload it here)</span>
+              <input type="file" accept="image/*,video/*" disabled={retentionMediaUploading} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleMediaFileSelected(f); }} />
+              {retentionMediaUploading && <span className="ml-2 text-xs text-gray-400">Uploading…</span>}
+              {retentionMediaUrls.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {retentionMediaUrls.map((url) => (
+                    <a key={url} href={url} target="_blank" rel="noreferrer" className="text-xs font-semibold text-[#1F8FE0] hover:underline">Attachment</a>
+                  ))}
+                </div>
+              )}
+            </div>
+            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+              <input type="checkbox" checked={retentionReferralCollected} onChange={(e) => setRetentionReferralCollected(e.target.checked)} /> Referral collected
+            </label>
+            {retentionReferralCollected && (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral name" value={retentionReferralName} onChange={(e) => setRetentionReferralName(e.target.value)} />
+                <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral phone" value={retentionReferralPhone} onChange={(e) => setRetentionReferralPhone(e.target.value)} />
+              </div>
+            )}
+            {retentionReviewIsVideo && (
+              <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                <input type="checkbox" checked={retentionDiscountOwed} onChange={(e) => setRetentionDiscountOwed(e.target.checked)} /> Reward with discount on next order
+              </label>
+            )}
+            {retentionDiscountOwed && (
+              <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Discount note (e.g. 10% off next order)" value={retentionDiscountNote} onChange={(e) => setRetentionDiscountNote(e.target.value)} />
+            )}
+            <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitReviewReferral(row.orderId)}>
+              Log review & referral
+            </button>
+          </div>
+        ) : row.dueStage === "retention_sale" || row.dueStage === "win_back" ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="space-y-1">
+                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Suggested product ID</span>
+                <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedProductId} onChange={(e) => setRetentionOfferedProductId(e.target.value)} placeholder="Product UUID" />
+              </label>
+              <label className="space-y-1">
+                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Package ID</span>
+                <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedPackageId} onChange={(e) => setRetentionOfferedPackageId(e.target.value)} placeholder="Package UUID (optional)" />
+              </label>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(["accepted", "declined", "no_response"] as const).map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold capitalize ${retentionOutcome === opt ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}
+                  onClick={() => setRetentionOutcome(opt)}
+                >
+                  {opt.replace("_", " ")}
+                </button>
+              ))}
+            </div>
+            {retentionOutcome === "accepted" && (
+              <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Resulting order ID" value={retentionResultingOrderId} onChange={(e) => setRetentionResultingOrderId(e.target.value)} />
+            )}
+            <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitRetentionSale(row.orderId)}>
+              Log retention sale
+            </button>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">This order isn&apos;t due for a stage-specific action yet.</p>
+        )}
+      </div>
+    );
+
     return (
       <div className="space-y-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -39980,149 +40115,124 @@ ${waybillLineItems(w).length > 1
           </section>
         )}
 
-        <section className="space-y-3">
-          {retentionStageFilter !== "all" && (
-            <button
-              type="button"
-              onClick={() => setRetentionStageFilter("all")}
-              className="!min-h-0 text-xs font-bold text-gray-500 hover:text-gray-700"
-            >
-              ← Clear stage filter
-            </button>
-          )}
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-200 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-gray-900">Priority Work Queue</h2>
+              {retentionStageFilter !== "all" && (
+                <button
+                  type="button"
+                  onClick={() => setRetentionStageFilter("all")}
+                  className="!min-h-0 text-xs font-bold text-gray-500 hover:text-gray-700"
+                >
+                  ← Clear stage filter
+                </button>
+              )}
+            </div>
+            <input
+              type="text"
+              value={retentionSearch}
+              onChange={(e) => setRetentionSearch(e.target.value)}
+              placeholder="Search customer, phone, or order ID"
+              className="!min-h-0 w-full sm:w-72 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+            />
+          </div>
 
           {retentionWorklistLoading && retentionWorklist.length === 0 ? (
-            <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-gray-400">Loading worklist…</div>
-          ) : retentionWorklist.length === 0 ? (
-            <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-gray-400">No delivered orders are due for a retention touchpoint right now.</div>
-          ) : (
-            <div className="space-y-3">
-              {retentionWorklist.map((row) => (
-                <article key={row.orderId} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-                  <button
-                    type="button"
-                    className="!min-h-0 flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50"
-                    onClick={() => toggleLogging(row.orderId, row.dueStage)}
-                  >
-                    <div className="min-w-0">
-                      <p className="m-0 font-black text-gray-900">#{row.orderId} · {row.customerName}</p>
-                      <p className="m-0 mt-0.5 text-xs text-gray-500">{row.phone} · delivered {row.deliveredDate} · {row.daysSinceDelivery}d ago{row.discountOwed ? " · discount owed" : ""}</p>
-                    </div>
-                    <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span>
-                  </button>
-
-                  {retentionLoggingOrderId === row.orderId && (
-                    <div className="border-t border-gray-100 bg-gray-50/60 p-4">
-                      {row.dueStage === "satisfaction_check" || row.dueStage === "needs_resolution" ? (
-                        <div className="space-y-3">
-                          <div className="flex flex-wrap gap-2">
-                            {satisfactionOptions.map((opt) => (
-                              <button
-                                key={opt.value}
-                                type="button"
-                                className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionSatisfactionOutcome === opt.value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}
-                                onClick={() => setRetentionSatisfactionOutcome(opt.value)}
-                              >
-                                {opt.label}
-                              </button>
-                            ))}
-                          </div>
-                          <textarea
-                            className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
-                            placeholder="Notes (optional)"
-                            value={retentionSatisfactionNotes}
-                            onChange={(e) => setRetentionSatisfactionNotes(e.target.value)}
-                          />
-                          <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitSatisfactionCheck(row.orderId)}>
-                            Log satisfaction check
-                          </button>
-                        </div>
-                      ) : row.dueStage === "review_referral" ? (
-                        <div className="space-y-3">
-                          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-                            <input type="checkbox" checked={retentionReviewCollected} onChange={(e) => setRetentionReviewCollected(e.target.checked)} /> Written review collected
-                          </label>
-                          {retentionReviewCollected && (
-                            <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Review text" value={retentionReviewText} onChange={(e) => setRetentionReviewText(e.target.value)} />
-                          )}
-                          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-                            <input type="checkbox" checked={retentionReviewIsVideo} onChange={(e) => setRetentionReviewIsVideo(e.target.checked)} /> Video testimonial collected
-                          </label>
-                          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-                            <input type="checkbox" checked={retentionAdPermission} onChange={(e) => setRetentionAdPermission(e.target.checked)} /> Permission to use in advertising
-                          </label>
-                          <div>
-                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">Photo / video (customer sends via WhatsApp, upload it here)</span>
-                            <input type="file" accept="image/*,video/*" disabled={retentionMediaUploading} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleMediaFileSelected(f); }} />
-                            {retentionMediaUploading && <span className="ml-2 text-xs text-gray-400">Uploading…</span>}
-                            {retentionMediaUrls.length > 0 && (
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                {retentionMediaUrls.map((url) => (
-                                  <a key={url} href={url} target="_blank" rel="noreferrer" className="text-xs font-semibold text-[#1F8FE0] hover:underline">Attachment</a>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-                            <input type="checkbox" checked={retentionReferralCollected} onChange={(e) => setRetentionReferralCollected(e.target.checked)} /> Referral collected
-                          </label>
-                          {retentionReferralCollected && (
-                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                              <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral name" value={retentionReferralName} onChange={(e) => setRetentionReferralName(e.target.value)} />
-                              <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral phone" value={retentionReferralPhone} onChange={(e) => setRetentionReferralPhone(e.target.value)} />
-                            </div>
-                          )}
-                          {retentionReviewIsVideo && (
-                            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-                              <input type="checkbox" checked={retentionDiscountOwed} onChange={(e) => setRetentionDiscountOwed(e.target.checked)} /> Reward with discount on next order
-                            </label>
-                          )}
-                          {retentionDiscountOwed && (
-                            <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Discount note (e.g. 10% off next order)" value={retentionDiscountNote} onChange={(e) => setRetentionDiscountNote(e.target.value)} />
-                          )}
-                          <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitReviewReferral(row.orderId)}>
-                            Log review & referral
-                          </button>
-                        </div>
-                      ) : row.dueStage === "retention_sale" ? (
-                        <div className="space-y-3">
-                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            <label className="space-y-1">
-                              <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Suggested product ID</span>
-                              <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedProductId} onChange={(e) => setRetentionOfferedProductId(e.target.value)} placeholder="Product UUID" />
-                            </label>
-                            <label className="space-y-1">
-                              <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Package ID</span>
-                              <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedPackageId} onChange={(e) => setRetentionOfferedPackageId(e.target.value)} placeholder="Package UUID (optional)" />
-                            </label>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {(["accepted", "declined", "no_response"] as const).map((opt) => (
-                              <button
-                                key={opt}
-                                type="button"
-                                className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold capitalize ${retentionOutcome === opt ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}
-                                onClick={() => setRetentionOutcome(opt)}
-                              >
-                                {opt.replace("_", " ")}
-                              </button>
-                            ))}
-                          </div>
-                          {retentionOutcome === "accepted" && (
-                            <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Resulting order ID" value={retentionResultingOrderId} onChange={(e) => setRetentionResultingOrderId(e.target.value)} />
-                          )}
-                          <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitRetentionSale(row.orderId)}>
-                            Log retention sale
-                          </button>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-gray-400">This order isn&apos;t due for a stage-specific action yet.</p>
-                      )}
-                    </div>
-                  )}
-                </article>
-              ))}
+            <div className="px-5 py-10 text-sm text-gray-400 text-center">Loading worklist…</div>
+          ) : filteredRetentionWorklist.length === 0 ? (
+            <div className="px-5 py-10 text-sm text-gray-400 text-center">
+              {retentionWorklist.length === 0 ? "No delivered orders are due for a retention touchpoint right now." : "No candidates match your search."}
             </div>
+          ) : (
+            <>
+              {/* Mobile: stacked cards. */}
+              <div className="sm:hidden divide-y divide-gray-100">
+                {filteredRetentionWorklist.map((row) => {
+                  const badge = priorityBadge(row.priorityBand);
+                  const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
+                  return (
+                    <article key={row.orderId} className="px-4 py-4 flex flex-col gap-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <button type="button" className="!min-h-0 flex min-w-0 items-start gap-3 text-left" onClick={() => toggleLogging(row.orderId, row.dueStage)}>
+                          <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
+                          <div className="min-w-0">
+                            <div className="font-bold text-gray-900 truncate">{row.customerName}</div>
+                            <div className="text-xs text-gray-500">{row.phone}</div>
+                            <div className="text-xs font-semibold text-gray-400">#{row.orderId} · {row.productName}</div>
+                          </div>
+                        </button>
+                        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span>
+                      </div>
+                      <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 space-y-0.5">
+                        <div>Stage: <strong className="text-gray-800">{stageLabel(row.dueStage)}</strong></div>
+                        <div>Last contact: {row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</div>
+                        <div>Next action: <strong className="text-gray-800">{nextActionLabelFor(row)}</strong></div>
+                        <div>Value: {formatMoney(row.orderAmount)}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <a href={whatsappUrl} target="_blank" rel="noreferrer" className="!min-h-0 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp</a>
+                        <a href={`tel:${row.phone}`} className="!min-h-0 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"><Phone className="w-3.5 h-3.5" /> Call</a>
+                        <button type="button" className="!min-h-0 ml-auto inline-flex items-center gap-1 rounded-md bg-[#1F8FE0] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8]" onClick={() => toggleLogging(row.orderId, row.dueStage)}>Log Outcome</button>
+                      </div>
+                      {retentionLoggingOrderId === row.orderId && renderInlineLoggingForm(row)}
+                    </article>
+                  );
+                })}
+              </div>
+
+              {/* Desktop: full table, spec column shape. */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full min-w-[960px] text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                      {["Priority", "Customer", "Order Details", "Stage", "Last Contact", "Next Action", "Customer Value", "Actions"].map((h) => (
+                        <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filteredRetentionWorklist.map((row) => {
+                      const badge = priorityBadge(row.priorityBand);
+                      const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
+                      return (
+                        <Fragment key={row.orderId}>
+                          <tr className="align-top hover:bg-gray-50">
+                            <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span></td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-2.5">
+                                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
+                                <div className="min-w-0">
+                                  <div className="font-bold text-gray-900">{row.customerName}</div>
+                                  <div className="text-xs text-gray-500">{row.phone}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-gray-600">#{row.orderId}<br />{row.productName}</td>
+                            <td className="px-4 py-3"><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
+                            <td className="px-4 py-3 text-xs text-gray-600">{row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</td>
+                            <td className="px-4 py-3 text-xs font-semibold text-gray-800">{nextActionLabelFor(row)}</td>
+                            <td className="px-4 py-3 text-xs font-semibold text-gray-800">{formatMoney(row.orderAmount)}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-1.5">
+                                <a href={whatsappUrl} target="_blank" rel="noreferrer" className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /></a>
+                                <a href={`tel:${row.phone}`} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><Phone className="w-3.5 h-3.5" /></a>
+                                <button type="button" className="!min-h-0 inline-flex items-center rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8]" onClick={() => toggleLogging(row.orderId, row.dueStage)}>Log Outcome</button>
+                              </div>
+                            </td>
+                          </tr>
+                          {retentionLoggingOrderId === row.orderId && (
+                            <tr>
+                              <td colSpan={8} className="p-0">{renderInlineLoggingForm(row)}</td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
       </div>
