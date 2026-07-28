@@ -8399,6 +8399,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerRestockThreshold, setManagerRestockThreshold] = useState(7);
   const [managerDashboardTab, setManagerDashboardTab] = useState<ManagerDashboardTab>("Overview");
   const [recoveryRepDashboardTab, setRecoveryRepDashboardTab] = useState<RecoveryRepDashboardTab>("Overview");
+  const [recoveryCandidateSearch, setRecoveryCandidateSearch] = useState("");
+  const [recoveryCandidateReasonFilter, setRecoveryCandidateReasonFilter] = useState("All");
   const [managerBonusWeekStart, setManagerBonusWeekStart] = useState<string>(getSundayKey);
   const [managerBonusSummary, setManagerBonusSummary] = useState<ManagerBonusSummary | null>(null);
   const [managerBonusLoading, setManagerBonusLoading] = useState(false);
@@ -39906,18 +39908,72 @@ ${waybillLineItems(w).length > 1
     // are cheaply computable from already-loaded order data (per-order
     // contact-attempt history isn't bulk-loaded client-side, so "7+ days no
     // response" is approximated as "still open 7+ days after creation"
-    // rather than an exact last-contact-attempt date diff).
-    const recoveryCandidates = trackedOrders.filter((order) => {
-      if (order.assignedRepId === recoveryRepViewingId) return false; // already recovered
+    // rather than an exact last-contact-attempt date diff). Each candidate
+    // carries its own `reason` (why it surfaced) so the card can show it,
+    // matching the Customers page's "Customer Status" badge convention.
+    const candidateReason = (order: TrackedOrder): string | null => {
       const status = order.status ?? "New";
-      if (["Cancelled", "Postponed", "Failed"].includes(status)) return true;
-      if ((order.callOutcome ?? "").trim() === "Product Unavailable") return true;
+      if (["Cancelled", "Postponed", "Failed"].includes(status)) return status;
+      if ((order.callOutcome ?? "").trim() === "Product Unavailable") return "Product Unavailable";
       if (["New", "Confirmed"].includes(status) && order.createdAt) {
         const createdMs = new Date(order.createdAt).getTime();
-        if (Number.isFinite(createdMs) && todayMs - createdMs >= sevenDaysMs) return true;
+        if (Number.isFinite(createdMs) && todayMs - createdMs >= sevenDaysMs) return "7+ days, no closure";
       }
-      return false;
-    }).slice(0, 100);
+      return null;
+    };
+    const recoveryCandidates = trackedOrders
+      .filter((order) => order.assignedRepId !== recoveryRepViewingId && candidateReason(order))
+      .slice(0, 100);
+    // Cheap per-phone order-history summary (total / delivered / cancelled),
+    // same "orders / delivered / cancelled" shape as the Customers page's
+    // "Order History" column, computed only for the candidates on screen.
+    const orderHistoryForPhone = (phone: string) => {
+      const key = normalizePhone(phone);
+      if (key.length < 7) return { orders: 0, delivered: 0, cancelled: 0 };
+      const matches = trackedOrders.filter((o) => normalizePhone(o.phone ?? "") === key);
+      return {
+        orders: matches.length,
+        delivered: matches.filter((o) => o.status === "Delivered").length,
+        cancelled: matches.filter((o) => o.status === "Cancelled" || o.status === "Failed").length
+      };
+    };
+    const addRecoveryCandidateNote = (order: TrackedOrder) => {
+      const noteText = window.prompt(`Add a note for ${order.customer} (order ${order.id}):`);
+      if (!noteText || !noteText.trim()) return;
+      const nextNotes = [
+        { id: makeNoteId(), text: noteText.trim(), by: ownerName, date: new Date().toISOString() },
+        ...orderNotesFor(order)
+      ];
+      setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? { ...item, notes: nextNotes } : item));
+      ordersApi.update(order.id, { timeline_notes: nextNotes }).then(() => {
+        showToast(`Note added to ${order.id}.`);
+      }).catch((err: any) => {
+        setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? order : item));
+        showToast(`Failed to save the note: ${err?.message ?? "please retry"}.`);
+      });
+    };
+    const candidateStatusTone = (reason: string | null) =>
+      reason === "Cancelled" ? { class: "bg-red-50 text-red-700 border-red-100", dot: "bg-red-500" }
+      : reason === "Failed" ? { class: "bg-red-50 text-red-700 border-red-100", dot: "bg-red-500" }
+      : reason === "Postponed" ? { class: "bg-amber-50 text-amber-700 border-amber-100", dot: "bg-amber-500" }
+      : reason === "Product Unavailable" ? { class: "bg-violet-50 text-violet-700 border-violet-100", dot: "bg-violet-500" }
+      : { class: "bg-sky-50 text-sky-700 border-sky-100", dot: "bg-sky-500" };
+
+    // Summary tiles reflect every candidate (before the search/reason filter
+    // below narrows the table) - same "organized overview + filter bar +
+    // table" shape as the Customers page.
+    const candidateReasonCounts = recoveryCandidates.reduce((acc, order) => {
+      const reason = candidateReason(order) ?? "Other";
+      acc[reason] = (acc[reason] ?? 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    const candidateReasonOptions = ["All", ...Array.from(new Set(recoveryCandidates.map((o) => candidateReason(o) ?? "Other")))];
+    const filteredRecoveryCandidates = recoveryCandidates.filter((order) => {
+      if (recoveryCandidateReasonFilter !== "All" && (candidateReason(order) ?? "Other") !== recoveryCandidateReasonFilter) return false;
+      if (!recoveryCandidateSearch.trim()) return true;
+      const q = recoveryCandidateSearch.trim().toLowerCase();
+      return order.customer.toLowerCase().includes(q) || (order.phone ?? "").includes(q) || order.id.includes(q);
+    });
 
     const kpiCard = (label: string, value: string, targetLabel: string, met: boolean | null) => (
       <div className={`rounded-xl border p-4 ${met === null ? "border-gray-200 bg-gray-50" : met ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
@@ -40137,6 +40193,29 @@ ${waybillLineItems(w).length > 1
           )}
         </section>
 
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Total Candidates</div>
+            <div className="text-xl font-black text-gray-900 mt-1">{recoveryCandidates.length}</div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Cancelled</div>
+            <div className="text-xl font-black text-red-600 mt-1">{candidateReasonCounts["Cancelled"] ?? 0}</div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Postponed</div>
+            <div className="text-xl font-black text-amber-600 mt-1">{candidateReasonCounts["Postponed"] ?? 0}</div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Product Unavailable</div>
+            <div className="text-xl font-black text-violet-600 mt-1">{candidateReasonCounts["Product Unavailable"] ?? 0}</div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3 col-span-2 sm:col-span-1">
+            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">7+ Days, No Closure</div>
+            <div className="text-xl font-black text-sky-600 mt-1">{candidateReasonCounts["7+ days, no closure"] ?? 0}</div>
+          </div>
+        </div>
+
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-200">
             <h2 className="text-base font-bold text-gray-900">Recovery Candidates</h2>
@@ -40145,30 +40224,146 @@ ${waybillLineItems(w).length > 1
               Reassign a candidate using its order's existing "Reassign Sales Rep" action.
             </p>
           </div>
-          {recoveryCandidates.length === 0 ? (
-            <div className="px-5 py-10 text-sm text-gray-400 text-center">No recovery candidates right now.</div>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {recoveryCandidates.map((order) => (
-                <button
-                  key={order.id}
-                  type="button"
-                  className="w-full text-left px-5 py-4 hover:bg-gray-50 transition-colors"
-                  onClick={() => openOrderDetailPopup(order.id)}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <strong className="text-sm text-[#1F8FE0]">{order.id}</strong>{" "}
-                      <span className="text-sm font-semibold text-gray-900">{order.customer}</span>
-                      <p className="mt-0.5 text-xs text-gray-400">{order.phone} · {formatOrderCreatedAt(order)}</p>
-                    </div>
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${orderStatusPillClass(order.status ?? "New", order.callOutcome)}`}>
-                      {orderStatusLabelFor(order)}
-                    </span>
-                  </div>
-                </button>
+          <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/60 flex flex-col sm:flex-row gap-2.5 sm:items-center">
+            <input
+              type="text"
+              value={recoveryCandidateSearch}
+              onChange={(e) => setRecoveryCandidateSearch(e.target.value)}
+              placeholder="Search name, phone, or order ID"
+              className="!min-h-0 w-full sm:w-64 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+            />
+            <select
+              value={recoveryCandidateReasonFilter}
+              onChange={(e) => setRecoveryCandidateReasonFilter(e.target.value)}
+              className="!min-h-0 w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+            >
+              {candidateReasonOptions.map((reason) => (
+                <option key={reason} value={reason}>{reason === "All" ? "Reason: All" : reason}</option>
               ))}
+            </select>
+            {(recoveryCandidateSearch || recoveryCandidateReasonFilter !== "All") && (
+              <button
+                type="button"
+                onClick={() => { setRecoveryCandidateSearch(""); setRecoveryCandidateReasonFilter("All"); }}
+                className="!min-h-0 text-xs font-semibold text-gray-500 hover:text-gray-700 sm:ml-auto"
+              >
+                Reset
+              </button>
+            )}
+            <span className="text-xs text-gray-400 sm:ml-2">{filteredRecoveryCandidates.length} of {recoveryCandidates.length}</span>
+          </div>
+          {filteredRecoveryCandidates.length === 0 ? (
+            <div className="px-5 py-10 text-sm text-gray-400 text-center">
+              {recoveryCandidates.length === 0 ? "No recovery candidates right now." : "No candidates match your search/filter."}
             </div>
+          ) : (
+            <>
+              {/* Mobile: stacked cards, easiest to scan/tap one-handed. */}
+              <div className="sm:hidden divide-y divide-gray-100">
+                {filteredRecoveryCandidates.map((order) => {
+                  const reason = candidateReason(order);
+                  const tone = candidateStatusTone(reason);
+                  const history = orderHistoryForPhone(order.phone ?? "");
+                  const whatsappUrl = buildWhatsAppTargets(order.phone ?? "", `Hello ${order.customer}, this is Protohub following up on your order.`).normalUrl;
+                  return (
+                    <article key={order.id} className="px-4 py-4 flex flex-col gap-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <button type="button" className="!min-h-0 flex min-w-0 items-start gap-3 text-left" onClick={() => openOrderDetailPopup(order.id)}>
+                          <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-black ${customerAvatarTone(order.id)}`}>{customerInitial(order.customer)}</span>
+                          <div className="min-w-0">
+                            <div className="font-bold text-gray-900 truncate">{order.customer}</div>
+                            <div className="text-xs text-gray-500">{order.phone}</div>
+                            <div className="text-xs font-semibold text-gray-400">{order.state || "No state"}</div>
+                          </div>
+                        </button>
+                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${tone.class}`}>{reason}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {whatsappUrl && <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-green-50 text-green-600 ring-1 ring-green-100 transition hover:bg-green-100" href={whatsappUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${order.customer}`}><WhatsAppIcon className="h-4 w-4" /></a>}
+                        <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-50 text-blue-600 ring-1 ring-blue-100 transition hover:bg-blue-100" href={`tel:${order.phone}`} title={`Call ${order.customer}`}><Phone className="h-4 w-4" /></a>
+                        <button className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-gray-50 text-gray-500 ring-1 ring-gray-200 transition hover:bg-gray-100" onClick={() => copyText(order.phone ?? "", `${order.customer} phone`)} title={`Copy ${order.customer}'s phone`}><Copy className="h-4 w-4" /></button>
+                      </div>
+                      <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 text-xs">
+                        <span className="font-semibold uppercase tracking-wide text-gray-400">Order details</span>
+                        <div className="mt-1 font-semibold text-gray-900">{customerOrderLabel(order.productName, order.packageName)}</div>
+                        <div className="text-gray-500">Qty {quantityForOrder(order)} · {formatProductMoney(order.amount, order.currency)}</div>
+                        <div className="text-gray-400">{order.state || "No state"} · Placed {customerOrderPlacedLabel(order.createdAt)}</div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 rounded-xl border border-gray-100 bg-gray-50 p-3 text-center text-xs">
+                        <span><strong className="block text-gray-900">{history.orders}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Orders</span></span>
+                        <span><strong className="block text-green-600">{history.delivered}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Delivered</span></span>
+                        <span><strong className="block text-red-500">{history.cancelled}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Cancelled</span></span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
+                        <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => addRecoveryCandidateNote(order)}>Add Note</button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              {/* Desktop: full table, same column shape as the Customers page. */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full min-w-[900px] text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                      {["Customer", "Order Details", "Candidate Reason", "Order History", "Actions"].map((h) => (
+                        <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filteredRecoveryCandidates.map((order) => {
+                      const reason = candidateReason(order);
+                      const tone = candidateStatusTone(reason);
+                      const history = orderHistoryForPhone(order.phone ?? "");
+                      const whatsappUrl = buildWhatsAppTargets(order.phone ?? "", `Hello ${order.customer}, this is Protohub following up on your order.`).normalUrl;
+                      return (
+                        <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-4 max-w-[240px]">
+                            <div className="flex items-center gap-3">
+                              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-black ${customerAvatarTone(order.id)}`}>{customerInitial(order.customer)}</span>
+                              <div className="min-w-0">
+                                <button type="button" className="!min-h-0 font-bold text-gray-900 truncate hover:text-[#1F8FE0]" onClick={() => openOrderDetailPopup(order.id)}>{order.customer}</button>
+                                <div className="mt-0.5 text-gray-700 whitespace-nowrap">{order.phone}</div>
+                                <div className="text-xs font-semibold text-gray-400">{order.state || "No state"}</div>
+                                <div className="mt-2 flex items-center gap-2">
+                                  {whatsappUrl && <a className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-green-50 text-green-600 ring-1 ring-green-100 transition hover:bg-green-100" href={whatsappUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${order.customer}`}><WhatsAppIcon className="h-3.5 w-3.5" /></a>}
+                                  <a className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-50 text-blue-600 ring-1 ring-blue-100 transition hover:bg-blue-100" href={`tel:${order.phone}`} title={`Call ${order.customer}`}><Phone className="h-3.5 w-3.5" /></a>
+                                  <button className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-gray-50 text-gray-500 ring-1 ring-gray-200 transition hover:bg-gray-100" onClick={() => copyText(order.phone ?? "", `${order.customer} phone`)} title={`Copy ${order.customer}'s phone`}><Copy className="h-3.5 w-3.5" /></button>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="font-semibold text-gray-900">{customerOrderLabel(order.productName, order.packageName)}</div>
+                            <div className="text-xs text-gray-500">Qty {quantityForOrder(order)} · {formatProductMoney(order.amount, order.currency)}</div>
+                            <div className="text-xs text-gray-400">{order.state || "No state"} · Placed {customerOrderPlacedLabel(order.createdAt)}</div>
+                          </td>
+                          <td className="px-4 py-4">
+                            <span className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black ${tone.class}`}><span className={`h-2 w-2 rounded-full ${tone.dot}`} /> {reason}</span>
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="grid grid-cols-3 gap-3 text-center">
+                              <span><strong className="block text-gray-900">{history.orders}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Orders</span></span>
+                              <span><strong className="block text-green-600">{history.delivered}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Delivered</span></span>
+                              <span><strong className="block text-red-500">{history.cancelled}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Cancelled</span></span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="flex items-center gap-1.5">
+                              <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
+                              <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => addRecoveryCandidateNote(order)}>Add Note</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
 
