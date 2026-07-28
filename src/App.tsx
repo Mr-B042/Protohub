@@ -212,6 +212,22 @@ type FinanceTab = "Financial Overview" | "Reports" | "Weekly Accounting" | "Sale
 type ManagerDashboardTab = "Overview" | "Bonus" | "Upsell Bonus" | "Needs Attention";
 type RecoveryRepDashboardTab = "Overview" | "Customer Retention";
 type RetentionSubPage = "Overview" | "Pipeline" | "Customers" | "Tasks" | "Calls & Outcomes" | "Reviews" | "Referrals" | "Repeat Sales" | "Win-back" | "Reports" | "Settings";
+// Rendered as a contextual sub-section in the MAIN app sidebar, directly
+// under "Recovery Rep Dashboard" - not a second/nested sidebar. Static
+// metadata only; the Tasks badge count is computed where it's rendered.
+const RETENTION_SUBNAV_ITEMS: Array<{ key: RetentionSubPage; label: string; icon: typeof LayoutPanelTop; ownerOnly?: boolean }> = [
+  { key: "Overview", label: "Overview", icon: LayoutPanelTop },
+  { key: "Pipeline", label: "Pipeline", icon: Repeat2 },
+  { key: "Customers", label: "Customers", icon: Users },
+  { key: "Tasks", label: "Tasks", icon: ClipboardCheck },
+  { key: "Calls & Outcomes", label: "Calls & Outcomes", icon: Phone },
+  { key: "Reviews", label: "Reviews", icon: Sparkles },
+  { key: "Referrals", label: "Referrals", icon: Gift },
+  { key: "Repeat Sales", label: "Repeat Sales", icon: ShoppingCart },
+  { key: "Win-back", label: "Win-back", icon: RefreshCw },
+  { key: "Reports", label: "Reports", icon: BarChart3 },
+  { key: "Settings", label: "Settings", icon: Settings, ownerOnly: true }
+];
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
@@ -40158,20 +40174,6 @@ ${waybillLineItems(w).length > 1
       </section>
     );
 
-    const retentionNavItems: Array<{ key: RetentionSubPage; label: string; icon: typeof LayoutPanelTop; badge?: number; ownerOnly?: boolean }> = [
-      { key: "Overview", label: "Overview", icon: LayoutPanelTop },
-      { key: "Pipeline", label: "Pipeline", icon: Repeat2 },
-      { key: "Customers", label: "Customers", icon: Users },
-      { key: "Tasks", label: "Tasks", icon: ClipboardCheck, badge: filteredRetentionTasks.length || undefined },
-      { key: "Calls & Outcomes", label: "Calls & Outcomes", icon: Phone },
-      { key: "Reviews", label: "Reviews", icon: Sparkles },
-      { key: "Referrals", label: "Referrals", icon: Gift },
-      { key: "Repeat Sales", label: "Repeat Sales", icon: ShoppingCart },
-      { key: "Win-back", label: "Win-back", icon: RefreshCw },
-      { key: "Reports", label: "Reports", icon: BarChart3 },
-      { key: "Settings", label: "Settings", icon: Settings, ownerOnly: true }
-    ];
-
     const renderRetentionComingSoon = (label: string) => (
       <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-10 text-center text-sm text-gray-400">
         {label} is coming in a follow-up update.
@@ -40737,46 +40739,7 @@ ${waybillLineItems(w).length > 1
           </div>
         </header>
 
-        {/* Mobile: horizontally-scrollable pill row instead of a second sidebar. */}
-        <div className="lg:hidden -mx-1 overflow-x-auto">
-          <div className="flex items-center gap-1.5 px-1 pb-1">
-            {retentionNavItems.filter((item) => !item.ownerOnly || currentRole === "Owner").map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => setRetentionSubPage(item.key)}
-                className={`!min-h-0 shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${retentionSubPage === item.key ? "bg-[#1F8FE0] text-white" : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
-              >
-                <item.icon className="w-3.5 h-3.5" /> {item.label}
-                {typeof item.badge === "number" && <span className={`rounded-full px-1.5 text-[10px] ${retentionSubPage === item.key ? "bg-white/20" : "bg-red-100 text-red-700"}`}>{item.badge}</span>}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex flex-col lg:flex-row gap-4">
-          {/* Desktop: nested sidebar, scoped to this tab only. */}
-          <aside className="hidden lg:block w-52 shrink-0">
-            <nav className="rounded-xl bg-[#0f1b2d] p-2 space-y-0.5 sticky top-4">
-              {retentionNavItems.filter((item) => !item.ownerOnly || currentRole === "Owner").map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => setRetentionSubPage(item.key)}
-                  className={`!min-h-0 w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-semibold text-left transition-colors ${retentionSubPage === item.key ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}
-                >
-                  <item.icon className="w-4 h-4 shrink-0" />
-                  <span className="flex-1 truncate">{item.label}</span>
-                  {typeof item.badge === "number" && <span className="rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">{item.badge}</span>}
-                </button>
-              ))}
-            </nav>
-          </aside>
-
-          <div className="flex-1 min-w-0">
-            {renderRetentionSubPage()}
-          </div>
-        </div>
+        {renderRetentionSubPage()}
       </div>
 
       {logOutcomeRow && (
@@ -44135,27 +44098,59 @@ ${waybillLineItems(w).length > 1
               : activePage === targetPage
                   && !(targetPage === "Sales Rep Workspace" && isWorkspaceBonusTab && currentAllowedPages.includes("Bonuses"))
                   && !(targetPage === "Sales Rep Workspace" && isWorkspaceSalesExpansionTab && currentAllowedPages.includes("Upsell & Cross-sell Log"));
+            // Customer Retention's own pages render as a contextual
+            // sub-section right under Recovery Rep Dashboard - not a second
+            // sidebar elsewhere in the page (Bright: "should have this on
+            // nav bar not creating new one which is very unnecessary").
+            const showRetentionSubnav = item.label === "Recovery Rep Dashboard"
+              && activePage === "Recovery Rep Dashboard"
+              && recoveryRepDashboardTab === "Customer Retention"
+              && !collapsed;
             return (
-              <button
-                type="button"
-                title={collapsed ? item.label : undefined}
-                className={`w-full flex items-center rounded-lg text-sm transition-all relative
-                  ${collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5"}
-                  ${isActive
-                    ? `bg-[#1F8FE0]/15 text-[#1F8FE0] font-semibold ${!collapsed ? "before:absolute before:left-0 before:top-1 before:bottom-1 before:w-1 before:bg-[#1F8FE0] before:rounded-full" : ""}`
-                    : "text-gray-300 font-medium hover:bg-white/5 hover:text-white"
-                  }`}
-                key={item.label}
-                onClick={() => {
-                  handleNavClick(item.label);
-                  if (window.matchMedia("(max-width: 1024px)").matches) {
-                    setMobileMenuOpen(false);
-                  }
-                }}
-              >
-                <item.icon className={`w-5 h-5 shrink-0 ${isActive ? "text-[#1F8FE0]" : "text-gray-400"}`} />
-                {!collapsed && <span className="truncate">{item.label}</span>}
-              </button>
+              <Fragment key={item.label}>
+                <button
+                  type="button"
+                  title={collapsed ? item.label : undefined}
+                  className={`w-full flex items-center rounded-lg text-sm transition-all relative
+                    ${collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5"}
+                    ${isActive
+                      ? `bg-[#1F8FE0]/15 text-[#1F8FE0] font-semibold ${!collapsed ? "before:absolute before:left-0 before:top-1 before:bottom-1 before:w-1 before:bg-[#1F8FE0] before:rounded-full" : ""}`
+                      : "text-gray-300 font-medium hover:bg-white/5 hover:text-white"
+                    }`}
+                  onClick={() => {
+                    handleNavClick(item.label);
+                    if (window.matchMedia("(max-width: 1024px)").matches) {
+                      setMobileMenuOpen(false);
+                    }
+                  }}
+                >
+                  <item.icon className={`w-5 h-5 shrink-0 ${isActive ? "text-[#1F8FE0]" : "text-gray-400"}`} />
+                  {!collapsed && <span className="truncate">{item.label}</span>}
+                </button>
+                {showRetentionSubnav && (
+                  <div className="ml-4 pl-3 border-l border-white/10 space-y-0.5 py-1">
+                    {RETENTION_SUBNAV_ITEMS.filter((sub) => !sub.ownerOnly || currentRole === "Owner").map((sub) => {
+                      const subActive = retentionSubPage === sub.key;
+                      const badge = sub.key === "Tasks" ? retentionWorklist.filter((r) => r.priorityBand !== "revenue_opportunity").length : 0;
+                      return (
+                        <button
+                          key={sub.key}
+                          type="button"
+                          onClick={() => {
+                            setRetentionSubPage(sub.key);
+                            if (window.matchMedia("(max-width: 1024px)").matches) setMobileMenuOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors ${subActive ? "bg-[#1F8FE0]/15 text-[#1F8FE0] font-bold" : "text-gray-400 font-medium hover:bg-white/5 hover:text-white"}`}
+                        >
+                          <sub.icon className="w-3.5 h-3.5 shrink-0" />
+                          <span className="flex-1 truncate text-left">{sub.label}</span>
+                          {badge > 0 && <span className={`rounded-full px-1.5 text-[10px] font-bold ${subActive ? "bg-[#1F8FE0]/20" : "bg-red-500/20 text-red-400"}`}>{badge}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </Fragment>
             );
           })}
         </nav>
