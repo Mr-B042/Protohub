@@ -947,7 +947,42 @@ export interface RetentionCustomerDetail {
   nextAction: { recommendedText: string; dueStage: string | null; orderId: string | null };
 }
 
+export interface RetentionActivityLogRow {
+  id: string;
+  orderId: string;
+  customerName: string;
+  phone: string;
+  productName: string;
+  stage: "satisfaction_check" | "review_referral" | "retention_sale";
+  loggedBy: string | null;
+  loggedByName: string;
+  loggedAt: string;
+  reachStatus: string | null;
+  customerResponse: string | null;
+  nextAction: string | null;
+  nextActionNote: string | null;
+  satisfactionOutcome: string | null;
+  satisfactionNotes: string | null;
+  reviewCollected: boolean | null;
+  reviewIsVideo: boolean | null;
+  reviewText: string | null;
+  referralCollected: boolean | null;
+  referralContactName: string | null;
+  retentionOutcome: string | null;
+  resultingOrderId: string | null;
+}
+
 export const customerRetentionApi = {
+  activityLog: (params: { dateFrom?: string; dateTo?: string; stage?: string; repId?: string; search?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.dateFrom) qs.set("dateFrom", params.dateFrom);
+    if (params.dateTo) qs.set("dateTo", params.dateTo);
+    if (params.stage) qs.set("stage", params.stage);
+    if (params.repId) qs.set("repId", params.repId);
+    if (params.search) qs.set("search", params.search);
+    const suffix = qs.toString();
+    return get<{ rows: RetentionActivityLogRow[] }>(`/api/customer-retention/activity-log${suffix ? `?${suffix}` : ""}`);
+  },
   customerDetail: (phone: string) => get<RetentionCustomerDetail>(`/api/customer-retention/customer/${encodeURIComponent(phone)}`),
   dashboardSummary: (params: { dateFrom?: string; dateTo?: string; repId?: string } = {}) => {
     const qs = new URLSearchParams();

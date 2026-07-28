@@ -801,6 +801,77 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
   }
 });
 
+// GET /activity-log - every touchpoint logged in the period, newest first,
+// joined against orders for display. Backs the Calls & Outcomes, Reviews,
+// Referrals, and Repeat Sales sidebar pages (each just passes a different
+// `stage`/framing on top of the same feed).
+router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { start, exclusiveEnd } = resolveDateBounds(req.query as Record<string, unknown>);
+    const stageFilter = typeof req.query.stage === "string" ? req.query.stage : null;
+    const repId = typeof req.query.repId === "string" && req.query.repId ? req.query.repId : null;
+    const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
+
+    let query = supabase
+      .from("customer_retention_touchpoints")
+      .select("id, order_id, stage, logged_by, logged_at, reach_status, customer_response, next_action, next_action_note, satisfaction_outcome, satisfaction_notes, review_collected, review_is_video, review_text, referral_collected, referral_contact_name, retention_outcome, resulting_order_id")
+      .eq("org_id", orgId)
+      .gte("logged_at", `${start}T00:00:00`)
+      .lt("logged_at", `${exclusiveEnd}T00:00:00`)
+      .order("logged_at", { ascending: false })
+      .limit(200);
+    if (stageFilter) query = query.eq("stage", stageFilter);
+    if (repId) query = query.eq("logged_by", repId);
+    const { data: touchpoints, error } = await query;
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    const rows = touchpoints ?? [];
+    if (rows.length === 0) { res.json({ rows: [] }); return; }
+
+    const orderIds = [...new Set(rows.map((r) => r.order_id))];
+    const { data: orders } = await supabase.from("orders").select("id, customer, phone, product_name").in("id", orderIds);
+    const orderById = new Map((orders ?? []).map((o) => [o.id, o]));
+
+    const repIds = [...new Set(rows.map((r) => r.logged_by).filter(Boolean))] as string[];
+    const { data: repUsers } = repIds.length > 0 ? await supabase.from("users").select("id, name").in("id", repIds) : { data: [] as { id: string; name: string }[] };
+    const repNameById = new Map((repUsers ?? []).map((u) => [u.id, u.name]));
+
+    const result = rows
+      .map((r) => {
+        const order = orderById.get(r.order_id);
+        return {
+          id: r.id,
+          orderId: r.order_id,
+          customerName: order?.customer ?? "Unknown",
+          phone: order?.phone ?? "",
+          productName: order?.product_name ?? "",
+          stage: r.stage,
+          loggedBy: r.logged_by,
+          loggedByName: r.logged_by ? (repNameById.get(r.logged_by) ?? "Unknown") : "Unknown",
+          loggedAt: r.logged_at,
+          reachStatus: r.reach_status,
+          customerResponse: r.customer_response,
+          nextAction: r.next_action,
+          nextActionNote: r.next_action_note,
+          satisfactionOutcome: r.satisfaction_outcome,
+          satisfactionNotes: r.satisfaction_notes,
+          reviewCollected: r.review_collected,
+          reviewIsVideo: r.review_is_video,
+          reviewText: r.review_text,
+          referralCollected: r.referral_collected,
+          referralContactName: r.referral_contact_name,
+          retentionOutcome: r.retention_outcome,
+          resultingOrderId: r.resulting_order_id
+        };
+      })
+      .filter((r) => !search || r.customerName.toLowerCase().includes(search) || r.phone.includes(search) || r.orderId.toLowerCase().includes(search));
+
+    res.json({ rows: result });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Failed to load the retention activity log." });
+  }
+});
+
 router.get("/settings", requireRole(...RETENTION_ROLES), async (req, res) => {
   try {
     const settings = await loadBonusSettings(req.user!.orgId);
