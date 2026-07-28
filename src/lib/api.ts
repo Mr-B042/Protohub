@@ -951,6 +951,14 @@ export interface RetentionCustomerDetail {
   nextAction: { recommendedText: string; dueStage: string | null; orderId: string | null };
 }
 
+export interface RetentionProductTiming {
+  satisfactionDays?: number;
+  reviewDays?: number;
+  repeatSaleStartDays?: number;
+  repeatSaleEndDays?: number;
+  winBackEndDays?: number;
+}
+
 export interface RetentionActivityLogRow {
   id: string;
   orderId: string;
@@ -1021,7 +1029,10 @@ export const customerRetentionApi = {
     return get<RetentionBonusSummary>(`/api/customer-retention/bonus-summary${suffix ? `?${suffix}` : ""}`);
   },
   settings: () => get<{ settings: RetentionBonusSettings }>("/api/customer-retention/settings"),
-  updateSettings: (body: Partial<RetentionBonusSettings>) => patch<{ settings: RetentionBonusSettings }>("/api/customer-retention/settings", body)
+  updateSettings: (body: Partial<RetentionBonusSettings>) => patch<{ settings: RetentionBonusSettings }>("/api/customer-retention/settings", body),
+  productTiming: () => get<{ products: Array<{ id: string; name: string; timing: RetentionProductTiming | null }> }>("/api/customer-retention/product-timing"),
+  updateProductTiming: (productId: string, timing: RetentionProductTiming) =>
+    patch<{ product: { id: string; name: string; timing: RetentionProductTiming | null } }>(`/api/customer-retention/product-timing/${encodeURIComponent(productId)}`, timing)
 };
 
 export const customerOptOutApi = {

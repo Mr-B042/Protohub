@@ -119,7 +119,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, customerOptOutApi, customerRetentionApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionActivityLogRow } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionActivityLogRow, RetentionProductTiming } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11041,6 +11041,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionCustomerSearch, setRetentionCustomerSearch] = useState("");
   const [retentionActivityLog, setRetentionActivityLog] = useState<RetentionActivityLogRow[]>([]);
   const [retentionActivityLogLoading, setRetentionActivityLogLoading] = useState(false);
+  const [retentionProductTimingList, setRetentionProductTimingList] = useState<Array<{ id: string; name: string; timing: RetentionProductTiming | null }>>([]);
+  const [retentionProductTimingDrafts, setRetentionProductTimingDrafts] = useState<Record<string, RetentionProductTiming>>({});
+  const [retentionProductTimingSavingId, setRetentionProductTimingSavingId] = useState<string | null>(null);
   const [retentionOutcomeReachStatus, setRetentionOutcomeReachStatus] = useState<"" | "reached" | "not_reached" | "not_reachable" | "wrong_number">("");
   const [retentionOutcomeResponse, setRetentionOutcomeResponse] = useState<"" | "satisfied" | "neutral" | "complaint">("");
   const [retentionOutcomeNextAction, setRetentionOutcomeNextAction] = useState<"" | "request_review" | "request_referral" | "offer_another_product" | "schedule_follow_up" | "needs_resolution" | "not_interested" | "do_not_contact">("");
@@ -39671,6 +39674,21 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  const saveRetentionProductTiming = async (productId: string) => {
+    if (currentRole !== "Owner") return;
+    setRetentionProductTimingSavingId(productId);
+    try {
+      const draft = retentionProductTimingDrafts[productId] ?? {};
+      const result = await customerRetentionApi.updateProductTiming(productId, draft);
+      setRetentionProductTimingList((list) => list.map((p) => (p.id === productId ? result.product : p)));
+      showToast("Timing override saved.");
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not save the timing override.");
+    } finally {
+      setRetentionProductTimingSavingId(null);
+    }
+  };
+
   useEffect(() => {
     if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention") return;
     void loadRetentionWorklist();
@@ -39704,6 +39722,17 @@ ${waybillLineItems(w).length > 1
       .finally(() => setRetentionActivityLogLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, recoveryRepDashboardTab, retentionSubPage, retentionPeriod, retentionDateRange]);
+
+  useEffect(() => {
+    if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || retentionSubPage !== "Settings" || currentRole !== "Owner") return;
+    customerRetentionApi.productTiming()
+      .then((result) => {
+        setRetentionProductTimingList(result.products);
+        setRetentionProductTimingDrafts(Object.fromEntries(result.products.map((p) => [p.id, p.timing ?? {}])));
+      })
+      .catch((err: any) => showToast(err?.message ?? "Could not load per-product retention timing."));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, recoveryRepDashboardTab, retentionSubPage, currentRole]);
 
   const renderCustomerRetentionTab = () => {
     const resetRetentionForm = () => {
@@ -40613,6 +40642,64 @@ ${waybillLineItems(w).length > 1
             </section>
           ) : (
             <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-10 text-center text-sm text-gray-400">Loading settings…</div>
+          )}
+
+          {retentionProductTimingList.length > 0 && (
+            <section className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-200">
+                <h3 className="text-base font-black text-gray-900">Per-Product Retention Timing</h3>
+                <p className="text-sm text-gray-500">Leave a field blank to use the org-wide default.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[820px] text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                      {["Product", "Satisfaction (d)", "Review (d)", "Repeat Start (d)", "Repeat End (d)", "Win-back End (d)", ""].map((h) => (
+                        <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {retentionProductTimingList.map((product) => {
+                      const draft = retentionProductTimingDrafts[product.id] ?? {};
+                      const field = (key: keyof RetentionProductTiming, placeholder: number) => (
+                        <input
+                          type="number"
+                          placeholder={String(placeholder)}
+                          className="w-20 h-8 px-2 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                          value={draft[key] ?? ""}
+                          onChange={(event) => {
+                            const raw = event.target.value;
+                            const value = raw === "" ? undefined : Number(raw);
+                            setRetentionProductTimingDrafts((prev) => ({ ...prev, [product.id]: { ...prev[product.id], [key]: value } }));
+                          }}
+                        />
+                      );
+                      return (
+                        <tr key={product.id}>
+                          <td className="px-4 py-3 font-semibold text-gray-900">{product.name}</td>
+                          <td className="px-4 py-3">{field("satisfactionDays", 3)}</td>
+                          <td className="px-4 py-3">{field("reviewDays", 7)}</td>
+                          <td className="px-4 py-3">{field("repeatSaleStartDays", 21)}</td>
+                          <td className="px-4 py-3">{field("repeatSaleEndDays", 45)}</td>
+                          <td className="px-4 py-3">{field("winBackEndDays", 90)}</td>
+                          <td className="px-4 py-3">
+                            <button
+                              type="button"
+                              disabled={retentionProductTimingSavingId === product.id}
+                              onClick={() => void saveRetentionProductTiming(product.id)}
+                              className="!min-h-0 rounded-md bg-[#1F8FE0] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8] disabled:opacity-60"
+                            >
+                              {retentionProductTimingSavingId === product.id ? "Saving…" : "Save"}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           )}
         </div>
       );

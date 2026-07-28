@@ -56,15 +56,32 @@ function latestSatisfactionOutcome(touchpoints: RetentionTouchpointRecord[]): st
   return withOutcome.length > 0 ? withOutcome[withOutcome.length - 1].satisfaction_outcome : null;
 }
 
+// Org-wide defaults, matching the spec's lifecycle table exactly. A product
+// can override any subset of these (backend/supabase/migrations/175) -
+// "The exact timing should be configurable by product because a bathroom
+// organizer, cleaning tool and other household products may have different
+// ideal follow-up windows."
+export interface RetentionTiming {
+  satisfactionDays: number;
+  reviewDays: number;
+  repeatSaleStartDays: number;
+  repeatSaleEndDays: number;
+  winBackEndDays: number;
+}
+export const DEFAULT_RETENTION_TIMING: RetentionTiming = {
+  satisfactionDays: 3, reviewDays: 7, repeatSaleStartDays: 21, repeatSaleEndDays: 45, winBackEndDays: 90
+};
+
 export function dueStageFor(
   deliveredDateKey: string,
   todayKey: string,
-  touchpoints: RetentionTouchpointRecord[]
+  touchpoints: RetentionTouchpointRecord[],
+  timing: RetentionTiming = DEFAULT_RETENTION_TIMING
 ): { dueStage: DueStage; overdueBy: number } {
   const age = daysBetween(deliveredDateKey, todayKey);
 
   if (!stageCompleted(touchpoints, "satisfaction_check")) {
-    return age >= 3 ? { dueStage: "satisfaction_check", overdueBy: age - 3 } : { dueStage: null, overdueBy: 0 };
+    return age >= timing.satisfactionDays ? { dueStage: "satisfaction_check", overdueBy: age - timing.satisfactionDays } : { dueStage: null, overdueBy: 0 };
   }
 
   const latestOutcome = latestSatisfactionOutcome(touchpoints);
@@ -73,12 +90,12 @@ export function dueStageFor(
   }
 
   if (!stageCompleted(touchpoints, "review_referral")) {
-    return age >= 7 ? { dueStage: "review_referral", overdueBy: age - 7 } : { dueStage: null, overdueBy: 0 };
+    return age >= timing.reviewDays ? { dueStage: "review_referral", overdueBy: age - timing.reviewDays } : { dueStage: null, overdueBy: 0 };
   }
 
   if (!stageCompleted(touchpoints, "retention_sale")) {
-    if (age >= 21 && age <= 45) return { dueStage: "retention_sale", overdueBy: age - 21 };
-    if (age > 45 && age <= 90) return { dueStage: "win_back", overdueBy: age - 45 };
+    if (age >= timing.repeatSaleStartDays && age <= timing.repeatSaleEndDays) return { dueStage: "retention_sale", overdueBy: age - timing.repeatSaleStartDays };
+    if (age > timing.repeatSaleEndDays && age <= timing.winBackEndDays) return { dueStage: "win_back", overdueBy: age - timing.repeatSaleEndDays };
     return { dueStage: null, overdueBy: 0 };
   }
 
