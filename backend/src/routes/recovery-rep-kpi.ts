@@ -50,6 +50,24 @@ const monthBounds = (month: string | undefined) => {
   return { monthKey: key, start, exclusiveEnd };
 };
 
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// Owner-editable "any date range" filter (replaces the old month-only
+// picker on the Recovery Rep Dashboard's Overview tab). dateFrom/dateTo
+// take precedence when both are present and valid; falls back to the
+// existing month-based bounds otherwise, so nothing else calling this
+// endpoint (or an older frontend build) breaks.
+const resolveBounds = (query: Record<string, unknown>) => {
+  const dateFrom = typeof query.dateFrom === "string" && DATE_KEY_PATTERN.test(query.dateFrom) ? query.dateFrom : null;
+  const dateTo = typeof query.dateTo === "string" && DATE_KEY_PATTERN.test(query.dateTo) ? query.dateTo : null;
+  if (dateFrom && dateTo && dateFrom <= dateTo) {
+    const exclusiveEndDate = new Date(`${dateTo}T00:00:00Z`);
+    exclusiveEndDate.setUTCDate(exclusiveEndDate.getUTCDate() + 1);
+    return { monthKey: `${dateFrom}..${dateTo}`, start: dateFrom, exclusiveEnd: exclusiveEndDate.toISOString().slice(0, 10) };
+  }
+  return monthBounds(typeof query.month === "string" ? query.month : undefined);
+};
+
 // Real COGS per delivered order: expand every inventory-consuming line
 // (base product, package components, cross-sells, free gifts - mirrors
 // src/App.tsx's costForOrder) and cost it against that product's unit_cost
@@ -93,7 +111,7 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     if (!repId) { res.status(400).json({ error: "repId is required." }); return; }
 
     const settings = await loadKpiSettings(orgId);
-    const { monthKey, start, exclusiveEnd } = monthBounds(typeof req.query.month === "string" ? req.query.month : undefined);
+    const { monthKey, start, exclusiveEnd } = resolveBounds(req.query as Record<string, unknown>);
 
     // A Recovery Rep's orders never arrive as fresh leads - every order in
     // their queue is an OLD order (cancelled/postponed/rejected weeks or

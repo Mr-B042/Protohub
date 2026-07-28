@@ -116,7 +116,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, customerOptOutApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, customerOptOutApi, customerRetentionApi,
   setApiSpyUserId
 } from "./lib/api";
 import {
@@ -209,6 +209,7 @@ type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type FinanceTab = "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
 type ManagerDashboardTab = "Overview" | "Bonus" | "Upsell Bonus" | "Needs Attention";
+type RecoveryRepDashboardTab = "Overview" | "Customer Retention";
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
@@ -8397,6 +8398,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerNavSpan, setManagerNavSpan] = useState<NavSpan>("1W");
   const [managerRestockThreshold, setManagerRestockThreshold] = useState(7);
   const [managerDashboardTab, setManagerDashboardTab] = useState<ManagerDashboardTab>("Overview");
+  const [recoveryRepDashboardTab, setRecoveryRepDashboardTab] = useState<RecoveryRepDashboardTab>("Overview");
   const [managerBonusWeekStart, setManagerBonusWeekStart] = useState<string>(getSundayKey);
   const [managerBonusSummary, setManagerBonusSummary] = useState<ManagerBonusSummary | null>(null);
   const [managerBonusLoading, setManagerBonusLoading] = useState(false);
@@ -10981,7 +10983,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [recoveryRepKpiSummary, setRecoveryRepKpiSummary] = useState<any | null>(null);
   const [recoveryRepKpiLoading, setRecoveryRepKpiLoading] = useState(false);
   const [recoveryRepKpiError, setRecoveryRepKpiError] = useState("");
-  const [recoveryRepMonth, setRecoveryRepMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [recoveryRepPeriod, setRecoveryRepPeriod] = useState<Period>("This Month");
+  const [recoveryRepDateRange, setRecoveryRepDateRange] = useState<DateRange>({ start: "", end: "" });
+  const [showRecoveryRepDateRange, setShowRecoveryRepDateRange] = useState(false);
   const [recoveryRepSettingsOpen, setRecoveryRepSettingsOpen] = useState(false);
   const [recoveryRepSettingsDraft, setRecoveryRepSettingsDraft] = useState<{
     monthlyTargetMin: number;
@@ -10994,6 +10998,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     surplusBonusPct: number;
   } | null>(null);
   const [recoveryRepSettingsSaving, setRecoveryRepSettingsSaving] = useState(false);
+  // Customer Retention tab (post-delivery satisfaction/review/retention
+  // worklist) - a second tab on the same Recovery Rep Dashboard, org-wide
+  // (not scoped to any one rep's own orders).
+  const [retentionWorklist, setRetentionWorklist] = useState<any[]>([]);
+  const [retentionWorklistLoading, setRetentionWorklistLoading] = useState(false);
+  const [retentionStageFilter, setRetentionStageFilter] = useState<"all" | "satisfaction_check" | "review_referral" | "retention_sale" | "needs_resolution">("all");
+  const [retentionBonusSummary, setRetentionBonusSummary] = useState<any | null>(null);
+  const [retentionLoggingOrderId, setRetentionLoggingOrderId] = useState<string | null>(null);
+  const [retentionMediaUploading, setRetentionMediaUploading] = useState(false);
+  const [retentionSatisfactionOutcome, setRetentionSatisfactionOutcome] = useState("");
+  const [retentionSatisfactionNotes, setRetentionSatisfactionNotes] = useState("");
+  const [retentionReviewText, setRetentionReviewText] = useState("");
+  const [retentionReviewCollected, setRetentionReviewCollected] = useState(false);
+  const [retentionReviewIsVideo, setRetentionReviewIsVideo] = useState(false);
+  const [retentionMediaUrls, setRetentionMediaUrls] = useState<string[]>([]);
+  const [retentionAdPermission, setRetentionAdPermission] = useState(false);
+  const [retentionReferralCollected, setRetentionReferralCollected] = useState(false);
+  const [retentionReferralName, setRetentionReferralName] = useState("");
+  const [retentionReferralPhone, setRetentionReferralPhone] = useState("");
+  const [retentionDiscountOwed, setRetentionDiscountOwed] = useState(false);
+  const [retentionDiscountNote, setRetentionDiscountNote] = useState("");
+  const [retentionOfferedProductId, setRetentionOfferedProductId] = useState("");
+  const [retentionOfferedPackageId, setRetentionOfferedPackageId] = useState("");
+  const [retentionOutcome, setRetentionOutcome] = useState<"accepted" | "declined" | "no_response" | "">("");
+  const [retentionResultingOrderId, setRetentionResultingOrderId] = useState("");
   const [salesExpansionSummary, setSalesExpansionSummary] = useState<any | null>(null);
   // Known independently of salesExpansionSummary (which only loads once the
   // Upsell tab is actually opened) - fetched once on mount so the nav tab and
@@ -27006,6 +27035,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast(`Orders date range set to ${ordersDateRange.start} to ${ordersDateRange.end}.`);
   };
 
+  const handleRecoveryRepPeriodChange = (nextPeriod: Period) => {
+    setRecoveryRepPeriod(nextPeriod);
+    setShowRecoveryRepDateRange(false);
+  };
+
+  const applyRecoveryRepDateRange = () => {
+    if (!recoveryRepDateRange.start || !recoveryRepDateRange.end) {
+      showToast("Choose both a start date and an end date.");
+      return;
+    }
+    if (!isDateValue(recoveryRepDateRange.start) || !isDateValue(recoveryRepDateRange.end)) {
+      showToast("Use YYYY-MM-DD for both dates.");
+      return;
+    }
+    if (recoveryRepDateRange.start > recoveryRepDateRange.end) {
+      showToast("Start date must be before the end date.");
+      return;
+    }
+    setRecoveryRepPeriod("Custom");
+    setShowRecoveryRepDateRange(false);
+    showToast(`Recovery Rep Dashboard range set to ${recoveryRepDateRange.start} to ${recoveryRepDateRange.end}.`);
+  };
+
   const clearOrdersDateRange = () => {
     setOrdersDateRange({ start: "", end: "" });
     setOrdersPeriod("This Month");
@@ -39467,7 +39519,10 @@ ${waybillLineItems(w).length > 1
     setRecoveryRepKpiLoading(true);
     setRecoveryRepKpiError("");
     try {
-      const summary = await recoveryRepKpiApi.summary({ repId: recoveryRepViewingId, month: recoveryRepMonth });
+      const bounds = periodBoundsForQuery(recoveryRepPeriod, recoveryRepDateRange);
+      const summary = await recoveryRepKpiApi.summary(
+        bounds ? { repId: recoveryRepViewingId, dateFrom: bounds.dateFrom, dateTo: bounds.dateTo } : { repId: recoveryRepViewingId }
+      );
       setRecoveryRepKpiSummary(summary);
       setRecoveryRepSettingsDraft({
         monthlyTargetMin: summary.netContribution.targetMin,
@@ -39504,7 +39559,340 @@ ${waybillLineItems(w).length > 1
     if (activePage !== "Recovery Rep Dashboard") return;
     void loadRecoveryRepKpi();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, recoveryRepViewingId, recoveryRepMonth]);
+  }, [activePage, recoveryRepViewingId, recoveryRepPeriod, recoveryRepDateRange]);
+
+  const loadRetentionWorklist = async () => {
+    setRetentionWorklistLoading(true);
+    try {
+      const result = await customerRetentionApi.worklist({ stage: retentionStageFilter });
+      setRetentionWorklist(result.rows ?? []);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not load the customer retention worklist.");
+    } finally {
+      setRetentionWorklistLoading(false);
+    }
+  };
+
+  const loadRetentionBonusSummary = async () => {
+    try {
+      const result = await customerRetentionApi.bonusSummary();
+      setRetentionBonusSummary(result);
+    } catch {
+      // Non-fatal - the bonus banner just won't render.
+    }
+  };
+
+  useEffect(() => {
+    if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention") return;
+    void loadRetentionWorklist();
+    void loadRetentionBonusSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, recoveryRepDashboardTab, retentionStageFilter]);
+
+  const renderCustomerRetentionTab = () => {
+    const resetRetentionForm = () => {
+      setRetentionSatisfactionOutcome("");
+      setRetentionSatisfactionNotes("");
+      setRetentionReviewText("");
+      setRetentionReviewCollected(false);
+      setRetentionReviewIsVideo(false);
+      setRetentionMediaUrls([]);
+      setRetentionAdPermission(false);
+      setRetentionReferralCollected(false);
+      setRetentionReferralName("");
+      setRetentionReferralPhone("");
+      setRetentionDiscountOwed(false);
+      setRetentionDiscountNote("");
+      setRetentionOfferedProductId("");
+      setRetentionOfferedPackageId("");
+      setRetentionOutcome("");
+      setRetentionResultingOrderId("");
+    };
+
+    const toggleLogging = (orderId: string, stage: string | null) => {
+      if (retentionLoggingOrderId === orderId) {
+        setRetentionLoggingOrderId(null);
+        return;
+      }
+      resetRetentionForm();
+      setRetentionLoggingOrderId(orderId);
+      if (stage === "retention_sale") {
+        void customerRetentionApi.retentionSuggestion(orderId).then((result) => {
+          if (result.suggestion) {
+            setRetentionOfferedProductId(result.suggestion.productId);
+            setRetentionOfferedPackageId(result.suggestion.packageId ?? "");
+          }
+        }).catch(() => {});
+      }
+    };
+
+    const handleMediaFileSelected = (file: File) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = typeof reader.result === "string" ? reader.result : "";
+        if (!dataUrl) return;
+        setRetentionMediaUploading(true);
+        customerRetentionApi.uploadMedia(dataUrl)
+          .then((result) => setRetentionMediaUrls((prev) => [...prev, result.url]))
+          .catch((err: any) => showToast(err?.message ?? "Media upload failed."))
+          .finally(() => setRetentionMediaUploading(false));
+      };
+      reader.readAsDataURL(file);
+    };
+
+    const afterLogSuccess = () => {
+      setRetentionLoggingOrderId(null);
+      void loadRetentionWorklist();
+      void loadRetentionBonusSummary();
+    };
+
+    const submitSatisfactionCheck = async (orderId: string) => {
+      if (!retentionSatisfactionOutcome) { showToast("Choose an outcome."); return; }
+      try {
+        await customerRetentionApi.logTouchpoint({
+          orderId, stage: "satisfaction_check",
+          satisfactionOutcome: retentionSatisfactionOutcome,
+          satisfactionNotes: retentionSatisfactionNotes.trim() || undefined
+        });
+        showToast("Satisfaction check logged.");
+        afterLogSuccess();
+      } catch (err: any) {
+        showToast(err?.message ?? "Could not log the satisfaction check.");
+      }
+    };
+
+    const submitReviewReferral = async (orderId: string) => {
+      try {
+        await customerRetentionApi.logTouchpoint({
+          orderId, stage: "review_referral",
+          reviewCollected: retentionReviewCollected,
+          reviewText: retentionReviewText.trim() || undefined,
+          reviewIsVideo: retentionReviewIsVideo,
+          mediaUrls: retentionMediaUrls.length ? retentionMediaUrls : undefined,
+          adPermissionGranted: retentionAdPermission,
+          referralCollected: retentionReferralCollected,
+          referralContactName: retentionReferralName.trim() || undefined,
+          referralContactPhone: retentionReferralPhone.trim() || undefined,
+          customerDiscountOwed: retentionDiscountOwed,
+          customerDiscountNote: retentionDiscountOwed ? (retentionDiscountNote.trim() || undefined) : undefined
+        });
+        showToast("Review & referral logged.");
+        afterLogSuccess();
+      } catch (err: any) {
+        showToast(err?.message ?? "Could not log the review/referral.");
+      }
+    };
+
+    const submitRetentionSale = async (orderId: string) => {
+      if (!retentionOutcome) { showToast("Choose an outcome."); return; }
+      try {
+        await customerRetentionApi.logTouchpoint({
+          orderId, stage: "retention_sale",
+          offeredProductId: retentionOfferedProductId || undefined,
+          offeredPackageId: retentionOfferedPackageId || undefined,
+          retentionOutcome,
+          resultingOrderId: retentionOutcome === "accepted" ? (retentionResultingOrderId.trim() || undefined) : undefined
+        });
+        showToast("Retention sale logged.");
+        afterLogSuccess();
+      } catch (err: any) {
+        showToast(err?.message ?? "Could not log the retention sale.");
+      }
+    };
+
+    const stageLabel = (stage: string | null) =>
+      stage === "satisfaction_check" ? "Satisfaction Check Due"
+      : stage === "review_referral" ? "Review & Referral Due"
+      : stage === "retention_sale" ? "Retention Sale Due"
+      : stage === "needs_resolution" ? "Needs Resolution"
+      : "Not due yet";
+
+    const stageTone = (stage: string | null) =>
+      stage === "needs_resolution" ? "border-rose-200 bg-rose-50 text-rose-700"
+      : stage === "retention_sale" ? "border-violet-200 bg-violet-50 text-violet-700"
+      : stage === "review_referral" ? "border-blue-200 bg-blue-50 text-blue-700"
+      : stage === "satisfaction_check" ? "border-amber-200 bg-amber-50 text-amber-700"
+      : "border-gray-200 bg-gray-50 text-gray-500";
+
+    const satisfactionOptions: Array<{ value: string; label: string }> = [
+      { value: "satisfied", label: "Satisfied" },
+      { value: "has_not_used_it", label: "Has not used it" },
+      { value: "needs_usage_guidance", label: "Needs usage guidance" },
+      { value: "wrong_damaged_or_incomplete", label: "Wrong, damaged or incomplete order" },
+      { value: "not_satisfied", label: "Not satisfied" },
+      { value: "potential_repeat_buyer", label: "Potential repeat buyer" },
+      { value: "potential_referral_customer", label: "Potential referral customer" }
+    ];
+
+    return (
+      <div className="space-y-6">
+        {retentionBonusSummary && (
+          <section className="overflow-hidden rounded-2xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Your customer retention bonus this month</p>
+            <strong className="mt-1 block text-3xl font-black text-emerald-700">{formatMoney(retentionBonusSummary.breakdown?.total ?? 0)}</strong>
+            <p className="mt-1 text-sm font-semibold text-gray-600">
+              {retentionBonusSummary.satisfactionChecksLogged} satisfaction checks · {retentionBonusSummary.writtenReviewsCollected} reviews · {retentionBonusSummary.videoTestimonialsCollected} videos · {retentionBonusSummary.referralsCollected} referrals · {retentionBonusSummary.retentionSalesConverted?.length ?? 0} retention sales
+            </p>
+          </section>
+        )}
+
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {([
+              ["all", "All"],
+              ["needs_resolution", "Needs Resolution"],
+              ["satisfaction_check", "Satisfaction Check Due"],
+              ["review_referral", "Review & Referral Due"],
+              ["retention_sale", "Retention Sale Due"]
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={`!min-h-0 rounded-full px-3 py-1.5 text-xs font-bold ${retentionStageFilter === value ? "bg-[#1F8FE0] text-white" : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+                onClick={() => setRetentionStageFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {retentionWorklistLoading && retentionWorklist.length === 0 ? (
+            <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-gray-400">Loading worklist…</div>
+          ) : retentionWorklist.length === 0 ? (
+            <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-gray-400">No delivered orders are due for a retention touchpoint right now.</div>
+          ) : (
+            <div className="space-y-3">
+              {retentionWorklist.map((row) => (
+                <article key={row.orderId} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                  <button
+                    type="button"
+                    className="!min-h-0 flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50"
+                    onClick={() => toggleLogging(row.orderId, row.dueStage)}
+                  >
+                    <div className="min-w-0">
+                      <p className="m-0 font-black text-gray-900">#{row.orderId} · {row.customerName}</p>
+                      <p className="m-0 mt-0.5 text-xs text-gray-500">{row.phone} · delivered {row.deliveredDate} · {row.daysSinceDelivery}d ago{row.discountOwed ? " · discount owed" : ""}</p>
+                    </div>
+                    <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span>
+                  </button>
+
+                  {retentionLoggingOrderId === row.orderId && (
+                    <div className="border-t border-gray-100 bg-gray-50/60 p-4">
+                      {row.dueStage === "satisfaction_check" || row.dueStage === "needs_resolution" ? (
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap gap-2">
+                            {satisfactionOptions.map((opt) => (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionSatisfactionOutcome === opt.value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}
+                                onClick={() => setRetentionSatisfactionOutcome(opt.value)}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                          <textarea
+                            className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                            placeholder="Notes (optional)"
+                            value={retentionSatisfactionNotes}
+                            onChange={(e) => setRetentionSatisfactionNotes(e.target.value)}
+                          />
+                          <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitSatisfactionCheck(row.orderId)}>
+                            Log satisfaction check
+                          </button>
+                        </div>
+                      ) : row.dueStage === "review_referral" ? (
+                        <div className="space-y-3">
+                          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                            <input type="checkbox" checked={retentionReviewCollected} onChange={(e) => setRetentionReviewCollected(e.target.checked)} /> Written review collected
+                          </label>
+                          {retentionReviewCollected && (
+                            <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Review text" value={retentionReviewText} onChange={(e) => setRetentionReviewText(e.target.value)} />
+                          )}
+                          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                            <input type="checkbox" checked={retentionReviewIsVideo} onChange={(e) => setRetentionReviewIsVideo(e.target.checked)} /> Video testimonial collected
+                          </label>
+                          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                            <input type="checkbox" checked={retentionAdPermission} onChange={(e) => setRetentionAdPermission(e.target.checked)} /> Permission to use in advertising
+                          </label>
+                          <div>
+                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">Photo / video (customer sends via WhatsApp, upload it here)</span>
+                            <input type="file" accept="image/*,video/*" disabled={retentionMediaUploading} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleMediaFileSelected(f); }} />
+                            {retentionMediaUploading && <span className="ml-2 text-xs text-gray-400">Uploading…</span>}
+                            {retentionMediaUrls.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {retentionMediaUrls.map((url) => (
+                                  <a key={url} href={url} target="_blank" rel="noreferrer" className="text-xs font-semibold text-[#1F8FE0] hover:underline">Attachment</a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                            <input type="checkbox" checked={retentionReferralCollected} onChange={(e) => setRetentionReferralCollected(e.target.checked)} /> Referral collected
+                          </label>
+                          {retentionReferralCollected && (
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral name" value={retentionReferralName} onChange={(e) => setRetentionReferralName(e.target.value)} />
+                              <input className="rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Referral phone" value={retentionReferralPhone} onChange={(e) => setRetentionReferralPhone(e.target.value)} />
+                            </div>
+                          )}
+                          {retentionReviewIsVideo && (
+                            <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                              <input type="checkbox" checked={retentionDiscountOwed} onChange={(e) => setRetentionDiscountOwed(e.target.checked)} /> Reward with discount on next order
+                            </label>
+                          )}
+                          {retentionDiscountOwed && (
+                            <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Discount note (e.g. 10% off next order)" value={retentionDiscountNote} onChange={(e) => setRetentionDiscountNote(e.target.value)} />
+                          )}
+                          <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitReviewReferral(row.orderId)}>
+                            Log review & referral
+                          </button>
+                        </div>
+                      ) : row.dueStage === "retention_sale" ? (
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <label className="space-y-1">
+                              <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Suggested product ID</span>
+                              <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedProductId} onChange={(e) => setRetentionOfferedProductId(e.target.value)} placeholder="Product UUID" />
+                            </label>
+                            <label className="space-y-1">
+                              <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Package ID</span>
+                              <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOfferedPackageId} onChange={(e) => setRetentionOfferedPackageId(e.target.value)} placeholder="Package UUID (optional)" />
+                            </label>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {(["accepted", "declined", "no_response"] as const).map((opt) => (
+                              <button
+                                key={opt}
+                                type="button"
+                                className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold capitalize ${retentionOutcome === opt ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}
+                                onClick={() => setRetentionOutcome(opt)}
+                              >
+                                {opt.replace("_", " ")}
+                              </button>
+                            ))}
+                          </div>
+                          {retentionOutcome === "accepted" && (
+                            <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Resulting order ID" value={retentionResultingOrderId} onChange={(e) => setRetentionResultingOrderId(e.target.value)} />
+                          )}
+                          <button type="button" className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white hover:bg-[#1560a8]" onClick={() => submitRetentionSale(row.orderId)}>
+                            Log retention sale
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-400">This order isn&apos;t due for a stage-specific action yet.</p>
+                      )}
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  };
 
   const renderRecoveryRepConsole = () => {
     const summary = recoveryRepKpiSummary;
@@ -39557,12 +39945,24 @@ ${waybillLineItems(w).length > 1
                 {recoveryRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
               </select>
             )}
-            <input
-              type="month"
+            <select
               className="h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
-              value={recoveryRepMonth}
-              onChange={(event) => setRecoveryRepMonth(event.target.value || new Date().toISOString().slice(0, 7))}
-            />
+              value={recoveryRepPeriod}
+              onChange={(event) => handleRecoveryRepPeriodChange(event.target.value as Period)}
+            >
+              {periods.map((item) => <option key={item} value={item}>{item}</option>)}
+              <option value="Custom">Custom</option>
+            </select>
+            <div className="relative">
+              <button
+                type="button"
+                className="!min-h-0 h-9 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => setShowRecoveryRepDateRange((open) => !open)}
+              >
+                <CalendarDays className="w-4 h-4" /> {recoveryRepPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+              </button>
+              {showRecoveryRepDateRange && renderDateRangeCalendar("recovery-rep-date-range-panel", recoveryRepDateRange, setRecoveryRepDateRange, applyRecoveryRepDateRange, () => setShowRecoveryRepDateRange(false))}
+            </div>
             {currentRole === "Owner" && (
               <button
                 type="button"
@@ -39575,6 +39975,21 @@ ${waybillLineItems(w).length > 1
           </div>
         </header>
 
+        <div className="inline-flex w-full sm:w-auto items-center rounded-2xl bg-gray-100 p-1">
+          {(["Overview", "Customer Retention"] as RecoveryRepDashboardTab[]).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              className={`!min-h-0 flex-1 sm:flex-none rounded-xl px-4 py-2 text-sm font-black transition-colors ${recoveryRepDashboardTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+              onClick={() => setRecoveryRepDashboardTab(tab)}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {recoveryRepDashboardTab === "Customer Retention" ? renderCustomerRetentionTab() : (
+        <>
         {currentRole === "Owner" && recoveryRepSettingsOpen && recoveryRepSettingsDraft && (
           <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -39777,6 +40192,8 @@ ${waybillLineItems(w).length > 1
             Mark customer: stop contact
           </button>
         </section>
+        </>
+        )}
       </div>
     );
   };
