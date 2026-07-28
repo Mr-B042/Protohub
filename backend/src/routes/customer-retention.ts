@@ -573,23 +573,25 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     // "Issues Resolved" = a positive satisfaction check logged in this
     // period, for an order that has ALSO had a negative satisfaction
     // outcome at some point (i.e. this check actually resolved a prior
-    // complaint, not just a first-time check).
-    const positiveInRangeOrderIds = [...new Set(
-      activity.filter((r) => r.stage === "satisfaction_check" && r.satisfaction_outcome && !NEGATIVE_SATISFACTION_OUTCOMES.has(r.satisfaction_outcome)).map((r) => r.order_id)
-    )];
-    let issuesResolved = 0;
-    if (positiveInRangeOrderIds.length > 0) {
+    // complaint, not just a first-time check). Shared between the
+    // org-wide figure and the rep-scoped "My Retention Performance" one.
+    const deriveIssuesResolved = async (rows: typeof activity): Promise<number> => {
+      const positiveIds = [...new Set(
+        rows.filter((r) => r.stage === "satisfaction_check" && r.satisfaction_outcome && !NEGATIVE_SATISFACTION_OUTCOMES.has(r.satisfaction_outcome)).map((r) => r.order_id)
+      )];
+      if (positiveIds.length === 0) return 0;
       const { data: allSatisfactionRows } = await supabase
         .from("customer_retention_touchpoints")
         .select("order_id, satisfaction_outcome")
         .eq("org_id", orgId)
         .eq("stage", "satisfaction_check")
-        .in("order_id", positiveInRangeOrderIds);
+        .in("order_id", positiveIds);
       const everHadNegative = new Set(
         (allSatisfactionRows ?? []).filter((r) => r.satisfaction_outcome && NEGATIVE_SATISFACTION_OUTCOMES.has(r.satisfaction_outcome)).map((r) => r.order_id)
       );
-      issuesResolved = positiveInRangeOrderIds.filter((id) => everHadNegative.has(id)).length;
-    }
+      return positiveIds.filter((id) => everHadNegative.has(id)).length;
+    };
+    const issuesResolved = await deriveIssuesResolved(activity);
 
     const reviews = activity.filter((r) => r.stage === "review_referral" && r.review_collected).length;
     const referrals = activity.filter((r) => r.stage === "review_referral" && r.referral_collected).length;
@@ -615,6 +617,77 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     const grossContribution = repeatSalesRevenue - retentionRepCost;
     const roi = retentionRepCost > 0 ? Math.round((repeatSalesRevenue / retentionRepCost) * 100) / 100 : null;
 
+    // "My Retention Performance" - always scoped to a specific rep
+    // (defaults to the caller), independent of whether the figures above
+    // are org-wide (repId omitted) or already rep-scoped.
+    const performanceRepId = repId ?? req.user!.id;
+    const repActivity = activity.filter((r) => r.logged_by === performanceRepId);
+    const repBonusResult = repId === performanceRepId ? bonusResult : await computeBonusBreakdown(orgId, settings, start, exclusiveEnd, performanceRepId);
+
+    const tasksAssigned = new Set(repActivity.map((r) => r.order_id)).size;
+    const completedStageOrderIds = new Set(
+      repActivity.filter((r) =>
+        (r.stage === "satisfaction_check" && r.satisfaction_outcome) ||
+        (r.stage === "review_referral" && (r.review_collected || r.referral_collected)) ||
+        (r.stage === "retention_sale" && r.retention_outcome)
+      ).map((r) => r.order_id)
+    );
+    const tasksCompleted = completedStageOrderIds.size;
+    const repCustomersReached = new Set(
+      repActivity.filter((r) => r.reach_status !== "not_reached" && r.reach_status !== "not_reachable").map((r) => r.order_id)
+    ).size;
+    const repIssuesResolved = await deriveIssuesResolved(repActivity);
+    const repReviewsReceived = repActivity.filter((r) => r.stage === "review_referral" && r.review_collected).length;
+    const repReferralsGenerated = repActivity.filter((r) => r.stage === "review_referral" && r.referral_collected).length;
+
+    const repRetentionSaleRows = repActivity.filter((r) => r.stage === "retention_sale" && r.retention_outcome === "accepted" && r.resulting_order_id);
+    let revenueOverTime: Array<{ label: string; current: number }> = [];
+    // "Revenue by Source" per the spec is Repeat Sales/Referrals/Other -
+    // but only accepted retention-sale offers carry a resulting order's
+    // revenue in this data model (referrals don't have their own tracked
+    // resulting-order revenue yet). Broken down by the offered product
+    // instead - a real, computable "what drives repeat revenue" view,
+    // rather than fabricating a referral-revenue figure that isn't tracked.
+    let revenueBySource: Array<{ label: string; amount: number; pct: number }> = [];
+    let repRetentionRevenue = 0;
+    if (repRetentionSaleRows.length > 0) {
+      const resultingIds = repRetentionSaleRows.map((r) => r.resulting_order_id as string);
+      const { data: resultOrders } = await supabase.from("orders").select("id, amount, product_name").in("id", resultingIds);
+      const infoById = new Map((resultOrders ?? []).map((o) => [o.id, { amount: Number(o.amount ?? 0), productName: String(o.product_name ?? "Unknown product") }]));
+      const byDay = new Map<string, number>();
+      const byProduct = new Map<string, number>();
+      for (const r of repRetentionSaleRows) {
+        const info = infoById.get(r.resulting_order_id as string);
+        if (!info) continue;
+        const day = dayKey(r.logged_at);
+        byDay.set(day, (byDay.get(day) ?? 0) + info.amount);
+        byProduct.set(info.productName, (byProduct.get(info.productName) ?? 0) + info.amount);
+        repRetentionRevenue += info.amount;
+      }
+      revenueOverTime = Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([day, amount]) => ({ label: day.slice(5), current: amount }));
+      revenueBySource = Array.from(byProduct.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([label, amount]) => ({ label, amount, pct: repRetentionRevenue > 0 ? Math.round((amount / repRetentionRevenue) * 100) : 0 }));
+    }
+    const repAvgRepeatOrder = repRetentionSaleRows.length > 0 ? Math.round(repRetentionRevenue / repRetentionSaleRows.length) : 0;
+    const repRoi = repBonusResult.breakdown.total > 0 ? Math.round((repRetentionRevenue / repBonusResult.breakdown.total) * 100) / 100 : null;
+
+    const repPerformance = {
+      tasksAssigned, tasksCompleted,
+      completionRatePct: tasksAssigned > 0 ? Math.round((tasksCompleted / tasksAssigned) * 100) : 0,
+      customersReached: repCustomersReached,
+      contactRatePct: tasksAssigned > 0 ? Math.round((repCustomersReached / tasksAssigned) * 100) : 0,
+      issuesResolved: repIssuesResolved,
+      reviewsReceived: repReviewsReceived,
+      referralsGenerated: repReferralsGenerated,
+      repeatPurchases: repRetentionSaleRows.length,
+      retentionRevenue: repRetentionRevenue,
+      avgRepeatOrder: repAvgRepeatOrder,
+      roi: repRoi,
+      revenueOverTime,
+      revenueBySource
+    };
+
     res.json({
       dateFrom: start,
       dateTo: exclusiveEnd,
@@ -628,6 +701,7 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
       lifecyclePipeline,
       reviewsReferrals: { reviewsRequested, reviewsReceived: reviews, reviewConversionPct, referralsRequested, referralsReceived: referrals, referralConversionPct },
       retentionRevenue: { repeatSalesRevenue, repeatCustomers, avgRepeatOrder, grossContribution, retentionRepCost, roi },
+      repPerformance,
       bonus: {
         earned: bonusResult.breakdown.total,
         target: settings.monthlyBonusTarget,

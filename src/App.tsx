@@ -40093,6 +40093,74 @@ ${waybillLineItems(w).length > 1
         </div>
 
         {retentionDashboardSummary && (
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">My Retention Performance</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {([
+                ["Tasks Assigned", retentionDashboardSummary.repPerformance.tasksAssigned],
+                ["Tasks Completed", retentionDashboardSummary.repPerformance.tasksCompleted],
+                ["Completion Rate", `${retentionDashboardSummary.repPerformance.completionRatePct}%`],
+                ["Customers Reached", retentionDashboardSummary.repPerformance.customersReached],
+                ["Contact Rate", `${retentionDashboardSummary.repPerformance.contactRatePct}%`],
+                ["Issues Resolved", retentionDashboardSummary.repPerformance.issuesResolved],
+                ["Reviews Received", retentionDashboardSummary.repPerformance.reviewsReceived],
+                ["Referrals Generated", retentionDashboardSummary.repPerformance.referralsGenerated],
+                ["Repeat Purchases", retentionDashboardSummary.repPerformance.repeatPurchases],
+                ["Retention Revenue", formatMoney(retentionDashboardSummary.repPerformance.retentionRevenue)],
+                ["Avg Repeat Order", formatMoney(retentionDashboardSummary.repPerformance.avgRepeatOrder)],
+                ["ROI", retentionDashboardSummary.repPerformance.roi === null ? "—" : `${retentionDashboardSummary.repPerformance.roi}x`]
+              ] as const).map(([label, value]) => (
+                <div key={label} className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-gray-400">{label}</div>
+                  <div className="text-base font-black text-gray-900 mt-0.5">{value}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
+              <div>
+                <p className="text-xs font-bold text-gray-500 mb-2">Retention Revenue Over Time</p>
+                {retentionDashboardSummary.repPerformance.revenueOverTime.length === 0 ? (
+                  <div className="h-[180px] flex items-center justify-center text-xs text-gray-400 border border-dashed border-gray-200 rounded-xl">No retention sales logged in this period yet.</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={180}>
+                    <LineChart data={retentionDashboardSummary.repPerformance.revenueOverTime} margin={{ left: -24, right: 16, top: 8, bottom: 0 }}>
+                      <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#9ca3af" }} />
+                      <YAxis hide />
+                      <Tooltip
+                        contentStyle={{ borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12 }}
+                        formatter={(value: number | string) => [formatMoney(typeof value === "number" ? value : Number(value)), "Revenue"]}
+                      />
+                      <Line type="monotone" dataKey="current" name="Revenue" stroke="#10b981" strokeWidth={2.5} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+              <div>
+                <p className="text-xs font-bold text-gray-500 mb-2">Revenue by Product Offered</p>
+                {retentionDashboardSummary.repPerformance.revenueBySource.length === 0 ? (
+                  <div className="h-[180px] flex items-center justify-center text-xs text-gray-400 border border-dashed border-gray-200 rounded-xl">No retention sales logged in this period yet.</div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {retentionDashboardSummary.repPerformance.revenueBySource.map((row) => (
+                      <div key={row.label}>
+                        <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                          <span className="truncate">{row.label}</span>
+                          <span className="font-semibold text-gray-800">{formatMoney(row.amount)} ({row.pct}%)</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-blue-100/60">
+                          <div className="h-2 rounded-full bg-[#1F8FE0]" style={{ width: `${row.pct}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {retentionDashboardSummary && (
           <section className="space-y-2">
             <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Customer Lifecycle Pipeline</p>
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
