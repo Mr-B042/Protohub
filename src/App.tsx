@@ -119,6 +119,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, customerOptOutApi, customerRetentionApi,
   setApiSpyUserId
 } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11003,10 +11004,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Customer Retention tab (post-delivery satisfaction/review/retention
   // worklist) - a second tab on the same Recovery Rep Dashboard, org-wide
   // (not scoped to any one rep's own orders).
-  const [retentionWorklist, setRetentionWorklist] = useState<any[]>([]);
+  const [retentionWorklist, setRetentionWorklist] = useState<RetentionWorklistRow[]>([]);
   const [retentionWorklistLoading, setRetentionWorklistLoading] = useState(false);
   const [retentionStageFilter, setRetentionStageFilter] = useState<"all" | "satisfaction_check" | "review_referral" | "retention_sale" | "needs_resolution">("all");
-  const [retentionBonusSummary, setRetentionBonusSummary] = useState<any | null>(null);
+  const [retentionBonusSummary, setRetentionBonusSummary] = useState<RetentionBonusSummary | null>(null);
   const [retentionLoggingOrderId, setRetentionLoggingOrderId] = useState<string | null>(null);
   const [retentionMediaUploading, setRetentionMediaUploading] = useState(false);
   const [retentionSatisfactionOutcome, setRetentionSatisfactionOutcome] = useState("");

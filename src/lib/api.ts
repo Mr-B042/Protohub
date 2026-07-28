@@ -793,16 +793,106 @@ export const recoveryRepKpiApi = {
   updateSettings: (body: unknown) => patch<any>("/api/recovery-rep-kpi/settings", body)
 };
 
+export type RetentionDueStage = "satisfaction_check" | "review_referral" | "retention_sale" | "needs_resolution" | "win_back" | null;
+export type RetentionPriorityBand = "critical" | "overdue" | "high_value" | "due" | "opportunity";
+
+export interface RetentionWorklistRow {
+  orderId: string;
+  customerName: string;
+  phone: string;
+  deliveredDate: string;
+  daysSinceDelivery: number;
+  dueStage: RetentionDueStage;
+  overdueBy: number;
+  priorityBand: RetentionPriorityBand;
+  orderAmount: number;
+  orderCurrency: string;
+  productName: string;
+  lastTouchpoint: { stage: string; loggedAt: string; satisfactionOutcome: string | null } | null;
+  lastContactAt: string | null;
+  nextActionAt: string | null;
+  nextActionNote: string | null;
+  discountOwed: boolean;
+  reviewRequested: boolean;
+  reviewCollected: boolean;
+  referralRequested: boolean;
+  referralCollected: boolean;
+}
+
+export interface RetentionBonusSummary {
+  dateFrom: string;
+  dateTo: string;
+  userId: string;
+  satisfactionChecksLogged: number;
+  writtenReviewsCollected: number;
+  videoTestimonialsCollected: number;
+  referralsCollected: number;
+  retentionSalesConverted: Array<{ resultingOrderId: string; amount: number }>;
+  breakdown: {
+    satisfactionBonus: number;
+    reviewBonus: number;
+    videoBonus: number;
+    referralBonus: number;
+    retentionSaleBonus: number;
+    total: number;
+  };
+}
+
+export interface RetentionBonusSettings {
+  satisfactionCheckBonus: number;
+  writtenReviewBonus: number;
+  videoTestimonialBonus: number;
+  referralBonus: number;
+  retentionSaleBonusPct: number;
+  customerDiscountPct: number;
+  highValueOrderThreshold: number;
+  monthlyBonusTarget: number;
+}
+
+export interface RetentionTouchpointPayload {
+  orderId: string;
+  stage: "satisfaction_check" | "review_referral" | "retention_sale";
+  reachStatus?: "reached" | "not_reached" | "not_reachable";
+  customerResponse?: "satisfied" | "neutral" | "complaint";
+  nextAction?: "request_review" | "request_referral" | "offer_another_product" | "schedule_follow_up" | "needs_resolution" | "not_interested" | "do_not_contact";
+  nextActionAt?: string;
+  nextActionNote?: string;
+  // satisfaction_check
+  satisfactionOutcome?: string;
+  satisfactionNotes?: string;
+  // review_referral
+  reviewCollected?: boolean;
+  reviewText?: string;
+  reviewIsVideo?: boolean;
+  mediaUrls?: string[];
+  adPermissionGranted?: boolean;
+  referralCollected?: boolean;
+  referralContactName?: string;
+  referralContactPhone?: string;
+  customerDiscountOwed?: boolean;
+  customerDiscountNote?: string;
+  reviewRequested?: boolean;
+  referralRequested?: boolean;
+  // retention_sale
+  offeredProductId?: string;
+  offeredPackageId?: string;
+  retentionOutcome?: "accepted" | "declined" | "no_response";
+  resultingOrderId?: string;
+}
+
 export const customerRetentionApi = {
-  worklist: (params: { stage?: string } = {}) => {
+  worklist: (params: { stage?: string; search?: string; minValue?: number } = {}) => {
     const qs = new URLSearchParams();
     if (params.stage && params.stage !== "all") qs.set("stage", params.stage);
+    if (params.search) qs.set("search", params.search);
+    if (typeof params.minValue === "number") qs.set("minValue", String(params.minValue));
     const suffix = qs.toString();
-    return get<{ rows: any[] }>(`/api/customer-retention/worklist${suffix ? `?${suffix}` : ""}`);
+    return get<{ rows: RetentionWorklistRow[] }>(`/api/customer-retention/worklist${suffix ? `?${suffix}` : ""}`);
   },
   retentionSuggestion: (orderId: string) => get<{ suggestion: { productId: string; packageId: string | null } | null }>(`/api/customer-retention/order/${encodeURIComponent(orderId)}/retention-suggestion`),
-  logTouchpoint: (body: unknown) => post<any>("/api/customer-retention/touchpoints", body),
-  updateTouchpoint: (id: string, body: unknown) => patch<any>(`/api/customer-retention/touchpoints/${id}`, body),
+  logTouchpoint: (body: RetentionTouchpointPayload) => post<{ row: Record<string, unknown> }>("/api/customer-retention/touchpoints", body),
+  updateTouchpoint: (id: string, body: { mediaUrls?: string[]; customerDiscountCleared?: boolean; resultingOrderId?: string }) =>
+    patch<{ row: Record<string, unknown> }>(`/api/customer-retention/touchpoints/${id}`, body),
   uploadMedia: (dataUrl: string) => post<{ url: string; path: string }>("/api/customer-retention/media/upload", { dataUrl }),
   bonusSummary: (params: { dateFrom?: string; dateTo?: string; userId?: string } = {}) => {
     const qs = new URLSearchParams();
@@ -810,10 +900,10 @@ export const customerRetentionApi = {
     if (params.dateTo) qs.set("dateTo", params.dateTo);
     if (params.userId) qs.set("userId", params.userId);
     const suffix = qs.toString();
-    return get<any>(`/api/customer-retention/bonus-summary${suffix ? `?${suffix}` : ""}`);
+    return get<RetentionBonusSummary>(`/api/customer-retention/bonus-summary${suffix ? `?${suffix}` : ""}`);
   },
-  settings: () => get<{ settings: any }>("/api/customer-retention/settings"),
-  updateSettings: (body: unknown) => patch<any>("/api/customer-retention/settings", body)
+  settings: () => get<{ settings: RetentionBonusSettings }>("/api/customer-retention/settings"),
+  updateSettings: (body: Partial<RetentionBonusSettings>) => patch<{ settings: RetentionBonusSettings }>("/api/customer-retention/settings", body)
 };
 
 export const customerOptOutApi = {
