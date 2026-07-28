@@ -39835,6 +39835,8 @@ ${waybillLineItems(w).length > 1
             referralContactPhone: retentionReferralPhone.trim() || undefined,
             customerDiscountOwed: retentionDiscountOwed,
             customerDiscountNote: retentionDiscountOwed ? (retentionDiscountNote.trim() || undefined) : undefined,
+            reviewRequested: retentionOutcomeNextAction === "request_review",
+            referralRequested: retentionOutcomeNextAction === "request_referral",
             ...common
           });
         } else {
@@ -40027,6 +40029,31 @@ ${waybillLineItems(w).length > 1
               {todaysFocusLines.map((line) => <li key={line}>• {line}</li>)}
             </ul>
           </section>
+        )}
+
+        {retentionDashboardSummary && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Reviews</p>
+              <div className="mt-2 flex items-baseline gap-3">
+                <span className="text-2xl font-black text-gray-900">{retentionDashboardSummary.reviewsReferrals.reviewsReceived}</span>
+                <span className="text-xs text-gray-500">of {retentionDashboardSummary.reviewsReferrals.reviewsRequested} requested</span>
+              </div>
+              <p className="mt-1 text-xs font-semibold text-gray-500">
+                Conversion: {retentionDashboardSummary.reviewsReferrals.reviewConversionPct === null ? "—" : `${retentionDashboardSummary.reviewsReferrals.reviewConversionPct}%`}
+              </p>
+            </section>
+            <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Referrals</p>
+              <div className="mt-2 flex items-baseline gap-3">
+                <span className="text-2xl font-black text-gray-900">{retentionDashboardSummary.reviewsReferrals.referralsReceived}</span>
+                <span className="text-xs text-gray-500">of {retentionDashboardSummary.reviewsReferrals.referralsRequested} requested</span>
+              </div>
+              <p className="mt-1 text-xs font-semibold text-gray-500">
+                Conversion: {retentionDashboardSummary.reviewsReferrals.referralConversionPct === null ? "—" : `${retentionDashboardSummary.reviewsReferrals.referralConversionPct}%`}
+              </p>
+            </section>
+          </div>
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

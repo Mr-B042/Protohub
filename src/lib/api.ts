@@ -902,6 +902,14 @@ export interface RetentionDashboardSummary {
     winBack: number;
     needsResolution: number;
   };
+  reviewsReferrals: {
+    reviewsRequested: number;
+    reviewsReceived: number;
+    reviewConversionPct: number | null;
+    referralsRequested: number;
+    referralsReceived: number;
+    referralConversionPct: number | null;
+  };
   retentionRevenue: {
     repeatSalesRevenue: number;
     repeatCustomers: number;
