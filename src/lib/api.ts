@@ -778,14 +778,42 @@ export const managerDashboardAlertsApi = {
 };
 
 export const recoveryRepKpiApi = {
-  summary: (params: { repId?: string; month?: string } = {}) => {
+  summary: (params: { repId?: string; month?: string; dateFrom?: string; dateTo?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.repId) qs.set("repId", params.repId);
-    if (params.month) qs.set("month", params.month);
+    if (params.dateFrom && params.dateTo) {
+      qs.set("dateFrom", params.dateFrom);
+      qs.set("dateTo", params.dateTo);
+    } else if (params.month) {
+      qs.set("month", params.month);
+    }
     const suffix = qs.toString();
     return get<any>(`/api/recovery-rep-kpi/summary${suffix ? `?${suffix}` : ""}`);
   },
   updateSettings: (body: unknown) => patch<any>("/api/recovery-rep-kpi/settings", body)
+};
+
+export const customerRetentionApi = {
+  worklist: (params: { stage?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.stage && params.stage !== "all") qs.set("stage", params.stage);
+    const suffix = qs.toString();
+    return get<{ rows: any[] }>(`/api/customer-retention/worklist${suffix ? `?${suffix}` : ""}`);
+  },
+  retentionSuggestion: (orderId: string) => get<{ suggestion: { productId: string; packageId: string | null } | null }>(`/api/customer-retention/order/${encodeURIComponent(orderId)}/retention-suggestion`),
+  logTouchpoint: (body: unknown) => post<any>("/api/customer-retention/touchpoints", body),
+  updateTouchpoint: (id: string, body: unknown) => patch<any>(`/api/customer-retention/touchpoints/${id}`, body),
+  uploadMedia: (dataUrl: string) => post<{ url: string; path: string }>("/api/customer-retention/media/upload", { dataUrl }),
+  bonusSummary: (params: { dateFrom?: string; dateTo?: string; userId?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.dateFrom) qs.set("dateFrom", params.dateFrom);
+    if (params.dateTo) qs.set("dateTo", params.dateTo);
+    if (params.userId) qs.set("userId", params.userId);
+    const suffix = qs.toString();
+    return get<any>(`/api/customer-retention/bonus-summary${suffix ? `?${suffix}` : ""}`);
+  },
+  settings: () => get<{ settings: any }>("/api/customer-retention/settings"),
+  updateSettings: (body: unknown) => patch<any>("/api/customer-retention/settings", body)
 };
 
 export const customerOptOutApi = {
