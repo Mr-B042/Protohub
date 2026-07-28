@@ -11038,6 +11038,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionProductFilter, setRetentionProductFilter] = useState("all");
   const [retentionAssignedRepFilter, setRetentionAssignedRepFilter] = useState("all");
   const [retentionSubPage, setRetentionSubPage] = useState<RetentionSubPage>("Overview");
+  const [retentionCustomerSearch, setRetentionCustomerSearch] = useState("");
   const [retentionOutcomeReachStatus, setRetentionOutcomeReachStatus] = useState<"" | "reached" | "not_reached" | "not_reachable" | "wrong_number">("");
   const [retentionOutcomeResponse, setRetentionOutcomeResponse] = useState<"" | "satisfied" | "neutral" | "complaint">("");
   const [retentionOutcomeNextAction, setRetentionOutcomeNextAction] = useState<"" | "request_review" | "request_referral" | "offer_another_product" | "schedule_follow_up" | "needs_resolution" | "not_interested" | "do_not_contact">("");
@@ -40261,6 +40262,64 @@ ${waybillLineItems(w).length > 1
       if (retentionSubPage === "Tasks") return renderRetentionQueue(filteredRetentionTasks, { title: "Tasks — due today & overdue", emptyMessage: "Nothing urgent right now." });
 
       if (retentionSubPage === "Win-back") return renderRetentionQueue(filteredRetentionWinBack, { title: "Win-back (Day 45-90)", emptyMessage: "No customers are in the win-back window right now." });
+
+      if (retentionSubPage === "Customers") {
+        // One row per customer (deduped by phone - a customer can have more
+        // than one delivered order inside the 90-day retention window; the
+        // most recently delivered order's stage represents them). Purely a
+        // client-side transform of the same worklist already fetched - no
+        // new endpoint.
+        const byPhone = new Map<string, RetentionWorklistRow>();
+        for (const row of retentionWorklist) {
+          const existing = byPhone.get(row.phone);
+          if (!existing || row.deliveredDate > existing.deliveredDate) byPhone.set(row.phone, row);
+        }
+        const query = retentionCustomerSearch.trim().toLowerCase();
+        const customers = Array.from(byPhone.values())
+          .filter((row) => !query || row.customerName.toLowerCase().includes(query) || row.phone.includes(query))
+          .sort((a, b) => a.customerName.localeCompare(b.customerName));
+
+        return (
+          <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-200 flex flex-col gap-3">
+              <h2 className="text-base font-bold text-gray-900">Customers</h2>
+              <input
+                type="text"
+                value={retentionCustomerSearch}
+                onChange={(e) => setRetentionCustomerSearch(e.target.value)}
+                placeholder="Search customer or phone"
+                className="!min-h-0 w-full sm:w-64 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              />
+            </div>
+            {customers.length === 0 ? (
+              <div className="px-5 py-10 text-sm text-gray-400 text-center">{retentionWorklist.length === 0 ? "No customers in the retention window right now." : "No customers match your search."}</div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {customers.map((row) => (
+                  <button
+                    key={row.phone}
+                    type="button"
+                    onClick={() => setRetentionDrawerPhone(row.phone)}
+                    className="!min-h-0 w-full flex items-center justify-between gap-3 px-5 py-3 text-left hover:bg-gray-50"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
+                      <div className="min-w-0">
+                        <div className="font-bold text-gray-900 truncate">{row.customerName}</div>
+                        <div className="text-xs text-gray-500">{row.phone} · {row.productName}</div>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span>
+                      <span className="text-xs font-semibold text-gray-600 hidden sm:inline">{formatMoney(row.orderAmount)}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      }
 
       if (retentionSubPage === "Reports") return (
         <div className="space-y-6">
