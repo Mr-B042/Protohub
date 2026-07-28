@@ -316,6 +316,11 @@ const TouchpointSchema = z.discriminatedUnion("stage", [
     referralContactPhone: z.string().max(40).optional(),
     customerDiscountOwed: z.boolean().optional(),
     customerDiscountNote: z.string().max(300).optional(),
+    // Decision D: a request is its own lightweight signal, independent of
+    // whether it was also collected in the same visit. Server sets the
+    // *_requested_at timestamp itself - never trusts a client-supplied one.
+    reviewRequested: z.boolean().optional(),
+    referralRequested: z.boolean().optional(),
     ...OutcomeFields
   }),
   z.object({
@@ -376,6 +381,9 @@ router.post("/touchpoints", requireRole(...RETENTION_ROLES), async (req, res) =>
     row.referral_contact_phone = d.referralContactPhone ?? null;
     row.customer_discount_owed = d.customerDiscountOwed ?? false;
     row.customer_discount_note = d.customerDiscountNote ?? null;
+    const now = new Date().toISOString();
+    row.review_requested_at = d.reviewRequested ? now : null;
+    row.referral_requested_at = d.referralRequested ? now : null;
   } else {
     row.offered_product_id = d.offeredProductId ?? null;
     row.offered_package_id = d.offeredPackageId ?? null;
@@ -545,7 +553,7 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
 
     let contactedQuery = supabase
       .from("customer_retention_touchpoints")
-      .select("order_id, reach_status, satisfaction_outcome, stage, logged_at, logged_by, retention_outcome, resulting_order_id")
+      .select("order_id, reach_status, satisfaction_outcome, stage, logged_at, logged_by, retention_outcome, resulting_order_id, review_collected, referral_collected, review_requested_at, referral_requested_at")
       .eq("org_id", orgId)
       .gte("logged_at", `${start}T00:00:00`)
       .lt("logged_at", `${exclusiveEnd}T00:00:00`);
@@ -583,8 +591,16 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
       issuesResolved = positiveInRangeOrderIds.filter((id) => everHadNegative.has(id)).length;
     }
 
-    const reviews = activity.filter((r) => r.stage === "review_referral" && (r as any).review_collected).length;
-    const referrals = activity.filter((r) => r.stage === "review_referral" && (r as any).referral_collected).length;
+    const reviews = activity.filter((r) => r.stage === "review_referral" && r.review_collected).length;
+    const referrals = activity.filter((r) => r.stage === "review_referral" && r.referral_collected).length;
+
+    // Decision D: Reviews and Referrals tracked independently, each with
+    // its own requested-to-received conversion rate (a real ask-to-get
+    // ratio, not an estimate).
+    const reviewsRequested = activity.filter((r) => r.stage === "review_referral" && r.review_requested_at).length;
+    const referralsRequested = activity.filter((r) => r.stage === "review_referral" && r.referral_requested_at).length;
+    const reviewConversionPct = reviewsRequested > 0 ? Math.round((reviews / reviewsRequested) * 100) : null;
+    const referralConversionPct = referralsRequested > 0 ? Math.round((referrals / referralsRequested) * 100) : null;
 
     const repeatSaleRows = activity.filter((r) => r.stage === "retention_sale" && r.retention_outcome === "accepted" && r.resulting_order_id);
     const repeatSalesRevenue = bonusResult.retentionSalesConverted.reduce((sum, r) => sum + r.amount, 0);
@@ -610,6 +626,7 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
         repeatCustomers, repeatSalesRevenue
       },
       lifecyclePipeline,
+      reviewsReferrals: { reviewsRequested, reviewsReceived: reviews, reviewConversionPct, referralsRequested, referralsReceived: referrals, referralConversionPct },
       retentionRevenue: { repeatSalesRevenue, repeatCustomers, avgRepeatOrder, grossContribution, retentionRepCost, roi },
       bonus: {
         earned: bonusResult.breakdown.total,
