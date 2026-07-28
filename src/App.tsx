@@ -119,7 +119,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, customerOptOutApi, customerRetentionApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11032,6 +11032,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionSettingsOpen, setRetentionSettingsOpen] = useState(false);
   const [retentionSettingsDraft, setRetentionSettingsDraft] = useState<RetentionBonusSettings | null>(null);
   const [retentionSettingsSaving, setRetentionSettingsSaving] = useState(false);
+  const [retentionDashboardSummary, setRetentionDashboardSummary] = useState<RetentionDashboardSummary | null>(null);
   const [salesExpansionSummary, setSalesExpansionSummary] = useState<any | null>(null);
   // Known independently of salesExpansionSummary (which only loads once the
   // Upsell tab is actually opened) - fetched once on mount so the nav tab and
@@ -39624,6 +39625,16 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  const loadRetentionDashboardSummary = async () => {
+    try {
+      const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
+      const result = await customerRetentionApi.dashboardSummary(bounds ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo } : {});
+      setRetentionDashboardSummary(result);
+    } catch {
+      // Non-fatal - the KPI cards/Today's Focus just won't render.
+    }
+  };
+
   const saveRetentionSettings = async () => {
     if (!retentionSettingsDraft || currentRole !== "Owner") return;
     setRetentionSettingsSaving(true);
@@ -39643,6 +39654,7 @@ ${waybillLineItems(w).length > 1
     void loadRetentionWorklist();
     void loadRetentionBonusSummary();
     void loadRetentionSettings();
+    void loadRetentionDashboardSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, recoveryRepDashboardTab, retentionStageFilter, retentionPeriod, retentionDateRange]);
 
@@ -39781,6 +39793,19 @@ ${waybillLineItems(w).length > 1
       { value: "potential_referral_customer", label: "Potential referral customer" }
     ];
 
+    // Today's Focus is a pure client-side derivation from the already-
+    // fetched worklist + KPI summary - not a separate data source.
+    const needsResolutionCount = retentionWorklist.filter((r) => r.dueStage === "needs_resolution").length;
+    const highValueOpportunityCount = retentionWorklist.filter((r) => r.priorityBand === "high_value").length;
+    const todaysFocusLines: string[] = [];
+    if (retentionDashboardSummary) {
+      const { kpis } = retentionDashboardSummary;
+      if (kpis.dueToday > 0) todaysFocusLines.push(`${kpis.dueToday} customer${kpis.dueToday === 1 ? "" : "s"} need${kpis.dueToday === 1 ? "s" : ""} to be contacted today`);
+      if (kpis.overdue > 0) todaysFocusLines.push(`${kpis.overdue} follow-up${kpis.overdue === 1 ? "" : "s"} ${kpis.overdue === 1 ? "is" : "are"} overdue`);
+    }
+    if (needsResolutionCount > 0) todaysFocusLines.push(`${needsResolutionCount} unresolved customer complaint${needsResolutionCount === 1 ? "" : "s"}`);
+    if (highValueOpportunityCount > 0) todaysFocusLines.push(`${highValueOpportunityCount} high-value repeat-sale opportunit${highValueOpportunityCount === 1 ? "y" : "ies"}`);
+
     return (
       <div className="space-y-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -39863,15 +39888,70 @@ ${waybillLineItems(w).length > 1
           </section>
         )}
 
-        {retentionBonusSummary && (
-          <section className="overflow-hidden rounded-2xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-sm">
-            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Your customer retention bonus this period</p>
-            <strong className="mt-1 block text-3xl font-black text-emerald-700">{formatMoney(retentionBonusSummary.breakdown?.total ?? 0)}</strong>
-            <p className="mt-1 text-sm font-semibold text-gray-600">
-              {retentionBonusSummary.satisfactionChecksLogged} satisfaction checks · {retentionBonusSummary.writtenReviewsCollected} reviews · {retentionBonusSummary.videoTestimonialsCollected} videos · {retentionBonusSummary.referralsCollected} referrals · {retentionBonusSummary.retentionSalesConverted?.length ?? 0} retention sales
-            </p>
+        {retentionDashboardSummary && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {([
+              ["Due Today", retentionDashboardSummary.kpis.dueToday, "text-sky-600"],
+              ["Overdue", retentionDashboardSummary.kpis.overdue, "text-red-600"],
+              ["Contacted", retentionDashboardSummary.kpis.contacted, "text-gray-900"],
+              ["Issues Resolved", retentionDashboardSummary.kpis.issuesResolved, "text-emerald-600"],
+              ["Reviews", retentionDashboardSummary.kpis.reviews, "text-gray-900"],
+              ["Referrals", retentionDashboardSummary.kpis.referrals, "text-gray-900"],
+              ["Repeat Customers", retentionDashboardSummary.kpis.repeatCustomers, "text-violet-600"],
+              ["Repeat Sales Revenue", formatMoney(retentionDashboardSummary.kpis.repeatSalesRevenue), "text-emerald-700"]
+            ] as const).map(([label, value, tone]) => (
+              <div key={label} className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{label}</div>
+                <div className={`text-xl font-black mt-1 ${tone}`}>{value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {todaysFocusLines.length > 0 && (
+          <section className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-sky-700">Today&apos;s Focus</p>
+            <ul className="mt-2 space-y-1 text-sm font-semibold text-sky-900">
+              {todaysFocusLines.map((line) => <li key={line}>• {line}</li>)}
+            </ul>
           </section>
         )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {retentionBonusSummary && (
+            <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">My Retention Bonus</p>
+              <strong className="mt-1 block text-2xl font-black text-emerald-700">{formatMoney(retentionBonusSummary.breakdown?.total ?? 0)}</strong>
+              {retentionDashboardSummary && (
+                <>
+                  <div className="mt-2 h-1.5 w-full rounded-full bg-gray-100">
+                    <div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${retentionDashboardSummary.bonus.progressPct}%` }} />
+                  </div>
+                  <p className="mt-1 text-xs font-semibold text-gray-500">
+                    {retentionDashboardSummary.bonus.progressPct}% of {formatMoney(retentionDashboardSummary.bonus.target)} target
+                  </p>
+                </>
+              )}
+              <p className="mt-2 text-xs text-gray-500">
+                {retentionBonusSummary.satisfactionChecksLogged} satisfaction checks · {retentionBonusSummary.writtenReviewsCollected} reviews · {retentionBonusSummary.videoTestimonialsCollected} videos · {retentionBonusSummary.referralsCollected} referrals · {retentionBonusSummary.retentionSalesConverted?.length ?? 0} retention sales
+              </p>
+            </section>
+          )}
+
+          {retentionDashboardSummary && (
+            <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Retention Revenue</p>
+              <strong className="mt-1 block text-2xl font-black text-gray-900">{formatMoney(retentionDashboardSummary.retentionRevenue.repeatSalesRevenue)}</strong>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-600">
+                <span>{retentionDashboardSummary.retentionRevenue.repeatCustomers} repeat customers</span>
+                <span>Avg order {formatMoney(retentionDashboardSummary.retentionRevenue.avgRepeatOrder)}</span>
+                <span>Gross contribution {formatMoney(retentionDashboardSummary.retentionRevenue.grossContribution)}</span>
+                <span>ROI {retentionDashboardSummary.retentionRevenue.roi === null ? "—" : `${retentionDashboardSummary.retentionRevenue.roi}x`}</span>
+              </div>
+              <p className="mt-2 text-[11px] text-gray-400">Cost = retention bonus actually paid this period ({formatMoney(retentionDashboardSummary.retentionRevenue.retentionRepCost)}), not a duplicate salary charge.</p>
+            </section>
+          )}
+        </div>
 
         <section className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
