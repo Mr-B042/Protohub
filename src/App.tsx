@@ -231,6 +231,31 @@ const RETENTION_SUBNAV_ITEMS: Array<{ key: RetentionSubPage; label: string; icon
   { key: "Reports", label: "Reports", icon: BarChart3 },
   { key: "Settings", label: "Settings", icon: Settings, ownerOnly: true }
 ];
+
+// The Tasks page is a task-shaped VIEW over the same derived worklist that
+// drives Pipeline and the bonus math - there is no separate task record.
+// A "task type" is the concrete action a row is asking for right now,
+// which is finer-grained than its lifecycle stage (review_referral splits
+// into Review Request vs Referral Request; any stage can be superseded by
+// a rep-scheduled callback). Same display-layer convention as order status
+// views: the raw stage still drives all reporting.
+type RetentionTaskTypeKey =
+  | "satisfaction_check" | "complaint_follow_up" | "review_request" | "referral_request"
+  | "repeat_sale_offer" | "win_back_call" | "scheduled_follow_up";
+// Tabs are a status lens. due_today/overdue/upcoming/waiting/cancelled all
+// come from the live worklist; completed is the only one sourced elsewhere
+// (logged touchpoints), because a finished task leaves the worklist.
+type RetentionTaskTab = "all" | "due_today" | "overdue" | "upcoming" | "completed" | "waiting" | "cancelled";
+type RetentionTaskStatus = "overdue" | "due_today" | "upcoming" | "waiting" | "cancelled";
+const RETENTION_TASK_TYPES: Array<{ key: RetentionTaskTypeKey; label: string; icon: typeof ClipboardCheck; tone: string }> = [
+  { key: "satisfaction_check", label: "Satisfaction Check", icon: ClipboardCheck, tone: "text-amber-600" },
+  { key: "complaint_follow_up", label: "Complaint Follow-up", icon: AlertTriangle, tone: "text-rose-600" },
+  { key: "review_request", label: "Review Request", icon: Sparkles, tone: "text-sky-600" },
+  { key: "referral_request", label: "Referral Request", icon: Gift, tone: "text-violet-600" },
+  { key: "repeat_sale_offer", label: "Repeat Sale Offer", icon: ShoppingCart, tone: "text-emerald-600" },
+  { key: "win_back_call", label: "Win-back Call", icon: RefreshCw, tone: "text-indigo-600" },
+  { key: "scheduled_follow_up", label: "Scheduled Follow-up", icon: Clock, tone: "text-gray-600" }
+];
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
@@ -11064,7 +11089,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionPipelineFiltersOpen, setRetentionPipelineFiltersOpen] = useState(false);
   const [retentionPipelinePage, setRetentionPipelinePage] = useState(1);
   const [retentionPipelineColumnPages, setRetentionPipelineColumnPages] = useState<Record<string, number>>({});
-  const [retentionTaskFilter, setRetentionTaskFilter] = useState<"all" | "due_today" | "overdue" | "complaints">("all");
+  const [retentionTaskFilter, setRetentionTaskFilter] = useState<RetentionTaskTab>("all");
+  const [retentionTaskTypeFilter, setRetentionTaskTypeFilter] = useState<"all" | RetentionTaskTypeKey>("all");
+  const [retentionTaskPage, setRetentionTaskPage] = useState(1);
   const [retentionCustomerSearch, setRetentionCustomerSearch] = useState("");
   const [retentionCustomers, setRetentionCustomers] = useState<RetentionCustomerRow[]>([]);
   const [retentionCustomersLoading, setRetentionCustomersLoading] = useState(false);
@@ -39925,7 +39952,12 @@ ${waybillLineItems(w).length > 1
   // Sales pages (each just narrows to one stage) - one shared feed endpoint.
   const ACTIVITY_LOG_PAGES: RetentionSubPage[] = ["Calls & Outcomes", "Reviews", "Referrals", "Repeat Sales"];
   useEffect(() => {
-    if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || !ACTIVITY_LOG_PAGES.includes(retentionSubPage)) return;
+    if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention") return;
+    // Tasks needs the same feed, but only for its Completed tab - a finished
+    // task has left the worklist, so it can only be read back from the
+    // touchpoints that closed it.
+    const tasksWantsLog = retentionSubPage === "Tasks" && retentionTaskFilter === "completed";
+    if (!ACTIVITY_LOG_PAGES.includes(retentionSubPage) && !tasksWantsLog) return;
     const stage = retentionSubPage === "Reviews" || retentionSubPage === "Referrals" ? "review_referral" : retentionSubPage === "Repeat Sales" ? "retention_sale" : undefined;
     setRetentionActivityLogLoading(true);
     const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
@@ -39938,7 +39970,7 @@ ${waybillLineItems(w).length > 1
       .catch((err: any) => showToast(err?.message ?? "Could not load the activity log."))
       .finally(() => setRetentionActivityLogLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionSubPage, retentionPeriod, retentionDateRange]);
+  }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionSubPage, retentionTaskFilter, retentionPeriod, retentionDateRange]);
 
   useEffect(() => {
     if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || retentionSubPage !== "Settings" || currentRole !== "Owner") return;
@@ -40253,6 +40285,69 @@ ${waybillLineItems(w).length > 1
       return label;
     };
 
+    // A row's concrete task identity. A rep-scheduled callback outranks the
+    // lifecycle stage: once someone promised to call back at a set time,
+    // that promise IS the task.
+    const taskTypeFor = (row: RetentionWorklistRow): RetentionTaskTypeKey =>
+      row.followUpStatus ? "scheduled_follow_up"
+      : row.dueStage === "needs_resolution" ? "complaint_follow_up"
+      : row.dueStage === "satisfaction_check" ? "satisfaction_check"
+      : row.dueStage === "review_referral" ? (row.reviewCollected ? "referral_request" : "review_request")
+      : row.dueStage === "retention_sale" ? "repeat_sale_offer"
+      : row.dueStage === "win_back" ? "win_back_call"
+      : "scheduled_follow_up";
+
+    const taskSubtitleFor = (row: RetentionWorklistRow): string => {
+      const type = taskTypeFor(row);
+      if (type === "scheduled_follow_up") return row.nextActionNote?.trim() || "Callback promised to customer";
+      if (type === "complaint_follow_up") return "Customer reported an issue";
+      if (type === "satisfaction_check") return "First follow-up after delivery";
+      if (type === "review_request") return "Ask for a review or testimonial";
+      if (type === "referral_request") return "Review collected - ask for a referral";
+      if (type === "repeat_sale_offer") return "Cross-sell or repeat-purchase opportunity";
+      return `Inactive for ${row.daysSinceDelivery} days`;
+    };
+
+    // Do-not-contact rows are surfaced as "cancelled" rather than hidden:
+    // they still occupy the lifecycle, but no one should call them.
+    const taskStatusFor = (row: RetentionWorklistRow): RetentionTaskStatus => {
+      if (row.doNotContact) return "cancelled";
+      if (row.followUpStatus === "overdue") return "overdue";
+      if (row.followUpStatus === "due") return "due_today";
+      if (row.followUpStatus === "scheduled") return "upcoming";
+      if (row.overdueBy > 0) return "overdue";
+      // Requested but not yet received - the ball is in the customer's court.
+      if ((row.reviewRequested && !row.reviewCollected) || (row.referralRequested && !row.referralCollected)) return "waiting";
+      return "due_today";
+    };
+
+    const taskStatusBadge = (status: RetentionTaskStatus) =>
+      status === "overdue" ? { label: "Overdue", class: "border-rose-200 bg-rose-50 text-rose-700" }
+      : status === "due_today" ? { label: "Pending", class: "border-sky-200 bg-sky-50 text-sky-700" }
+      : status === "upcoming" ? { label: "Scheduled", class: "border-gray-200 bg-gray-50 text-gray-600" }
+      : status === "waiting" ? { label: "Waiting", class: "border-amber-200 bg-amber-50 text-amber-700" }
+      : { label: "Cancelled", class: "border-gray-200 bg-gray-100 text-gray-500" };
+
+    // Absolute due moment + a relative hint. Scheduled callbacks carry a real
+    // time; lifecycle stages are day-granular, so those read as dates only
+    // rather than inventing a clock time the data does not have.
+    const taskDueDisplay = (row: RetentionWorklistRow): { absolute: string; relative: string; tone: string } => {
+      if (row.followUpStatus && row.nextActionAt) {
+        const at = new Date(row.nextActionAt);
+        const diffMs = at.getTime() - Date.now();
+        const absolute = at.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+        if (diffMs < 0) {
+          const mins = Math.round(-diffMs / 60000);
+          return { absolute, relative: mins < 60 ? `${mins}m overdue` : mins < 1440 ? `${Math.round(mins / 60)}h overdue` : `${Math.round(mins / 1440)}d overdue`, tone: "text-rose-600" };
+        }
+        const mins = Math.round(diffMs / 60000);
+        return { absolute, relative: mins < 60 ? `Due in ${mins}m` : mins < 1440 ? `Due in ${Math.round(mins / 60)}h` : `Due in ${Math.round(mins / 1440)}d`, tone: mins < 1440 ? "text-sky-600" : "text-gray-500" };
+      }
+      const absolute = row.stageDueDate ? new Date(row.stageDueDate).toLocaleDateString([], { dateStyle: "medium" }) : "—";
+      if (row.overdueBy > 0) return { absolute, relative: `${row.overdueBy}d overdue`, tone: "text-rose-600" };
+      return { absolute, relative: "Due today", tone: "text-sky-600" };
+    };
+
     const retentionSearchQuery = retentionSearch.trim().toLowerCase();
     const retentionProductOptions = Array.from(new Set(retentionWorklist.map((r) => r.productName))).sort();
     const retentionRepOptions = Array.from(
@@ -40272,12 +40367,25 @@ ${waybillLineItems(w).length > 1
     // opportunity" tier (retention_sale/win_back), which is a longer-
     // horizon sales opportunity rather than an urgent task.
     const actionableRetentionTasks = retentionWorklist.filter((row) => row.followUpStatus !== null || row.priorityBand !== "revenue_opportunity");
-    const filteredRetentionTasks = applyRetentionFilters(actionableRetentionTasks.filter((row) =>
-      retentionTaskFilter === "all"
-      || (retentionTaskFilter === "due_today" && (row.followUpStatus === "due" || (row.followUpStatus === null && row.overdueBy === 0)))
-      || (retentionTaskFilter === "overdue" && (row.followUpStatus === "overdue" || (row.followUpStatus === null && row.overdueBy > 0)))
-      || (retentionTaskFilter === "complaints" && row.dueStage === "needs_resolution")
-    ));
+    // Tab counts come from the whole task set, so a tab always shows how
+    // much work it holds regardless of the other filters in effect.
+    const retentionTaskTabCounts: Record<Exclude<RetentionTaskTab, "completed">, number> = {
+      all: actionableRetentionTasks.length,
+      due_today: actionableRetentionTasks.filter((r) => taskStatusFor(r) === "due_today").length,
+      overdue: actionableRetentionTasks.filter((r) => taskStatusFor(r) === "overdue").length,
+      upcoming: actionableRetentionTasks.filter((r) => taskStatusFor(r) === "upcoming").length,
+      waiting: actionableRetentionTasks.filter((r) => taskStatusFor(r) === "waiting").length,
+      cancelled: actionableRetentionTasks.filter((r) => taskStatusFor(r) === "cancelled").length
+    };
+    const retentionTaskTypeCounts = RETENTION_TASK_TYPES.map((type) => ({
+      ...type,
+      count: actionableRetentionTasks.filter((row) => taskTypeFor(row) === type.key).length
+    }));
+    const filteredRetentionTasks = applyRetentionFilters(actionableRetentionTasks
+      .filter((row) => retentionTaskFilter === "all" || retentionTaskFilter === "completed" || taskStatusFor(row) === retentionTaskFilter)
+      .filter((row) => retentionTaskTypeFilter === "all" || taskTypeFor(row) === retentionTaskTypeFilter)
+      .filter((row) => retentionStageFilter === "all" || row.dueStage === retentionStageFilter)
+    );
     const filteredRetentionWinBack = applyRetentionFilters(retentionWorklist.filter((row) => row.dueStage === "win_back"));
     const retentionActivityQuery = retentionActivitySearch.trim().toLowerCase();
     const filteredRetentionActivity = retentionActivityLog.filter((row) =>
@@ -41296,34 +41404,321 @@ ${waybillLineItems(w).length > 1
       }
 
       if (retentionSubPage === "Tasks") {
-        const dueToday = actionableRetentionTasks.filter((row) =>
-          row.followUpStatus === "due" || (row.followUpStatus === null && row.overdueBy === 0)
-        ).length;
-        const overdue = actionableRetentionTasks.filter((row) =>
-          row.followUpStatus === "overdue" || (row.followUpStatus === null && row.overdueBy > 0)
-        ).length;
-        const complaints = actionableRetentionTasks.filter((row) => row.dueStage === "needs_resolution").length;
+        const scheduledFollowUps = actionableRetentionTasks.filter((r) => r.followUpStatus !== null).length;
+        const upcomingWeek = actionableRetentionTasks.filter((r) => {
+          if (r.followUpStatus !== "scheduled" || !r.nextActionAt) return false;
+          const days = (new Date(r.nextActionAt).getTime() - Date.now()) / 86400000;
+          return days >= 0 && days <= 7;
+        }).length;
+        const perf = retentionDashboardSummary?.repPerformance;
+        const showingCompleted = retentionTaskFilter === "completed";
+        const pageSize = 10;
+        const totalTasks = filteredRetentionTasks.length;
+        const totalPages = Math.max(1, Math.ceil(totalTasks / pageSize));
+        const currentPage = Math.min(retentionTaskPage, totalPages);
+        const pagedTasks = filteredRetentionTasks.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+        // Only rep-scheduled callbacks carry a clock time, so the day view
+        // lists those by time and keeps day-granular stage work separate
+        // rather than inventing appointment times.
+        const timedToday = actionableRetentionTasks
+          .filter((r) => r.nextActionAt && new Date(r.nextActionAt).toDateString() === new Date().toDateString())
+          .sort((a, b) => new Date(a.nextActionAt as string).getTime() - new Date(b.nextActionAt as string).getTime());
+        const anyTimeToday = actionableRetentionTasks.filter((r) => !r.nextActionAt && taskStatusFor(r) === "due_today").length;
+        const resetTaskPage = () => setRetentionTaskPage(1);
+
         return (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
               {([
-                ["all", "Open Tasks", actionableRetentionTasks.length, "border-gray-200 bg-white text-gray-900"],
-                ["due_today", "Due Today", dueToday, "border-sky-200 bg-sky-50 text-sky-700"],
-                ["overdue", "Overdue", overdue, "border-rose-200 bg-rose-50 text-rose-700"],
-                ["complaints", "Needs Resolution", complaints, "border-amber-200 bg-amber-50 text-amber-700"]
-              ] as const).map(([key, label, count, tone]) => (
+                ["Due Today", retentionTaskTabCounts.due_today, "text-sky-700", CalendarDays],
+                ["Overdue", retentionTaskTabCounts.overdue, "text-rose-700", AlertTriangle],
+                ["Upcoming (7 days)", upcomingWeek, "text-gray-800", CalendarDays],
+                ["Completed (period)", perf?.tasksCompleted ?? 0, "text-emerald-700", CheckCircle2],
+                ["Completion Rate", perf ? `${Math.round(perf.completionRatePct)}%` : "—", "text-violet-700", Clock],
+                ["Scheduled Follow-ups", scheduledFollowUps, "text-amber-700", Users]
+              ] as const).map(([label, value, tone, Icon]) => (
+                <div key={label} className="rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="flex items-center gap-2">
+                    <Icon className={`h-4 w-4 ${tone}`} />
+                    <span className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-500">{label}</span>
+                  </div>
+                  <strong className={`mt-1.5 block text-2xl font-black ${tone}`}>{value}</strong>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex gap-1 overflow-x-auto border-b border-gray-200 pb-px">
+              {([
+                ["all", "All Tasks", retentionTaskTabCounts.all],
+                ["due_today", "Due Today", retentionTaskTabCounts.due_today],
+                ["overdue", "Overdue", retentionTaskTabCounts.overdue],
+                ["upcoming", "Upcoming", retentionTaskTabCounts.upcoming],
+                ["completed", "Completed", perf?.tasksCompleted ?? 0],
+                ["waiting", "Waiting", retentionTaskTabCounts.waiting],
+                ["cancelled", "Cancelled", retentionTaskTabCounts.cancelled]
+              ] as const).map(([key, label, count]) => (
                 <button
                   key={key}
                   type="button"
-                  onClick={() => setRetentionTaskFilter(key)}
-                  className={`!min-h-0 rounded-lg border p-4 text-left ${tone} ${retentionTaskFilter === key ? "ring-2 ring-emerald-500 ring-offset-1" : ""}`}
+                  onClick={() => { setRetentionTaskFilter(key); resetTaskPage(); }}
+                  className={`!min-h-0 inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${
+                    retentionTaskFilter === key
+                      ? "border-emerald-600 font-black text-emerald-700"
+                      : "border-transparent font-bold text-gray-500 hover:text-gray-800"
+                  }`}
                 >
-                  <span className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">{label}</span>
-                  <strong className="mt-1 block text-2xl font-black">{count}</strong>
+                  {label}
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${retentionTaskFilter === key ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>{count}</span>
                 </button>
               ))}
             </div>
-            {renderRetentionQueue(filteredRetentionTasks, { title: "Action Queue", emptyMessage: "Nothing urgent right now." })}
+
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+              <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div className="flex flex-col gap-2 border-b border-gray-200 p-4 sm:flex-row sm:flex-wrap sm:items-center">
+                  <div className="relative min-w-0 flex-1 sm:min-w-[200px]">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                    <input
+                      value={retentionSearch}
+                      onChange={(e) => { setRetentionSearch(e.target.value); resetTaskPage(); }}
+                      placeholder="Search task or customer..."
+                      className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm"
+                    />
+                  </div>
+                  <select value={retentionTaskTypeFilter} onChange={(e) => { setRetentionTaskTypeFilter(e.target.value as typeof retentionTaskTypeFilter); resetTaskPage(); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                    <option value="all">All Task Types</option>
+                    {RETENTION_TASK_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                  </select>
+                  <select value={retentionStageFilter} onChange={(e) => { setRetentionStageFilter(e.target.value as typeof retentionStageFilter); resetTaskPage(); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                    <option value="all">All Stages</option>
+                    {(["needs_resolution", "satisfaction_check", "review_referral", "retention_sale", "win_back"] as const).map((s) => (
+                      <option key={s} value={s}>{stageLabel(s)}</option>
+                    ))}
+                  </select>
+                  <select value={retentionPriorityFilter} onChange={(e) => { setRetentionPriorityFilter(e.target.value as typeof retentionPriorityFilter); resetTaskPage(); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                    <option value="all">All Priority</option>
+                    {(["critical", "overdue", "high_value", "satisfaction_due", "review_referral_due", "revenue_opportunity"] as const).map((band) => (
+                      <option key={band} value={band}>{priorityBadge(band).label}</option>
+                    ))}
+                  </select>
+                  {retentionRepOptions.length > 0 && (
+                    <select value={retentionAssignedRepFilter} onChange={(e) => { setRetentionAssignedRepFilter(e.target.value); resetTaskPage(); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                      <option value="all">All Reps</option>
+                      {retentionRepOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                    </select>
+                  )}
+                </div>
+
+                {showingCompleted ? (
+                  retentionActivityLogLoading && retentionActivityLog.length === 0 ? (
+                    <p className="px-5 py-10 text-center text-sm text-gray-400">Loading completed tasks…</p>
+                  ) : retentionActivityLog.length === 0 ? (
+                    <p className="px-5 py-10 text-center text-sm text-gray-400">No tasks were completed in this period.</p>
+                  ) : (
+                    <ul className="divide-y divide-gray-100">
+                      {retentionActivityLog.slice(0, 50).map((row) => (
+                        <li key={row.id}>
+                          <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 flex w-full items-start justify-between gap-3 px-5 py-3 text-left hover:bg-gray-50">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                                <span className="truncate font-bold text-gray-900">{row.customerName}</span>
+                                <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${stageTone(row.stage)}`}>{stageLabel(row.stage)}</span>
+                              </div>
+                              <p className="mt-0.5 text-xs text-gray-500">#{row.orderId} · {row.productName} · logged by {row.loggedByName}</p>
+                            </div>
+                            <span className="shrink-0 text-xs font-semibold text-gray-500">{new Date(row.loggedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                ) : pagedTasks.length === 0 ? (
+                  <p className="px-5 py-10 text-center text-sm text-gray-400">No tasks match this view.</p>
+                ) : (
+                  <>
+                    {/* Mobile cards */}
+                    <div className="divide-y divide-gray-100 sm:hidden">
+                      {pagedTasks.map((row) => {
+                        const type = RETENTION_TASK_TYPES.find((t) => t.key === taskTypeFor(row)) as typeof RETENTION_TASK_TYPES[number];
+                        const status = taskStatusBadge(taskStatusFor(row));
+                        const due = taskDueDisplay(row);
+                        const badge = priorityBadge(row.priorityBand);
+                        return (
+                          <article key={row.orderId} className="flex flex-col gap-2 px-4 py-4">
+                            <div className="flex items-start justify-between gap-2">
+                              <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 min-w-0 text-left">
+                                <div className="flex items-center gap-1.5">
+                                  <type.icon className={`h-4 w-4 shrink-0 ${type.tone}`} />
+                                  <span className="truncate font-bold text-gray-900">{type.label}</span>
+                                </div>
+                                <p className="mt-0.5 truncate text-xs text-gray-500">{taskSubtitleFor(row)}</p>
+                                <p className="mt-1 truncate text-sm font-bold text-gray-900">{row.customerName}</p>
+                                <p className="text-xs text-gray-500">{row.phone} · #{row.orderId}</p>
+                              </button>
+                              <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${status.class}`}>{status.label}</span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span>
+                              <span className="text-xs text-gray-500">{due.absolute}</span>
+                              <span className={`text-xs font-bold ${due.tone}`}>{due.relative}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "tasks")} className="!min-h-0 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700"><Phone className="h-3.5 w-3.5" /> Call</a>
+                              <a href={buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "tasks")} className="!min-h-0 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700"><WhatsAppIcon className="h-3.5 w-3.5" /> WhatsApp</a>
+                              <button type="button" onClick={() => toggleLogging(row.orderId, row.dueStage)} className="!min-h-0 inline-flex h-8 flex-1 items-center justify-center rounded-lg bg-[#1F8FE0] text-xs font-black text-white">Log</button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+
+                    {/* Desktop table */}
+                    <div className="hidden overflow-x-auto sm:block">
+                      <table className="w-full min-w-[900px] text-sm">
+                        <thead className="bg-gray-50 text-[10px] uppercase tracking-wider text-gray-500">
+                          <tr>
+                            <th className="px-4 py-3 text-left font-bold">Priority</th>
+                            <th className="px-4 py-3 text-left font-bold">Task</th>
+                            <th className="px-4 py-3 text-left font-bold">Customer</th>
+                            <th className="px-4 py-3 text-left font-bold">Product / Order</th>
+                            <th className="px-4 py-3 text-left font-bold">Stage</th>
+                            <th className="px-4 py-3 text-left font-bold">Due Date &amp; Time</th>
+                            <th className="px-4 py-3 text-left font-bold">Status</th>
+                            <th className="px-4 py-3 text-left font-bold">Assigned Rep</th>
+                            <th className="px-4 py-3 text-left font-bold">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {pagedTasks.map((row) => {
+                            const type = RETENTION_TASK_TYPES.find((t) => t.key === taskTypeFor(row)) as typeof RETENTION_TASK_TYPES[number];
+                            const status = taskStatusBadge(taskStatusFor(row));
+                            const due = taskDueDisplay(row);
+                            const badge = priorityBadge(row.priorityBand);
+                            const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
+                            return (
+                              <tr key={row.orderId} className="align-top hover:bg-gray-50">
+                                <td className="px-4 py-3"><span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span></td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-1.5">
+                                    <type.icon className={`h-4 w-4 shrink-0 ${type.tone}`} />
+                                    <span className="font-bold text-gray-900">{type.label}</span>
+                                  </div>
+                                  <p className="mt-0.5 text-xs text-gray-500">{taskSubtitleFor(row)}</p>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 text-left">
+                                    <div className="font-bold text-gray-900">{row.customerName}</div>
+                                    <div className="text-xs text-gray-500">{row.phone}</div>
+                                  </button>
+                                </td>
+                                <td className="px-4 py-3 text-xs text-gray-600">{row.productName}<br />#{row.orderId}</td>
+                                <td className="px-4 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
+                                <td className="px-4 py-3 text-xs">
+                                  <div className="whitespace-nowrap font-semibold text-gray-800">{due.absolute}</div>
+                                  <div className={`whitespace-nowrap font-bold ${due.tone}`}>{due.relative}</div>
+                                </td>
+                                <td className="px-4 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${status.class}`}>{status.label}</span></td>
+                                <td className="px-4 py-3 text-xs font-semibold text-gray-700">{row.assignedRepName ?? <span className="text-gray-400">Unassigned</span>}</td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-1.5">
+                                    <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "tasks")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><Phone className="h-3.5 w-3.5" /></a>
+                                    <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "tasks")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+                                    <button type="button" onClick={() => toggleLogging(row.orderId, row.dueStage)} className="!min-h-0 inline-flex items-center whitespace-nowrap rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8]">Log Outcome</button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="flex flex-col items-center justify-between gap-2 border-t border-gray-200 px-4 py-3 sm:flex-row">
+                      <span className="text-xs font-semibold text-gray-500">
+                        Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalTasks)} of {totalTasks} task{totalTasks === 1 ? "" : "s"}
+                      </span>
+                      {totalPages > 1 && (
+                        <div className="flex items-center gap-1">
+                          <button type="button" disabled={currentPage === 1} onClick={() => setRetentionTaskPage(currentPage - 1)} className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-xs font-bold text-gray-600 disabled:opacity-40">Prev</button>
+                          <span className="px-2 text-xs font-black text-gray-700">{currentPage} / {totalPages}</span>
+                          <button type="button" disabled={currentPage === totalPages} onClick={() => setRetentionTaskPage(currentPage + 1)} className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-xs font-bold text-gray-600 disabled:opacity-40">Next</button>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </section>
+
+              <aside className="space-y-4">
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Task Types</h3>
+                  <ul className="mt-3 space-y-1">
+                    {retentionTaskTypeCounts.map((type) => (
+                      <li key={type.key}>
+                        <button
+                          type="button"
+                          onClick={() => { setRetentionTaskTypeFilter(retentionTaskTypeFilter === type.key ? "all" : type.key); resetTaskPage(); }}
+                          className={`!min-h-0 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors ${retentionTaskTypeFilter === type.key ? "bg-emerald-50 font-black text-emerald-700" : "font-semibold text-gray-700 hover:bg-gray-50"}`}
+                        >
+                          <type.icon className={`h-4 w-4 shrink-0 ${type.tone}`} />
+                          <span className="flex-1 truncate">{type.label}</span>
+                          <span className="shrink-0 text-xs font-black text-gray-500">{type.count}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Today</h3>
+                  <p className="mt-0.5 text-xs text-gray-500">{new Date().toLocaleDateString([], { dateStyle: "long" })}</p>
+                  {timedToday.length === 0 && anyTimeToday === 0 ? (
+                    <p className="mt-3 text-xs italic text-gray-400">Nothing scheduled for today.</p>
+                  ) : (
+                    <>
+                      <ul className="mt-3 space-y-2">
+                        {timedToday.map((row) => {
+                          const overdueNow = new Date(row.nextActionAt as string).getTime() < Date.now();
+                          return (
+                            <li key={row.orderId}>
+                              <button
+                                type="button"
+                                onClick={() => setRetentionDrawerPhone(row.phone)}
+                                className="!min-h-0 flex w-full items-start gap-2 rounded-lg border-l-2 pl-2 text-left hover:bg-gray-50"
+                                style={{ borderLeftColor: overdueNow ? "#e11d48" : "#0ea5e9" }}
+                              >
+                                <span className="w-16 shrink-0 text-xs font-black text-gray-700">{new Date(row.nextActionAt as string).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-xs font-bold text-gray-900">{row.customerName}</span>
+                                  <span className="block truncate text-[11px] text-gray-500">{RETENTION_TASK_TYPES.find((t) => t.key === taskTypeFor(row))?.label}</span>
+                                </span>
+                                {overdueNow && <span className="shrink-0 text-[10px] font-black text-rose-600">Overdue</span>}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      {anyTimeToday > 0 && (
+                        <p className="mt-3 border-t border-gray-100 pt-2 text-xs font-semibold text-gray-500">
+                          + {anyTimeToday} task{anyTimeToday === 1 ? "" : "s"} due today with no set time
+                        </p>
+                      )}
+                    </>
+                  )}
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Quick Actions</h3>
+                  <div className="mt-3 space-y-1.5">
+                    <button type="button" onClick={() => { setRetentionTaskFilter("overdue"); resetTaskPage(); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><AlertTriangle className="h-3.5 w-3.5 text-rose-600" /> Work the overdue list</button>
+                    <button type="button" onClick={() => setRetentionSubPage("Pipeline")} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Repeat2 className="h-3.5 w-3.5 text-sky-600" /> Open full pipeline</button>
+                    <button type="button" onClick={() => setRetentionSubPage("Customers")} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Users className="h-3.5 w-3.5 text-violet-600" /> Browse customers</button>
+                    <button type="button" onClick={exportRetentionPipelineCsv} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Download className="h-3.5 w-3.5 text-gray-500" /> Export queue CSV</button>
+                  </div>
+                </section>
+              </aside>
+            </div>
           </div>
         );
       }
