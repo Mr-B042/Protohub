@@ -11077,6 +11077,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionCustomerReferralFilter, setRetentionCustomerReferralFilter] = useState("all");
   const [retentionCustomerFiltersOpen, setRetentionCustomerFiltersOpen] = useState(false);
   const [retentionCustomerView, setRetentionCustomerView] = useState<"table" | "cards">("table");
+  const [retentionCustomerPage, setRetentionCustomerPage] = useState(1);
   const [retentionActivitySearch, setRetentionActivitySearch] = useState("");
   const [retentionActivityLog, setRetentionActivityLog] = useState<RetentionActivityLogRow[]>([]);
   const [retentionActivityLogLoading, setRetentionActivityLogLoading] = useState(false);
@@ -39884,6 +39885,21 @@ ${waybillLineItems(w).length > 1
   }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionSubPage]);
 
   useEffect(() => {
+    setRetentionCustomerPage(1);
+  }, [
+    retentionCustomerSearch,
+    retentionCustomerStageFilter,
+    retentionCustomerStatusFilter,
+    retentionCustomerProductFilter,
+    retentionCustomerStateFilter,
+    retentionCustomerSpendFilter,
+    retentionCustomerContactFilter,
+    retentionCustomerReviewFilter,
+    retentionCustomerReferralFilter,
+    retentionAssignedRepFilter
+  ]);
+
+  useEffect(() => {
     if (!retentionDrawerPhone) { setRetentionCustomerDetail(null); return; }
     setRetentionCustomerDetailLoading(true);
     customerRetentionApi.customerDetail(retentionDrawerPhone)
@@ -41284,6 +41300,18 @@ ${waybillLineItems(w).length > 1
           if (retentionCustomerReferralFilter !== "all" && row.referralStatus !== retentionCustomerReferralFilter) return false;
           return true;
         });
+        const customerPageSize = 20;
+        const customerPageCount = Math.max(1, Math.ceil(customers.length / customerPageSize));
+        const currentCustomerPage = Math.min(retentionCustomerPage, customerPageCount);
+        const customerPageStart = (currentCustomerPage - 1) * customerPageSize;
+        const pagedCustomers = customers.slice(customerPageStart, customerPageStart + customerPageSize);
+        const customerPageNumbers = Array.from(
+          { length: Math.min(5, customerPageCount) },
+          (_, index) => {
+            const firstPage = Math.max(1, Math.min(currentCustomerPage - 2, customerPageCount - 4));
+            return firstPage + index;
+          }
+        );
         const customerStatusMeta = (row: RetentionCustomerRow) => {
           if (row.status === "do_not_contact") return { label: "Do Not Contact", tone: "border-gray-300 bg-gray-100 text-gray-700" };
           if (row.status === "unresolved_issue") return { label: "Issue", tone: "border-rose-200 bg-rose-50 text-rose-700" };
@@ -41310,6 +41338,7 @@ ${waybillLineItems(w).length > 1
           setRetentionCustomerReviewFilter("all");
           setRetentionCustomerReferralFilter("all");
           setRetentionAssignedRepFilter("all");
+          setRetentionCustomerPage(1);
         };
         const exportRetentionCustomers = () => {
           const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, "\"\"")}"`;
@@ -41355,7 +41384,7 @@ ${waybillLineItems(w).length > 1
         const renderCustomerCard = (row: RetentionCustomerRow) => {
           const status = customerStatusMeta(row);
           return (
-            <article key={row.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+            <article key={row.id} data-retention-customer-card className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 flex min-w-0 items-center gap-3 text-left">
                   <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.id)}`}>{customerInitial(row.name)}</span>
@@ -41445,16 +41474,16 @@ ${waybillLineItems(w).length > 1
             ) : customers.length === 0 ? (
               <section className="rounded-lg border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-400">No customers match the selected filters.</section>
             ) : retentionCustomerView === "cards" ? (
-              <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{customers.map(renderCustomerCard)}</section>
+              <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{pagedCustomers.map(renderCustomerCard)}</section>
             ) : (
               <>
-                <section className="grid gap-3 lg:hidden">{customers.map(renderCustomerCard)}</section>
+                <section className="grid gap-3 lg:hidden">{pagedCustomers.map(renderCustomerCard)}</section>
                 <section className="hidden overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:block">
                   <table className="w-full table-fixed text-left">
                     <colgroup><col className="w-[18%]" /><col className="w-[24%]" /><col className="w-[15%]" /><col className="w-[21%]" /><col className="w-[13%]" /><col className="w-[9%]" /></colgroup>
                     <thead className="border-b border-gray-200 bg-gray-50 text-[9px] font-black uppercase tracking-[0.12em] text-gray-500"><tr><th className="px-3 py-3">Customer</th><th className="px-3 py-3">Purchase relationship</th><th className="px-3 py-3">Lifecycle</th><th className="px-3 py-3">Contact plan</th><th className="px-3 py-3">Owner / status</th><th className="px-2 py-3 text-right">Actions</th></tr></thead>
                     <tbody className="divide-y divide-gray-100">
-                      {customers.map((row) => {
+                      {pagedCustomers.map((row) => {
                         const status = customerStatusMeta(row);
                         return (
                           <tr key={row.id} className="align-top hover:bg-gray-50">
@@ -41476,6 +41505,51 @@ ${waybillLineItems(w).length > 1
                   </table>
                 </section>
               </>
+            )}
+            {customers.length > 0 && (
+              <nav aria-label="Customer directory pages" className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs font-semibold text-gray-500">
+                  Showing {customerPageStart + 1}-{Math.min(customerPageStart + customerPageSize, customers.length)} of {customers.length} customers
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setRetentionCustomerPage((page) => Math.max(1, page - 1))}
+                    disabled={currentCustomerPage === 1}
+                    aria-label="Previous customer page"
+                    title="Previous page"
+                    className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 text-gray-700 disabled:cursor-not-allowed disabled:opacity-35"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  {customerPageNumbers.map((page) => (
+                    <button
+                      key={page}
+                      type="button"
+                      onClick={() => setRetentionCustomerPage(page)}
+                      aria-label={`Customer page ${page}`}
+                      aria-current={page === currentCustomerPage ? "page" : undefined}
+                      className={`!min-h-0 inline-flex h-9 min-w-9 items-center justify-center rounded-md border px-2 text-xs font-black ${
+                        page === currentCustomerPage
+                          ? "border-emerald-600 bg-emerald-600 text-white"
+                          : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setRetentionCustomerPage((page) => Math.min(customerPageCount, page + 1))}
+                    disabled={currentCustomerPage === customerPageCount}
+                    aria-label="Next customer page"
+                    title="Next page"
+                    className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 text-gray-700 disabled:cursor-not-allowed disabled:opacity-35"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </nav>
             )}
           </div>
         );
