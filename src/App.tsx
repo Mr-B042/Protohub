@@ -43863,6 +43863,7 @@ ${waybillLineItems(w).length > 1
                 <>
                   <Section title="Customer">
                     <Field label="Phone" value={detail.customer.phone} />
+                    <Field label="Address" value={detail.customer.address || <span className="text-gray-400">Not recorded</span>} />
                     <Field label="Location" value={`${detail.customer.city}${detail.customer.state ? ", " + detail.customer.state : ""}`} />
                     <Field label="Customer since" value={new Date(detail.customer.customerSince).toLocaleDateString()} />
                   </Section>
@@ -43903,10 +43904,98 @@ ${waybillLineItems(w).length > 1
                               : "border-gray-200 bg-white text-gray-600"
                           }`}>{detail.latestOrder.status}</span>
                         </div>
-                        <div className="mt-3 flex items-end justify-between gap-3 border-t border-gray-200 pt-3">
-                          <span className="text-xs text-gray-500">{detail.latestOrder.deliveredDate ? `Delivered ${new Date(detail.latestOrder.deliveredDate).toLocaleDateString()}` : "Not delivered yet"}</span>
-                          <strong className="text-base font-black text-gray-900">{formatMoney(detail.latestOrder.amount)}</strong>
+                        {/* Itemised basket. The headline total alone hid the
+                            add-ons, so the rep could not tell a single big
+                            product from a main product plus cross-sells. */}
+                        <div className="mt-3 space-y-1.5 border-t border-gray-200 pt-3">
+                          <div className="flex items-start justify-between gap-2 text-xs">
+                            <span className="min-w-0 text-gray-600">
+                              {detail.latestOrder.product}
+                              {detail.latestOrder.quantity > 0 && <span className="text-gray-400"> × {detail.latestOrder.quantity}</span>}
+                              {detail.latestOrder.upsell && (
+                                <span className="ml-1 inline-flex items-center whitespace-nowrap rounded-full border border-indigo-200 bg-indigo-50 px-1.5 text-[10px] font-black text-indigo-700">
+                                  Upsold {detail.latestOrder.upsell.fromQty ?? "?"} → {detail.latestOrder.upsell.toQty ?? "?"}
+                                </span>
+                              )}
+                            </span>
+                            <span className="shrink-0 font-bold text-gray-800">{formatMoney(detail.latestOrder.mainAmount)}</span>
+                          </div>
+
+                          {detail.latestOrder.crossSells.map((line, idx) => (
+                            <div key={`${line.productId ?? line.productName}-${idx}`} className="flex items-start justify-between gap-2 text-xs">
+                              <span className="min-w-0 text-gray-600">
+                                <span className="mr-1 inline-flex items-center whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-1.5 text-[10px] font-black text-emerald-700">Cross-sell</span>
+                                {line.productName}
+                                {line.quantity > 0 && <span className="text-gray-400"> × {line.quantity}</span>}
+                                {line.addedByName && (
+                                  <span className="block text-[10px] text-gray-400">
+                                    added by {line.addedByName}{line.addedByRole ? ` (${line.addedByRole})` : ""}
+                                    {line.selectionSource === "manual_rep" ? " · pitched on the call" : ""}
+                                  </span>
+                                )}
+                              </span>
+                              <span className="shrink-0 font-bold text-gray-800">{formatMoney(line.amount)}</span>
+                            </div>
+                          ))}
+
+                          {detail.latestOrder.freeGifts.map((gift, idx) => (
+                            <div key={`${gift.productName}-${idx}`} className="flex items-start justify-between gap-2 text-xs">
+                              <span className="min-w-0 text-gray-600">
+                                <span className="mr-1 inline-flex items-center whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-1.5 text-[10px] font-black text-violet-700">Free gift</span>
+                                {gift.productName}
+                                {gift.quantity > 0 && <span className="text-gray-400"> × {gift.quantity}</span>}
+                                {gift.source === "package" && <span className="block text-[10px] text-gray-400">included in the {detail.latestOrder!.package || "package"}</span>}
+                              </span>
+                              <span className="shrink-0 font-bold text-violet-700">Free</span>
+                            </div>
+                          ))}
                         </div>
+
+                        <div className="mt-2 flex items-end justify-between gap-3 border-t border-gray-200 pt-2">
+                          <span className="text-xs text-gray-500">{detail.latestOrder.deliveredDate ? `Delivered ${new Date(detail.latestOrder.deliveredDate).toLocaleDateString()}` : "Not delivered yet"}</span>
+                          <span className="text-right">
+                            <span className="block text-[10px] font-bold uppercase tracking-wide text-gray-400">Order total</span>
+                            <strong className="text-base font-black text-gray-900">{formatMoney(detail.latestOrder.amount)}</strong>
+                          </span>
+                        </div>
+                      </div>
+                    </Section>
+                  )}
+
+                  {/* Everything they have ever bought, so the rep can spot
+                      repeat products and what has already been cross-sold
+                      before pitching again. */}
+                  {detail.orderHistory.length > 1 && (
+                    <Section title={`Purchase History (${detail.orderHistory.length} orders)`}>
+                      <div className="space-y-2">
+                        {detail.orderHistory.slice(1).map((order) => (
+                          <div key={order.orderId} className="rounded-lg border border-gray-100 bg-white p-2.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-bold text-gray-900">{order.product}{order.quantity > 0 ? ` × ${order.quantity}` : ""}</p>
+                                <p className="text-[10px] text-gray-400">
+                                  #{order.orderId} · {order.deliveredDate ? new Date(order.deliveredDate).toLocaleDateString() : order.status}
+                                </p>
+                              </div>
+                              <strong className="shrink-0 text-xs font-black text-gray-900">{formatMoney(order.amount)}</strong>
+                            </div>
+                            {(order.crossSells.length > 0 || order.upsell || order.freeGifts.length > 0) && (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {order.upsell && <span className="inline-flex items-center whitespace-nowrap rounded-full border border-indigo-200 bg-indigo-50 px-1.5 text-[10px] font-black text-indigo-700">Upsold {order.upsell.fromQty ?? "?"} → {order.upsell.toQty ?? "?"}</span>}
+                                {order.crossSells.map((line, idx) => (
+                                  <span key={`${order.orderId}-x-${idx}`} className="inline-flex items-center whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-1.5 text-[10px] font-bold text-emerald-700">
+                                    + {line.productName}{line.quantity > 0 ? ` ×${line.quantity}` : ""} · {formatMoney(line.amount)}
+                                  </span>
+                                ))}
+                                {order.freeGifts.map((gift, idx) => (
+                                  <span key={`${order.orderId}-g-${idx}`} className="inline-flex items-center whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-1.5 text-[10px] font-bold text-violet-700">
+                                    Gift: {gift.productName}{gift.quantity > 0 ? ` ×${gift.quantity}` : ""}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     </Section>
                   )}

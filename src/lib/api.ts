@@ -998,10 +998,40 @@ export interface RetentionDashboardSummary {
   bonus: { earned: number; target: number; progressPct: number };
 }
 
+// One order, itemised: main product + upsell + cross-sell add-ons + free
+// gifts. mainAmount is the order total minus the cross-sell lines, so main
+// and add-ons always reconcile to `amount`.
+export interface RetentionOrderBreakdown {
+  orderId: string;
+  product: string;
+  package: string;
+  quantity: number;
+  mainAmount: number;
+  crossSellTotal: number;
+  amount: number;
+  currency: string;
+  deliveredDate: string | null;
+  createdAt: string | null;
+  status: string;
+  crossSells: Array<{
+    productId: string | null;
+    productName: string;
+    quantity: number;
+    amount: number;
+    addedByName: string | null;
+    addedByRole: string | null;
+    addedAt: string | null;
+    selectionSource: string | null;
+  }>;
+  freeGifts: Array<{ productName: string; quantity: number; source: "package" | "added" }>;
+  upsell: { fromQty: number | null; toQty: number | null; note: string | null } | null;
+}
+
 export interface RetentionCustomerDetail {
-  customer: { name: string; phone: string; city: string; state: string; customerSince: string; status: string };
+  customer: { name: string; phone: string; address: string; city: string; state: string; customerSince: string; status: string };
   summary: { totalOrders: number; totalSpent: number; delivered: number; wrongDamagedReportsCount: number; ltv: number };
-  latestOrder: { orderId: string; product: string; package: string; amount: number; currency: string; deliveredDate: string | null; status: string } | null;
+  latestOrder: RetentionOrderBreakdown | null;
+  orderHistory: RetentionOrderBreakdown[];
   timeline: Array<{ type: string; at: string; detail: string }>;
   nextAction: {
     recommendedText: string;
