@@ -11062,6 +11062,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionPipelineView, setRetentionPipelineView] = useState<"board" | "table">("board");
   const [retentionPipelineStageFilter, setRetentionPipelineStageFilter] = useState("all");
   const [retentionPipelineFiltersOpen, setRetentionPipelineFiltersOpen] = useState(false);
+  const [retentionPipelinePage, setRetentionPipelinePage] = useState(1);
+  const [retentionPipelineColumnPages, setRetentionPipelineColumnPages] = useState<Record<string, number>>({});
   const [retentionTaskFilter, setRetentionTaskFilter] = useState<"all" | "due_today" | "overdue" | "complaints">("all");
   const [retentionCustomerSearch, setRetentionCustomerSearch] = useState("");
   const [retentionCustomers, setRetentionCustomers] = useState<RetentionCustomerRow[]>([]);
@@ -39885,6 +39887,17 @@ ${waybillLineItems(w).length > 1
   }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionSubPage]);
 
   useEffect(() => {
+    setRetentionPipelinePage(1);
+    setRetentionPipelineColumnPages({});
+  }, [
+    retentionSearch,
+    retentionProductFilter,
+    retentionAssignedRepFilter,
+    retentionPriorityFilter,
+    retentionPipelineStageFilter
+  ]);
+
+  useEffect(() => {
     setRetentionCustomerPage(1);
   }, [
     retentionCustomerSearch,
@@ -40489,16 +40502,36 @@ ${waybillLineItems(w).length > 1
     );
     const pipelineBoardRows = applyRetentionFilters(retentionWorklist)
       .filter((row) => retentionPipelineStageFilter === "all" || row.lifecycleStage === retentionPipelineStageFilter);
+    const pipelineColumnPageSize = 5;
     const pipelineColumns = pipelineStageConfig.map((stage) => {
       const rows = pipelineBoardRows.filter((row) => row.lifecycleStage === stage.key);
+      const pageCount = Math.max(1, Math.ceil(rows.length / pipelineColumnPageSize));
+      const page = Math.min(retentionPipelineColumnPages[stage.key] ?? 1, pageCount);
+      const pageStart = (page - 1) * pipelineColumnPageSize;
       return {
         ...stage,
         rows,
+        page,
+        pageCount,
+        pageStart,
+        pageRows: rows.slice(pageStart, pageStart + pipelineColumnPageSize),
         dueToday: rows.filter(pipelineRowIsDueToday).length,
         overdue: rows.filter(pipelineRowIsOverdue).length,
         value: rows.reduce((sum, row) => sum + row.orderAmount, 0)
       };
     });
+    const pipelineTablePageSize = 20;
+    const pipelineTablePageCount = Math.max(1, Math.ceil(pipelineBoardRows.length / pipelineTablePageSize));
+    const currentPipelinePage = Math.min(retentionPipelinePage, pipelineTablePageCount);
+    const pipelineTablePageStart = (currentPipelinePage - 1) * pipelineTablePageSize;
+    const pagedPipelineRows = pipelineBoardRows.slice(pipelineTablePageStart, pipelineTablePageStart + pipelineTablePageSize);
+    const pipelineTablePageNumbers = Array.from(
+      { length: Math.min(5, pipelineTablePageCount) },
+      (_, index) => {
+        const firstPage = Math.max(1, Math.min(currentPipelinePage - 2, pipelineTablePageCount - 4));
+        return firstPage + index;
+      }
+    );
     const pipelineFiltersActive = retentionSearch !== ""
       || retentionProductFilter !== "all"
       || retentionAssignedRepFilter !== "all"
@@ -40542,7 +40575,7 @@ ${waybillLineItems(w).length > 1
       const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
       const overdue = pipelineRowIsOverdue(row);
       return (
-        <article key={row.orderId} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+        <article key={row.orderId} data-retention-pipeline-card className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
           <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 w-full text-left">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -40599,8 +40632,38 @@ ${waybillLineItems(w).length > 1
                 <div className="space-y-2">
                   {column.rows.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-gray-200 bg-white/70 px-3 py-8 text-center text-xs text-gray-400">No customers here</div>
-                  ) : column.rows.map(renderPipelineCard)}
+                  ) : column.pageRows.map(renderPipelineCard)}
                 </div>
+                {column.rows.length > pipelineColumnPageSize && (
+                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-gray-200/70 pt-3">
+                    <span className="text-[9px] font-bold text-gray-500">
+                      {column.pageStart + 1}-{Math.min(column.pageStart + pipelineColumnPageSize, column.rows.length)} of {column.rows.length}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setRetentionPipelineColumnPages((pages) => ({ ...pages, [column.key]: Math.max(1, column.page - 1) }))}
+                        disabled={column.page === 1}
+                        aria-label={`Previous ${column.label} customers`}
+                        title={`Previous ${column.label} customers`}
+                        className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-600 disabled:cursor-not-allowed disabled:opacity-35"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </button>
+                      <span className="min-w-8 text-center text-[10px] font-black text-gray-700">{column.page}/{column.pageCount}</span>
+                      <button
+                        type="button"
+                        onClick={() => setRetentionPipelineColumnPages((pages) => ({ ...pages, [column.key]: Math.min(column.pageCount, column.page + 1) }))}
+                        disabled={column.page === column.pageCount}
+                        aria-label={`Next ${column.label} customers`}
+                        title={`Next ${column.label} customers`}
+                        className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-600 disabled:cursor-not-allowed disabled:opacity-35"
+                      >
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </section>
             ))}
           </div>
@@ -40617,7 +40680,7 @@ ${waybillLineItems(w).length > 1
         ) : (
           <>
             <div className="divide-y divide-gray-100 sm:hidden">
-              {pipelineBoardRows.map((row) => (
+              {pagedPipelineRows.map((row) => (
                 <div key={row.orderId} className="p-4">{renderPipelineCard(row)}</div>
               ))}
             </div>
@@ -40629,7 +40692,7 @@ ${waybillLineItems(w).length > 1
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {pipelineBoardRows.map((row) => {
+                  {pagedPipelineRows.map((row) => {
                     const badge = priorityBadge(row.priorityBand);
                     const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
                     return (
@@ -40659,6 +40722,49 @@ ${waybillLineItems(w).length > 1
                 </tbody>
               </table>
             </div>
+            <nav aria-label="Retention pipeline pages" className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs font-semibold text-gray-500">
+                Showing {pipelineTablePageStart + 1}-{Math.min(pipelineTablePageStart + pipelineTablePageSize, pipelineBoardRows.length)} of {pipelineBoardRows.length} customers
+              </p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setRetentionPipelinePage((page) => Math.max(1, page - 1))}
+                  disabled={currentPipelinePage === 1}
+                  aria-label="Previous pipeline page"
+                  title="Previous page"
+                  className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 text-gray-700 disabled:cursor-not-allowed disabled:opacity-35"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                {pipelineTablePageNumbers.map((page) => (
+                  <button
+                    key={page}
+                    type="button"
+                    onClick={() => setRetentionPipelinePage(page)}
+                    aria-label={`Pipeline page ${page}`}
+                    aria-current={page === currentPipelinePage ? "page" : undefined}
+                    className={`!min-h-0 inline-flex h-9 min-w-9 items-center justify-center rounded-md border px-2 text-xs font-black ${
+                      page === currentPipelinePage
+                        ? "border-emerald-600 bg-emerald-600 text-white"
+                        : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    {page}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setRetentionPipelinePage((page) => Math.min(pipelineTablePageCount, page + 1))}
+                  disabled={currentPipelinePage === pipelineTablePageCount}
+                  aria-label="Next pipeline page"
+                  title="Next page"
+                  className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 text-gray-700 disabled:cursor-not-allowed disabled:opacity-35"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </nav>
           </>
         )}
       </section>
