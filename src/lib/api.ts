@@ -849,6 +849,13 @@ export interface RetentionCustomerRow {
   deliveredOrders: number;
   rejectedOrders: number;
   totalSpent: number;
+  // Delivered-only, and excluding the first order (acquisition, not
+  // retention) - so repeatRevenue can never exceed totalSpent.
+  repeatOrders: number;
+  repeatRevenue: number;
+  firstOrderAmount: number;
+  daysSinceLastOrder: number | null;
+  lastOrderAmount: number;
   currency: string;
   lastOrderId: string;
   lastProduct: string;

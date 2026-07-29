@@ -11155,6 +11155,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionCallsProductFilter, setRetentionCallsProductFilter] = useState("all");
   const [retentionCallsRepFilter, setRetentionCallsRepFilter] = useState("all");
   const [retentionCallsMenuId, setRetentionCallsMenuId] = useState<string | null>(null);
+  const [retentionRepeatTab, setRetentionRepeatTab] = useState<"all" | "active" | "at_risk" | "high_value">("all");
+  const [retentionRepeatSearch, setRetentionRepeatSearch] = useState("");
+  const [retentionRepeatProductFilter, setRetentionRepeatProductFilter] = useState("all");
+  const [retentionRepeatRepFilter, setRetentionRepeatRepFilter] = useState("all");
+  const [retentionRepeatPage, setRetentionRepeatPage] = useState(1);
+  const [retentionWinbackTab, setRetentionWinbackTab] = useState<"all" | "30_60" | "61_90" | "91_180" | "180_plus" | "messaged" | "reactivated">("all");
+  const [retentionWinbackSearch, setRetentionWinbackSearch] = useState("");
+  const [retentionWinbackStatusFilter, setRetentionWinbackStatusFilter] = useState("all");
+  const [retentionWinbackRepFilter, setRetentionWinbackRepFilter] = useState("all");
+  const [retentionWinbackPage, setRetentionWinbackPage] = useState(1);
   const [retentionProductTimingList, setRetentionProductTimingList] = useState<Array<{ id: string; name: string; timing: RetentionProductTiming | null }>>([]);
   const [retentionProductTimingDrafts, setRetentionProductTimingDrafts] = useState<Record<string, RetentionProductTiming>>({});
   const [retentionProductTimingSavingId, setRetentionProductTimingSavingId] = useState<string | null>(null);
@@ -39955,7 +39965,10 @@ ${waybillLineItems(w).length > 1
   }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionPeriod, retentionDateRange]);
 
   useEffect(() => {
-    if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || retentionSubPage !== "Customers") return;
+    // Customers, Repeat Sales and Win-back are all views over the same
+    // per-customer aggregate, so they share one fetch.
+    if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention") return;
+    if (retentionSubPage !== "Customers" && retentionSubPage !== "Repeat Sales" && retentionSubPage !== "Win-back") return;
     void loadRetentionCustomers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionSubPage]);
@@ -40555,7 +40568,6 @@ ${waybillLineItems(w).length > 1
         : { absolute, relative: `Due in ${human}`, tone: mins < 1440 ? "text-sky-600" : "text-gray-500" };
     };
 
-    const filteredRetentionWinBack = applyRetentionFilters(retentionWorklist.filter((row) => row.dueStage === "win_back"));
     const retentionActivityQuery = retentionActivitySearch.trim().toLowerCase();
     const filteredRetentionActivity = retentionActivityLog.filter((row) =>
       !retentionActivityQuery
@@ -40567,159 +40579,6 @@ ${waybillLineItems(w).length > 1
     );
 
     const logOutcomeRow = retentionWorklist.find((r) => r.orderId === retentionLoggingOrderId) ?? null;
-
-    // Shared filter bar + mobile-card/desktop-table renderer, reused by
-    // the Pipeline, Tasks, and Win-back pages - each passes its own
-    // already-filtered row set (see applyRetentionFilters above).
-    const renderRetentionQueue = (rows: RetentionWorklistRow[], opts: { title: string; showStageClear?: boolean; emptyMessage: string }) => (
-      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-gray-900">{opts.title}</h2>
-            {opts.showStageClear && retentionStageFilter !== "all" && (
-              <button
-                type="button"
-                onClick={() => setRetentionStageFilter("all")}
-                className="!min-h-0 text-xs font-bold text-gray-500 hover:text-gray-700"
-              >
-                ← Clear stage filter
-              </button>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="text"
-              value={retentionSearch}
-              onChange={(e) => setRetentionSearch(e.target.value)}
-              placeholder="Search customer, phone, or order ID"
-              className="!min-h-0 w-full sm:w-64 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-            />
-            <select
-              value={retentionPriorityFilter}
-              onChange={(e) => setRetentionPriorityFilter(e.target.value)}
-              className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-            >
-              <option value="all">Priority: All</option>
-              {(["critical", "overdue", "high_value", "satisfaction_due", "review_referral_due", "revenue_opportunity"] as const).map((band) => (
-                <option key={band} value={band}>{priorityBadge(band).label}</option>
-              ))}
-            </select>
-            <select
-              value={retentionProductFilter}
-              onChange={(e) => setRetentionProductFilter(e.target.value)}
-              className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-            >
-              <option value="all">Product: All</option>
-              {retentionProductOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
-            <select
-              value={retentionAssignedRepFilter}
-              onChange={(e) => setRetentionAssignedRepFilter(e.target.value)}
-              className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-            >
-              <option value="all">Assigned: All</option>
-              {retentionRepOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-            </select>
-            {(retentionPriorityFilter !== "all" || retentionProductFilter !== "all" || retentionAssignedRepFilter !== "all" || retentionSearch) && (
-              <button
-                type="button"
-                onClick={() => { setRetentionPriorityFilter("all"); setRetentionProductFilter("all"); setRetentionAssignedRepFilter("all"); setRetentionSearch(""); }}
-                className="!min-h-0 text-xs font-bold text-gray-500 hover:text-gray-700"
-              >
-                Reset
-              </button>
-            )}
-          </div>
-        </div>
-
-        {retentionWorklistLoading && retentionWorklist.length === 0 ? (
-          <div className="px-5 py-10 text-sm text-gray-400 text-center">Loading worklist…</div>
-        ) : rows.length === 0 ? (
-          <div className="px-5 py-10 text-sm text-gray-400 text-center">{opts.emptyMessage}</div>
-        ) : (
-          <>
-            {/* Mobile: stacked cards. */}
-            <div className="sm:hidden divide-y divide-gray-100">
-              {rows.map((row) => {
-                const badge = priorityBadge(row.priorityBand);
-                const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
-                return (
-                  <article key={row.orderId} className="px-4 py-4 flex flex-col gap-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <button type="button" className="!min-h-0 flex min-w-0 items-start gap-3 text-left" onClick={() => setRetentionDrawerPhone(row.phone)}>
-                        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
-                        <div className="min-w-0">
-                          <div className="font-bold text-gray-900 truncate">{row.customerName}</div>
-                          <div className="text-xs text-gray-500">{row.phone}</div>
-                          <div className="text-xs font-semibold text-gray-400">#{row.orderId} · {row.productName}</div>
-                        </div>
-                      </button>
-                      <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span>
-                    </div>
-                    <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 space-y-0.5">
-                      <div>Stage: <strong className="text-gray-800">{stageLabel(displayedStageFor(row))}</strong></div>
-                      <div>Last contact: {row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</div>
-                      <div>Next action: <strong className="text-gray-800">{nextActionInstructionFor(row)}</strong></div>
-                      <div>Value: {formatMoney(row.orderAmount)}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "worklist_mobile")} className="!min-h-0 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp</a>
-                      <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "worklist_mobile")} className="!min-h-0 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"><Phone className="w-3.5 h-3.5" /> Call</a>
-                      <button type="button" className="!min-h-0 ml-auto inline-flex items-center gap-1 rounded-md bg-[#1F8FE0] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8]" onClick={() => toggleLogging(row.orderId, row.dueStage)}>Log Outcome</button>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-
-            {/* Desktop: full table, spec column shape. */}
-            <div className="hidden sm:block overflow-x-auto">
-              <table className="w-full min-w-[960px] text-sm">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                    {["Priority", "Customer", "Order Details", "Stage", "Last Contact", "Next Action", "Customer Value", "Actions"].map((h) => (
-                      <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {rows.map((row) => {
-                    const badge = priorityBadge(row.priorityBand);
-                    const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
-                    return (
-                      <tr key={row.orderId} className="align-top hover:bg-gray-50">
-                        <td className="px-4 py-3"><span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span></td>
-                        <td className="px-4 py-3">
-                          <button type="button" className="!min-h-0 flex items-center gap-2.5 text-left" onClick={() => setRetentionDrawerPhone(row.phone)}>
-                            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
-                            <div className="min-w-0">
-                              <div className="font-bold text-gray-900">{row.customerName}</div>
-                              <div className="text-xs text-gray-500">{row.phone}</div>
-                            </div>
-                          </button>
-                        </td>
-                        <td className="px-4 py-3 text-xs text-gray-600">#{row.orderId}<br />{row.productName}</td>
-                        <td className="px-4 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(displayedStageFor(row))}`}>{stageLabel(displayedStageFor(row))}</span></td>
-                        <td className="px-4 py-3 text-xs text-gray-600">{row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</td>
-                        <td className={`px-4 py-3 text-xs font-semibold ${row.overdueBy > 0 || row.dueStage === "needs_resolution" ? "text-red-600" : "text-gray-800"}`}>{nextActionInstructionFor(row)}</td>
-                        <td className="px-4 py-3 text-xs font-semibold text-gray-800">{formatMoney(row.orderAmount)}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
-                            <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "worklist_desktop")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /></a>
-                            <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "worklist_desktop")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><Phone className="w-3.5 h-3.5" /></a>
-                            <button type="button" className="!min-h-0 inline-flex items-center rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8]" onClick={() => toggleLogging(row.orderId, row.dueStage)}>Log Outcome</button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </section>
-    );
 
     const lifecycleStageLabel = (stage: string) =>
       stage === "delivered" ? "Delivered"
@@ -42062,25 +41921,354 @@ ${waybillLineItems(w).length > 1
       }
 
 
-      if (retentionSubPage === "Win-back") return (
-        <div className="space-y-4">
-          <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">Eligible Customers</p>
-              <p className="mt-1 text-2xl font-black text-gray-900">{filteredRetentionWinBack.length}</p>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">Potential Value</p>
-              <p className="mt-1 text-2xl font-black text-emerald-700">{formatMoney(filteredRetentionWinBack.reduce((sum, row) => sum + row.orderAmount, 0))}</p>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">Oldest Opportunity</p>
-              <p className="mt-1 text-2xl font-black text-gray-900">{filteredRetentionWinBack.reduce((max, row) => Math.max(max, row.daysSinceDelivery), 0)}d</p>
-            </div>
-          </section>
-          {renderRetentionQueue(filteredRetentionWinBack, { title: "Win-back Queue", emptyMessage: "No customers are in the win-back window right now." })}
-        </div>
-      );
+      if (retentionSubPage === "Win-back") {
+        // Inactive = a delivered customer with no order for 30+ days, and not
+        // opted out. Measured from their last delivered order, so it tracks
+        // real buying behaviour rather than lifecycle bookkeeping.
+        const INACTIVE_DAYS = 30;
+        const inactive = retentionCustomers.filter((c) =>
+          c.deliveredOrders > 0 && !c.doNotContact && (c.daysSinceLastOrder ?? 0) >= INACTIVE_DAYS
+        );
+        // Reactivated = they were dormant and have since bought again. Uses
+        // repeatOrders > 0 with a recent last order, so it only counts real
+        // orders, never conversations.
+        const reactivated = retentionCustomers.filter((c) =>
+          c.repeatOrders > 0 && (c.daysSinceLastOrder ?? 999) < INACTIVE_DAYS
+        );
+        const winbackTouchpoints = retentionActivityLog.filter((r) => r.activityType === "outcome");
+
+        // Contact state per customer, from the lifecycle signals already on
+        // the row. There is no offer-tracking table yet, so "Offer Sent" means
+        // a repeat-sale offer was logged - see the note rendered below.
+        const winbackStatus = (c: RetentionCustomerRow): { key: string; label: string; class: string } => {
+          if (c.repeatSaleStatus === "offered" || c.lastOutcome === "offer_made") return { key: "offer_sent", label: "Offer Sent", class: "border-violet-200 bg-violet-50 text-violet-700" };
+          if (c.lastContactAt) {
+            const days = Math.floor((Date.now() - new Date(c.lastContactAt).getTime()) / 86400000);
+            if (days <= 7) return { key: "messaged", label: "Recently Messaged", class: "border-sky-200 bg-sky-50 text-sky-700" };
+            return { key: "no_response", label: "No Response", class: "border-rose-200 bg-rose-50 text-rose-700" };
+          }
+          return { key: "not_contacted", label: "Not Contacted", class: "border-gray-200 bg-gray-100 text-gray-600" };
+        };
+
+        const bandOf = (c: RetentionCustomerRow) => {
+          const d = c.daysSinceLastOrder ?? 0;
+          if (d <= 60) return "30_60";
+          if (d <= 90) return "61_90";
+          if (d <= 180) return "91_180";
+          return "180_plus";
+        };
+
+        const tabCounts = {
+          all: inactive.length,
+          "30_60": inactive.filter((c) => bandOf(c) === "30_60").length,
+          "61_90": inactive.filter((c) => bandOf(c) === "61_90").length,
+          "91_180": inactive.filter((c) => bandOf(c) === "91_180").length,
+          "180_plus": inactive.filter((c) => bandOf(c) === "180_plus").length,
+          messaged: inactive.filter((c) => winbackStatus(c).key === "messaged").length,
+          reactivated: reactivated.length
+        };
+
+        const wbQuery = retentionWinbackSearch.trim().toLowerCase();
+        const baseRows = retentionWinbackTab === "reactivated" ? reactivated : inactive;
+        const visibleWinback = baseRows
+          .filter((c) => {
+            if (retentionWinbackTab === "all" || retentionWinbackTab === "reactivated") return true;
+            if (retentionWinbackTab === "messaged") return winbackStatus(c).key === "messaged";
+            return bandOf(c) === retentionWinbackTab;
+          })
+          .filter((c) => retentionWinbackStatusFilter === "all" || winbackStatus(c).key === retentionWinbackStatusFilter)
+          .filter((c) => retentionWinbackRepFilter === "all" || c.assignedRepId === retentionWinbackRepFilter)
+          .filter((c) => !wbQuery || c.name.toLowerCase().includes(wbQuery) || c.phone.includes(wbQuery) || c.lastProduct.toLowerCase().includes(wbQuery))
+          .sort((a, b) => (b.daysSinceLastOrder ?? 0) - (a.daysSinceLastOrder ?? 0));
+
+        const pageSize = 10;
+        const totalRows = visibleWinback.length;
+        const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+        const page = Math.min(retentionWinbackPage, totalPages);
+        const paged = visibleWinback.slice((page - 1) * pageSize, page * pageSize);
+        const pageNums: Array<number | "gap"> = [];
+        for (let p = 1; p <= totalPages; p += 1) {
+          if (p <= 2 || p > totalPages - 1 || Math.abs(p - page) <= 1) pageNums.push(p);
+          else if (pageNums[pageNums.length - 1] !== "gap") pageNums.push("gap");
+        }
+
+        // Win-back orders/revenue come from logged retention-sale conversions,
+        // which is the only place a recovered sale is actually attributed.
+        const winbackOrders = winbackTouchpoints.filter((r) => r.retentionOutcome === "accepted" && r.resultingOrderId).length;
+        const winbackRevenue = retentionDashboardSummary?.retentionRevenue.repeatSalesRevenue ?? 0;
+        const reactivationRate = inactive.length + reactivated.length > 0
+          ? (reactivated.length / (inactive.length + reactivated.length)) * 100
+          : null;
+
+        const statusCounts = (["not_contacted", "messaged", "offer_sent", "no_response"] as const).map((key) => ({
+          key,
+          label: key === "not_contacted" ? "Not Contacted" : key === "messaged" ? "Recently Messaged" : key === "offer_sent" ? "Offer Sent" : "No Response",
+          color: key === "not_contacted" ? "#94a3b8" : key === "messaged" ? "#0ea5e9" : key === "offer_sent" ? "#8b5cf6" : "#e11d48",
+          count: inactive.filter((c) => winbackStatus(c).key === key).length
+        })).filter((s) => s.count > 0);
+        const statusTotal = statusCounts.reduce((s, x) => s + x.count, 0);
+        const circumference = 2 * Math.PI * 42;
+        let offset = 0;
+
+        const dueToday = retentionCustomers.filter((c) => c.nextActionAt && new Date(c.nextActionAt).toDateString() === new Date().toDateString()).length;
+        const dueThisWeek = retentionCustomers.filter((c) => {
+          if (!c.nextActionAt) return false;
+          const d = (new Date(c.nextActionAt).getTime() - Date.now()) / 86400000;
+          return d >= 0 && d <= 7;
+        }).length;
+        const overdueActions = retentionCustomers.filter((c) => c.nextActionAt && new Date(c.nextActionAt).getTime() < Date.now()).length;
+
+        const wbReps = Array.from(new Map(retentionCustomers.filter((c) => c.assignedRepId).map((c) => [c.assignedRepId as string, c.assignedRepName ?? "Unknown"])).entries()).sort((a, b) => a[1].localeCompare(b[1]));
+
+        const exportWinbackCsv = () => {
+          const header = ["Customer", "Phone", "Last Order", "Days Inactive", "Last Product", "Total Spent", "Win-back Status", "Next Action", "Assigned Rep"];
+          const body = visibleWinback.map((c) => [
+            c.name, c.phone,
+            c.lastOrderDate ? new Date(c.lastOrderDate).toLocaleDateString() : "",
+            String(c.daysSinceLastOrder ?? ""), c.lastProduct, String(c.totalSpent),
+            winbackStatus(c).label, c.nextAction, c.assignedRepName ?? ""
+          ]);
+          const csv = [header, ...body].map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+          const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url; link.download = `win-back-${new Date().toISOString().slice(0, 10)}.csv`; link.click();
+          URL.revokeObjectURL(url);
+        };
+
+        return (
+          <div className="space-y-4">
+            {retentionCustomersLoading && retentionCustomers.length === 0 ? (
+              <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-400">Loading inactive customers…</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+                  {([
+                    ["Inactive Customers", String(inactive.length), "text-rose-700", "bg-rose-50", Users],
+                    ["Win-back Conversations", String(winbackTouchpoints.length), "text-sky-700", "bg-sky-50", Phone],
+                    ["Reactivated Customers", String(reactivated.length), "text-emerald-700", "bg-emerald-50", RefreshCw],
+                    ["Win-back Orders", String(winbackOrders), "text-violet-700", "bg-violet-50", ShoppingCart],
+                    ["Win-back Revenue", formatMoney(winbackRevenue), "text-indigo-700", "bg-indigo-50", CircleDollarSign],
+                    ["Reactivation Rate", reactivationRate === null ? "—" : `${reactivationRate.toFixed(1)}%`, "text-amber-700", "bg-amber-50", TrendingUp]
+                  ] as const).map(([label, value, tone, chip, Icon]) => (
+                    <div key={label} className="rounded-xl border border-gray-200 bg-white p-4">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${chip}`}><Icon className={`h-4 w-4 ${tone}`} /></span>
+                        <span className="text-[10px] font-black uppercase leading-tight tracking-[0.1em] text-gray-500">{label}</span>
+                      </div>
+                      <strong className={`mt-2 block text-2xl font-black ${tone}`}>{value}</strong>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_290px]">
+                  <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="-mb-3 flex gap-1 overflow-x-auto lg:mb-0">
+                        {([
+                          ["all", "All Inactive", tabCounts.all],
+                          ["30_60", "30 – 60 Days", tabCounts["30_60"]],
+                          ["61_90", "61 – 90 Days", tabCounts["61_90"]],
+                          ["91_180", "91 – 180 Days", tabCounts["91_180"]],
+                          ["180_plus", "180+ Days", tabCounts["180_plus"]],
+                          ["messaged", "Recently Messaged", tabCounts.messaged],
+                          ["reactivated", "Reactivated", tabCounts.reactivated]
+                        ] as const).map(([key, label, count]) => (
+                          <button key={key} type="button" onClick={() => { setRetentionWinbackTab(key); setRetentionWinbackPage(1); }}
+                            className={`!min-h-0 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${retentionWinbackTab === key ? "border-emerald-600 font-black text-emerald-700" : "border-transparent font-bold text-gray-500 hover:text-gray-800"}`}>
+                            {label}
+                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${retentionWinbackTab === key ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>{count}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <button type="button" onClick={exportWinbackCsv} className="!min-h-0 inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-gray-50"><Download className="h-4 w-4" /> Export</button>
+                    </div>
+
+                    <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
+                      <div className="relative min-w-0 flex-1 sm:min-w-[190px]">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                        <input value={retentionWinbackSearch} onChange={(e) => { setRetentionWinbackSearch(e.target.value); setRetentionWinbackPage(1); }} placeholder="Search customer or phone..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
+                      </div>
+                      <select value={retentionWinbackStatusFilter} onChange={(e) => { setRetentionWinbackStatusFilter(e.target.value); setRetentionWinbackPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                        <option value="all">All Statuses</option>
+                        <option value="not_contacted">Not Contacted</option>
+                        <option value="messaged">Recently Messaged</option>
+                        <option value="offer_sent">Offer Sent</option>
+                        <option value="no_response">No Response</option>
+                      </select>
+                      {wbReps.length > 0 && (
+                        <select value={retentionWinbackRepFilter} onChange={(e) => { setRetentionWinbackRepFilter(e.target.value); setRetentionWinbackPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                          <option value="all">All Reps</option>
+                          {wbReps.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                        </select>
+                      )}
+                    </div>
+
+                    {paged.length === 0 ? (
+                      <p className="px-5 py-10 text-center text-sm text-gray-400">
+                        {inactive.length === 0 ? "No customer has been inactive for 30 days or more." : "No customers match this view."}
+                      </p>
+                    ) : (
+                      <>
+                        <div className="hidden overflow-x-auto lg:block">
+                          <table className="w-full min-w-[1060px] text-sm">
+                            <thead className="bg-gray-50 text-[10px] uppercase tracking-wider text-gray-500">
+                              <tr>
+                                <th className="px-3 py-3 text-left font-bold">Customer</th>
+                                <th className="px-3 py-3 text-left font-bold">Phone</th>
+                                <th className="px-3 py-3 text-left font-bold">Last Order</th>
+                                <th className="px-3 py-3 text-left font-bold">Days Inactive</th>
+                                <th className="px-3 py-3 text-left font-bold">Last Product</th>
+                                <th className="px-3 py-3 text-left font-bold">Total Spent</th>
+                                <th className="px-3 py-3 text-left font-bold">Win-back Status</th>
+                                <th className="px-3 py-3 text-left font-bold">Next Action</th>
+                                <th className="px-3 py-3 text-left font-bold">Assigned Rep</th>
+                                <th className="px-3 py-3 text-left font-bold">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {paged.map((c) => {
+                                const st = winbackStatus(c);
+                                const days = c.daysSinceLastOrder ?? 0;
+                                const whatsappUrl = buildWhatsAppTargets(c.phone, `Hello ${c.name}, this is Protohub - we would love to have you back.`).normalUrl ?? undefined;
+                                return (
+                                  <tr key={c.id} className="align-top hover:bg-gray-50">
+                                    <td className="px-3 py-3">
+                                      <button type="button" onClick={() => setRetentionDrawerPhone(c.phone)} className="!min-h-0 text-left font-bold text-gray-900">{c.name}</button>
+                                    </td>
+                                    <td className="px-3 py-3 whitespace-nowrap text-xs text-gray-600">{c.phone}</td>
+                                    <td className="px-3 py-3 whitespace-nowrap text-xs text-gray-600">{c.lastOrderDate ? new Date(c.lastOrderDate).toLocaleDateString() : "—"}</td>
+                                    <td className={`px-3 py-3 whitespace-nowrap text-xs font-black ${days > 180 ? "text-rose-700" : days > 90 ? "text-rose-600" : "text-amber-600"}`}>{days} days</td>
+                                    <td className="px-3 py-3 text-xs text-gray-600">{c.lastProduct}<div className="text-[10px] text-gray-400">#{c.lastOrderId}</div></td>
+                                    <td className="px-3 py-3 text-xs font-bold text-gray-900">{formatMoney(c.totalSpent)}</td>
+                                    <td className="px-3 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${st.class}`}>{st.label}</span></td>
+                                    <td className="px-3 py-3 text-xs">
+                                      <div className="font-semibold text-gray-800">{c.nextAction}</div>
+                                      {c.nextActionAt && <div className="text-[10px] text-gray-400">{new Date(c.nextActionAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</div>}
+                                    </td>
+                                    <td className="px-3 py-3 text-xs font-semibold text-gray-700">{c.assignedRepName ?? <span className="text-gray-400">Unassigned</span>}</td>
+                                    <td className="px-3 py-3">
+                                      <div className="flex items-center gap-1.5">
+                                        <a href={`tel:${c.phone}`} onClick={() => trackRetentionAction(c.lastOrderId, "call", "win_back")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-emerald-600 hover:bg-gray-50"><Phone className="h-3.5 w-3.5" /></a>
+                                        <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(c.lastOrderId, "whatsapp", "win_back")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-emerald-600 hover:bg-gray-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+                                        <button type="button" onClick={() => toggleLogging(c.nextActionOrderId || c.lastOrderId, "win_back")} className="!min-h-0 inline-flex items-center whitespace-nowrap rounded-md bg-[#1F8FE0] px-2 py-1.5 text-[11px] font-bold text-white hover:bg-[#1560a8]">Log</button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div className="divide-y divide-gray-100 lg:hidden">
+                          {paged.map((c) => {
+                            const st = winbackStatus(c);
+                            return (
+                              <article key={c.id} className="flex flex-col gap-2 px-4 py-4">
+                                <button type="button" onClick={() => setRetentionDrawerPhone(c.phone)} className="!min-h-0 text-left">
+                                  <p className="font-bold text-gray-900">{c.name}</p>
+                                  <p className="text-xs text-gray-500">{c.phone} · {c.daysSinceLastOrder ?? 0} days inactive</p>
+                                  <p className="mt-0.5 text-xs text-gray-500">{c.lastProduct} · {formatMoney(c.totalSpent)} lifetime</p>
+                                </button>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${st.class}`}>{st.label}</span>
+                                  <span className="text-[11px] font-semibold text-gray-500">{c.nextAction}</span>
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+
+                        <div className="flex flex-col items-center justify-between gap-2 border-t border-gray-200 px-4 py-3 sm:flex-row">
+                          <span className="text-xs font-semibold text-gray-500">Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, totalRows)} of {totalRows} customer{totalRows === 1 ? "" : "s"}</span>
+                          {totalPages > 1 && (
+                            <div className="flex items-center gap-1">
+                              <button type="button" disabled={page === 1} onClick={() => setRetentionWinbackPage(page - 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-3.5 w-3.5" /></button>
+                              {pageNums.map((p, i) => p === "gap"
+                                ? <span key={`g${i}`} className="px-1 text-xs text-gray-400">…</span>
+                                : <button key={p} type="button" onClick={() => setRetentionWinbackPage(p)} className={`!min-h-0 inline-flex h-7 min-w-[28px] items-center justify-center rounded-md border px-1.5 text-xs font-bold ${p === page ? "border-emerald-600 bg-emerald-600 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{p}</button>)}
+                              <button type="button" disabled={page === totalPages} onClick={() => setRetentionWinbackPage(page + 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-3.5 w-3.5" /></button>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </section>
+
+                  <aside className="space-y-4">
+                    <section className="rounded-xl border border-gray-200 bg-white p-4">
+                      <h3 className="text-sm font-black text-gray-900">Win-back Performance</h3>
+                      {statusTotal === 0 ? (
+                        <p className="mt-3 text-xs italic text-gray-400">No inactive customers to work.</p>
+                      ) : (
+                        <div className="mt-3 flex items-center gap-3">
+                          <svg viewBox="0 0 100 100" className="h-24 w-24 shrink-0 -rotate-90">
+                            <circle cx="50" cy="50" r="42" fill="none" stroke="#f1f5f9" strokeWidth="12" />
+                            {statusCounts.map((s) => {
+                              const len = (s.count / statusTotal) * circumference;
+                              const el = <circle key={s.key} cx="50" cy="50" r="42" fill="none" stroke={s.color} strokeWidth="12" strokeDasharray={`${len} ${circumference - len}`} strokeDashoffset={-offset} />;
+                              offset += len;
+                              return el;
+                            })}
+                          </svg>
+                          <ul className="min-w-0 flex-1 space-y-1">
+                            {statusCounts.map((s) => (
+                              <li key={s.key} className="flex items-center gap-1.5 text-[11px]">
+                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: s.color }} />
+                                <span className="flex-1 truncate font-semibold text-gray-600">{s.label}</span>
+                                <span className="shrink-0 font-black text-gray-800">{s.count}</span>
+                                <span className="shrink-0 text-gray-400">({((s.count / statusTotal) * 100).toFixed(1)}%)</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </section>
+
+                    <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-emerald-700">Reactivation Rate</p>
+                      <strong className="mt-1 block text-2xl font-black text-emerald-800">{reactivationRate === null ? "—" : `${reactivationRate.toFixed(1)}%`}</strong>
+                      <p className="mt-1 text-[11px] font-semibold text-emerald-700">{reactivated.length} reactivated of {inactive.length + reactivated.length} dormant</p>
+                    </section>
+
+                    <section className="rounded-xl border border-gray-200 bg-white p-4">
+                      <h3 className="text-sm font-black text-gray-900">Next Action Summary</h3>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        {([
+                          ["Due today", dueToday, "text-sky-700", "bg-sky-50"],
+                          ["This week", dueThisWeek, "text-emerald-700", "bg-emerald-50"],
+                          ["Overdue", overdueActions, "text-rose-700", "bg-rose-50"],
+                          ["Not contacted", tabCounts.all - tabCounts.messaged, "text-gray-700", "bg-gray-50"]
+                        ] as const).map(([label, value, tone, chip]) => (
+                          <div key={label} className={`rounded-lg border border-gray-100 ${chip} px-3 py-2`}>
+                            <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">{label}</p>
+                            <strong className={`mt-0.5 block text-lg font-black ${tone}`}>{value}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section className="rounded-xl border border-gray-200 bg-white p-4">
+                      <h3 className="text-sm font-black text-gray-900">Quick Actions</h3>
+                      <div className="mt-3 space-y-1.5">
+                        <button type="button" onClick={() => { setRetentionWinbackTab("180_plus"); setRetentionWinbackPage(1); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><AlertTriangle className="h-3.5 w-3.5 text-rose-600" /> Work the 180+ day list</button>
+                        <button type="button" onClick={() => { setRetentionWinbackStatusFilter("not_contacted"); setRetentionWinbackPage(1); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Phone className="h-3.5 w-3.5 text-sky-600" /> Never-contacted only</button>
+                        <button type="button" onClick={() => { setRetentionTaskForm({ customerName: "", customerPhone: "", taskType: "win_back_call", title: "Win-back call", note: "", priority: "medium", dueAt: "", assignedRepId: null, orderId: null }); setRetentionAddTaskOpen(true); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Plus className="h-3.5 w-3.5 text-emerald-600" /> Schedule win-back call</button>
+                        <button type="button" onClick={exportWinbackCsv} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Download className="h-3.5 w-3.5 text-gray-500" /> Download inactive list</button>
+                      </div>
+                    </section>
+
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
+                      "Top Win-back Offers" from the design needs per-offer tracking (which discount was sent, and what it earned). Protohub does not store that yet, so it is left out rather than estimated.
+                    </p>
+                  </aside>
+                </div>
+              </>
+            )}
+          </div>
+        );
+      }
 
       if (retentionSubPage === "Customers") {
         const query = retentionCustomerSearch.trim().toLowerCase();
@@ -43020,35 +43208,381 @@ ${waybillLineItems(w).length > 1
         </div>
       );
 
-      if (retentionSubPage === "Repeat Sales") return (
-        <div className="space-y-4">
-          {retentionDashboardSummary && (
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Repeat Customers</div>
-                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.retentionRevenue.repeatCustomers}</div>
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Revenue</div>
-                <div className="text-xl font-black text-emerald-700 mt-1">{formatMoney(retentionDashboardSummary.retentionRevenue.repeatSalesRevenue)}</div>
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Avg Order</div>
-                <div className="text-xl font-black text-gray-900 mt-1">{formatMoney(retentionDashboardSummary.retentionRevenue.avgRepeatOrder)}</div>
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Gross Contribution</div>
-                <div className="text-xl font-black text-gray-900 mt-1">{formatMoney(retentionDashboardSummary.retentionRevenue.grossContribution)}</div>
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">ROI</div>
-                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.retentionRevenue.roi === null ? "—" : `${retentionDashboardSummary.retentionRevenue.roi}x`}</div>
-              </div>
-            </div>
-          )}
-          {renderActivityFeed("Repeat-sale Offers & Outcomes", "No retention-sale activity logged in this period yet.", repeatSaleActivity)}
-        </div>
-      );
+      if (retentionSubPage === "Repeat Sales") {
+        // A repeat customer is one with more than one DELIVERED order. Repeat
+        // orders and revenue exclude their first order, because that one is
+        // acquisition - counting it would credit retention with the original
+        // sale.
+        const repeatCustomers = retentionCustomers.filter((c) => c.repeatOrders > 0);
+        const repeatOrderCount = repeatCustomers.reduce((sum, c) => sum + c.repeatOrders, 0);
+        const repeatRevenue = repeatCustomers.reduce((sum, c) => sum + c.repeatRevenue, 0);
+        const avgRepeatOrderValue = repeatOrderCount > 0 ? repeatRevenue / repeatOrderCount : 0;
+        const deliveredCustomers = retentionCustomers.filter((c) => c.deliveredOrders > 0);
+        const repeatRatePct = deliveredCustomers.length > 0 ? (repeatCustomers.length / deliveredCustomers.length) * 100 : null;
+        const avgLtv = deliveredCustomers.length > 0
+          ? deliveredCustomers.reduce((sum, c) => sum + c.totalSpent, 0) / deliveredCustomers.length
+          : 0;
+
+        // Segment by behaviour, not by lifecycle stage: "at risk" is about
+        // how long since they last bought, "high value" about lifetime spend.
+        const AT_RISK_DAYS = 60;
+        const segmentOf = (c: RetentionCustomerRow): "high_value" | "at_risk" | "active" | "new_repeat" => {
+          if (c.status === "high_value") return "high_value";
+          if ((c.daysSinceLastOrder ?? 0) > AT_RISK_DAYS) return "at_risk";
+          if (c.repeatOrders >= 2) return "active";
+          return "new_repeat";
+        };
+        const segmentMeta: Record<string, { label: string; class: string; color: string }> = {
+          high_value: { label: "High Value", class: "border-sky-200 bg-sky-50 text-sky-700", color: "#0ea5e9" },
+          at_risk: { label: "At Risk", class: "border-rose-200 bg-rose-50 text-rose-700", color: "#f59e0b" },
+          active: { label: "Active", class: "border-emerald-200 bg-emerald-50 text-emerald-700", color: "#10b981" },
+          new_repeat: { label: "New Repeat", class: "border-emerald-200 bg-emerald-50 text-emerald-700", color: "#8b5cf6" }
+        };
+
+        // Next best action follows what the customer still owes us or what we
+        // have not yet asked for - reusing the lifecycle signals already on
+        // the row rather than inventing a second recommendation engine.
+        const nextBestAction = (c: RetentionCustomerRow): { label: string; class: string } => {
+          if (c.complaintOpen) return { label: "Resolve Complaint", class: "border-rose-200 bg-rose-50 text-rose-700" };
+          if (segmentOf(c) === "at_risk") return { label: "Win-back Offer", class: "border-rose-200 bg-rose-50 text-rose-700" };
+          if (c.reviewStatus === "not_requested") return { label: "Ask for Review", class: "border-amber-200 bg-amber-50 text-amber-700" };
+          if (c.referralStatus === "not_requested") return { label: "Ask for Referral", class: "border-amber-200 bg-amber-50 text-amber-700" };
+          if (c.status === "high_value") return { label: "VIP Loyalty Offer", class: "border-sky-200 bg-sky-50 text-sky-700" };
+          return { label: "Cross-sell New Product", class: "border-violet-200 bg-violet-50 text-violet-700" };
+        };
+
+        const tabCounts = {
+          all: repeatCustomers.length,
+          active: repeatCustomers.filter((c) => { const s = segmentOf(c); return s === "active" || s === "new_repeat"; }).length,
+          at_risk: repeatCustomers.filter((c) => segmentOf(c) === "at_risk").length,
+          high_value: repeatCustomers.filter((c) => segmentOf(c) === "high_value").length
+        };
+
+        const repeatQuery = retentionRepeatSearch.trim().toLowerCase();
+        const visibleRepeat = repeatCustomers
+          .filter((c) => retentionRepeatTab === "all"
+            || (retentionRepeatTab === "active" && ["active", "new_repeat"].includes(segmentOf(c)))
+            || (retentionRepeatTab === "at_risk" && segmentOf(c) === "at_risk")
+            || (retentionRepeatTab === "high_value" && segmentOf(c) === "high_value"))
+          .filter((c) => retentionRepeatProductFilter === "all" || c.productsPurchased.includes(retentionRepeatProductFilter))
+          .filter((c) => retentionRepeatRepFilter === "all" || c.assignedRepId === retentionRepeatRepFilter)
+          .filter((c) => !repeatQuery || c.name.toLowerCase().includes(repeatQuery) || c.phone.includes(repeatQuery) || c.lastProduct.toLowerCase().includes(repeatQuery))
+          .sort((a, b) => b.totalSpent - a.totalSpent);
+
+        const pageSize = 8;
+        const totalRows = visibleRepeat.length;
+        const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+        const page = Math.min(retentionRepeatPage, totalPages);
+        const paged = visibleRepeat.slice((page - 1) * pageSize, page * pageSize);
+        const pageNums: Array<number | "gap"> = [];
+        for (let p = 1; p <= totalPages; p += 1) {
+          if (p <= 2 || p > totalPages - 1 || Math.abs(p - page) <= 1) pageNums.push(p);
+          else if (pageNums[pageNums.length - 1] !== "gap") pageNums.push("gap");
+        }
+
+        // Repeat rate by month: of customers acquired up to each month, how
+        // many had gone on to order again by then. Built from the same rows,
+        // so it always agrees with the headline rate.
+        const monthlySeries = (() => {
+          const months: Array<{ label: string; pct: number }> = [];
+          for (let back = 5; back >= 0; back -= 1) {
+            const edge = new Date();
+            edge.setMonth(edge.getMonth() - back);
+            edge.setDate(1);
+            edge.setHours(0, 0, 0, 0);
+            const nextEdge = new Date(edge);
+            nextEdge.setMonth(nextEdge.getMonth() + 1);
+            const acquired = deliveredCustomers.filter((c) => new Date(c.customerSince) < nextEdge);
+            const repeatedBy = acquired.filter((c) => c.repeatOrders > 0 && new Date(c.lastOrderDate) < nextEdge);
+            months.push({
+              label: edge.toLocaleDateString([], { month: "short" }),
+              pct: acquired.length > 0 ? (repeatedBy.length / acquired.length) * 100 : 0
+            });
+          }
+          return months;
+        })();
+        const maxPct = Math.max(10, ...monthlySeries.map((m) => m.pct));
+
+        const topRepeatProducts = (() => {
+          const counts = new Map<string, number>();
+          repeatCustomers.forEach((c) => c.productsPurchased.forEach((p) => counts.set(p, (counts.get(p) ?? 0) + 1)));
+          const total = [...counts.values()].reduce((s, n) => s + n, 0);
+          return [...counts.entries()]
+            .map(([name, count]) => ({ name, count, pct: total > 0 ? (count / total) * 100 : 0 }))
+            .sort((a, b) => b.count - a.count).slice(0, 6);
+        })();
+
+        const segmentCounts = (["active", "at_risk", "high_value", "new_repeat"] as const).map((key) => ({
+          key,
+          label: segmentMeta[key].label,
+          color: segmentMeta[key].color,
+          count: repeatCustomers.filter((c) => segmentOf(c) === key).length
+        })).filter((s) => s.count > 0);
+        const segmentTotal = segmentCounts.reduce((s, x) => s + x.count, 0);
+        const circumference = 2 * Math.PI * 42;
+        let offset = 0;
+
+        const repeatProducts = Array.from(new Set(retentionCustomers.flatMap((c) => c.productsPurchased))).sort();
+        const repeatReps = Array.from(new Map(retentionCustomers.filter((c) => c.assignedRepId).map((c) => [c.assignedRepId as string, c.assignedRepName ?? "Unknown"])).entries()).sort((a, b) => a[1].localeCompare(b[1]));
+
+        const exportRepeatCsv = () => {
+          const header = ["Customer", "Phone", "Orders (All Time)", "Repeat Orders", "Last Order", "Last Product", "Total Spent", "Repeat Revenue", "AOV (All Time)", "Segment", "Next Best Action", "Rep"];
+          const body = visibleRepeat.map((c) => [
+            c.name, c.phone, String(c.totalOrders), String(c.repeatOrders),
+            c.lastOrderDate ? new Date(c.lastOrderDate).toLocaleDateString() : "",
+            c.lastProduct, String(c.totalSpent), String(c.repeatRevenue),
+            String(c.deliveredOrders > 0 ? Math.round(c.totalSpent / c.deliveredOrders) : 0),
+            segmentMeta[segmentOf(c)].label, nextBestAction(c).label, c.assignedRepName ?? ""
+          ]);
+          const csv = [header, ...body].map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+          const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url; link.download = `repeat-sales-${new Date().toISOString().slice(0, 10)}.csv`; link.click();
+          URL.revokeObjectURL(url);
+        };
+
+        return (
+          <div className="space-y-4">
+            {retentionCustomersLoading && retentionCustomers.length === 0 ? (
+              <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-400">Loading repeat customers…</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+                  {([
+                    ["Repeat Customers", String(repeatCustomers.length), "text-emerald-700", "bg-emerald-50", Users],
+                    ["Repeat Orders", String(repeatOrderCount), "text-sky-700", "bg-sky-50", ShoppingCart],
+                    ["Repeat Revenue", formatMoney(repeatRevenue), "text-violet-700", "bg-violet-50", CircleDollarSign],
+                    ["Avg. Order Value", formatMoney(Math.round(avgRepeatOrderValue)), "text-indigo-700", "bg-indigo-50", TrendingUp],
+                    ["Repeat Rate", repeatRatePct === null ? "—" : `${repeatRatePct.toFixed(1)}%`, "text-amber-700", "bg-amber-50", Repeat2],
+                    ["Customer LTV (avg)", formatMoney(Math.round(avgLtv)), "text-rose-700", "bg-rose-50", Sparkles]
+                  ] as const).map(([label, value, tone, chip, Icon]) => (
+                    <div key={label} className="rounded-xl border border-gray-200 bg-white p-4">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${chip}`}><Icon className={`h-4 w-4 ${tone}`} /></span>
+                        <span className="text-[10px] font-black uppercase leading-tight tracking-[0.1em] text-gray-500">{label}</span>
+                      </div>
+                      <strong className={`mt-2 block text-2xl font-black ${tone}`}>{value}</strong>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_290px]">
+                  <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="-mb-3 flex gap-1 overflow-x-auto lg:mb-0">
+                        {([
+                          ["all", "All Repeat Customers", tabCounts.all],
+                          ["active", "Active (Purchased Again)", tabCounts.active],
+                          ["at_risk", "At Risk (No Recent Purchase)", tabCounts.at_risk],
+                          ["high_value", "High Value Advocates", tabCounts.high_value]
+                        ] as const).map(([key, label, count]) => (
+                          <button key={key} type="button" onClick={() => { setRetentionRepeatTab(key); setRetentionRepeatPage(1); }}
+                            className={`!min-h-0 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${retentionRepeatTab === key ? "border-emerald-600 font-black text-emerald-700" : "border-transparent font-bold text-gray-500 hover:text-gray-800"}`}>
+                            {label}
+                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${retentionRepeatTab === key ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>{count}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <button type="button" onClick={exportRepeatCsv} className="!min-h-0 inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-gray-50"><Download className="h-4 w-4" /> Export</button>
+                    </div>
+
+                    <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
+                      <div className="relative min-w-0 flex-1 sm:min-w-[190px]">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                        <input value={retentionRepeatSearch} onChange={(e) => { setRetentionRepeatSearch(e.target.value); setRetentionRepeatPage(1); }} placeholder="Search customer, phone..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
+                      </div>
+                      <select value={retentionRepeatProductFilter} onChange={(e) => { setRetentionRepeatProductFilter(e.target.value); setRetentionRepeatPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                        <option value="all">All Products</option>
+                        {repeatProducts.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                      {repeatReps.length > 0 && (
+                        <select value={retentionRepeatRepFilter} onChange={(e) => { setRetentionRepeatRepFilter(e.target.value); setRetentionRepeatPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                          <option value="all">All Reps</option>
+                          {repeatReps.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                        </select>
+                      )}
+                    </div>
+
+                    {paged.length === 0 ? (
+                      <p className="px-5 py-10 text-center text-sm text-gray-400">
+                        {repeatCustomers.length === 0 ? "No customer has placed a second delivered order yet." : "No customers match this view."}
+                      </p>
+                    ) : (
+                      <>
+                        <div className="hidden overflow-x-auto lg:block">
+                          <table className="w-full min-w-[1080px] text-sm">
+                            <thead className="bg-gray-50 text-[10px] uppercase tracking-wider text-gray-500">
+                              <tr>
+                                <th className="px-3 py-3 text-left font-bold">Customer</th>
+                                <th className="px-3 py-3 text-left font-bold">Orders (All Time)</th>
+                                <th className="px-3 py-3 text-left font-bold">Last Order</th>
+                                <th className="px-3 py-3 text-left font-bold">Last Product Purchased</th>
+                                <th className="px-3 py-3 text-left font-bold">Total Spent</th>
+                                <th className="px-3 py-3 text-left font-bold">AOV (All Time)</th>
+                                <th className="px-3 py-3 text-left font-bold">Repeat Status</th>
+                                <th className="px-3 py-3 text-left font-bold">Next Best Action</th>
+                                <th className="px-3 py-3 text-left font-bold">Rep</th>
+                                <th className="px-3 py-3 text-left font-bold">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {paged.map((c) => {
+                                const seg = segmentMeta[segmentOf(c)];
+                                const nba = nextBestAction(c);
+                                const aov = c.deliveredOrders > 0 ? c.totalSpent / c.deliveredOrders : 0;
+                                const whatsappUrl = buildWhatsAppTargets(c.phone, `Hello ${c.name}, this is Protohub following up on your order.`).normalUrl ?? undefined;
+                                return (
+                                  <tr key={c.id} className="align-top hover:bg-gray-50">
+                                    <td className="px-3 py-3">
+                                      <button type="button" onClick={() => setRetentionDrawerPhone(c.phone)} className="!min-h-0 text-left">
+                                        <div className="font-bold text-gray-900">{c.name}</div>
+                                        <div className="text-xs text-gray-500">{c.phone}</div>
+                                      </button>
+                                    </td>
+                                    <td className="px-3 py-3 text-xs font-bold text-gray-800">{c.totalOrders}<span className="ml-1 font-medium text-gray-400">({c.repeatOrders} repeat)</span></td>
+                                    <td className="px-3 py-3 text-xs text-gray-600">
+                                      <div className="whitespace-nowrap">{c.lastOrderDate ? new Date(c.lastOrderDate).toLocaleDateString() : "—"}</div>
+                                      {c.daysSinceLastOrder !== null && <div className={`whitespace-nowrap text-[10px] font-bold ${c.daysSinceLastOrder > AT_RISK_DAYS ? "text-rose-600" : "text-gray-400"}`}>{c.daysSinceLastOrder}d ago</div>}
+                                    </td>
+                                    <td className="px-3 py-3 text-xs text-gray-600">{c.lastProduct}<div className="text-[10px] text-gray-400">#{c.lastOrderId}</div></td>
+                                    <td className="px-3 py-3 text-xs font-bold text-gray-900">{formatMoney(c.totalSpent)}</td>
+                                    <td className="px-3 py-3 text-xs font-semibold text-gray-700">{formatMoney(Math.round(aov))}</td>
+                                    <td className="px-3 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${seg.class}`}>{seg.label}</span></td>
+                                    <td className="px-3 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${nba.class}`}>{nba.label}</span></td>
+                                    <td className="px-3 py-3 text-xs font-semibold text-gray-700">{c.assignedRepName ?? <span className="text-gray-400">Unassigned</span>}</td>
+                                    <td className="px-3 py-3">
+                                      <div className="flex items-center gap-1.5">
+                                        <a href={`tel:${c.phone}`} onClick={() => trackRetentionAction(c.lastOrderId, "call", "repeat_sales")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-emerald-600 hover:bg-gray-50"><Phone className="h-3.5 w-3.5" /></a>
+                                        <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(c.lastOrderId, "whatsapp", "repeat_sales")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-emerald-600 hover:bg-gray-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+                                        <button type="button" onClick={() => setRetentionDrawerPhone(c.phone)} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-500 hover:bg-gray-50" aria-label="View customer"><Eye className="h-3.5 w-3.5" /></button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div className="divide-y divide-gray-100 lg:hidden">
+                          {paged.map((c) => {
+                            const seg = segmentMeta[segmentOf(c)];
+                            const nba = nextBestAction(c);
+                            return (
+                              <article key={c.id} className="flex flex-col gap-2 px-4 py-4">
+                                <button type="button" onClick={() => setRetentionDrawerPhone(c.phone)} className="!min-h-0 text-left">
+                                  <p className="font-bold text-gray-900">{c.name}</p>
+                                  <p className="text-xs text-gray-500">{c.phone} · {c.totalOrders} orders ({c.repeatOrders} repeat)</p>
+                                  <p className="mt-0.5 text-xs text-gray-500">{c.lastProduct} · {formatMoney(c.totalSpent)} lifetime</p>
+                                </button>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${seg.class}`}>{seg.label}</span>
+                                  <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${nba.class}`}>{nba.label}</span>
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+
+                        <div className="flex flex-col items-center justify-between gap-2 border-t border-gray-200 px-4 py-3 sm:flex-row">
+                          <span className="text-xs font-semibold text-gray-500">Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, totalRows)} of {totalRows} customer{totalRows === 1 ? "" : "s"}</span>
+                          {totalPages > 1 && (
+                            <div className="flex items-center gap-1">
+                              <button type="button" disabled={page === 1} onClick={() => setRetentionRepeatPage(page - 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-3.5 w-3.5" /></button>
+                              {pageNums.map((p, i) => p === "gap"
+                                ? <span key={`g${i}`} className="px-1 text-xs text-gray-400">…</span>
+                                : <button key={p} type="button" onClick={() => setRetentionRepeatPage(p)} className={`!min-h-0 inline-flex h-7 min-w-[28px] items-center justify-center rounded-md border px-1.5 text-xs font-bold ${p === page ? "border-emerald-600 bg-emerald-600 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{p}</button>)}
+                              <button type="button" disabled={page === totalPages} onClick={() => setRetentionRepeatPage(page + 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-3.5 w-3.5" /></button>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </section>
+
+                  <aside className="space-y-4">
+                    <section className="rounded-xl border border-gray-200 bg-white p-4">
+                      <h3 className="text-sm font-black text-gray-900">Repeat Rate Over Time</h3>
+                      <p className="mt-0.5 text-[10px] text-gray-400">Share of customers acquired by each month who had ordered again.</p>
+                      <div className="mt-3 flex h-28 items-end gap-1.5">
+                        {monthlySeries.map((m) => (
+                          <div key={m.label} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+                            <span className="text-[9px] font-black text-gray-600">{m.pct.toFixed(1)}%</span>
+                            <div className="w-full rounded-t bg-emerald-500" style={{ height: `${Math.max(2, (m.pct / maxPct) * 70)}px` }} />
+                            <span className="text-[10px] font-bold text-gray-400">{m.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section className="rounded-xl border border-gray-200 bg-white p-4">
+                      <h3 className="text-sm font-black text-gray-900">Top Products in Repeat Orders</h3>
+                      {topRepeatProducts.length === 0 ? (
+                        <p className="mt-3 text-xs italic text-gray-400">No repeat purchases yet.</p>
+                      ) : (
+                        <ul className="mt-3 space-y-2">
+                          {topRepeatProducts.map((p) => (
+                            <li key={p.name}>
+                              <div className="flex items-center justify-between gap-2 text-[11px]">
+                                <span className="min-w-0 flex-1 truncate font-semibold text-gray-600">{p.name}</span>
+                                <span className="shrink-0 font-black text-gray-800">{p.count}</span>
+                                <span className="shrink-0 text-gray-400">({p.pct.toFixed(1)}%)</span>
+                              </div>
+                              <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(2, p.pct)}%` }} />
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+
+                    <section className="rounded-xl border border-gray-200 bg-white p-4">
+                      <h3 className="text-sm font-black text-gray-900">Repeat Customer Segments</h3>
+                      {segmentTotal === 0 ? (
+                        <p className="mt-3 text-xs italic text-gray-400">No repeat customers yet.</p>
+                      ) : (
+                        <div className="mt-3 flex items-center gap-3">
+                          <svg viewBox="0 0 100 100" className="h-24 w-24 shrink-0 -rotate-90">
+                            <circle cx="50" cy="50" r="42" fill="none" stroke="#f1f5f9" strokeWidth="12" />
+                            {segmentCounts.map((s) => {
+                              const len = (s.count / segmentTotal) * circumference;
+                              const el = <circle key={s.key} cx="50" cy="50" r="42" fill="none" stroke={s.color} strokeWidth="12" strokeDasharray={`${len} ${circumference - len}`} strokeDashoffset={-offset} />;
+                              offset += len;
+                              return el;
+                            })}
+                          </svg>
+                          <ul className="min-w-0 flex-1 space-y-1">
+                            {segmentCounts.map((s) => (
+                              <li key={s.key} className="flex items-center gap-1.5 text-[11px]">
+                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: s.color }} />
+                                <span className="flex-1 truncate font-semibold text-gray-600">{s.label}</span>
+                                <span className="shrink-0 font-black text-gray-800">{s.count}</span>
+                                <span className="shrink-0 text-gray-400">({((s.count / segmentTotal) * 100).toFixed(1)}%)</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </section>
+
+                    <section className="rounded-xl border border-gray-200 bg-white p-4">
+                      <h3 className="text-sm font-black text-gray-900">Quick Actions</h3>
+                      <div className="mt-3 space-y-1.5">
+                        <button type="button" onClick={() => { setRetentionRepeatTab("at_risk"); setRetentionRepeatPage(1); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><RefreshCw className="h-3.5 w-3.5 text-rose-600" /> Work the at-risk list</button>
+                        <button type="button" onClick={() => { setRetentionRepeatTab("high_value"); setRetentionRepeatPage(1); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Sparkles className="h-3.5 w-3.5 text-sky-600" /> VIP loyalty offers</button>
+                        <button type="button" onClick={() => setRetentionSubPage("Win-back")} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Repeat2 className="h-3.5 w-3.5 text-violet-600" /> Open Win-back</button>
+                        <button type="button" onClick={exportRepeatCsv} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Download className="h-3.5 w-3.5 text-gray-500" /> Download customer list</button>
+                      </div>
+                    </section>
+                  </aside>
+                </div>
+              </>
+            )}
+          </div>
+        );
+      }
 
       if (retentionSubPage === "Reports") return (
         <div className="space-y-6">
@@ -43285,7 +43819,7 @@ ${waybillLineItems(w).length > 1
       void loadRetentionWorklist();
       void loadRetentionBonusSummary();
       void loadRetentionDashboardSummary();
-      if (retentionSubPage === "Customers") void loadRetentionCustomers();
+      if (retentionSubPage === "Customers" || retentionSubPage === "Repeat Sales" || retentionSubPage === "Win-back") void loadRetentionCustomers();
       if (ACTIVITY_LOG_PAGES.includes(retentionSubPage)) {
         setRetentionActivityLogLoading(true);
         const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
