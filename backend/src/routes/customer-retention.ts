@@ -173,6 +173,7 @@ type WorklistRow = {
   lastContactAt: string | null; nextAction: string | null; nextActionAt: string | null; nextActionNote: string | null;
   followUpStatus: "scheduled" | "due" | "overdue" | null;
   discountOwed: boolean; reviewRequested: boolean; reviewCollected: boolean; referralRequested: boolean; referralCollected: boolean;
+  doNotContact: boolean;
 };
 
 function addDaysToDateKey(dateKey: string, days: number) {
@@ -231,7 +232,11 @@ function pipelineStageDates(
 // rows aggregated into KPI/lifecycle-pipeline counts). Kept as one function
 // so both endpoints agree on exactly which orders are "in the retention
 // lifecycle" and how their due-stage is derived.
-async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<typeof loadBonusSettings>>): Promise<WorklistRow[]> {
+async function loadWorklistRows(
+  orgId: string,
+  settings: Awaited<ReturnType<typeof loadBonusSettings>>,
+  options: { includeOptedOut?: boolean } = {}
+): Promise<WorklistRow[]> {
   const nowIso = new Date().toISOString();
   const today = dayKey(nowIso);
   const oldestRelevant = new Date();
@@ -260,7 +265,9 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
     .eq("org_id", orgId)
     .eq("blocks_followup", true);
   const optedOutPhones = new Set((optOuts ?? []).map((f) => f.phone));
-  orders = orders.filter((o) => !optedOutPhones.has(String(o.phone).replace(/\D/g, "")));
+  if (!options.includeOptedOut) {
+    orders = orders.filter((o) => !optedOutPhones.has(String(o.phone).replace(/\D/g, "")));
+  }
   if (orders.length === 0) return [];
 
   const orderIds = orders.map((o) => o.id);
@@ -357,7 +364,8 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
       nextActionNote: followUp?.note ?? null,
       followUpStatus: followUp?.status ?? null,
       discountOwed,
-      reviewRequested, reviewCollected, referralRequested, referralCollected
+      reviewRequested, reviewCollected, referralRequested, referralCollected,
+      doNotContact: optedOutPhones.has(String(order.phone).replace(/\D/g, ""))
     };
   });
 }
@@ -395,6 +403,176 @@ router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
     res.json({ rows });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Failed to load the customer retention worklist." });
+  }
+});
+
+router.get("/customers", requireRole(...RETENTION_ROLES), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const settings = await loadBonusSettings(orgId);
+    const requestedRepId = retentionRepScope(req.user!.role, req.user!.id, req.query.repId);
+    const worklistRows = await loadWorklistRows(orgId, settings, { includeOptedOut: true });
+
+    const currentByPhone = new Map<string, WorklistRow>();
+    for (const row of worklistRows) {
+      const phoneKey = String(row.phone).replace(/\D/g, "");
+      if (!phoneKey) continue;
+      const existing = currentByPhone.get(phoneKey);
+      if (!existing || row.deliveredDate > existing.deliveredDate) currentByPhone.set(phoneKey, row);
+    }
+
+    const { data: allOrders, error } = await fetchAllRows<any>((from, to) => supabase
+      .from("orders")
+      .select("id, customer, phone, city, state, product_name, package_name, amount, currency, status, delivered_date, created_at")
+      .eq("org_id", orgId)
+      .not("phone", "is", null)
+      .order("created_at", { ascending: true })
+      .range(from, to));
+    if (error) throw new Error(error.message);
+
+    const ordersByPhone = new Map<string, any[]>();
+    for (const order of allOrders ?? []) {
+      const phoneKey = String(order.phone).replace(/\D/g, "");
+      if (!phoneKey) continue;
+      const rows = ordersByPhone.get(phoneKey) ?? [];
+      rows.push(order);
+      ordersByPhone.set(phoneKey, rows);
+    }
+
+    const customerGroups = [...ordersByPhone.entries()]
+      .map(([phoneKey, customerOrders]) => ({
+        phoneKey,
+        customerOrders,
+        deliveredOrders: customerOrders.filter((order) => order.status === "Delivered" && order.delivered_date)
+      }))
+      .filter((group) => group.deliveredOrders.length > 0);
+    if (customerGroups.length === 0) {
+      res.json({ rows: [] });
+      return;
+    }
+
+    const latestDeliveredOrderIds = customerGroups.map((group) => group.deliveredOrders[group.deliveredOrders.length - 1].id);
+    const assignmentByOrderId = await loadRetentionAssignmentMap(orgId, latestDeliveredOrderIds);
+    const assignedRepIds = [...new Set([...assignmentByOrderId.values()].filter(Boolean))] as string[];
+    const { data: assignedReps, error: assignedRepsError } = assignedRepIds.length > 0
+      ? await supabase.from("users").select("id, name").eq("org_id", orgId).in("id", assignedRepIds)
+      : { data: [] as { id: string; name: string }[], error: null };
+    if (assignedRepsError) throw new Error(assignedRepsError.message);
+    const assignedRepNameById = new Map((assignedReps ?? []).map((user) => [user.id, user.name]));
+
+    const latestOrderTouchpoints: any[] = [];
+    for (const orderIdChunk of chunksOf(latestDeliveredOrderIds)) {
+      const { data, error: touchpointError } = await fetchAllRows<any>((from, to) => supabase
+        .from("customer_retention_touchpoints")
+        .select("order_id, satisfaction_outcome, review_requested_at, review_collected, referral_requested_at, referral_collected, retention_outcome, customer_response, logged_at")
+        .eq("org_id", orgId)
+        .in("order_id", orderIdChunk)
+        .order("logged_at", { ascending: true })
+        .range(from, to));
+      if (touchpointError) throw new Error(touchpointError.message);
+      latestOrderTouchpoints.push(...(data ?? []));
+    }
+    const touchpointsByOrderId = new Map<string, any[]>();
+    for (const touchpoint of latestOrderTouchpoints) {
+      const rows = touchpointsByOrderId.get(touchpoint.order_id) ?? [];
+      rows.push(touchpoint);
+      touchpointsByOrderId.set(touchpoint.order_id, rows);
+    }
+
+    const { data: customerFlags, error: customerFlagsError } = await supabase
+      .from("customer_flags")
+      .select("phone")
+      .eq("org_id", orgId)
+      .eq("blocks_followup", true);
+    if (customerFlagsError) throw new Error(customerFlagsError.message);
+    const optedOutPhones = new Set((customerFlags ?? []).map((flag) => String(flag.phone).replace(/\D/g, "")));
+
+    const rows = customerGroups.map(({ phoneKey, customerOrders, deliveredOrders }) => {
+      const lifecycle = currentByPhone.get(phoneKey) ?? null;
+      const latestOrder = customerOrders[customerOrders.length - 1] ?? null;
+      const latestDeliveredOrder = deliveredOrders[deliveredOrders.length - 1];
+      const rejectedOrders = customerOrders.filter((order) => ["Cancelled", "Failed", "Rejected"].includes(String(order.status)));
+      const totalSpent = deliveredOrders.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
+      const productsPurchased = [...new Set(deliveredOrders.map((order) => String(order.product_name ?? "")).filter(Boolean))];
+      const assignedRepId = lifecycle?.assignedRepId ?? assignmentByOrderId.get(latestDeliveredOrder.id) ?? null;
+      const assignedRepName = lifecycle?.assignedRepName ?? (assignedRepId ? assignedRepNameById.get(assignedRepId) ?? null : null);
+      const touchpoints = touchpointsByOrderId.get(latestDeliveredOrder.id) ?? [];
+      const latestTouchpoint = touchpoints[touchpoints.length - 1] ?? null;
+      const doNotContact = lifecycle?.doNotContact ?? optedOutPhones.has(phoneKey);
+      const complaintOpen = lifecycle?.lifecycleStage === "needs_resolution";
+      const lifecycleStage: LifecycleStage = lifecycle?.lifecycleStage ?? "win_back";
+      const deliveredKey = String(latestDeliveredOrder.delivered_date).slice(0, 10);
+      const inactiveStageDates = pipelineStageDates("win_back", deliveredKey, DEFAULT_RETENTION_TIMING, []);
+      const status =
+        doNotContact ? "do_not_contact"
+        : complaintOpen ? "unresolved_issue"
+        : totalSpent >= settings.highValueOrderThreshold ? "high_value"
+        : deliveredOrders.length > 1 ? "repeat_customer"
+        : "active";
+      const nextAction =
+        doNotContact ? "Do not contact"
+        : lifecycle?.followUpStatus ? "Scheduled follow-up"
+        : lifecycleStage === "needs_resolution" ? "Resolve complaint"
+        : lifecycleStage === "satisfaction_check" ? "Run satisfaction check"
+        : lifecycleStage === "review_testimonial" ? "Request review"
+        : lifecycleStage === "referral" ? "Request referral"
+        : lifecycleStage === "repeat_sale" ? "Make repeat-sale offer"
+        : lifecycleStage === "win_back" ? "Attempt win-back"
+        : "Wait for satisfaction window";
+      const reviewCollected = lifecycle?.reviewCollected ?? touchpoints.some((row) => row.review_collected);
+      const reviewRequested = lifecycle?.reviewRequested ?? touchpoints.some((row) => !!row.review_requested_at);
+      const referralCollected = lifecycle?.referralCollected ?? touchpoints.some((row) => row.referral_collected);
+      const referralRequested = lifecycle?.referralRequested ?? touchpoints.some((row) => !!row.referral_requested_at);
+
+      return {
+        id: phoneKey,
+        name: latestOrder?.customer ?? latestDeliveredOrder.customer,
+        phone: latestOrder?.phone ?? latestDeliveredOrder.phone,
+        city: latestOrder?.city ?? "",
+        state: latestOrder?.state ?? "",
+        customerSince: customerOrders[0]?.created_at ?? `${deliveredKey}T00:00:00`,
+        totalOrders: customerOrders.length,
+        deliveredOrders: deliveredOrders.length,
+        rejectedOrders: rejectedOrders.length,
+        totalSpent,
+        currency: latestDeliveredOrder.currency ?? lifecycle?.orderCurrency ?? "NGN",
+        lastOrderId: latestDeliveredOrder.id,
+        lastProduct: latestDeliveredOrder.product_name ?? lifecycle?.productName ?? "",
+        lastPackage: latestDeliveredOrder.package_name ?? "",
+        lastOrderDate: latestDeliveredOrder.delivered_date ?? latestDeliveredOrder.created_at,
+        productsPurchased,
+        lifecycleStage,
+        stageEnteredDate: lifecycle?.stageEnteredDate ?? inactiveStageDates.stageEnteredDate,
+        stageDueDate: lifecycle?.stageDueDate ?? inactiveStageDates.stageDueDate,
+        lastContactAt: lifecycle?.lastContactAt ?? latestTouchpoint?.logged_at ?? null,
+        nextAction,
+        nextActionAt: lifecycle?.nextActionAt ?? (lifecycle ? `${lifecycle.stageDueDate}T17:00:00` : null),
+        nextActionOrderId: lifecycle?.orderId ?? latestDeliveredOrder.id,
+        assignedRepId,
+        assignedRepName,
+        priorityBand: lifecycle?.priorityBand ?? "revenue_opportunity",
+        complaintOpen,
+        doNotContact,
+        activeRetention: !!lifecycle,
+        reviewStatus: reviewCollected ? "received" : reviewRequested ? "requested" : "not_requested",
+        referralStatus: referralCollected ? "received" : referralRequested ? "requested" : "not_requested",
+        repeatSaleStatus: lifecycle?.lastTouchpoint?.retentionOutcome ?? latestTouchpoint?.retention_outcome ?? (lifecycleStage === "repeat_sale" ? "eligible" : "not_due"),
+        status,
+        lastOutcome: lifecycle?.lastTouchpoint?.customerResponse
+          ?? lifecycle?.lastTouchpoint?.satisfactionOutcome
+          ?? lifecycle?.lastTouchpoint?.retentionOutcome
+          ?? latestTouchpoint?.customer_response
+          ?? latestTouchpoint?.satisfaction_outcome
+          ?? latestTouchpoint?.retention_outcome
+          ?? null
+      };
+    })
+      .filter((row) => !requestedRepId || row.assignedRepId === requestedRepId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    res.json({ rows });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Failed to load retention customers." });
   }
 });
 

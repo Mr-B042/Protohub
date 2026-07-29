@@ -122,7 +122,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, customerOptOutApi, customerRetentionApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionActivityLogRow, RetentionProductTiming } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11064,6 +11064,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionPipelineFiltersOpen, setRetentionPipelineFiltersOpen] = useState(false);
   const [retentionTaskFilter, setRetentionTaskFilter] = useState<"all" | "due_today" | "overdue" | "complaints">("all");
   const [retentionCustomerSearch, setRetentionCustomerSearch] = useState("");
+  const [retentionCustomers, setRetentionCustomers] = useState<RetentionCustomerRow[]>([]);
+  const [retentionCustomersLoading, setRetentionCustomersLoading] = useState(false);
+  const [retentionCustomersError, setRetentionCustomersError] = useState("");
+  const [retentionCustomerStageFilter, setRetentionCustomerStageFilter] = useState("all");
+  const [retentionCustomerStatusFilter, setRetentionCustomerStatusFilter] = useState("all");
+  const [retentionCustomerProductFilter, setRetentionCustomerProductFilter] = useState("all");
+  const [retentionCustomerStateFilter, setRetentionCustomerStateFilter] = useState("all");
+  const [retentionCustomerSpendFilter, setRetentionCustomerSpendFilter] = useState("all");
+  const [retentionCustomerContactFilter, setRetentionCustomerContactFilter] = useState("all");
+  const [retentionCustomerReviewFilter, setRetentionCustomerReviewFilter] = useState("all");
+  const [retentionCustomerReferralFilter, setRetentionCustomerReferralFilter] = useState("all");
+  const [retentionCustomerFiltersOpen, setRetentionCustomerFiltersOpen] = useState(false);
+  const [retentionCustomerView, setRetentionCustomerView] = useState<"table" | "cards">("table");
   const [retentionActivitySearch, setRetentionActivitySearch] = useState("");
   const [retentionActivityLog, setRetentionActivityLog] = useState<RetentionActivityLogRow[]>([]);
   const [retentionActivityLogLoading, setRetentionActivityLogLoading] = useState(false);
@@ -39766,6 +39779,21 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  const loadRetentionCustomers = async () => {
+    setRetentionCustomersLoading(true);
+    setRetentionCustomersError("");
+    try {
+      const result = await customerRetentionApi.customers({
+        repId: recoveryRepViewingId || undefined
+      });
+      setRetentionCustomers(result.rows ?? []);
+    } catch (err: any) {
+      setRetentionCustomersError(err?.message ?? "Could not load the retention customer directory.");
+    } finally {
+      setRetentionCustomersLoading(false);
+    }
+  };
+
   const loadRetentionBonusSummary = async () => {
     try {
       const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
@@ -39848,6 +39876,12 @@ ${waybillLineItems(w).length > 1
     void loadRetentionDashboardSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionPeriod, retentionDateRange]);
+
+  useEffect(() => {
+    if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || retentionSubPage !== "Customers") return;
+    void loadRetentionCustomers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionSubPage]);
 
   useEffect(() => {
     if (!retentionDrawerPhone) { setRetentionCustomerDetail(null); return; }
@@ -41193,60 +41227,257 @@ ${waybillLineItems(w).length > 1
       );
 
       if (retentionSubPage === "Customers") {
-        // One row per customer (deduped by phone - a customer can have more
-        // than one delivered order inside the 90-day retention window; the
-        // most recently delivered order's stage represents them). Purely a
-        // client-side transform of the same worklist already fetched - no
-        // new endpoint.
-        const byPhone = new Map<string, RetentionWorklistRow>();
-        for (const row of retentionWorklist) {
-          const existing = byPhone.get(row.phone);
-          if (!existing || row.deliveredDate > existing.deliveredDate) byPhone.set(row.phone, row);
-        }
         const query = retentionCustomerSearch.trim().toLowerCase();
-        const customers = Array.from(byPhone.values())
-          .filter((row) => !query || row.customerName.toLowerCase().includes(query) || row.phone.includes(query))
-          .sort((a, b) => a.customerName.localeCompare(b.customerName));
+        const customerProducts = [...new Set(retentionCustomers.flatMap((row) => row.productsPurchased).filter(Boolean))].sort();
+        const customerStates = [...new Set(retentionCustomers.map((row) => row.state).filter(Boolean))].sort();
+        const customerReps = [...new Map(
+          retentionCustomers
+            .filter((row) => row.assignedRepId && row.assignedRepName)
+            .map((row) => [row.assignedRepId!, row.assignedRepName!])
+        ).entries()].sort((left, right) => left[1].localeCompare(right[1]));
+        const customerFilterCount = [
+          retentionCustomerStageFilter,
+          retentionCustomerStatusFilter,
+          retentionCustomerProductFilter,
+          retentionCustomerStateFilter,
+          retentionCustomerSpendFilter,
+          retentionCustomerContactFilter,
+          retentionCustomerReviewFilter,
+          retentionCustomerReferralFilter,
+          retentionAssignedRepFilter
+        ].filter((value) => value !== "all").length;
+        const customerContactDays = (value: string | null) => {
+          if (!value) return null;
+          const timestamp = new Date(value).getTime();
+          return Number.isFinite(timestamp) ? Math.max(0, Math.floor((Date.now() - timestamp) / 86400000)) : null;
+        };
+        const customerDate = (value: string | null, includeTime = false) => {
+          if (!value) return "Never";
+          const date = new Date(value);
+          if (!Number.isFinite(date.getTime())) return "Never";
+          return includeTime
+            ? date.toLocaleString([], { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })
+            : date.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+        };
+        const customerIsOverdue = (row: RetentionCustomerRow) =>
+          !row.doNotContact && !!row.nextActionAt && new Date(row.nextActionAt).getTime() < Date.now();
+        const customers = retentionCustomers.filter((row) => {
+          const searchable = [
+            row.name, row.phone, row.city, row.state, row.lastOrderId, row.lastProduct,
+            row.lastPackage, ...row.productsPurchased
+          ].join(" ").toLowerCase();
+          if (query && !searchable.includes(query)) return false;
+          if (retentionCustomerStageFilter !== "all" && row.lifecycleStage !== retentionCustomerStageFilter) return false;
+          if (retentionCustomerStatusFilter !== "all" && row.status !== retentionCustomerStatusFilter) return false;
+          if (retentionCustomerProductFilter !== "all" && !row.productsPurchased.includes(retentionCustomerProductFilter)) return false;
+          if (retentionCustomerStateFilter !== "all" && row.state !== retentionCustomerStateFilter) return false;
+          if (retentionAssignedRepFilter !== "all" && (retentionAssignedRepFilter === "unassigned" ? !!row.assignedRepId : row.assignedRepId !== retentionAssignedRepFilter)) return false;
+          if (retentionCustomerSpendFilter === "under_25000" && row.totalSpent >= 25000) return false;
+          if (retentionCustomerSpendFilter === "25000_49999" && (row.totalSpent < 25000 || row.totalSpent >= 50000)) return false;
+          if (retentionCustomerSpendFilter === "50000_99999" && (row.totalSpent < 50000 || row.totalSpent >= 100000)) return false;
+          if (retentionCustomerSpendFilter === "100000_plus" && row.totalSpent < 100000) return false;
+          const contactDays = customerContactDays(row.lastContactAt);
+          if (retentionCustomerContactFilter === "never" && contactDays !== null) return false;
+          if (retentionCustomerContactFilter === "7_days" && (contactDays === null || contactDays > 7)) return false;
+          if (retentionCustomerContactFilter === "30_days" && (contactDays === null || contactDays > 30)) return false;
+          if (retentionCustomerReviewFilter !== "all" && row.reviewStatus !== retentionCustomerReviewFilter) return false;
+          if (retentionCustomerReferralFilter !== "all" && row.referralStatus !== retentionCustomerReferralFilter) return false;
+          return true;
+        });
+        const customerStatusMeta = (row: RetentionCustomerRow) => {
+          if (row.status === "do_not_contact") return { label: "Do Not Contact", tone: "border-gray-300 bg-gray-100 text-gray-700" };
+          if (row.status === "unresolved_issue") return { label: "Issue", tone: "border-rose-200 bg-rose-50 text-rose-700" };
+          if (row.status === "high_value") return { label: "High Value", tone: "border-amber-200 bg-amber-50 text-amber-700" };
+          if (row.status === "repeat_customer") return { label: "Repeat", tone: "border-violet-200 bg-violet-50 text-violet-700" };
+          return { label: row.activeRetention ? "Active" : "Past customer", tone: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+        };
+        const customerStageTone = (stage: string) =>
+          stage === "needs_resolution" ? "border-rose-200 bg-rose-50 text-rose-700"
+          : stage === "satisfaction_check" ? "border-amber-200 bg-amber-50 text-amber-700"
+          : stage === "review_testimonial" ? "border-sky-200 bg-sky-50 text-sky-700"
+          : stage === "referral" ? "border-violet-200 bg-violet-50 text-violet-700"
+          : stage === "repeat_sale" ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+          : stage === "win_back" ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+          : "border-blue-200 bg-blue-50 text-blue-700";
+        const clearCustomerFilters = () => {
+          setRetentionCustomerSearch("");
+          setRetentionCustomerStageFilter("all");
+          setRetentionCustomerStatusFilter("all");
+          setRetentionCustomerProductFilter("all");
+          setRetentionCustomerStateFilter("all");
+          setRetentionCustomerSpendFilter("all");
+          setRetentionCustomerContactFilter("all");
+          setRetentionCustomerReviewFilter("all");
+          setRetentionCustomerReferralFilter("all");
+          setRetentionAssignedRepFilter("all");
+        };
+        const exportRetentionCustomers = () => {
+          const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, "\"\"")}"`;
+          const headings = ["Customer", "Phone", "Location", "Customer since", "Total orders", "Delivered", "Total spent", "Last product", "Lifecycle stage", "Last contact", "Next action", "Assigned rep", "Status"];
+          const lines = customers.map((row) => [
+            row.name, row.phone, [row.city, row.state].filter(Boolean).join(", "), customerDate(row.customerSince),
+            row.totalOrders, row.deliveredOrders, row.totalSpent, row.lastProduct, lifecycleStageLabel(row.lifecycleStage),
+            customerDate(row.lastContactAt, true), row.nextAction, row.assignedRepName ?? "Unassigned", customerStatusMeta(row).label
+          ].map(escape).join(","));
+          const blob = new Blob([[headings.map(escape).join(","), ...lines].join("\n")], { type: "text/csv;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `retention-customers-${todayKey()}.csv`;
+          link.click();
+          URL.revokeObjectURL(url);
+        };
+        const customerSummaryCards = [
+          { label: "Total Customers", value: retentionCustomers.length, detail: "all delivered buyers", Icon: Users, tone: "bg-sky-50 text-sky-700" },
+          { label: "Active Retention", value: retentionCustomers.filter((row) => row.activeRetention && !row.doNotContact).length, detail: "current lifecycle window", Icon: Activity, tone: "bg-emerald-50 text-emerald-700" },
+          { label: "Repeat Customers", value: retentionCustomers.filter((row) => row.deliveredOrders > 1).length, detail: "purchased more than once", Icon: Repeat2, tone: "bg-violet-50 text-violet-700" },
+          { label: "High Value", value: retentionCustomers.filter((row) => row.totalSpent >= (retentionSettingsDraft?.highValueOrderThreshold ?? 50000)).length, detail: `spend at least ${formatMoney(retentionSettingsDraft?.highValueOrderThreshold ?? 50000)}`, Icon: Sparkles, tone: "bg-amber-50 text-amber-700" },
+          { label: "Unresolved Issues", value: retentionCustomers.filter((row) => row.complaintOpen).length, detail: "need immediate action", Icon: AlertTriangle, tone: "bg-rose-50 text-rose-700" },
+          { label: "Do Not Contact", value: retentionCustomers.filter((row) => row.doNotContact).length, detail: "excluded customers", Icon: PhoneOff, tone: "bg-gray-100 text-gray-700" }
+        ];
+        const renderCustomerActions = (row: RetentionCustomerRow, compact = false) => {
+          const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.name}, this is Protohub following up on your recent order.`).normalUrl ?? undefined;
+          return (
+            <div className={`flex items-center ${compact ? "gap-1" : "gap-2"}`}>
+              {!row.doNotContact && (
+                <>
+                  <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.nextActionOrderId, "call", "customers_directory")} title={`Call ${row.name}`} aria-label={`Call ${row.name}`} className="!min-h-0 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-gray-200 text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" /></a>
+                  <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.nextActionOrderId, "whatsapp", "customers_directory")} title={`WhatsApp ${row.name}`} aria-label={`WhatsApp ${row.name}`} className="!min-h-0 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-gray-200 text-emerald-700 hover:bg-emerald-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+                </>
+              )}
+              <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} title="Open full customer history" aria-label={`Open ${row.name} history`} className="!min-h-0 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-gray-200 text-sky-700 hover:bg-sky-50"><Eye className="h-3.5 w-3.5" /></button>
+              {!row.doNotContact && row.activeRetention && (
+                <button type="button" onClick={() => toggleLogging(row.nextActionOrderId, row.lifecycleStage)} title="Log contact outcome" aria-label={`Log outcome for ${row.name}`} className="!min-h-0 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white hover:bg-emerald-700"><FileText className="h-3.5 w-3.5" /></button>
+              )}
+            </div>
+          );
+        };
+        const renderCustomerCard = (row: RetentionCustomerRow) => {
+          const status = customerStatusMeta(row);
+          return (
+            <article key={row.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 flex min-w-0 items-center gap-3 text-left">
+                  <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.id)}`}>{customerInitial(row.name)}</span>
+                  <span className="min-w-0">
+                    <strong className="block truncate text-sm text-gray-900">{row.name}</strong>
+                    <span className="block text-xs text-gray-500">{row.phone}</span>
+                  </span>
+                </button>
+                <span className={`inline-flex shrink-0 rounded-full border px-2 py-1 text-[9px] font-black uppercase ${status.tone}`}>{status.label}</span>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3 border-y border-gray-100 py-3 text-xs">
+                <div><span className="block text-[9px] font-black uppercase tracking-wide text-gray-400">Last order</span><strong className="mt-1 block text-gray-800">{row.lastProduct}</strong><span className="text-gray-500">{row.lastPackage || `#${row.lastOrderId}`}</span></div>
+                <div><span className="block text-[9px] font-black uppercase tracking-wide text-gray-400">Relationship</span><strong className="mt-1 block text-gray-800">{row.deliveredOrders} delivered · {formatMoney(row.totalSpent)}</strong><span className="text-gray-500">{[row.city, row.state].filter(Boolean).join(", ") || "Location unavailable"}</span></div>
+                <div><span className="block text-[9px] font-black uppercase tracking-wide text-gray-400">Lifecycle</span><span className={`mt-1 inline-flex rounded-full border px-2 py-1 text-[9px] font-black ${customerStageTone(row.lifecycleStage)}`}>{lifecycleStageLabel(row.lifecycleStage)}</span></div>
+                <div><span className="block text-[9px] font-black uppercase tracking-wide text-gray-400">Next action</span><strong className={`mt-1 block ${customerIsOverdue(row) ? "text-rose-600" : "text-gray-800"}`}>{row.nextAction}</strong><span className="text-gray-500">{row.nextActionAt ? customerDate(row.nextActionAt, true) : "No due date"}</span></div>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="truncate text-xs text-gray-500">Rep: <strong className="text-gray-700">{row.assignedRepName ?? "Unassigned"}</strong></span>
+                {renderCustomerActions(row)}
+              </div>
+            </article>
+          );
+        };
 
         return (
-          <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-200 flex flex-col gap-3">
-              <h2 className="text-base font-bold text-gray-900">Customers</h2>
-              <input
-                type="text"
-                value={retentionCustomerSearch}
-                onChange={(e) => setRetentionCustomerSearch(e.target.value)}
-                placeholder="Search customer or phone"
-                className="!min-h-0 w-full sm:w-64 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-              />
-            </div>
-            {customers.length === 0 ? (
-              <div className="px-5 py-10 text-sm text-gray-400 text-center">{retentionWorklist.length === 0 ? "No customers in the retention window right now." : "No customers match your search."}</div>
-            ) : (
-              <div className="divide-y divide-gray-100">
-                {customers.map((row) => (
-                  <button
-                    key={row.phone}
-                    type="button"
-                    onClick={() => setRetentionDrawerPhone(row.phone)}
-                    className="!min-h-0 w-full flex items-center justify-between gap-3 px-5 py-3 text-left hover:bg-gray-50"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
-                      <div className="min-w-0">
-                        <div className="font-bold text-gray-900 truncate">{row.customerName}</div>
-                        <div className="text-xs text-gray-500">{row.phone} · {row.productName}</div>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-3">
-                      <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(displayedStageFor(row))}`}>{stageLabel(displayedStageFor(row))}</span>
-                      <span className="text-xs font-semibold text-gray-600 hidden sm:inline">{formatMoney(row.orderAmount)}</span>
-                    </div>
-                  </button>
-                ))}
+          <div className="space-y-4">
+            <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+              {customerSummaryCards.map(({ label, value, detail, Icon, tone }) => (
+                <div key={label} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+                  <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${tone}`}><Icon className="h-4 w-4" /></div>
+                  <p className="mt-3 text-[9px] font-black uppercase tracking-[0.12em] text-gray-500">{label}</p>
+                  <strong className="mt-1 block text-xl font-black text-gray-900">{value}</strong>
+                  <span className="mt-1 block text-[10px] leading-4 text-gray-500">{detail}</span>
+                </div>
+              ))}
+            </section>
+
+            <section className="rounded-lg border border-gray-200 bg-white shadow-sm">
+              <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center">
+                <label className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                  <input type="search" value={retentionCustomerSearch} onChange={(event) => setRetentionCustomerSearch(event.target.value)} placeholder="Search customer, phone, order or product" className="!min-h-0 h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20" />
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={() => setRetentionCustomerFiltersOpen((open) => !open)} className={`!min-h-0 inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-black ${retentionCustomerFiltersOpen || customerFilterCount > 0 ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-gray-200 text-gray-700"}`}><Filter className="h-4 w-4" /> Filters{customerFilterCount > 0 ? ` (${customerFilterCount})` : ""}</button>
+                  <button type="button" onClick={exportRetentionCustomers} disabled={customers.length === 0} className="!min-h-0 inline-flex h-9 items-center gap-2 rounded-lg border border-gray-200 px-3 text-xs font-black text-gray-700 disabled:opacity-40"><Download className="h-4 w-4" /> Export</button>
+                  <div className="inline-flex h-9 rounded-lg border border-gray-200 bg-gray-50 p-1">
+                    <button type="button" onClick={() => setRetentionCustomerView("table")} title="Relationship table" aria-label="Show relationship table" className={`!min-h-0 inline-flex h-7 w-8 items-center justify-center rounded-md ${retentionCustomerView === "table" ? "bg-white text-emerald-700 shadow-sm" : "text-gray-400"}`}><FileText className="h-4 w-4" /></button>
+                    <button type="button" onClick={() => setRetentionCustomerView("cards")} title="Customer cards" aria-label="Show customer cards" className={`!min-h-0 inline-flex h-7 w-8 items-center justify-center rounded-md ${retentionCustomerView === "cards" ? "bg-white text-emerald-700 shadow-sm" : "text-gray-400"}`}><LayoutPanelTop className="h-4 w-4" /></button>
+                  </div>
+                </div>
               </div>
+
+              {retentionCustomerFiltersOpen && (
+                <div className="border-t border-gray-100 bg-gray-50/70 p-4">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                    <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Lifecycle stage<select value={retentionCustomerStageFilter} onChange={(event) => setRetentionCustomerStageFilter(event.target.value)} className="!min-h-0 mt-1 h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold normal-case text-gray-700"><option value="all">All stages</option>{pipelineStageConfig.map((stage) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}</select></label>
+                    <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Customer status<select value={retentionCustomerStatusFilter} onChange={(event) => setRetentionCustomerStatusFilter(event.target.value)} className="!min-h-0 mt-1 h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold normal-case text-gray-700"><option value="all">All statuses</option><option value="active">Active</option><option value="repeat_customer">Repeat customer</option><option value="high_value">High value</option><option value="unresolved_issue">Unresolved issue</option><option value="do_not_contact">Do not contact</option></select></label>
+                    <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Product<select value={retentionCustomerProductFilter} onChange={(event) => setRetentionCustomerProductFilter(event.target.value)} className="!min-h-0 mt-1 h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold normal-case text-gray-700"><option value="all">All products</option>{customerProducts.map((product) => <option key={product} value={product}>{product}</option>)}</select></label>
+                    <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">State<select value={retentionCustomerStateFilter} onChange={(event) => setRetentionCustomerStateFilter(event.target.value)} className="!min-h-0 mt-1 h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold normal-case text-gray-700"><option value="all">All states</option>{customerStates.map((state) => <option key={state} value={state}>{state}</option>)}</select></label>
+                    <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Total spend<select value={retentionCustomerSpendFilter} onChange={(event) => setRetentionCustomerSpendFilter(event.target.value)} className="!min-h-0 mt-1 h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold normal-case text-gray-700"><option value="all">All values</option><option value="under_25000">Under ₦25,000</option><option value="25000_49999">₦25,000 - ₦49,999</option><option value="50000_99999">₦50,000 - ₦99,999</option><option value="100000_plus">₦100,000+</option></select></label>
+                    <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Assigned rep<select value={retentionAssignedRepFilter} onChange={(event) => setRetentionAssignedRepFilter(event.target.value)} className="!min-h-0 mt-1 h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold normal-case text-gray-700"><option value="all">All reps</option><option value="unassigned">Unassigned</option>{customerReps.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
+                    <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Last contact<select value={retentionCustomerContactFilter} onChange={(event) => setRetentionCustomerContactFilter(event.target.value)} className="!min-h-0 mt-1 h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold normal-case text-gray-700"><option value="all">Any time</option><option value="never">Never contacted</option><option value="7_days">Within 7 days</option><option value="30_days">Within 30 days</option></select></label>
+                    <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Review status<select value={retentionCustomerReviewFilter} onChange={(event) => setRetentionCustomerReviewFilter(event.target.value)} className="!min-h-0 mt-1 h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold normal-case text-gray-700"><option value="all">All review states</option><option value="received">Received</option><option value="requested">Requested</option><option value="not_requested">Not requested</option></select></label>
+                    <label className="text-[10px] font-black uppercase tracking-wide text-gray-500">Referral status<select value={retentionCustomerReferralFilter} onChange={(event) => setRetentionCustomerReferralFilter(event.target.value)} className="!min-h-0 mt-1 h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-xs font-bold normal-case text-gray-700"><option value="all">All referral states</option><option value="received">Received</option><option value="requested">Requested</option><option value="not_requested">Not requested</option></select></label>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <span className="text-xs font-semibold text-gray-500">{customers.length} of {retentionCustomers.length} customers</span>
+                    <button type="button" onClick={clearCustomerFilters} className="!min-h-0 text-xs font-black text-emerald-700 hover:text-emerald-800">Clear all</button>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {retentionCustomersError && (
+              <section className="rounded-lg border border-rose-200 bg-rose-50 p-5 text-center">
+                <AlertTriangle className="mx-auto h-5 w-5 text-rose-600" />
+                <p className="mt-2 text-sm font-bold text-rose-800">{retentionCustomersError}</p>
+                <button type="button" onClick={loadRetentionCustomers} className="!min-h-0 mt-3 rounded-lg bg-rose-700 px-4 py-2 text-xs font-black text-white">Try again</button>
+              </section>
             )}
-          </section>
+
+            {retentionCustomersLoading && retentionCustomers.length === 0 ? (
+              <section className="grid gap-3 sm:grid-cols-2">
+                {Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-48 animate-pulse rounded-lg border border-gray-200 bg-white" />)}
+              </section>
+            ) : customers.length === 0 ? (
+              <section className="rounded-lg border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-400">No customers match the selected filters.</section>
+            ) : retentionCustomerView === "cards" ? (
+              <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{customers.map(renderCustomerCard)}</section>
+            ) : (
+              <>
+                <section className="grid gap-3 lg:hidden">{customers.map(renderCustomerCard)}</section>
+                <section className="hidden overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm lg:block">
+                  <table className="w-full table-fixed text-left">
+                    <colgroup><col className="w-[18%]" /><col className="w-[24%]" /><col className="w-[15%]" /><col className="w-[21%]" /><col className="w-[13%]" /><col className="w-[9%]" /></colgroup>
+                    <thead className="border-b border-gray-200 bg-gray-50 text-[9px] font-black uppercase tracking-[0.12em] text-gray-500"><tr><th className="px-3 py-3">Customer</th><th className="px-3 py-3">Purchase relationship</th><th className="px-3 py-3">Lifecycle</th><th className="px-3 py-3">Contact plan</th><th className="px-3 py-3">Owner / status</th><th className="px-2 py-3 text-right">Actions</th></tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {customers.map((row) => {
+                        const status = customerStatusMeta(row);
+                        return (
+                          <tr key={row.id} className="align-top hover:bg-gray-50">
+                            <td className="px-3 py-3">
+                              <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 flex min-w-0 items-start gap-2 text-left">
+                                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-black ${customerAvatarTone(row.id)}`}>{customerInitial(row.name)}</span>
+                                <span className="min-w-0"><strong className="block truncate text-xs text-gray-900">{row.name}</strong><span className="block truncate text-[10px] text-gray-500">{row.phone}</span><span className="block truncate text-[10px] text-gray-400">{[row.city, row.state].filter(Boolean).join(", ") || "Location unavailable"}</span></span>
+                              </button>
+                            </td>
+                            <td className="px-3 py-3"><strong className="block truncate text-xs text-gray-800">{row.lastProduct}</strong><span className="block truncate text-[10px] text-gray-500">{row.lastPackage || `Order #${row.lastOrderId}`}</span><span className="mt-1 block text-[10px] text-gray-600">{row.deliveredOrders}/{row.totalOrders} delivered · <strong>{formatMoney(row.totalSpent)}</strong></span><span className="block text-[9px] text-gray-400">Customer since {customerDate(row.customerSince)}</span></td>
+                            <td className="px-3 py-3"><span className={`inline-flex max-w-full rounded-full border px-2 py-1 text-[9px] font-black ${customerStageTone(row.lifecycleStage)}`}>{lifecycleStageLabel(row.lifecycleStage)}</span><span className="mt-2 block text-[10px] text-gray-500">Review: {row.reviewStatus.replace("_", " ")}</span><span className="block text-[10px] text-gray-500">Referral: {row.referralStatus.replace("_", " ")}</span></td>
+                            <td className="px-3 py-3"><span className="block text-[9px] font-black uppercase tracking-wide text-gray-400">Last contact</span><strong className="block text-[10px] text-gray-700">{customerDate(row.lastContactAt, true)}</strong><span className="mt-2 block text-[9px] font-black uppercase tracking-wide text-gray-400">Next action</span><strong className={`block text-[10px] ${customerIsOverdue(row) ? "text-rose-600" : "text-gray-700"}`}>{row.nextAction}</strong><span className="block text-[9px] text-gray-500">{row.nextActionAt ? customerDate(row.nextActionAt, true) : "No due date"}</span></td>
+                            <td className="px-3 py-3"><strong className="block truncate text-xs text-gray-800">{row.assignedRepName ?? "Unassigned"}</strong><span className={`mt-2 inline-flex max-w-full rounded-full border px-2 py-1 text-[9px] font-black uppercase ${status.tone}`}>{status.label}</span></td>
+                            <td className="px-2 py-3"><div className="flex justify-end">{renderCustomerActions(row, true)}</div></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </section>
+              </>
+            )}
+          </div>
         );
       }
 
@@ -41651,7 +41882,7 @@ ${waybillLineItems(w).length > 1
     const retentionPageMeta: Record<RetentionSubPage, { title: string; description: string }> = {
       Overview: { title: "Customer Retention Overview", description: "Daily performance, urgent tasks, lifecycle health and retention revenue." },
       Pipeline: { title: "Customer Lifecycle Pipeline", description: "Track customers from delivery to repeat purchase and win-back." },
-      Customers: { title: "Retention Customers", description: "A single customer record with order value, lifecycle status and full history." },
+      Customers: { title: "Customers", description: "View every buyer, purchase relationship, lifecycle stage and next retention action." },
       Tasks: { title: "Retention Tasks", description: "The due-today, overdue and complaint work that needs action first." },
       "Calls & Outcomes": { title: "Calls & Outcomes", description: "Every contact attempt, response, action and quality signal in one audit trail." },
       Reviews: { title: "Customer Reviews", description: "Track requests, evidence, permissions and review conversion." },
@@ -41666,6 +41897,7 @@ ${waybillLineItems(w).length > 1
       void loadRetentionWorklist();
       void loadRetentionBonusSummary();
       void loadRetentionDashboardSummary();
+      if (retentionSubPage === "Customers") void loadRetentionCustomers();
       if (ACTIVITY_LOG_PAGES.includes(retentionSubPage)) {
         setRetentionActivityLogLoading(true);
         const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);

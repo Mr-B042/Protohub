@@ -835,6 +835,44 @@ export interface RetentionWorklistRow {
   reviewCollected: boolean;
   referralRequested: boolean;
   referralCollected: boolean;
+  doNotContact: boolean;
+}
+
+export interface RetentionCustomerRow {
+  id: string;
+  name: string;
+  phone: string;
+  city: string;
+  state: string;
+  customerSince: string;
+  totalOrders: number;
+  deliveredOrders: number;
+  rejectedOrders: number;
+  totalSpent: number;
+  currency: string;
+  lastOrderId: string;
+  lastProduct: string;
+  lastPackage: string;
+  lastOrderDate: string;
+  productsPurchased: string[];
+  lifecycleStage: RetentionLifecycleStage;
+  stageEnteredDate: string;
+  stageDueDate: string;
+  lastContactAt: string | null;
+  nextAction: string;
+  nextActionAt: string | null;
+  nextActionOrderId: string;
+  assignedRepId: string | null;
+  assignedRepName: string | null;
+  priorityBand: RetentionPriorityBand;
+  complaintOpen: boolean;
+  doNotContact: boolean;
+  activeRetention: boolean;
+  reviewStatus: "received" | "requested" | "not_requested";
+  referralStatus: "received" | "requested" | "not_requested";
+  repeatSaleStatus: string;
+  status: "active" | "repeat_customer" | "high_value" | "unresolved_issue" | "do_not_contact";
+  lastOutcome: string | null;
 }
 
 export interface RetentionBonusSummary {
@@ -1017,6 +1055,12 @@ export interface RetentionActivityLogRow {
 }
 
 export const customerRetentionApi = {
+  customers: (params: { repId?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.repId && params.repId !== "all") qs.set("repId", params.repId);
+    const suffix = qs.toString();
+    return get<{ rows: RetentionCustomerRow[] }>(`/api/customer-retention/customers${suffix ? `?${suffix}` : ""}`);
+  },
   activityLog: (params: { dateFrom?: string; dateTo?: string; stage?: string; repId?: string; search?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.dateFrom) qs.set("dateFrom", params.dateFrom);
