@@ -19,12 +19,23 @@ const RETENTION_ROLES = ["Owner", "Admin", "Manager", "Recovery Rep"] as const;
 const RETENTION_SUPERVISOR_ROLES = new Set(["Owner", "Admin", "Manager"]);
 const NON_REACH_STATUSES = new Set(["not_reached", "not_reachable", "wrong_number"]);
 const ACTION_EVENTS_TABLE = "customer_retention_action_events";
+const MANUAL_TASKS_TABLE = "customer_retention_tasks";
 
 function isMissingActionEventsTable(error: { code?: string; message?: string } | null | undefined) {
   if (!error) return false;
   return error.code === "42P01"
     || error.code === "PGRST205"
     || /customer_retention_action_events.*(does not exist|schema cache)/i.test(error.message ?? "");
+}
+
+// Same defensive pattern as the action-events table above: the Tasks page
+// must keep working (showing derived lifecycle tasks) if migration 178 has
+// not reached this environment yet, rather than erroring the whole page.
+function isMissingManualTasksTable(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  return error.code === "42P01"
+    || error.code === "PGRST205"
+    || /customer_retention_tasks.*(does not exist|schema cache)/i.test(error.message ?? "");
 }
 
 function retentionRepScope(role: string, userId: string, requested: unknown): string | null {
@@ -1726,6 +1737,228 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
   // return an identical shape - the raw upserted row is snake_case.
   const settings = await loadBonusSettings(req.user!.orgId);
   res.json({ settings });
+});
+
+// ---------------------------------------------------------------------------
+// Manual retention tasks (migration 178).
+//
+// These sit ALONGSIDE the derived lifecycle worklist, never replacing it.
+// Derived tasks stay the source of truth for bonuses and KPI reporting; a
+// manual task is a reminder someone created by hand.
+// ---------------------------------------------------------------------------
+
+const MANUAL_TASK_TYPES = [
+  "satisfaction_check", "complaint_follow_up", "review_request", "referral_request",
+  "repeat_sale_offer", "win_back_call", "scheduled_follow_up", "general_check_in"
+] as const;
+
+const ManualTaskSchema = z.object({
+  orderId: z.string().trim().min(1).nullable().optional(),
+  customerName: z.string().trim().min(1, "Customer name is required."),
+  customerPhone: z.string().trim().min(1, "Customer phone is required."),
+  taskType: z.enum(MANUAL_TASK_TYPES),
+  title: z.string().trim().min(1, "Task title is required."),
+  note: z.string().trim().max(2000).nullable().optional(),
+  priority: z.enum(["high", "medium", "low"]).default("medium"),
+  dueAt: z.string().datetime({ offset: true }),
+  assignedRepId: z.string().uuid().nullable().optional()
+});
+
+const ManualTaskUpdateSchema = z.object({
+  status: z.enum(["pending", "completed", "cancelled"]).optional(),
+  priority: z.enum(["high", "medium", "low"]).optional(),
+  dueAt: z.string().datetime({ offset: true }).optional(),
+  assignedRepId: z.string().uuid().nullable().optional(),
+  title: z.string().trim().min(1).optional(),
+  note: z.string().trim().max(2000).nullable().optional()
+});
+
+const BulkAssignSchema = z.object({
+  taskIds: z.array(z.string().uuid()).min(1, "Select at least one task."),
+  assignedRepId: z.string().uuid().nullable()
+});
+
+const ImportTasksSchema = z.object({
+  tasks: z.array(ManualTaskSchema).min(1, "Nothing to import.").max(200, "Import at most 200 tasks at a time.")
+});
+
+function manualTaskRow(row: any) {
+  return {
+    id: row.id,
+    orderId: row.order_id ?? null,
+    customerName: row.customer_name,
+    customerPhone: row.customer_phone,
+    taskType: row.task_type,
+    title: row.title,
+    note: row.note ?? null,
+    priority: row.priority,
+    status: row.status,
+    dueAt: row.due_at,
+    assignedRepId: row.assigned_rep_id ?? null,
+    assignedRepName: row.assigned_rep?.name ?? null,
+    completedAt: row.completed_at ?? null,
+    createdAt: row.created_at
+  };
+}
+
+const MANUAL_TASK_SELECT = "id, order_id, customer_name, customer_phone, task_type, title, note, priority, status, due_at, assigned_rep_id, completed_at, created_at, assigned_rep:users!customer_retention_tasks_assigned_rep_id_fkey(name)";
+
+router.get("/tasks", requireRole(...RETENTION_ROLES), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    let query = supabase
+      .from(MANUAL_TASKS_TABLE)
+      .select(MANUAL_TASK_SELECT)
+      .eq("org_id", orgId)
+      .order("due_at", { ascending: true })
+      .limit(500);
+
+    // A Recovery Rep sees their own tasks plus anything still unassigned.
+    if (!RETENTION_SUPERVISOR_ROLES.has(req.user!.role)) {
+      query = query.or(`assigned_rep_id.eq.${req.user!.id},assigned_rep_id.is.null`);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      if (isMissingManualTasksTable(error)) { res.json({ rows: [], pendingMigration: true }); return; }
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.json({ rows: (data ?? []).map(manualTaskRow) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load manual tasks." });
+  }
+});
+
+router.post("/tasks", requireRole(...RETENTION_ROLES), async (req, res) => {
+  const parsed = ManualTaskSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const { data, error } = await supabase
+      .from(MANUAL_TASKS_TABLE)
+      .insert({
+        org_id: req.user!.orgId,
+        order_id: parsed.data.orderId ?? null,
+        customer_name: parsed.data.customerName,
+        customer_phone: parsed.data.customerPhone,
+        task_type: parsed.data.taskType,
+        title: parsed.data.title,
+        note: parsed.data.note ?? null,
+        priority: parsed.data.priority,
+        due_at: parsed.data.dueAt,
+        assigned_rep_id: parsed.data.assignedRepId ?? null,
+        created_by: req.user!.id
+      })
+      .select(MANUAL_TASK_SELECT)
+      .single();
+    if (error) {
+      if (isMissingManualTasksTable(error)) { res.status(503).json({ error: "Manual tasks are still being activated on this environment." }); return; }
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(201).json({ row: manualTaskRow(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not create the task." });
+  }
+});
+
+router.patch("/tasks/:id", requireRole(...RETENTION_ROLES), async (req, res) => {
+  const parsed = ManualTaskUpdateSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const { data: existing, error: findError } = await supabase
+      .from(MANUAL_TASKS_TABLE)
+      .select("id, assigned_rep_id")
+      .eq("org_id", orgId)
+      .eq("id", req.params.id)
+      .maybeSingle();
+    if (findError) {
+      if (isMissingManualTasksTable(findError)) { res.status(503).json({ error: "Manual tasks are still being activated on this environment." }); return; }
+      res.status(500).json({ error: findError.message });
+      return;
+    }
+    if (!existing) { res.status(404).json({ error: "Task not found." }); return; }
+    // A rep may only touch their own task; supervisors may touch any.
+    if (!RETENTION_SUPERVISOR_ROLES.has(req.user!.role) && existing.assigned_rep_id && existing.assigned_rep_id !== req.user!.id) {
+      res.status(403).json({ error: "This task is not assigned to you." });
+      return;
+    }
+
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (parsed.data.status !== undefined) {
+      patch.status = parsed.data.status;
+      patch.completed_at = parsed.data.status === "completed" ? new Date().toISOString() : null;
+      patch.completed_by = parsed.data.status === "completed" ? req.user!.id : null;
+    }
+    if (parsed.data.priority !== undefined) patch.priority = parsed.data.priority;
+    if (parsed.data.dueAt !== undefined) patch.due_at = parsed.data.dueAt;
+    if (parsed.data.assignedRepId !== undefined) patch.assigned_rep_id = parsed.data.assignedRepId;
+    if (parsed.data.title !== undefined) patch.title = parsed.data.title;
+    if (parsed.data.note !== undefined) patch.note = parsed.data.note;
+
+    const { data, error } = await supabase
+      .from(MANUAL_TASKS_TABLE)
+      .update(patch)
+      .eq("org_id", orgId)
+      .eq("id", req.params.id)
+      .select(MANUAL_TASK_SELECT)
+      .single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ row: manualTaskRow(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update the task." });
+  }
+});
+
+router.post("/tasks/bulk-assign", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
+  const parsed = BulkAssignSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const { data, error } = await supabase
+      .from(MANUAL_TASKS_TABLE)
+      .update({ assigned_rep_id: parsed.data.assignedRepId, updated_at: new Date().toISOString() })
+      .eq("org_id", req.user!.orgId)
+      .in("id", parsed.data.taskIds)
+      .select("id");
+    if (error) {
+      if (isMissingManualTasksTable(error)) { res.status(503).json({ error: "Manual tasks are still being activated on this environment." }); return; }
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.json({ updated: (data ?? []).length });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not reassign the tasks." });
+  }
+});
+
+router.post("/tasks/import", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
+  const parsed = ImportTasksSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const rows = parsed.data.tasks.map((task) => ({
+      org_id: req.user!.orgId,
+      order_id: task.orderId ?? null,
+      customer_name: task.customerName,
+      customer_phone: task.customerPhone,
+      task_type: task.taskType,
+      title: task.title,
+      note: task.note ?? null,
+      priority: task.priority,
+      due_at: task.dueAt,
+      assigned_rep_id: task.assignedRepId ?? null,
+      created_by: req.user!.id
+    }));
+    const { data, error } = await supabase.from(MANUAL_TASKS_TABLE).insert(rows).select("id");
+    if (error) {
+      if (isMissingManualTasksTable(error)) { res.status(503).json({ error: "Manual tasks are still being activated on this environment." }); return; }
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(201).json({ imported: (data ?? []).length });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not import the tasks." });
+  }
 });
 
 export default router;
