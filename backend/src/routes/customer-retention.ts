@@ -6,6 +6,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 import { resolveDateBounds } from "../lib/date-bounds.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
+import { fetchAllRows } from "../lib/paginated-query.js";
 import {
   dueStageFor, priorityBandFor, compareByPriority, dayKey, daysBetween, NEGATIVE_SATISFACTION_OUTCOMES,
   DEFAULT_RETENTION_TIMING, type RetentionTouchpointRecord, type RetentionTiming
@@ -25,6 +26,60 @@ function retentionRepScope(role: string, userId: string, requested: unknown): st
 
 function canAccessAssignedRetentionOrder(role: string, userId: string, assignedRepId: string | null | undefined) {
   return RETENTION_SUPERVISOR_ROLES.has(role) || assignedRepId === userId;
+}
+
+type RetentionAssignment = {
+  order_id: string;
+  recovery_rep_id: string | null;
+};
+
+const chunksOf = <T>(items: T[], size = 200) => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+};
+
+async function soleActiveRecoveryRepId(orgId: string) {
+  const { data, error } = await supabase
+    .from("users")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("active", true)
+    .eq("role", "Recovery Rep")
+    .limit(2);
+  if (error) throw new Error(error.message);
+  return data?.length === 1 ? data[0].id : null;
+}
+
+async function loadRetentionAssignmentMap(orgId: string, orderIds: string[]) {
+  if (orderIds.length === 0) return new Map<string, string | null>();
+  const assignmentRows: RetentionAssignment[] = [];
+  for (const orderIdChunk of chunksOf(orderIds)) {
+    const { data, error } = await supabase
+      .from("customer_retention_assignments")
+      .select("order_id, recovery_rep_id")
+      .eq("org_id", orgId)
+      .in("order_id", orderIdChunk);
+    const assignmentTableMissing = error?.code === "42P01"
+      || error?.code === "PGRST205"
+      || (/customer_retention_assignments/i.test(error?.message ?? "") && /not find|does not exist|schema cache/i.test(error?.message ?? ""));
+    if (assignmentTableMissing) break;
+    if (error) throw new Error(error.message);
+    assignmentRows.push(...((data as RetentionAssignment[] | null) ?? []));
+  }
+
+  const result = new Map(assignmentRows.map((row) => [row.order_id, row.recovery_rep_id]));
+  const soleRepId = await soleActiveRecoveryRepId(orgId);
+  if (soleRepId) {
+    for (const orderId of orderIds) {
+      if (!result.get(orderId)) result.set(orderId, soleRepId);
+    }
+  }
+  return result;
+}
+
+async function retentionRepForOrder(orgId: string, orderId: string) {
+  return (await loadRetentionAssignmentMap(orgId, [orderId])).get(orderId) ?? null;
 }
 
 // Real per-order COGS lookup, same pattern as manager-bonuses.ts's
@@ -116,22 +171,18 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
   const oldestRelevant = new Date();
   oldestRelevant.setUTCDate(oldestRelevant.getUTCDate() - 90);
 
-  const { data: deliveredOrders, error: ordersError } = await supabase
+  const { data: deliveredOrders, error: ordersError } = await fetchAllRows<any>((from, to) => supabase
     .from("orders")
-    .select("id, customer, phone, delivered_date, product_id, package_id, amount, currency, product_name, assigned_rep_id")
+    .select("id, customer, phone, delivered_date, product_id, package_id, amount, currency, product_name")
     .eq("org_id", orgId)
     .eq("status", "Delivered")
     .gte("delivered_date", oldestRelevant.toISOString().slice(0, 10))
-    .not("delivered_date", "is", null);
+    .not("delivered_date", "is", null)
+    .order("id", { ascending: true })
+    .range(from, to));
   if (ordersError) throw new Error(ordersError.message);
   let orders = deliveredOrders ?? [];
   if (orders.length === 0) return [];
-
-  const repIds = [...new Set(orders.map((o) => o.assigned_rep_id).filter(Boolean))] as string[];
-  const { data: repUsers } = repIds.length > 0
-    ? await supabase.from("users").select("id, name").in("id", repIds)
-    : { data: [] as { id: string; name: string }[] };
-  const repNameById = new Map((repUsers ?? []).map((u) => [u.id, u.name]));
 
   // Opted-out customers must leave the worklist - blocks_followup already
   // suppresses follow-up obligations elsewhere (customers.ts), but the
@@ -147,16 +198,29 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
   if (orders.length === 0) return [];
 
   const orderIds = orders.map((o) => o.id);
-  const { data: touchpointRows, error: touchpointsError } = await supabase
-    .from("customer_retention_touchpoints")
-    .select("order_id, stage, satisfaction_outcome, review_collected, referral_collected, review_is_video, review_requested_at, referral_requested_at, retention_outcome, customer_discount_owed, customer_discount_cleared_at, next_action, next_action_at, next_action_note, reach_status, logged_at")
-    .eq("org_id", orgId)
-    .in("order_id", orderIds)
-    .order("logged_at", { ascending: true });
-  if (touchpointsError) throw new Error(touchpointsError.message);
+  const assignmentByOrderId = await loadRetentionAssignmentMap(orgId, orderIds);
+  const repIds = [...new Set([...assignmentByOrderId.values()].filter(Boolean))] as string[];
+  const { data: repUsers } = repIds.length > 0
+    ? await supabase.from("users").select("id, name").in("id", repIds)
+    : { data: [] as { id: string; name: string }[] };
+  const repNameById = new Map((repUsers ?? []).map((u) => [u.id, u.name]));
 
-  const touchpointsByOrder = new Map<string, typeof touchpointRows>();
-  for (const row of touchpointRows ?? []) {
+  const touchpointRows: any[] = [];
+  for (const orderIdChunk of chunksOf(orderIds)) {
+    const { data, error } = await fetchAllRows<any>((from, to) => supabase
+      .from("customer_retention_touchpoints")
+      .select("order_id, stage, satisfaction_outcome, review_collected, referral_collected, review_is_video, review_requested_at, referral_requested_at, retention_outcome, customer_discount_owed, customer_discount_cleared_at, next_action, next_action_at, next_action_note, reach_status, logged_at")
+      .eq("org_id", orgId)
+      .in("order_id", orderIdChunk)
+      .order("logged_at", { ascending: true })
+      .range(from, to));
+    if (error) throw new Error(error.message);
+    touchpointRows.push(...(data ?? []));
+  }
+  touchpointRows.sort((a, b) => String(a.logged_at).localeCompare(String(b.logged_at)));
+
+  const touchpointsByOrder = new Map<string, any[]>();
+  for (const row of touchpointRows) {
     const list = touchpointsByOrder.get(row.order_id) ?? [];
     list.push(row);
     touchpointsByOrder.set(row.order_id, list);
@@ -174,6 +238,7 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
   );
 
   return orders.map((order) => {
+    const recoveryRepId = assignmentByOrderId.get(order.id) ?? null;
     const tps = (touchpointsByOrder.get(order.id) ?? []) as (RetentionTouchpointRecord & Record<string, any>)[];
     const deliveredKey = String(order.delivered_date).slice(0, 10);
     const timing = (order.product_id && timingByProductId.get(order.product_id)) || DEFAULT_RETENTION_TIMING;
@@ -199,8 +264,8 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
       orderAmount,
       orderCurrency: order.currency,
       productName: order.product_name,
-      assignedRepId: order.assigned_rep_id ?? null,
-      assignedRepName: order.assigned_rep_id ? (repNameById.get(order.assigned_rep_id) ?? null) : null,
+      assignedRepId: recoveryRepId,
+      assignedRepName: recoveryRepId ? (repNameById.get(recoveryRepId) ?? null) : null,
       lastTouchpoint: last ? { stage: last.stage, loggedAt: last.logged_at, satisfactionOutcome: last.satisfaction_outcome } : null,
       lastContactAt,
       nextActionAt: last?.next_action_at ?? null,
@@ -242,16 +307,89 @@ router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
   }
 });
 
+const RetentionAssignmentSchema = z.object({
+  recoveryRepId: z.string().uuid()
+});
+
+router.patch("/order/:orderId/assignment", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
+  try {
+    const parsed = RetentionAssignmentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      return;
+    }
+
+    const orgId = req.user!.orgId;
+    const { data: order, error: orderError } = await supabase
+      .from("orders")
+      .select("id, status")
+      .eq("org_id", orgId)
+      .eq("id", req.params.orderId)
+      .maybeSingle();
+    if (orderError) throw new Error(orderError.message);
+    if (!order) {
+      res.status(404).json({ error: "Order not found." });
+      return;
+    }
+    if (order.status !== "Delivered") {
+      res.status(400).json({ error: "Only Delivered orders can enter the customer-retention queue." });
+      return;
+    }
+
+    const { data: rep, error: repError } = await supabase
+      .from("users")
+      .select("id, name, active, role")
+      .eq("org_id", orgId)
+      .eq("id", parsed.data.recoveryRepId)
+      .maybeSingle();
+    if (repError) throw new Error(repError.message);
+    if (!rep || !rep.active || rep.role !== "Recovery Rep") {
+      res.status(400).json({ error: "Choose an active Recovery Rep from this organization." });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const { data: assignment, error: assignmentError } = await supabase
+      .from("customer_retention_assignments")
+      .upsert({
+        order_id: order.id,
+        org_id: orgId,
+        recovery_rep_id: rep.id,
+        assigned_by: req.user!.id,
+        assignment_source: "manual",
+        assigned_at: now,
+        updated_at: now
+      }, { onConflict: "order_id" })
+      .select("order_id, recovery_rep_id, assignment_source, assigned_at, updated_at")
+      .single();
+    if (assignmentError) throw new Error(assignmentError.message);
+
+    res.json({
+      assignment: {
+        orderId: assignment.order_id,
+        recoveryRepId: assignment.recovery_rep_id,
+        recoveryRepName: rep.name,
+        assignmentSource: assignment.assignment_source,
+        assignedAt: assignment.assigned_at,
+        updatedAt: assignment.updated_at
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Failed to assign the retention order." });
+  }
+});
+
 router.get("/order/:orderId/retention-suggestion", requireRole(...RETENTION_ROLES), async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const { data: order } = await supabase
       .from("orders")
-      .select("id, product_id, package_id, assigned_rep_id")
+      .select("id, product_id, package_id")
       .eq("org_id", orgId)
       .eq("id", req.params.orderId)
       .maybeSingle();
-    if (order && !canAccessAssignedRetentionOrder(req.user!.role, req.user!.id, order.assigned_rep_id)) {
+    const recoveryRepId = order ? await retentionRepForOrder(orgId, order.id) : null;
+    if (order && !canAccessAssignedRetentionOrder(req.user!.role, req.user!.id, recoveryRepId)) {
       res.status(403).json({ error: "This retention order is not assigned to you." });
       return;
     }
@@ -279,15 +417,23 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
     const targetPhone = String(req.params.phone).replace(/\D/g, "");
     if (!targetPhone) { res.status(400).json({ error: "Invalid phone." }); return; }
 
-    const { data: allOrders, error } = await supabase
+    const { data: allOrders, error } = await fetchAllRows<any>((from, to) => supabase
       .from("orders")
-      .select("id, customer, phone, city, state, product_name, package_name, amount, currency, status, delivered_date, created_at, assigned_rep_id")
-      .eq("org_id", orgId);
+      .select("id, customer, phone, city, state, product_name, package_name, amount, currency, status, delivered_date, created_at")
+      .eq("org_id", orgId)
+      .order("id", { ascending: true })
+      .range(from, to));
     if (error) { res.status(500).json({ error: error.message }); return; }
-    const orders = (allOrders ?? []).filter((o) =>
-      String(o.phone).replace(/\D/g, "") === targetPhone
-      && canAccessAssignedRetentionOrder(req.user!.role, req.user!.id, o.assigned_rep_id)
-    );
+    const matchingOrders = (allOrders ?? []).filter((o) => String(o.phone).replace(/\D/g, "") === targetPhone);
+    if (!RETENTION_SUPERVISOR_ROLES.has(req.user!.role)) {
+      const assignmentByOrderId = await loadRetentionAssignmentMap(orgId, matchingOrders.map((o) => o.id));
+      const canAccessCustomer = matchingOrders.some((o) => assignmentByOrderId.get(o.id) === req.user!.id);
+      if (!canAccessCustomer) {
+        res.status(404).json({ error: "No orders found for this customer." });
+        return;
+      }
+    }
+    const orders = matchingOrders;
     if (orders.length === 0) { res.status(404).json({ error: "No orders found for this customer." }); return; }
 
     const byCreatedAsc = [...orders].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
@@ -446,12 +592,13 @@ router.post("/touchpoints", requireRole(...RETENTION_ROLES), async (req, res) =>
 
   const { data: order } = await supabase
     .from("orders")
-    .select("id, status, assigned_rep_id")
+    .select("id, status")
     .eq("org_id", orgId)
     .eq("id", d.orderId)
     .maybeSingle();
   if (!order) { res.status(404).json({ error: "Order not found." }); return; }
-  if (!canAccessAssignedRetentionOrder(req.user!.role, req.user!.id, order.assigned_rep_id)) {
+  const recoveryRepId = await retentionRepForOrder(orgId, order.id);
+  if (!canAccessAssignedRetentionOrder(req.user!.role, req.user!.id, recoveryRepId)) {
     res.status(403).json({ error: "This retention order is not assigned to you." });
     return;
   }
