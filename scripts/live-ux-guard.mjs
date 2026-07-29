@@ -65,7 +65,10 @@ const checks = [
       "What Customer Ordered",
       "crossSellLineDisplayDetail(line)",
       "renderOrderPurchaseSummary(order, \"mobile\")",
-      "renderOrderPurchaseSummary(order, \"table\")"
+      "renderOrderPurchaseSummary(order, \"table\")",
+      "w-full table-fixed text-sm",
+      "Status / Response",
+      "Location / Date"
     ]
   },
   {

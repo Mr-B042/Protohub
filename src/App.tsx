@@ -13198,7 +13198,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         onClick={handleAssigneeClick}
         aria-label={assigneeActionLabel}
         title={assigneeActionLabel}
-        className={`group/assignee relative inline-flex min-w-[190px] max-w-[260px] items-center gap-2 overflow-hidden rounded-2xl border px-2.5 py-2 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/35 ${
+        className={`group/assignee relative inline-flex w-full min-w-0 max-w-none items-center gap-2 overflow-hidden rounded-2xl border px-2.5 py-2 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]/35 ${
           assigneeGold
             ? "!border-2 !border-amber-500 dark:!border-amber-400/60 bg-amber-50/80 dark:bg-amber-500/10 shadow-[0_0_12px_rgba(251,191,36,0.3)]"
             : "border-gray-200 bg-white/80 hover:border-sky-200 dark:border-slate-700/80 dark:bg-white/[0.04] dark:hover:border-sky-400/30"
@@ -13315,7 +13315,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         className={
           variant === "mobile"
             ? "relative mt-4 overflow-hidden rounded-[24px] border border-sky-100 bg-white/85 px-4 py-3.5 shadow-sm dark:border-sky-400/20 dark:bg-white/[0.05]"
-            : "min-w-[260px] max-w-[360px] py-0.5"
+            : "w-full min-w-0 max-w-none py-0.5"
         }
       >
         {variant === "mobile" && (
@@ -16006,7 +16006,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const ordersPageClamped = Math.min(ordersPage, ordersTotalPages);
   const pagedOrderRows = prioritizedOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
   const showOrderAssignmentColumn = !isMarketerOrderView;
-  const orderTableColumnCount = (canUseAdminOrderActions ? 11 : 10) - (showOrderAssignmentColumn ? 0 : 1);
+  const orderTableColumnCount = (canUseAdminOrderActions ? 8 : 7) - (showOrderAssignmentColumn ? 0 : 1);
   // Product-filtered stats - drive summary cards so they reflect the active product filter
   const assignmentScopedPeriodOrders = periodOrders.filter(matchesOrderAssignmentScope);
   const assignmentScopedWorkspaceOrders = assignmentScopedPeriodOrders.filter(matchesOrderWorkspacePage);
@@ -46980,8 +46980,9 @@ ${waybillLineItems(w).length > 1
                   </div>
                 )}
 
-                {/* Mobile card list (sm and below) */}
-                <div className="block sm:hidden space-y-3 bg-gray-50/80 p-3 dark:bg-[#07111a]">
+                {/* Full-detail cards replace the table whenever the available
+                    desktop width would force horizontal dragging. */}
+                <div className={`${collapsed ? "grid xl:hidden" : "grid min-[1760px]:hidden"} grid-cols-1 gap-3 bg-gray-50/80 p-3 lg:grid-cols-2 dark:bg-[#07111a]`}>
                   {filteredOrderRows.length === 0 ? (
                     <div className="rounded-3xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-400 shadow-sm dark:border-slate-800 dark:bg-[#101a24]">
                       {orderWorkspacePage === "Follow-up Queue"
@@ -47150,13 +47151,24 @@ ${waybillLineItems(w).length > 1
                   )}
                 </div>
 
-                {/* Table (sm and above) */}
-                <div className="hidden sm:block overflow-x-auto">
-                  <table className="w-full text-sm sticky-col-first" aria-label={activeOrderWorkspaceMeta.tableLabel}>
+                {/* Compact desktop table. Secondary fields share columns so the
+                    whole row stays visible in both sidebar states. */}
+                <div className={`${collapsed ? "hidden xl:block" : "hidden min-[1760px]:block"} w-full overflow-hidden`}>
+                  <table className="w-full table-fixed text-sm" aria-label={activeOrderWorkspaceMeta.tableLabel}>
+                    <colgroup>
+                      {canUseAdminOrderActions && <col style={{ width: "3%" }} />}
+                      <col style={{ width: showOrderAssignmentColumn ? "13%" : "16%" }} />
+                      <col style={{ width: showOrderAssignmentColumn ? "25%" : "32%" }} />
+                      {showOrderAssignmentColumn && <col style={{ width: "16%" }} />}
+                      <col style={{ width: "6%" }} />
+                      <col style={{ width: "16%" }} />
+                      <col style={{ width: "14%" }} />
+                      <col style={{ width: canUseAdminOrderActions ? "7%" : showOrderAssignmentColumn ? "10%" : "16%" }} />
+                    </colgroup>
                     <thead>
                       <tr className={`text-left ${orderTableHeaderClass}`}>
                         {canUseAdminOrderActions && (
-                          <th className="hidden sm:table-cell px-4 py-3 w-8 bg-gray-50 dark:bg-[#16212c] sticky left-0 z-20 border-r border-gray-200 dark:border-slate-800/90">
+                          <th className="px-2 py-3 bg-gray-50 dark:bg-[#16212c] border-r border-gray-200 dark:border-slate-800/90">
                             <input
                               type="checkbox"
                               className="rounded border-gray-300"
@@ -47175,18 +47187,15 @@ ${waybillLineItems(w).length > 1
                             />
                           </th>
                         )}
-                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Order ID</th>
-                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>{isMarketerOrderView ? "Lead" : "Customer Name"}</th>
-                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>What Customer Ordered</th>
+                        <th className={`px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-left ${orderFaintTextClass}`}>{isMarketerOrderView ? "Order / Lead" : "Order / Customer"}</th>
+                        <th className={`px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-left ${orderFaintTextClass}`}>What Customer Ordered</th>
                         {showOrderAssignmentColumn && (
-                          <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Assigned To</th>
+                          <th className={`px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-left ${orderFaintTextClass}`}>Assigned To</th>
                         )}
-                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Source</th>
-                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Status</th>
-                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Response</th>
-                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Location</th>
-                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Date</th>
-                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-right ${orderFaintTextClass}`}>Actions</th>
+                        <th className={`px-2 py-3 text-[10px] font-semibold uppercase tracking-wider text-center ${orderFaintTextClass}`}>Source</th>
+                        <th className={`px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-left ${orderFaintTextClass}`}>Status / Response</th>
+                        <th className={`px-3 py-3 text-[10px] font-semibold uppercase tracking-wider text-left ${orderFaintTextClass}`}>Location / Date</th>
+                        <th className={`px-2 py-3 text-[10px] font-semibold uppercase tracking-wider text-right ${orderFaintTextClass}`}>Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-slate-800/80">
@@ -47200,10 +47209,14 @@ ${waybillLineItems(w).length > 1
                           const location = order.location ?? orderLocationFromFields(order.city ?? "", order.state ?? "");
                           const scheduleMarker = orderScheduleMarkerForOrder(order);
                           const latestAttempt = latestContactAttemptForOrder(orderContactAttemptsByOrder[order.id] ?? []);
+                          const responseTime = (() => {
+                            void responseTick;
+                            return responseTimeColor(order, status);
+                          })();
                           return (
                             <tr key={order.id} className={`group hover:bg-gray-50 dark:hover:bg-[#16212c]/80 transition-colors ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : ""}`}>
                               {canUseAdminOrderActions && (
-                                <td className={`hidden sm:table-cell px-4 py-3.5 w-8 sticky left-0 z-10 border-r border-gray-200 dark:border-slate-800/90 group-hover:bg-gray-50 dark:group-hover:bg-[#16212c]/80 ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : "bg-white dark:bg-[#101a24]"}`}>
+                                <td className={`px-2 py-3.5 border-r border-gray-200 dark:border-slate-800/90 group-hover:bg-gray-50 dark:group-hover:bg-[#16212c]/80 ${selectedOrderIds.has(order.id) ? "bg-blue-50 dark:bg-sky-950/40" : "bg-white dark:bg-[#101a24]"}`}>
                                   <input
                                     type="checkbox"
                                     className="rounded border-gray-300"
@@ -47218,27 +47231,41 @@ ${waybillLineItems(w).length > 1
                                   />
                                 </td>
                               )}
-                              <td className="px-4 py-3.5 font-bold text-[#1F8FE0] whitespace-nowrap">
-                                {order.id}
+                              <td className="px-3 py-3.5 align-top">
+                                <span className="inline-flex rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-black text-[#1F8FE0] dark:bg-sky-400/10 dark:text-sky-200">
+                                  #{order.id}
+                                </span>
+                                <p className={`m-0 mt-2 break-words text-[12px] font-black leading-4 ${orderTitleTextClass}`}>
+                                  {isMarketerOrderView ? marketerLeadLabel(order) : order.customer || "Unnamed customer"}
+                                </p>
+                                {!isMarketerOrderView && (
+                                  <p className={`m-0 mt-1 break-all text-[10px] font-semibold leading-4 ${orderMutedTextClass}`}>
+                                    {order.phone || "No phone saved"}
+                                  </p>
+                                )}
                               </td>
-                              <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{isMarketerOrderView ? marketerLeadLabel(order) : order.customer}</td>
-                              <td className="px-4 py-3.5 align-top">
+                              <td className="px-3 py-3.5 align-top">
                                 {renderOrderPurchaseSummary(order, "table")}
                               </td>
                               {showOrderAssignmentColumn && (
-                                <td className="px-4 py-3.5 whitespace-nowrap">{renderOrderAssigneeBadge(order, "table")}</td>
+                                <td className="px-3 py-3.5 align-top">{renderOrderAssigneeBadge(order, "table")}</td>
                               )}
-                              <td className="px-4 py-3.5">
+                              <td className="px-2 py-3.5 text-center align-top">
                                 <span className="inline-flex" title={sourceMeta.label}>
                                   <OrderSourceLogo
                                     source={sourceMeta.label}
-                                    className="h-9 w-9"
+                                    className="h-8 w-8"
                                     aria-label={sourceMeta.label}
                                   />
                                 </span>
                               </td>
-                              <td className="px-4 py-3.5">
+                              <td className="px-3 py-3.5 align-top">
                                 {renderOrderStatusSummary(order)}
+                                {responseTime.label !== "-" && (
+                                  <span className={`mt-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${responseTime.cls}`}>
+                                    <Clock className="mr-1 h-3 w-3" /> {responseTime.label}
+                                  </span>
+                                )}
                                 {order.reviewHold && (
                                   <span
                                     className="mt-1.5 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"
@@ -47267,19 +47294,18 @@ ${waybillLineItems(w).length > 1
                                   </div>
                                 )}
                               </td>
-                              <td className="px-4 py-3.5 whitespace-nowrap">
-                                {(() => {
-                                  void responseTick;
-                                  const rt = responseTimeColor(order, status);
-                                  return rt.label === "-"
-                                    ? <span className="text-gray-300 dark:text-slate-600">-</span>
-                                    : <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${rt.cls}`}>{rt.label}</span>;
-                                })()}
+                              <td className={`px-3 py-3.5 align-top ${orderMutedTextClass}`}>
+                                <p className="m-0 flex min-w-0 items-start gap-1.5 break-words text-[11px] font-bold leading-4">
+                                  <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                                  <span>{location}</span>
+                                </p>
+                                <p className="m-0 mt-2 flex min-w-0 items-start gap-1.5 break-words text-[10px] font-semibold leading-4">
+                                  <CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                  <span>{formatOrderCreatedAt(order)}</span>
+                                </p>
                               </td>
-                              <td className={`px-4 py-3.5 text-sm whitespace-nowrap ${orderMutedTextClass}`}>{location}</td>
-                              <td className={`px-4 py-3.5 text-sm whitespace-nowrap ${orderMutedTextClass}`}>{formatOrderCreatedAt(order)}</td>
-                              <td className="px-4 py-3.5">
-                                <div className="flex items-center justify-end gap-1.5">
+                              <td className="px-2 py-3.5 align-top">
+                                <div className="flex flex-wrap items-center justify-end gap-1.5">
                                   {canContactCustomers && (
                                     <button
                                       className="!min-h-0 w-8 h-8 inline-flex items-center justify-center rounded-md bg-[#25D366] text-white hover:bg-[#1ebe57] transition-colors"
@@ -47290,10 +47316,12 @@ ${waybillLineItems(w).length > 1
                                     </button>
                                   )}
                                   <button
-                                    className="!min-h-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-[#1F8FE0] text-white rounded-md hover:bg-blue-700 transition-colors whitespace-nowrap"
+                                    className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-md bg-[#1F8FE0] text-white transition-colors hover:bg-blue-700"
+                                    title={isMarketerOrderView ? "Open order summary" : "Open order details"}
+                                    aria-label={isMarketerOrderView ? `Open summary for order ${order.id}` : `Open details for order ${order.id}`}
                                     onClick={() => openScopedOrderDetail(order)}
                                   >
-                                    <Eye className="w-3.5 h-3.5" /> {isMarketerOrderView ? "Summary" : "Details"}
+                                    <Eye className="h-4 w-4" />
                                   </button>
                                   {!isTerminal && canUseAdminOrderActions && (
                                     <button
