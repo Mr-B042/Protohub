@@ -39905,7 +39905,10 @@ ${waybillLineItems(w).length > 1
 
     const resetLogOutcomeForm = () => {
       resetRetentionForm();
-      setRetentionOutcomeReachStatus("");
+      // Most retention calls reach the customer. Start on that complete
+      // workflow so satisfaction and next-action controls are never hidden
+      // behind an unexplained first click.
+      setRetentionOutcomeReachStatus("reached");
       setRetentionOutcomeResponse("");
       setRetentionOutcomeNextAction("");
       setRetentionOutcomeNote("");
@@ -39932,6 +39935,14 @@ ${waybillLineItems(w).length > 1
     const closeLogOutcome = () => {
       setRetentionLoggingOrderId(null);
       resetLogOutcomeForm();
+    };
+
+    const selectReachStatus = (status: typeof retentionOutcomeReachStatus) => {
+      setRetentionOutcomeReachStatus(status);
+      setRetentionOutcomeResponse("");
+      setRetentionOutcomeNextAction("");
+      setRetentionOutcomeFollowUpDate("");
+      setRetentionOutcomeFollowUpTime("");
     };
 
     const selectNextAction = (action: typeof retentionOutcomeNextAction, orderId: string) => {
@@ -39980,13 +39991,24 @@ ${waybillLineItems(w).length > 1
       setRetentionOutcomeSaving(true);
       try {
         if (retentionOutcomeReachStatus !== "reached") {
+          let retryAt: string | undefined;
+          if (retentionOutcomeNextAction === "schedule_follow_up") {
+            if (!retentionOutcomeFollowUpDate) {
+              showToast("Choose when the rep should retry this customer.");
+              setRetentionOutcomeSaving(false);
+              return;
+            }
+            retryAt = new Date(`${retentionOutcomeFollowUpDate}T${retentionOutcomeFollowUpTime || "09:00"}:00`).toISOString();
+          }
           await customerRetentionApi.logTouchpoint({
             orderId: row.orderId,
             stage: baseStageFor(row.dueStage),
             reachStatus: retentionOutcomeReachStatus,
+            nextAction: retentionOutcomeNextAction === "schedule_follow_up" ? "schedule_follow_up" : undefined,
+            nextActionAt: retryAt,
             nextActionNote: retentionOutcomeNote.trim() || undefined
           });
-          showToast("Contact attempt logged.");
+          showToast(retryAt ? "Contact attempt logged and retry scheduled." : "Contact attempt logged.");
           closeLogOutcome();
           void loadRetentionWorklist(); void loadRetentionBonusSummary(); void loadRetentionDashboardSummary();
           return;
@@ -41530,7 +41552,7 @@ ${waybillLineItems(w).length > 1
 
       {logOutcomeRow && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4 overflow-y-auto" onClick={closeLogOutcome}>
-          <section className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <section className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 bg-white px-5 py-4 border-b border-gray-100 flex items-center justify-between z-10">
               <div>
                 <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Log Outcome</p>
@@ -41539,16 +41561,17 @@ ${waybillLineItems(w).length > 1
               <button type="button" className="!min-h-0 rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600" onClick={closeLogOutcome}><X className="w-4 h-4" /></button>
             </div>
             <div className="p-5 space-y-4">
-              <div>
-                <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Reach Status</span>
-                <div className="flex flex-wrap gap-2">
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">1. Contact result</span>
+                <p className="mt-1 text-xs text-gray-500">Did the rep speak with the customer during this contact attempt?</p>
+                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {([
-                    ["reached", "Reached"],
-                    ["not_reached", "Not Reached"],
-                    ["not_reachable", "Number Not Reachable"],
+                    ["reached", "Spoke with customer"],
+                    ["not_reached", "No answer"],
+                    ["not_reachable", "Number unavailable"],
                     ["wrong_number", "Wrong Number"]
                   ] as const).map(([value, label]) => (
-                    <button key={value} type="button" onClick={() => setRetentionOutcomeReachStatus(value)} className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionOutcomeReachStatus === value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}>{label}</button>
+                    <button key={value} type="button" onClick={() => selectReachStatus(value)} className={`!min-h-0 min-w-0 rounded-lg border px-2 py-2.5 text-xs font-bold ${retentionOutcomeReachStatus === value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}>{label}</button>
                   ))}
                 </div>
               </div>
@@ -41556,7 +41579,8 @@ ${waybillLineItems(w).length > 1
               {retentionOutcomeReachStatus === "reached" && (
                 <>
                   <div>
-                    <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-gray-500">What happened?</span>
+                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">2. How was the customer?</span>
+                    <p className="mb-2 text-xs text-gray-500">Record their experience, then choose the correct next action.</p>
                     <div className="grid grid-cols-3 gap-2">
                       {([
                         { value: "satisfied", label: "Satisfied", Icon: Smile, active: "border-emerald-500 bg-emerald-50 text-emerald-800", icon: "text-emerald-600" },
@@ -41708,6 +41732,61 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
                 </>
+              )}
+
+              {retentionOutcomeReachStatus && retentionOutcomeReachStatus !== "reached" && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-3">
+                  <div>
+                    <span className="block text-xs font-bold uppercase tracking-wide text-amber-800">2. What happens next?</span>
+                    <p className="mt-1 text-xs text-amber-800/80">
+                      Satisfaction does not apply because the customer was not reached. Save the attempt now or schedule a retry.
+                    </p>
+                  </div>
+                  {retentionOutcomeReachStatus === "wrong_number" ? (
+                    <p className="rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-700">
+                      This records the bad number for review. It does not mark the customer satisfied, contacted, or permanently opted out.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setRetentionOutcomeNextAction("")}
+                          className={`!min-h-0 rounded-lg border px-3 py-2.5 text-xs font-bold ${
+                            retentionOutcomeNextAction !== "schedule_follow_up"
+                              ? "border-amber-400 bg-white text-amber-900"
+                              : "border-gray-200 bg-white text-gray-600"
+                          }`}
+                        >
+                          Log attempt only
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRetentionOutcomeNextAction("schedule_follow_up")}
+                          className={`!min-h-0 rounded-lg border px-3 py-2.5 text-xs font-bold ${
+                            retentionOutcomeNextAction === "schedule_follow_up"
+                              ? "border-[#1F8FE0] bg-sky-50 text-sky-800"
+                              : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"
+                          }`}
+                        >
+                          Schedule a retry
+                        </button>
+                      </div>
+                      {retentionOutcomeNextAction === "schedule_follow_up" && (
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <label className="space-y-1">
+                            <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Retry date</span>
+                            <input type="date" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOutcomeFollowUpDate} onChange={(e) => setRetentionOutcomeFollowUpDate(e.target.value)} />
+                          </label>
+                          <label className="space-y-1">
+                            <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Retry time</span>
+                            <input type="time" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" value={retentionOutcomeFollowUpTime} onChange={(e) => setRetentionOutcomeFollowUpTime(e.target.value)} />
+                          </label>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
               )}
 
               <label className="space-y-1 block">

@@ -117,6 +117,19 @@ const checks = [
     ]
   },
   {
+    name: "Complete retention outcome workflow",
+    why: "Log Outcome must open on the reached-customer satisfaction flow while preserving explicit no-answer, unavailable-number, wrong-number, and retry outcomes.",
+    required: [
+      "setRetentionOutcomeReachStatus(\"reached\")",
+      "Spoke with customer",
+      "No answer",
+      "Number unavailable",
+      "2. How was the customer?",
+      "Schedule a retry",
+      "Contact attempt logged and retry scheduled."
+    ]
+  },
+  {
     name: "Sales rep motivator bonus coach",
     why: "The first Sales Rep Motivator Bonus UX must stay as the simple four-card coach; owner/admin bonus challenge settings belong in the original Payroll controls.",
     required: [
