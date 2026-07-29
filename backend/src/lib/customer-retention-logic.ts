@@ -33,6 +33,29 @@ export interface RetentionTouchpointRecord {
   referral_collected: boolean | null;
   retention_outcome: "accepted" | "declined" | "no_response" | null;
   logged_at: string;
+  next_action?: string | null;
+  next_action_at?: string | null;
+  next_action_note?: string | null;
+}
+
+export type ScheduledFollowUpStatus = "scheduled" | "due" | "overdue";
+
+export function scheduledFollowUpFor(
+  touchpoints: RetentionTouchpointRecord[],
+  todayIso: string
+): { nextActionAt: string; note: string | null; status: ScheduledFollowUpStatus; overdueBy: number } | null {
+  const latest = touchpoints.length > 0 ? touchpoints[touchpoints.length - 1] : null;
+  if (latest?.next_action !== "schedule_follow_up" || !latest.next_action_at) return null;
+
+  const targetKey = dayKey(latest.next_action_at);
+  const todayKey = dayKey(todayIso);
+  const overdueBy = Math.max(0, daysBetween(targetKey, todayKey));
+  return {
+    nextActionAt: latest.next_action_at,
+    note: latest.next_action_note ?? null,
+    status: targetKey < todayKey ? "overdue" : targetKey === todayKey ? "due" : "scheduled",
+    overdueBy
+  };
 }
 
 // A stage only counts as "handled" once a row carries a real completion

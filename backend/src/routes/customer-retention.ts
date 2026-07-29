@@ -8,7 +8,7 @@ import { resolveDateBounds } from "../lib/date-bounds.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import { fetchAllRows } from "../lib/paginated-query.js";
 import {
-  dueStageFor, priorityBandFor, compareByPriority, dayKey, daysBetween, NEGATIVE_SATISFACTION_OUTCOMES,
+  dueStageFor, scheduledFollowUpFor, priorityBandFor, compareByPriority, dayKey, daysBetween, NEGATIVE_SATISFACTION_OUTCOMES,
   DEFAULT_RETENTION_TIMING, type RetentionTouchpointRecord, type RetentionTiming
 } from "../lib/customer-retention-logic.js";
 
@@ -18,6 +18,14 @@ router.use(requireAuth);
 const RETENTION_ROLES = ["Owner", "Admin", "Manager", "Recovery Rep"] as const;
 const RETENTION_SUPERVISOR_ROLES = new Set(["Owner", "Admin", "Manager"]);
 const NON_REACH_STATUSES = new Set(["not_reached", "not_reachable", "wrong_number"]);
+const ACTION_EVENTS_TABLE = "customer_retention_action_events";
+
+function isMissingActionEventsTable(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  return error.code === "42P01"
+    || error.code === "PGRST205"
+    || /customer_retention_action_events.*(does not exist|schema cache)/i.test(error.message ?? "");
+}
 
 function retentionRepScope(role: string, userId: string, requested: unknown): string | null {
   if (!RETENTION_SUPERVISOR_ROLES.has(role)) return userId;
@@ -157,7 +165,8 @@ type WorklistRow = {
   orderAmount: number; orderCurrency: string; productName: string;
   assignedRepId: string | null; assignedRepName: string | null;
   lastTouchpoint: { stage: string; loggedAt: string; satisfactionOutcome: string | null } | null;
-  lastContactAt: string | null; nextActionAt: string | null; nextActionNote: string | null;
+  lastContactAt: string | null; nextAction: string | null; nextActionAt: string | null; nextActionNote: string | null;
+  followUpStatus: "scheduled" | "due" | "overdue" | null;
   discountOwed: boolean; reviewRequested: boolean; reviewCollected: boolean; referralRequested: boolean; referralCollected: boolean;
 };
 
@@ -167,7 +176,8 @@ type WorklistRow = {
 // so both endpoints agree on exactly which orders are "in the retention
 // lifecycle" and how their due-stage is derived.
 async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<typeof loadBonusSettings>>): Promise<WorklistRow[]> {
-  const today = dayKey(new Date().toISOString());
+  const nowIso = new Date().toISOString();
+  const today = dayKey(nowIso);
   const oldestRelevant = new Date();
   oldestRelevant.setUTCDate(oldestRelevant.getUTCDate() - 90);
 
@@ -242,10 +252,14 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
     const tps = (touchpointsByOrder.get(order.id) ?? []) as (RetentionTouchpointRecord & Record<string, any>)[];
     const deliveredKey = String(order.delivered_date).slice(0, 10);
     const timing = (order.product_id && timingByProductId.get(order.product_id)) || DEFAULT_RETENTION_TIMING;
-    const { dueStage, overdueBy } = dueStageFor(deliveredKey, today, tps, timing);
+    const lifecycleDue = dueStageFor(deliveredKey, today, tps, timing);
+    const followUp = scheduledFollowUpFor(tps, nowIso);
+    const dueStage = lifecycleDue.dueStage;
+    const overdueBy = followUp ? followUp.overdueBy : lifecycleDue.overdueBy;
     const orderAmount = Number(order.amount ?? 0);
-    const priorityBand = priorityBandFor({ dueStage, overdueBy, orderAmount }, settings);
     const last = tps.length > 0 ? tps[tps.length - 1] : null;
+    let priorityBand = priorityBandFor({ dueStage, overdueBy, orderAmount }, settings);
+    if (dueStage !== "needs_resolution" && followUp?.status === "overdue") priorityBand = "overdue";
     const discountOwed = tps.some((t) => t.customer_discount_owed && !t.customer_discount_cleared_at);
     const reviewRequested = tps.some((t) => !!t.review_requested_at);
     const reviewCollected = tps.some((t) => t.review_collected);
@@ -268,8 +282,10 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
       assignedRepName: recoveryRepId ? (repNameById.get(recoveryRepId) ?? null) : null,
       lastTouchpoint: last ? { stage: last.stage, loggedAt: last.logged_at, satisfactionOutcome: last.satisfaction_outcome } : null,
       lastContactAt,
-      nextActionAt: last?.next_action_at ?? null,
-      nextActionNote: last?.next_action_note ?? null,
+      nextAction: followUp ? "schedule_follow_up" : (last?.next_action ?? null),
+      nextActionAt: followUp?.nextActionAt ?? null,
+      nextActionNote: followUp?.note ?? null,
+      followUpStatus: followUp?.status ?? null,
       discountOwed,
       reviewRequested, reviewCollected, referralRequested, referralCollected
     };
@@ -293,7 +309,7 @@ router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
       // "all" means "everything actionable" - rows with no due stage (fully
       // progressed / not yet eligible) are noise in a work queue and are
       // still reachable individually via the stage-specific filters.
-      .filter((row) => (stageFilter === "all" ? row.dueStage !== null : row.dueStage === stageFilter))
+      .filter((row) => (stageFilter === "all" ? row.dueStage !== null || row.followUpStatus !== null : row.dueStage === stageFilter))
       .filter((row) => !search || row.customerName.toLowerCase().includes(search) || String(row.phone).includes(search) || row.orderId.toLowerCase().includes(search))
       .filter((row) => minValue === null || row.orderAmount >= minValue)
       .filter((row) => !priorityFilter || row.priorityBand === priorityFilter)
@@ -379,6 +395,60 @@ router.patch("/order/:orderId/assignment", requireRole("Owner", "Admin", "Manage
   }
 });
 
+const RetentionActionEventSchema = z.object({
+  orderId: z.string().min(1),
+  actionType: z.enum(["call", "whatsapp"]),
+  context: z.string().trim().min(1).max(80).optional()
+});
+
+router.post("/action-events", requireRole(...RETENTION_ROLES), async (req, res) => {
+  const parsed = RetentionActionEventSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
+  try {
+    const orgId = req.user!.orgId;
+    const { data: order, error: orderError } = await supabase
+      .from("orders")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("id", parsed.data.orderId)
+      .maybeSingle();
+    if (orderError) { res.status(500).json({ error: orderError.message }); return; }
+    if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+
+    const assignedRepId = await retentionRepForOrder(orgId, parsed.data.orderId);
+    if (!canAccessAssignedRetentionOrder(req.user!.role, req.user!.id, assignedRepId)) {
+      res.status(403).json({ error: "This retention order is not assigned to you." });
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from(ACTION_EVENTS_TABLE)
+      .insert({
+        org_id: orgId,
+        order_id: parsed.data.orderId,
+        action_type: parsed.data.actionType,
+        context: parsed.data.context ?? "worklist",
+        logged_by: req.user!.id
+      })
+      .select("id, order_id, action_type, context, logged_by, logged_at")
+      .single();
+    if (error) {
+      if (isMissingActionEventsTable(error)) {
+        res.status(503).json({ error: "Retention action auditing is still being activated. The customer contact action was not blocked." });
+        return;
+      }
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(201).json({ row: data });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not record the retention action." });
+  }
+});
+
 router.get("/order/:orderId/retention-suggestion", requireRole(...RETENTION_ROLES), async (req, res) => {
   try {
     const orgId = req.user!.orgId;
@@ -419,7 +489,7 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
 
     const { data: allOrders, error } = await fetchAllRows<any>((from, to) => supabase
       .from("orders")
-      .select("id, customer, phone, city, state, product_name, package_name, amount, currency, status, delivered_date, created_at")
+      .select("id, customer, phone, city, state, product_id, product_name, package_name, amount, currency, status, delivered_date, created_at")
       .eq("org_id", orgId)
       .order("id", { ascending: true })
       .range(from, to));
@@ -442,16 +512,22 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
     const latestOrder = byCreatedDesc[0];
     const delivered = orders.filter((o) => o.status === "Delivered");
     const totalSpent = delivered.reduce((sum, o) => sum + Number(o.amount ?? 0), 0);
-    const latestDelivered = [...delivered].sort((a, b) => String(b.delivered_date ?? "").localeCompare(String(a.delivered_date ?? "")))[0] ?? null;
 
     const orderIds = orders.map((o) => o.id);
     const { data: touchpointRows } = await supabase
       .from("customer_retention_touchpoints")
-      .select("order_id, stage, satisfaction_outcome, satisfaction_notes, review_collected, review_is_video, referral_collected, retention_outcome, resulting_order_id, logged_at, reach_status, review_requested_at, referral_requested_at")
+      .select("order_id, stage, satisfaction_outcome, satisfaction_notes, review_collected, review_is_video, referral_collected, retention_outcome, resulting_order_id, logged_at, reach_status, customer_response, next_action, next_action_at, next_action_note, review_requested_at, referral_requested_at")
       .eq("org_id", orgId)
       .in("order_id", orderIds)
       .order("logged_at", { ascending: true });
     const tps = touchpointRows ?? [];
+    const { data: actionEventRows } = await supabase
+      .from(ACTION_EVENTS_TABLE)
+      .select("order_id, action_type, context, logged_at")
+      .eq("org_id", orgId)
+      .in("order_id", orderIds)
+      .order("logged_at", { ascending: true });
+    const actionEvents = actionEventRows ?? [];
 
     // Decision B: Protohub has no order-level "Returned" concept - this is
     // a real, defensible proxy, never silently labeled "Returns" on the
@@ -462,9 +538,22 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
     for (const o of delivered) {
       if (o.delivered_date) timeline.push({ type: "order_delivered", at: `${o.delivered_date}T00:00:00`, detail: `Order #${o.id} delivered (${o.product_name})` });
     }
+    const ordersWithReportedIssues = new Set<string>();
     for (const t of tps) {
+      let hasPrimaryEvent = false;
       if (t.stage === "satisfaction_check" && t.satisfaction_outcome) {
-        timeline.push({ type: "satisfaction_check", at: t.logged_at, detail: `Satisfaction check: ${String(t.satisfaction_outcome).replace(/_/g, " ")}${t.satisfaction_notes ? " — " + t.satisfaction_notes : ""}` });
+        const outcome = String(t.satisfaction_outcome);
+        const isIssue = NEGATIVE_SATISFACTION_OUTCOMES.has(outcome);
+        const resolvedEarlierIssue = !isIssue && ordersWithReportedIssues.has(t.order_id);
+        if (isIssue) ordersWithReportedIssues.add(t.order_id);
+        timeline.push({
+          type: isIssue ? "issue_reported" : resolvedEarlierIssue ? "issue_resolved" : "satisfaction_check",
+          at: t.logged_at,
+          detail: resolvedEarlierIssue
+            ? `Issue resolved: ${outcome.replace(/_/g, " ")}${t.satisfaction_notes ? " - " + t.satisfaction_notes : ""}`
+            : `Satisfaction check: ${outcome.replace(/_/g, " ")}${t.satisfaction_notes ? " - " + t.satisfaction_notes : ""}`
+        });
+        hasPrimaryEvent = true;
       } else if (t.stage === "review_referral") {
         // A request and its eventual collection are two distinct moments
         // (Decision D) - show "requested" only while still outstanding, so
@@ -475,34 +564,131 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
         if (t.referral_requested_at && !t.referral_collected) timeline.push({ type: "referral_requested", at: t.referral_requested_at, detail: "Referral requested" });
         if (t.review_collected) timeline.push({ type: "review_collected", at: t.logged_at, detail: t.review_is_video ? "Video testimonial collected" : "Written review collected" });
         if (t.referral_collected) timeline.push({ type: "referral_collected", at: t.logged_at, detail: "Referral collected" });
-        if (!t.review_collected && !t.referral_collected && !t.review_requested_at && !t.referral_requested_at && t.reach_status) {
-          timeline.push({ type: "note", at: t.logged_at, detail: `Contact attempt (${String(t.reach_status).replace("_", " ")})` });
-        }
+        hasPrimaryEvent = !!(t.review_requested_at || t.referral_requested_at || t.review_collected || t.referral_collected);
       } else if (t.stage === "retention_sale" && t.retention_outcome) {
         timeline.push({ type: "retention_sale_attempt", at: t.logged_at, detail: `Retention sale ${t.retention_outcome}${t.resulting_order_id ? " — order #" + t.resulting_order_id : ""}` });
+        hasPrimaryEvent = true;
+      }
+
+      if (t.next_action === "schedule_follow_up" && t.next_action_at) {
+        const scheduledFor = new Date(t.next_action_at).toLocaleString("en-NG", {
+          timeZone: "Africa/Lagos",
+          dateStyle: "medium",
+          timeStyle: "short"
+        });
+        timeline.push({
+          type: "follow_up_scheduled",
+          at: t.logged_at,
+          detail: `Follow-up scheduled for ${scheduledFor}${t.next_action_note ? " - " + t.next_action_note : ""}`
+        });
+        hasPrimaryEvent = true;
+      } else if (t.next_action === "do_not_contact") {
+        timeline.push({ type: "do_not_contact", at: t.logged_at, detail: `Customer marked Do Not Contact${t.next_action_note ? " - " + t.next_action_note : ""}` });
+        hasPrimaryEvent = true;
+      } else if (t.next_action === "not_interested") {
+        timeline.push({ type: "not_interested", at: t.logged_at, detail: `Customer is not interested${t.next_action_note ? " - " + t.next_action_note : ""}` });
+        hasPrimaryEvent = true;
+      } else if (t.next_action === "needs_resolution" && !hasPrimaryEvent) {
+        timeline.push({ type: "issue_reported", at: t.logged_at, detail: `Issue needs resolution${t.next_action_note ? " - " + t.next_action_note : ""}` });
+        hasPrimaryEvent = true;
+      }
+
+      if (!hasPrimaryEvent && t.reach_status) {
+        timeline.push({ type: "contact_attempt", at: t.logged_at, detail: `Contact attempt (${String(t.reach_status).replace(/_/g, " ")})${t.next_action_note ? " - " + t.next_action_note : ""}` });
+      } else if (
+        hasPrimaryEvent
+        && t.stage !== "satisfaction_check"
+        && t.next_action_note
+        && t.next_action !== "schedule_follow_up"
+        && t.next_action !== "do_not_contact"
+        && t.next_action !== "not_interested"
+      ) {
+        timeline.push({ type: "outcome_note", at: t.logged_at, detail: t.next_action_note });
       }
     }
-    timeline.sort((a, b) => b.at.localeCompare(a.at));
+    for (const event of actionEvents) {
+      timeline.push({
+        type: event.action_type === "whatsapp" ? "whatsapp_opened" : "call_opened",
+        at: event.logged_at,
+        detail: event.action_type === "whatsapp"
+          ? "WhatsApp conversation opened"
+          : "Customer call opened"
+      });
+    }
+    timeline.sort((a, b) => a.at.localeCompare(b.at));
 
-    let nextAction: { recommendedText: string; dueStage: string | null; orderId: string | null } = {
-      recommendedText: "No delivered order to follow up on yet.", dueStage: null, orderId: null
+    let nextAction: { recommendedText: string; dueStage: string | null; orderId: string | null; dueAt: string | null; source: string } = {
+      recommendedText: "No delivered order to follow up on yet.", dueStage: null, orderId: null, dueAt: null, source: "lifecycle"
     };
-    if (latestDelivered?.delivered_date) {
-      const today = dayKey(new Date().toISOString());
-      const relevantTps = tps.filter((t) => t.order_id === latestDelivered.id) as any;
-      const { dueStage, overdueBy } = dueStageFor(String(latestDelivered.delivered_date).slice(0, 10), today, relevantTps);
-      const action =
-        dueStage === "needs_resolution" ? "Resolve this customer's complaint"
-        : dueStage === "satisfaction_check" ? "Run a satisfaction check"
-        : dueStage === "review_referral" ? "Ask for a review or referral"
-        : dueStage === "retention_sale" ? "Offer a repeat-purchase product"
-        : dueStage === "win_back" ? "Attempt a win-back offer"
-        : null;
-      const recommendedText = action === null ? "No action currently due."
-        : dueStage === "needs_resolution" ? `${action} now.`
-        : overdueBy > 0 ? `${action} — ${overdueBy}d overdue.`
-        : `${action} — due today.`;
-      nextAction = { recommendedText, dueStage, orderId: latestDelivered.id };
+    if (delivered.length > 0) {
+      const nowIso = new Date().toISOString();
+      const today = dayKey(nowIso);
+      const productIds = [...new Set(delivered.map((order) => order.product_id).filter(Boolean))] as string[];
+      const { data: timingRows } = productIds.length > 0
+        ? await supabase.from("products").select("id, retention_timing_overrides").in("id", productIds)
+        : { data: [] as Array<{ id: string; retention_timing_overrides: Partial<RetentionTiming> | null }> };
+      const timingByProductId = new Map(
+        (timingRows ?? []).map((product) => [product.id, { ...DEFAULT_RETENTION_TIMING, ...(product.retention_timing_overrides ?? {}) }])
+      );
+      const actionCandidates = delivered
+        .filter((order) => order.delivered_date)
+        .map((order) => {
+          const relevantTps = tps.filter((t) => t.order_id === order.id) as any;
+          const timing = (order.product_id && timingByProductId.get(order.product_id)) || DEFAULT_RETENTION_TIMING;
+          const lifecycle = dueStageFor(String(order.delivered_date).slice(0, 10), today, relevantTps, timing);
+          const scheduled = scheduledFollowUpFor(relevantTps, nowIso);
+          const rank =
+            lifecycle.dueStage === "needs_resolution" ? 0
+            : scheduled?.status === "overdue" ? 1
+            : lifecycle.overdueBy > 0 ? 2
+            : scheduled?.status === "due" ? 3
+            : lifecycle.dueStage !== null ? 4
+            : scheduled?.status === "scheduled" ? 5
+            : 6;
+          return { order, relevantTps, lifecycle, scheduled, rank };
+        })
+        .sort((a, b) =>
+          a.rank - b.rank
+          || b.lifecycle.overdueBy - a.lifecycle.overdueBy
+          || String(a.scheduled?.nextActionAt ?? "").localeCompare(String(b.scheduled?.nextActionAt ?? ""))
+          || String(b.order.delivered_date).localeCompare(String(a.order.delivered_date))
+        );
+      const selected = actionCandidates[0];
+      const selectedOrder = selected.order;
+      const { dueStage, overdueBy } = selected.lifecycle;
+      const scheduled = selected.scheduled;
+      if (scheduled) {
+        const scheduledFor = new Date(scheduled.nextActionAt).toLocaleString("en-NG", {
+          timeZone: "Africa/Lagos",
+          dateStyle: "medium",
+          timeStyle: "short"
+        });
+        const recommendedText = scheduled.status === "overdue"
+          ? `Scheduled follow-up was due ${scheduledFor}. Contact the customer now.`
+          : scheduled.status === "due"
+            ? `Follow up with this customer today at ${scheduledFor.split(", ").pop() ?? scheduledFor}.`
+            : `Follow up with this customer on ${scheduledFor}.`;
+        nextAction = {
+          recommendedText,
+          dueStage,
+          orderId: selectedOrder.id,
+          dueAt: scheduled.nextActionAt,
+          source: "scheduled_follow_up"
+        };
+      } else {
+        const action =
+          dueStage === "needs_resolution" ? "Resolve this customer's complaint"
+          : dueStage === "satisfaction_check" ? "Run a satisfaction check"
+          : dueStage === "review_referral" ? "Ask for a review or referral"
+          : dueStage === "retention_sale" ? "Offer a repeat-purchase product"
+          : dueStage === "win_back" ? "Attempt a win-back offer"
+          : null;
+        const recommendedText = action === null ? "No action currently due."
+          : dueStage === "needs_resolution" ? `${action} now.`
+          : overdueBy > 0 ? `${action} - ${overdueBy}d overdue.`
+          : `${action} - due today.`;
+        nextAction = { recommendedText, dueStage, orderId: selectedOrder.id, dueAt: null, source: "lifecycle" };
+      }
     }
 
     // Simple, defensible status label (not a stored field) - "Needs
@@ -789,8 +975,14 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     // the retention window, same rows the worklist itself uses.
     const allRows = await loadWorklistRows(orgId, settings);
     const scopedRows = repId ? allRows.filter((row) => row.assignedRepId === repId) : allRows;
-    const dueToday = scopedRows.filter((r) => r.dueStage !== null && r.dueStage !== "needs_resolution" && r.overdueBy === 0).length;
-    const overdue = scopedRows.filter((r) => r.overdueBy > 0).length;
+    const dueToday = scopedRows.filter((r) =>
+      r.followUpStatus === "due"
+      || (r.followUpStatus === null && r.dueStage !== null && r.dueStage !== "needs_resolution" && r.overdueBy === 0)
+    ).length;
+    const overdue = scopedRows.filter((r) =>
+      r.followUpStatus === "overdue"
+      || (r.followUpStatus === null && r.overdueBy > 0)
+    ).length;
     const lifecyclePipeline = {
       delivered: scopedRows.length,
       satisfactionDue: scopedRows.filter((r) => r.dueStage === "satisfaction_check").length,
@@ -897,7 +1089,16 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     const repActivity = activity.filter((r) => r.logged_by === performanceRepId);
     const repBonusResult = repId === performanceRepId ? bonusResult : await computeBonusBreakdown(orgId, settings, start, exclusiveEnd, performanceRepId);
 
-    const tasksAssigned = new Set(repActivity.map((r) => r.order_id)).size;
+    const assignedTaskOrderIds = new Set([
+      ...allRows
+        .filter((row) =>
+          row.assignedRepId === performanceRepId
+          && (row.dueStage !== null || row.followUpStatus !== null)
+        )
+        .map((row) => row.orderId),
+      ...repActivity.map((row) => row.order_id)
+    ]);
+    const tasksAssigned = assignedTaskOrderIds.size;
     const completedStageOrderIds = new Set(
       repActivity.filter((r) =>
         (r.stage === "satisfaction_check" && r.satisfaction_outcome) ||
@@ -915,30 +1116,40 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
 
     const repRetentionSaleRows = repActivity.filter((r) => r.stage === "retention_sale" && r.retention_outcome === "accepted" && r.resulting_order_id);
     let revenueOverTime: Array<{ label: string; current: number }> = [];
-    // "Revenue by Source" per the spec is Repeat Sales/Referrals/Other -
-    // but only accepted retention-sale offers carry a resulting order's
-    // revenue in this data model (referrals don't have their own tracked
-    // resulting-order revenue yet). Broken down by the offered product
-    // instead - a real, computable "what drives repeat revenue" view,
-    // rather than fabricating a referral-revenue figure that isn't tracked.
+    // Revenue source comes from the resulting order. Older retention orders
+    // with no explicit source remain under Repeat Sales instead of being
+    // attributed to a referral or review without evidence.
     let revenueBySource: Array<{ label: string; amount: number; pct: number }> = [];
     let repRetentionRevenue = 0;
     if (repRetentionSaleRows.length > 0) {
       const resultingIds = repRetentionSaleRows.map((r) => r.resulting_order_id as string);
-      const { data: resultOrders } = await supabase.from("orders").select("id, amount, product_name").in("id", resultingIds);
-      const infoById = new Map((resultOrders ?? []).map((o) => [o.id, { amount: Number(o.amount ?? 0), productName: String(o.product_name ?? "Unknown product") }]));
+      const { data: resultOrders } = await supabase.from("orders").select("id, amount, source").in("id", resultingIds);
+      const infoById = new Map((resultOrders ?? []).map((o) => [o.id, {
+        amount: Number(o.amount ?? 0),
+        source: String(o.source ?? "")
+      }]));
       const byDay = new Map<string, number>();
-      const byProduct = new Map<string, number>();
+      const bySource = new Map<string, number>();
       for (const r of repRetentionSaleRows) {
         const info = infoById.get(r.resulting_order_id as string);
         if (!info) continue;
         const day = dayKey(r.logged_at);
         byDay.set(day, (byDay.get(day) ?? 0) + info.amount);
-        byProduct.set(info.productName, (byProduct.get(info.productName) ?? 0) + info.amount);
+        const normalizedSource = info.source.toLowerCase();
+        const sourceLabel = normalizedSource.includes("referral")
+          ? "Referrals"
+          : normalizedSource.includes("review") || normalizedSource.includes("testimonial")
+            ? "Reviews"
+            : normalizedSource.includes("win")
+              ? "Win-back"
+              : normalizedSource.includes("cross")
+                ? "Retention Cross-sell"
+                : "Repeat Sales";
+        bySource.set(sourceLabel, (bySource.get(sourceLabel) ?? 0) + info.amount);
         repRetentionRevenue += info.amount;
       }
       revenueOverTime = Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([day, amount]) => ({ label: day.slice(5), current: amount }));
-      revenueBySource = Array.from(byProduct.entries())
+      revenueBySource = Array.from(bySource.entries())
         .sort((a, b) => b[1] - a[1])
         .map(([label, amount]) => ({ label, amount, pct: repRetentionRevenue > 0 ? Math.round((amount / repRetentionRevenue) * 100) : 0 }));
     }
@@ -971,14 +1182,25 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     }> | undefined;
     if (["Owner", "Admin", "Manager"].includes(req.user!.role)) {
       const amountByResultingOrderId = new Map(bonusResult.retentionSalesConverted.map((r) => [r.resultingOrderId, r.amount]));
-      const distinctReps = [...new Set(activity.map((r) => r.logged_by).filter(Boolean))] as string[];
+      const distinctReps = [...new Set([
+        ...allRows.map((row) => row.assignedRepId).filter(Boolean),
+        ...activity.map((r) => r.logged_by).filter(Boolean)
+      ])] as string[];
       const { data: breakdownUsers } = distinctReps.length > 0
         ? await supabase.from("users").select("id, name").in("id", distinctReps)
         : { data: [] as { id: string; name: string }[] };
       const breakdownNameById = new Map((breakdownUsers ?? []).map((u) => [u.id, u.name]));
       repBreakdown = await Promise.all(distinctReps.map(async (id) => {
         const rows = activity.filter((r) => r.logged_by === id);
-        const assigned = new Set(rows.map((r) => r.order_id)).size;
+        const assigned = new Set([
+          ...allRows
+            .filter((row) =>
+              row.assignedRepId === id
+              && (row.dueStage !== null || row.followUpStatus !== null)
+            )
+            .map((row) => row.orderId),
+          ...rows.map((row) => row.order_id)
+        ]).size;
         const completed = new Set(rows.filter((r) =>
           (r.stage === "satisfaction_check" && r.satisfaction_outcome) ||
           (r.stage === "review_referral" && (r.review_collected || r.referral_collected)) ||
@@ -1058,21 +1280,41 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
     const { data: touchpoints, error } = await query;
     if (error) { res.status(500).json({ error: error.message }); return; }
     const rows = touchpoints ?? [];
-    if (rows.length === 0) { res.json({ rows: [] }); return; }
 
-    const orderIds = [...new Set(rows.map((r) => r.order_id))];
+    let actionRows: any[] = [];
+    if (!stageFilter) {
+      let actionQuery = supabase
+        .from(ACTION_EVENTS_TABLE)
+        .select("id, order_id, action_type, context, logged_by, logged_at")
+        .eq("org_id", orgId)
+        .gte("logged_at", `${start}T00:00:00`)
+        .lt("logged_at", `${exclusiveEnd}T00:00:00`)
+        .order("logged_at", { ascending: false })
+        .limit(200);
+      if (repId) actionQuery = actionQuery.eq("logged_by", repId);
+      const { data: events, error: actionError } = await actionQuery;
+      if (actionError && !isMissingActionEventsTable(actionError)) {
+        res.status(500).json({ error: actionError.message });
+        return;
+      }
+      actionRows = events ?? [];
+    }
+    if (rows.length === 0 && actionRows.length === 0) { res.json({ rows: [] }); return; }
+
+    const orderIds = [...new Set([...rows.map((r) => r.order_id), ...actionRows.map((r) => r.order_id)])];
     const { data: orders } = await supabase.from("orders").select("id, customer, phone, product_name").in("id", orderIds);
     const orderById = new Map((orders ?? []).map((o) => [o.id, o]));
 
-    const repIds = [...new Set(rows.map((r) => r.logged_by).filter(Boolean))] as string[];
+    const repIds = [...new Set([...rows.map((r) => r.logged_by), ...actionRows.map((r) => r.logged_by)].filter(Boolean))] as string[];
     const { data: repUsers } = repIds.length > 0 ? await supabase.from("users").select("id, name").in("id", repIds) : { data: [] as { id: string; name: string }[] };
     const repNameById = new Map((repUsers ?? []).map((u) => [u.id, u.name]));
 
-    const result = rows
+    const touchpointResult = rows
       .map((r) => {
         const order = orderById.get(r.order_id);
         return {
           id: r.id,
+          activityType: "outcome",
           orderId: r.order_id,
           customerName: order?.customer ?? "Unknown",
           phone: order?.phone ?? "",
@@ -1104,7 +1346,48 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
           retentionOutcome: r.retention_outcome,
           resultingOrderId: r.resulting_order_id
         };
-      })
+      });
+    const actionResult = actionRows.map((r) => {
+      const order = orderById.get(r.order_id);
+      return {
+        id: r.id,
+        activityType: r.action_type,
+        orderId: r.order_id,
+        customerName: order?.customer ?? "Unknown",
+        phone: order?.phone ?? "",
+        productName: order?.product_name ?? "",
+        stage: null,
+        loggedBy: r.logged_by,
+        loggedByName: r.logged_by ? (repNameById.get(r.logged_by) ?? "Unknown") : "Unknown",
+        loggedAt: r.logged_at,
+        context: r.context,
+        reachStatus: null,
+        customerResponse: null,
+        nextAction: null,
+        nextActionNote: null,
+        satisfactionOutcome: null,
+        satisfactionNotes: null,
+        reviewRequestedAt: null,
+        reviewCollected: false,
+        reviewIsVideo: false,
+        reviewText: null,
+        mediaUrls: [],
+        adPermissionGranted: false,
+        referralRequestedAt: null,
+        referralCollected: false,
+        referralContactName: null,
+        referralContactPhone: null,
+        customerDiscountOwed: false,
+        customerDiscountClearedAt: null,
+        offeredProductId: null,
+        offeredPackageId: null,
+        retentionOutcome: null,
+        resultingOrderId: null
+      };
+    });
+    const result = [...touchpointResult, ...actionResult]
+      .sort((a, b) => String(b.loggedAt).localeCompare(String(a.loggedAt)))
+      .slice(0, 200)
       .filter((r) => !search || r.customerName.toLowerCase().includes(search) || r.phone.includes(search) || r.orderId.toLowerCase().includes(search));
 
     res.json({ rows: result });

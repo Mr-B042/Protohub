@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   dueStageFor,
+  scheduledFollowUpFor,
   priorityBandFor,
   compareByPriority,
   daysBetween,
@@ -87,6 +88,46 @@ test("a retention_sale row with any outcome closes out that stage (no win_back a
     tp({ stage: "retention_sale", retention_outcome: "declined", logged_at: "2026-01-25T00:00:00Z" })
   ];
   assert.deepEqual(dueStageFor("2026-01-01", "2026-03-01", rows), { dueStage: null, overdueBy: 0 });
+});
+
+test("scheduledFollowUpFor keeps the latest scheduled follow-up actionable", () => {
+  const rows = [
+    tp({
+      next_action: "schedule_follow_up",
+      next_action_at: "2026-01-08T10:00:00Z",
+      next_action_note: "Customer asked for a morning call",
+      logged_at: "2026-01-04T00:00:00Z"
+    })
+  ];
+  assert.deepEqual(scheduledFollowUpFor(rows, "2026-01-07T15:00:00Z"), {
+    nextActionAt: "2026-01-08T10:00:00Z",
+    note: "Customer asked for a morning call",
+    status: "scheduled",
+    overdueBy: 0
+  });
+  assert.equal(scheduledFollowUpFor(rows, "2026-01-08T15:00:00Z")?.status, "due");
+  assert.deepEqual(scheduledFollowUpFor(rows, "2026-01-10T15:00:00Z"), {
+    nextActionAt: "2026-01-08T10:00:00Z",
+    note: "Customer asked for a morning call",
+    status: "overdue",
+    overdueBy: 2
+  });
+});
+
+test("scheduledFollowUpFor clears the schedule after a later logged outcome", () => {
+  const rows = [
+    tp({
+      next_action: "schedule_follow_up",
+      next_action_at: "2026-01-08T10:00:00Z",
+      logged_at: "2026-01-04T00:00:00Z"
+    }),
+    tp({
+      stage: "review_referral",
+      next_action: "request_review",
+      logged_at: "2026-01-08T10:30:00Z"
+    })
+  ];
+  assert.equal(scheduledFollowUpFor(rows, "2026-01-09T00:00:00Z"), null);
 });
 
 test("priorityBandFor: needs_resolution is always critical (P1) regardless of value/overdue", () => {

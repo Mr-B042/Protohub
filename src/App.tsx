@@ -80,6 +80,9 @@ import {
   ClipboardCheck,
   Phone,
   PhoneOff,
+  Smile,
+  Meh,
+  Frown,
   SkipForward,
   X,
   Zap,
@@ -39915,6 +39918,17 @@ ${waybillLineItems(w).length > 1
       setRetentionLoggingOrderId(orderId);
     };
 
+    const trackRetentionAction = (
+      orderId: string | null | undefined,
+      actionType: "call" | "whatsapp",
+      context: string
+    ) => {
+      if (!orderId) return;
+      // Opening the phone or WhatsApp must stay instant. Audit persistence is
+      // intentionally best-effort and never blocks the customer's contact flow.
+      void customerRetentionApi.trackAction({ orderId, actionType, context }).catch(() => undefined);
+    };
+
     const closeLogOutcome = () => {
       setRetentionLoggingOrderId(null);
       resetLogOutcomeForm();
@@ -39982,6 +39996,14 @@ ${waybillLineItems(w).length > 1
         if (!retentionOutcomeNextAction) { showToast("Choose a next action."); setRetentionOutcomeSaving(false); return; }
 
         if (retentionOutcomeNextAction === "do_not_contact") {
+          await customerRetentionApi.logTouchpoint({
+            orderId: row.orderId,
+            stage: baseStageFor(row.dueStage),
+            reachStatus: "reached",
+            customerResponse: retentionOutcomeResponse,
+            nextAction: "do_not_contact",
+            nextActionNote: retentionOutcomeNote.trim() || undefined
+          });
           await customerOptOutApi.optOut(row.phone, retentionOutcomeNote.trim() || "Requested via Customer Retention Log Outcome");
           showToast("Customer marked do-not-contact.");
           closeLogOutcome();
@@ -39992,7 +40014,7 @@ ${waybillLineItems(w).length > 1
         let nextActionAt: string | undefined;
         if (retentionOutcomeNextAction === "schedule_follow_up") {
           if (!retentionOutcomeFollowUpDate) { showToast("Choose a follow-up date."); setRetentionOutcomeSaving(false); return; }
-          nextActionAt = `${retentionOutcomeFollowUpDate}T${retentionOutcomeFollowUpTime || "09:00"}:00`;
+          nextActionAt = new Date(`${retentionOutcomeFollowUpDate}T${retentionOutcomeFollowUpTime || "09:00"}:00`).toISOString();
         }
 
         const common = {
@@ -40061,6 +40083,7 @@ ${waybillLineItems(w).length > 1
       : stage === "retention_sale" ? "Retention Sale Due"
       : stage === "win_back" ? "Win-back"
       : stage === "needs_resolution" ? "Needs Resolution"
+      : stage === "scheduled_follow_up" ? "Scheduled Follow-up"
       : "Not due yet";
 
     const stageTone = (stage: string | null) =>
@@ -40068,8 +40091,12 @@ ${waybillLineItems(w).length > 1
       : stage === "retention_sale" ? "border-violet-200 bg-violet-50 text-violet-700"
       : stage === "review_referral" ? "border-blue-200 bg-blue-50 text-blue-700"
       : stage === "satisfaction_check" ? "border-amber-200 bg-amber-50 text-amber-700"
+      : stage === "scheduled_follow_up" ? "border-sky-200 bg-sky-50 text-sky-700"
       : stage === "win_back" ? "border-slate-200 bg-slate-50 text-slate-700"
       : "border-gray-200 bg-gray-50 text-gray-500";
+
+    const displayedStageFor = (row: RetentionWorklistRow) =>
+      row.followUpStatus ? "scheduled_follow_up" : row.dueStage;
 
     const satisfactionOptions: Array<{ value: string; label: string }> = [
       { value: "satisfied", label: "Satisfied" },
@@ -40109,7 +40136,8 @@ ${waybillLineItems(w).length > 1
       : { emoji: "🟢", label: "Revenue Opportunity (P6)", class: "bg-emerald-50 text-emerald-700 border-emerald-200" };
 
     const nextActionLabelFor = (row: RetentionWorklistRow) =>
-      row.dueStage === "needs_resolution" ? "Resolve complaint"
+      row.followUpStatus ? "Scheduled follow-up"
+      : row.dueStage === "needs_resolution" ? "Resolve complaint"
       : row.dueStage === "satisfaction_check" ? "Run satisfaction check"
       : row.dueStage === "review_referral" ? (!row.reviewCollected ? "Request review" : "Request referral")
       : row.dueStage === "retention_sale" ? "Offer another product"
@@ -40124,6 +40152,12 @@ ${waybillLineItems(w).length > 1
     const nextActionInstructionFor = (row: RetentionWorklistRow) => {
       const label = nextActionLabelFor(row);
       if (label === "—") return label;
+      if (row.followUpStatus && row.nextActionAt) {
+        const when = new Date(row.nextActionAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+        if (row.followUpStatus === "overdue") return `Call now - scheduled for ${when}`;
+        if (row.followUpStatus === "due") return `Follow up today at ${new Date(row.nextActionAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+        return `Scheduled for ${when}`;
+      }
       if (row.dueStage === "needs_resolution") return `Call now — ${label.toLowerCase()}`;
       if (row.overdueBy > 0) return `Call now — ${row.overdueBy}d overdue`;
       if (row.dueStage !== null) return `${label} — due today`;
@@ -40148,11 +40182,11 @@ ${waybillLineItems(w).length > 1
     // Tasks = the must-do-now subset (P1-P5) - excludes the P6 "revenue
     // opportunity" tier (retention_sale/win_back), which is a longer-
     // horizon sales opportunity rather than an urgent task.
-    const actionableRetentionTasks = retentionWorklist.filter((row) => row.priorityBand !== "revenue_opportunity");
+    const actionableRetentionTasks = retentionWorklist.filter((row) => row.followUpStatus !== null || row.priorityBand !== "revenue_opportunity");
     const filteredRetentionTasks = applyRetentionFilters(actionableRetentionTasks.filter((row) =>
       retentionTaskFilter === "all"
-      || (retentionTaskFilter === "due_today" && row.overdueBy === 0)
-      || (retentionTaskFilter === "overdue" && row.overdueBy > 0)
+      || (retentionTaskFilter === "due_today" && (row.followUpStatus === "due" || (row.followUpStatus === null && row.overdueBy === 0)))
+      || (retentionTaskFilter === "overdue" && (row.followUpStatus === "overdue" || (row.followUpStatus === null && row.overdueBy > 0)))
       || (retentionTaskFilter === "complaints" && row.dueStage === "needs_resolution")
     ));
     const filteredRetentionWinBack = applyRetentionFilters(retentionWorklist.filter((row) => row.dueStage === "win_back"));
@@ -40257,14 +40291,14 @@ ${waybillLineItems(w).length > 1
                       <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span>
                     </div>
                     <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 space-y-0.5">
-                      <div>Stage: <strong className="text-gray-800">{stageLabel(row.dueStage)}</strong></div>
+                      <div>Stage: <strong className="text-gray-800">{stageLabel(displayedStageFor(row))}</strong></div>
                       <div>Last contact: {row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</div>
                       <div>Next action: <strong className="text-gray-800">{nextActionInstructionFor(row)}</strong></div>
                       <div>Value: {formatMoney(row.orderAmount)}</div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <a href={whatsappUrl} target="_blank" rel="noreferrer" className="!min-h-0 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp</a>
-                      <a href={`tel:${row.phone}`} className="!min-h-0 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"><Phone className="w-3.5 h-3.5" /> Call</a>
+                      <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "worklist_mobile")} className="!min-h-0 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp</a>
+                      <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "worklist_mobile")} className="!min-h-0 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"><Phone className="w-3.5 h-3.5" /> Call</a>
                       <button type="button" className="!min-h-0 ml-auto inline-flex items-center gap-1 rounded-md bg-[#1F8FE0] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8]" onClick={() => toggleLogging(row.orderId, row.dueStage)}>Log Outcome</button>
                     </div>
                   </article>
@@ -40299,14 +40333,14 @@ ${waybillLineItems(w).length > 1
                           </button>
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">#{row.orderId}<br />{row.productName}</td>
-                        <td className="px-4 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
+                        <td className="px-4 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(displayedStageFor(row))}`}>{stageLabel(displayedStageFor(row))}</span></td>
                         <td className="px-4 py-3 text-xs text-gray-600">{row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</td>
                         <td className={`px-4 py-3 text-xs font-semibold ${row.overdueBy > 0 || row.dueStage === "needs_resolution" ? "text-red-600" : "text-gray-800"}`}>{nextActionInstructionFor(row)}</td>
                         <td className="px-4 py-3 text-xs font-semibold text-gray-800">{formatMoney(row.orderAmount)}</td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
-                            <a href={whatsappUrl} target="_blank" rel="noreferrer" className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /></a>
-                            <a href={`tel:${row.phone}`} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><Phone className="w-3.5 h-3.5" /></a>
+                            <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "worklist_desktop")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /></a>
+                            <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "worklist_desktop")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><Phone className="w-3.5 h-3.5" /></a>
                             <button type="button" className="!min-h-0 inline-flex items-center rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8]" onClick={() => toggleLogging(row.orderId, row.dueStage)}>Log Outcome</button>
                           </div>
                         </td>
@@ -40516,18 +40550,20 @@ ${waybillLineItems(w).length > 1
           { label: "Repeat Sales", value: formatMoney(summary.kpis.repeatSalesRevenue), detail: `${summary.kpis.repeatCustomers} repeat customer${summary.kpis.repeatCustomers === 1 ? "" : "s"}`, icon: Repeat2, iconTone: "bg-green-50 text-green-700", valueTone: "text-green-700" }
         ];
         const stageOverdueCount = (predicate: (row: RetentionWorklistRow) => boolean) =>
-          retentionWorklist.filter((row) => predicate(row) && row.overdueBy > 0).length;
+          retentionWorklist.filter((row) => predicate(row) && (row.followUpStatus === "overdue" || (row.followUpStatus === null && row.overdueBy > 0))).length;
         const overviewLifecycleStages = [
           {
-            label: "Needs Resolution",
-            count: summary.lifecyclePipeline.needsResolution,
-            overdue: stageOverdueCount((row) => row.dueStage === "needs_resolution"),
-            stage: "needs_resolution" as const,
-            icon: AlertTriangle,
-            tone: "border-rose-200 bg-rose-50 text-rose-700"
+            label: "Delivered",
+            timing: "Journey starts",
+            count: summary.lifecyclePipeline.delivered,
+            overdue: 0,
+            stage: null,
+            icon: PackageCheck,
+            tone: "border-emerald-200 bg-emerald-50 text-emerald-700"
           },
           {
             label: "Satisfaction Check",
+            timing: "Day 2-4",
             count: summary.lifecyclePipeline.satisfactionDue,
             overdue: stageOverdueCount((row) => row.dueStage === "satisfaction_check"),
             stage: "satisfaction_check" as const,
@@ -40536,6 +40572,7 @@ ${waybillLineItems(w).length > 1
           },
           {
             label: "Review / Testimonial",
+            timing: "Day 7-14",
             count: summary.lifecyclePipeline.reviewDue,
             overdue: stageOverdueCount((row) => row.dueStage === "review_referral" && !row.reviewCollected),
             stage: "review_referral" as const,
@@ -40544,6 +40581,7 @@ ${waybillLineItems(w).length > 1
           },
           {
             label: "Referral",
+            timing: "Day 14-30",
             count: summary.lifecyclePipeline.referralDue,
             overdue: stageOverdueCount((row) => row.dueStage === "review_referral" && !row.referralCollected && row.daysSinceDelivery >= 14),
             stage: "review_referral" as const,
@@ -40552,6 +40590,7 @@ ${waybillLineItems(w).length > 1
           },
           {
             label: "Repeat Sale / Cross-sell",
+            timing: "Day 21-45",
             count: summary.lifecyclePipeline.retentionSaleDue,
             overdue: stageOverdueCount((row) => row.dueStage === "retention_sale"),
             stage: "retention_sale" as const,
@@ -40560,6 +40599,7 @@ ${waybillLineItems(w).length > 1
           },
           {
             label: "Win-back",
+            timing: "Day 45-90",
             count: summary.lifecyclePipeline.winBack,
             overdue: stageOverdueCount((row) => row.dueStage === "win_back"),
             stage: "win_back" as const,
@@ -40570,15 +40610,16 @@ ${waybillLineItems(w).length > 1
         const priorityRank = (band: RetentionWorklistRow["priorityBand"]) =>
           ["critical", "overdue", "high_value", "satisfaction_due", "review_referral_due", "revenue_opportunity"].indexOf(band);
         const overviewPriorityRows = [...retentionWorklist]
-          .filter((row) => row.dueStage !== null)
+          .filter((row) => row.dueStage !== null || row.followUpStatus !== null)
           .sort((a, b) => priorityRank(a.priorityBand) - priorityRank(b.priorityBand) || b.overdueBy - a.overdueBy || b.orderAmount - a.orderAmount)
           .slice(0, 5);
-        const overviewDueLabel = (row: RetentionWorklistRow) =>
-          row.overdueBy > 0
-            ? `${row.overdueBy}d overdue`
-            : row.nextActionAt
-              ? new Date(row.nextActionAt).toLocaleDateString()
-              : "Today";
+        const overviewDueLabel = (row: RetentionWorklistRow) => {
+          if (row.followUpStatus && row.nextActionAt) {
+            if (row.followUpStatus === "overdue") return `${row.overdueBy}d overdue`;
+            return new Date(row.nextActionAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+          }
+          return row.overdueBy > 0 ? `${row.overdueBy}d overdue` : "Today";
+        };
 
         return (
           <div className="space-y-4">
@@ -40691,27 +40732,46 @@ ${waybillLineItems(w).length > 1
                   <LayoutPanelTop className="h-3.5 w-3.5" /> View pipeline
                 </button>
               </header>
-              <div className="overflow-x-auto p-3">
-                <div className="flex min-w-[940px] items-stretch gap-2">
-                  {overviewLifecycleStages.map((item, index) => {
+              <div className="p-3">
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+                  {overviewLifecycleStages.map((item) => {
                     const Icon = item.icon;
                     return (
-                      <Fragment key={item.label}>
-                        <button
-                          type="button"
-                          onClick={() => { setRetentionStageFilter(item.stage); setRetentionPipelineView("table"); setRetentionSubPage("Pipeline"); }}
-                          className={`!min-h-0 min-w-0 flex-1 rounded-lg border px-3 py-3 text-center transition-shadow hover:shadow-sm ${item.tone}`}
-                        >
-                          <Icon className="mx-auto h-4 w-4" />
-                          <span className="mt-1.5 block text-[10px] font-black uppercase leading-4 tracking-wide">{item.label}</span>
-                          <strong className="mt-1 block text-xl font-black text-gray-900">{item.count}</strong>
-                          <span className="mt-0.5 block text-[10px] font-semibold">{item.overdue > 0 ? `${item.overdue} overdue` : "On schedule"}</span>
-                        </button>
-                        {index < overviewLifecycleStages.length - 1 && <ChevronRight className="my-auto h-4 w-4 shrink-0 text-gray-400" />}
-                      </Fragment>
+                      <button
+                        key={item.label}
+                        type="button"
+                        onClick={() => {
+                          setRetentionStageFilter(item.stage ?? "all");
+                          setRetentionPipelineView(item.stage ? "table" : "board");
+                          setRetentionSubPage("Pipeline");
+                        }}
+                        className={`!min-h-0 min-w-0 rounded-lg border px-3 py-3 text-center transition-shadow hover:shadow-sm ${item.tone}`}
+                      >
+                        <Icon className="mx-auto h-4 w-4" />
+                        <span className="mt-1.5 block text-[10px] font-black uppercase leading-4 tracking-wide">{item.label}</span>
+                        <span className="mt-0.5 block text-[9px] font-semibold opacity-75">{item.timing}</span>
+                        <strong className="mt-1 block text-xl font-black text-gray-900">{item.count}</strong>
+                        <span className="mt-0.5 block text-[10px] font-semibold">{item.overdue > 0 ? `${item.overdue} overdue` : "On schedule"}</span>
+                      </button>
                     );
                   })}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => { setRetentionStageFilter("needs_resolution"); setRetentionPipelineView("table"); setRetentionSubPage("Pipeline"); }}
+                  className="!min-h-0 mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-3 text-left text-rose-700 hover:border-rose-300"
+                >
+                  <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-white"><AlertTriangle className="h-4 w-4" /></span>
+                  <span className="min-w-0 flex-1">
+                    <strong className="block text-xs font-black uppercase tracking-wide">Resolution branch</strong>
+                    <span className="block text-[11px] text-rose-700/80">Complaints pause the normal journey. A positive resolution check returns the customer to the next lifecycle stage.</span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <strong className="block text-xl font-black text-gray-900">{summary.lifecyclePipeline.needsResolution}</strong>
+                    <span className="text-[10px] font-semibold">{stageOverdueCount((row) => row.dueStage === "needs_resolution") > 0 ? "Needs action" : "Clear"}</span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0" />
+                </button>
               </div>
             </section>
 
@@ -40749,8 +40809,8 @@ ${waybillLineItems(w).length > 1
                             <span><span className="block text-gray-400">Due</span><strong className={row.overdueBy > 0 ? "text-rose-600" : "text-gray-800"}>{overviewDueLabel(row)}</strong></span>
                           </div>
                           <div className="mt-3 flex items-center gap-2">
-                            <a href={`tel:${row.phone}`} aria-label={`Call ${row.customerName}`} className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-emerald-700"><Phone className="h-4 w-4" /></a>
-                            <a href={whatsappUrl} target="_blank" rel="noreferrer" aria-label={`WhatsApp ${row.customerName}`} className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-emerald-700"><WhatsAppIcon className="h-4 w-4" /></a>
+                            <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "overview_mobile")} aria-label={`Call ${row.customerName}`} className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-emerald-700"><Phone className="h-4 w-4" /></a>
+                            <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "overview_mobile")} aria-label={`WhatsApp ${row.customerName}`} className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-emerald-700"><WhatsAppIcon className="h-4 w-4" /></a>
                             <button type="button" onClick={() => toggleLogging(row.orderId, row.dueStage)} className="!min-h-0 ml-auto rounded-lg bg-emerald-700 px-3 py-2 text-xs font-black text-white">Log outcome</button>
                           </div>
                         </article>
@@ -40786,15 +40846,15 @@ ${waybillLineItems(w).length > 1
                                 </button>
                               </td>
                               <td className="px-3 py-2.5"><span className="block font-bold text-gray-800">{row.productName}</span><span className="text-[10px] text-gray-500">#{row.orderId}</span></td>
-                              <td className="px-3 py-2.5"><span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-1 text-[9px] font-black ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
+                              <td className="px-3 py-2.5"><span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-1 text-[9px] font-black ${stageTone(displayedStageFor(row))}`}>{stageLabel(displayedStageFor(row))}</span></td>
                               <td className="px-3 py-2.5 text-gray-600">{row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</td>
                               <td className="px-3 py-2.5 font-semibold text-gray-800">{nextActionLabelFor(row)}</td>
                               <td className={`px-3 py-2.5 font-black ${row.overdueBy > 0 ? "text-rose-600" : "text-gray-800"}`}>{overviewDueLabel(row)}</td>
                               <td className="px-3 py-2.5 font-black text-gray-800">{formatMoney(row.orderAmount)}</td>
                               <td className="px-3 py-2.5">
                                 <div className="flex justify-end gap-1.5">
-                                  <a href={`tel:${row.phone}`} title={`Call ${row.customerName}`} aria-label={`Call ${row.customerName}`} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" /></a>
-                                  <a href={whatsappUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${row.customerName}`} aria-label={`WhatsApp ${row.customerName}`} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-emerald-700 hover:bg-emerald-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+                                  <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "overview_desktop")} title={`Call ${row.customerName}`} aria-label={`Call ${row.customerName}`} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" /></a>
+                                  <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "overview_desktop")} title={`WhatsApp ${row.customerName}`} aria-label={`WhatsApp ${row.customerName}`} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-emerald-700 hover:bg-emerald-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
                                   <button type="button" onClick={() => toggleLogging(row.orderId, row.dueStage)} title="Log outcome" aria-label={`Log outcome for ${row.customerName}`} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-emerald-700 hover:bg-emerald-50"><FileText className="h-3.5 w-3.5" /></button>
                                 </div>
                               </td>
@@ -40867,8 +40927,12 @@ ${waybillLineItems(w).length > 1
       );
 
       if (retentionSubPage === "Tasks") {
-        const dueToday = actionableRetentionTasks.filter((row) => row.overdueBy === 0).length;
-        const overdue = actionableRetentionTasks.filter((row) => row.overdueBy > 0).length;
+        const dueToday = actionableRetentionTasks.filter((row) =>
+          row.followUpStatus === "due" || (row.followUpStatus === null && row.overdueBy === 0)
+        ).length;
+        const overdue = actionableRetentionTasks.filter((row) =>
+          row.followUpStatus === "overdue" || (row.followUpStatus === null && row.overdueBy > 0)
+        ).length;
         const complaints = actionableRetentionTasks.filter((row) => row.dueStage === "needs_resolution").length;
         return (
           <div className="space-y-4">
@@ -40962,7 +41026,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
-                      <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span>
+                      <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(displayedStageFor(row))}`}>{stageLabel(displayedStageFor(row))}</span>
                       <span className="text-xs font-semibold text-gray-600 hidden sm:inline">{formatMoney(row.orderAmount)}</span>
                     </div>
                   </button>
@@ -40974,6 +41038,8 @@ ${waybillLineItems(w).length > 1
       }
 
       const activityDetailFor = (row: RetentionActivityLogRow) => {
+        if (row.activityType === "call") return "Customer call opened";
+        if (row.activityType === "whatsapp") return "WhatsApp conversation opened";
         if (row.stage === "satisfaction_check" && row.satisfactionOutcome) {
           return `Satisfaction: ${row.satisfactionOutcome.replace(/_/g, " ")}${row.satisfactionNotes ? " — " + row.satisfactionNotes : ""}`;
         }
@@ -41018,7 +41084,13 @@ ${waybillLineItems(w).length > 1
                 <button key={row.id} type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 w-full flex flex-col gap-2 px-5 py-3 text-left hover:bg-gray-50 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${stageTone(row.stage)}`}>{stageLabel(row.stage)}</span>
+                      <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                        row.activityType === "call"
+                          ? "border-sky-200 bg-sky-50 text-sky-700"
+                          : row.activityType === "whatsapp"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : stageTone(row.stage)
+                      }`}>{row.activityType === "call" ? "Call opened" : row.activityType === "whatsapp" ? "WhatsApp opened" : stageLabel(row.stage)}</span>
                       <span className="font-bold text-gray-900 truncate">{row.customerName}</span>
                     </div>
                     <p className="text-xs text-gray-600 mt-1">{activityDetailFor(row)}</p>
@@ -41193,7 +41265,7 @@ ${waybillLineItems(w).length > 1
                   )}
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-gray-500 mb-2">Revenue by Product Offered</p>
+                  <p className="text-xs font-bold text-gray-500 mb-2">Revenue by Source</p>
                   {retentionDashboardSummary.repPerformance.revenueBySource.length === 0 ? (
                     <div className="h-[180px] flex items-center justify-center text-xs text-gray-400 border border-dashed border-gray-200 rounded-xl">No retention sales logged in this period yet.</div>
                   ) : (
@@ -41220,7 +41292,7 @@ ${waybillLineItems(w).length > 1
             <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-200">
                 <h2 className="text-base font-bold text-gray-900">Workload by Rep</h2>
-                <p className="text-xs text-gray-500 mt-0.5">Owner/Manager view — every rep who logged activity this period.</p>
+                <p className="text-xs text-gray-500 mt-0.5">Owner/Manager view — every rep with assigned retention work or activity in this period.</p>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[720px] text-sm">
@@ -41484,32 +41556,60 @@ ${waybillLineItems(w).length > 1
               {retentionOutcomeReachStatus === "reached" && (
                 <>
                   <div>
-                    <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Customer Response</span>
-                    <div className="flex flex-wrap gap-2">
+                    <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-gray-500">What happened?</span>
+                    <div className="grid grid-cols-3 gap-2">
                       {([
-                        ["satisfied", "😊 Satisfied"],
-                        ["neutral", "😐 Neutral"],
-                        ["complaint", "😡 Complaint"]
-                      ] as const).map(([value, label]) => (
-                        <button key={value} type="button" onClick={() => setRetentionOutcomeResponse(value)} className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionOutcomeResponse === value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}>{label}</button>
+                        { value: "satisfied", label: "Satisfied", Icon: Smile, active: "border-emerald-500 bg-emerald-50 text-emerald-800", icon: "text-emerald-600" },
+                        { value: "neutral", label: "Neutral", Icon: Meh, active: "border-amber-400 bg-amber-50 text-amber-800", icon: "text-amber-600" },
+                        { value: "complaint", label: "Complaint", Icon: Frown, active: "border-rose-400 bg-rose-50 text-rose-700", icon: "text-rose-600" }
+                      ] as const).map(({ value, label, Icon, active, icon }) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => {
+                            setRetentionOutcomeResponse(value);
+                            if (value === "complaint") setRetentionOutcomeNextAction("needs_resolution");
+                            else if (retentionOutcomeNextAction === "needs_resolution") setRetentionOutcomeNextAction("");
+                          }}
+                          className={`!min-h-0 flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-lg border px-2 py-3 text-xs font-black ${
+                            retentionOutcomeResponse === value ? active : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
+                          }`}
+                        >
+                          <Icon className={`h-5 w-5 ${retentionOutcomeResponse === value ? icon : "text-gray-400"}`} />
+                          <span className="break-words text-center">{label}</span>
+                        </button>
                       ))}
                     </div>
                   </div>
 
                   {retentionOutcomeResponse && (
                     <div>
-                      <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Next Action</span>
-                      <div className="flex flex-wrap gap-2">
+                      <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-gray-500">Next action</span>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                         {([
-                          ["request_review", "Request Review"],
-                          ["request_referral", "Request Referral"],
-                          ["offer_another_product", "Offer Another Product"],
-                          ["schedule_follow_up", "Schedule Follow-up"],
-                          ["needs_resolution", "Needs Resolution"],
-                          ["not_interested", "Not Interested"],
-                          ["do_not_contact", "Do Not Contact"]
-                        ] as const).map(([value, label]) => (
-                          <button key={value} type="button" onClick={() => selectNextAction(value, logOutcomeRow.orderId)} className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${retentionOutcomeNextAction === value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}>{label}</button>
+                          { value: "request_review", label: "Request Review", Icon: Sparkles },
+                          { value: "request_referral", label: "Request Referral", Icon: UserPlus },
+                          { value: "offer_another_product", label: "Offer Another Product", Icon: ShoppingBag },
+                          { value: "schedule_follow_up", label: "Schedule Follow-up", Icon: CalendarClock },
+                          { value: "needs_resolution", label: "Issue Needs Resolution", Icon: AlertTriangle },
+                          { value: "not_interested", label: "Not Interested", Icon: CircleX },
+                          { value: "do_not_contact", label: "Do Not Contact", Icon: PhoneOff }
+                        ] as const).map(({ value, label, Icon }) => (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => selectNextAction(value, logOutcomeRow.orderId)}
+                            className={`!min-h-0 flex min-w-0 items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-xs font-bold ${
+                              retentionOutcomeNextAction === value
+                                ? value === "needs_resolution"
+                                  ? "border-rose-400 bg-rose-50 text-rose-700"
+                                  : "border-[#1F8FE0] bg-sky-50 text-sky-800"
+                                : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"
+                            }`}
+                          >
+                            <Icon className="h-4 w-4 shrink-0" />
+                            <span className="break-words">{label}</span>
+                          </button>
                         ))}
                       </div>
                     </div>
@@ -41638,6 +41738,22 @@ ${waybillLineItems(w).length > 1
           </div>
         );
         const detail = retentionCustomerDetail;
+        const timelineVisual = (type: string) => {
+          if (type === "order_delivered") return { Icon: PackageCheck, tone: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+          if (type === "issue_reported") return { Icon: AlertTriangle, tone: "border-rose-200 bg-rose-50 text-rose-700" };
+          if (type === "issue_resolved") return { Icon: ShieldCheck, tone: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+          if (type === "satisfaction_check") return { Icon: Smile, tone: "border-amber-200 bg-amber-50 text-amber-700" };
+          if (type === "review_requested" || type === "review_collected") return { Icon: Sparkles, tone: "border-sky-200 bg-sky-50 text-sky-700" };
+          if (type === "referral_requested" || type === "referral_collected") return { Icon: UserPlus, tone: "border-violet-200 bg-violet-50 text-violet-700" };
+          if (type === "retention_sale_attempt") return { Icon: Repeat2, tone: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+          if (type === "follow_up_scheduled") return { Icon: CalendarClock, tone: "border-amber-200 bg-amber-50 text-amber-700" };
+          if (type === "do_not_contact") return { Icon: PhoneOff, tone: "border-gray-300 bg-gray-100 text-gray-600" };
+          if (type === "not_interested") return { Icon: CircleX, tone: "border-gray-300 bg-gray-50 text-gray-600" };
+          if (type === "call_opened") return { Icon: Phone, tone: "border-sky-200 bg-sky-50 text-sky-700" };
+          if (type === "whatsapp_opened") return { Icon: MessageCircle, tone: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+          if (type === "contact_attempt") return { Icon: Phone, tone: "border-sky-200 bg-sky-50 text-sky-700" };
+          return { Icon: FileText, tone: "border-gray-200 bg-gray-50 text-gray-600" };
+        };
         return (
           <>
             <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setRetentionDrawerPhone(null)} />
@@ -41692,11 +41808,24 @@ ${waybillLineItems(w).length > 1
 
                   {detail.latestOrder && (
                     <Section title="Latest Order">
-                      <Field label="Product" value={`${detail.latestOrder.product}${detail.latestOrder.package ? " · " + detail.latestOrder.package : ""}`} />
-                      <Field label="Order" value={detail.latestOrder.orderId} />
-                      <Field label="Price" value={formatMoney(detail.latestOrder.amount)} />
-                      <Field label="Delivered" value={detail.latestOrder.deliveredDate ? new Date(detail.latestOrder.deliveredDate).toLocaleDateString() : "-"} />
-                      <Field label="Status" value={detail.latestOrder.status} />
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                        <div className="flex items-start gap-3">
+                          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white text-sky-700 shadow-sm"><Package className="h-5 w-5" /></span>
+                          <div className="min-w-0 flex-1">
+                            <p className="break-words text-sm font-black text-gray-900">{detail.latestOrder.product}</p>
+                            <p className="mt-0.5 text-xs text-gray-500">{detail.latestOrder.package || "Standard package"} · Order #{detail.latestOrder.orderId}</p>
+                          </div>
+                          <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black ${
+                            detail.latestOrder.status === "Delivered"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-gray-200 bg-white text-gray-600"
+                          }`}>{detail.latestOrder.status}</span>
+                        </div>
+                        <div className="mt-3 flex items-end justify-between gap-3 border-t border-gray-200 pt-3">
+                          <span className="text-xs text-gray-500">{detail.latestOrder.deliveredDate ? `Delivered ${new Date(detail.latestOrder.deliveredDate).toLocaleDateString()}` : "Not delivered yet"}</span>
+                          <strong className="text-base font-black text-gray-900">{formatMoney(detail.latestOrder.amount)}</strong>
+                        </div>
+                      </div>
                     </Section>
                   )}
 
@@ -41705,15 +41834,22 @@ ${waybillLineItems(w).length > 1
                       <p className="text-xs text-gray-400 italic">No retention activity logged yet.</p>
                     ) : (
                       <div className="space-y-3">
-                        {detail.timeline.map((event, idx) => (
-                          <div key={`${event.at}-${idx}`} className="flex gap-2">
-                            <div className="w-1.5 h-1.5 mt-1.5 rounded-full bg-[#1F8FE0] shrink-0" />
-                            <div>
-                              <p className="text-xs text-gray-400">{new Date(event.at).toLocaleString()}</p>
-                              <p className="text-sm text-gray-800">{event.detail}</p>
+                        {detail.timeline.map((event, idx) => {
+                          const visual = timelineVisual(event.type);
+                          const TimelineIcon = visual.Icon;
+                          return (
+                            <div key={`${event.at}-${idx}`} className="relative flex gap-3">
+                              {idx < detail.timeline.length - 1 && <span className="absolute left-[17px] top-8 h-[calc(100%+0.75rem)] w-px bg-gray-200" />}
+                              <span className={`relative z-[1] inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border ${visual.tone}`}>
+                                <TimelineIcon className="h-4 w-4" />
+                              </span>
+                              <div className="min-w-0 pb-1">
+                                <p className="text-xs text-gray-400">{new Date(event.at).toLocaleString()}</p>
+                                <p className="mt-0.5 break-words text-sm font-semibold text-gray-800">{event.detail}</p>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </Section>
@@ -41721,9 +41857,15 @@ ${waybillLineItems(w).length > 1
                   <div className="px-5 py-4 border-t border-gray-100 bg-gray-50">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Next Action</p>
                     <p className="mt-1 text-sm font-bold text-gray-900">{detail.nextAction.recommendedText}</p>
+                    {detail.nextAction.dueAt && (
+                      <p className={`mt-1 text-xs font-semibold ${new Date(detail.nextAction.dueAt).getTime() < Date.now() ? "text-rose-600" : "text-amber-700"}`}>
+                        <CalendarClock className="mr-1 inline h-3.5 w-3.5" />
+                        {new Date(detail.nextAction.dueAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+                      </p>
+                    )}
                     <div className="mt-3 flex gap-2">
-                      <a href={`tel:${detail.customer.phone}`} className="!min-h-0 flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1560a8]"><Phone className="w-3.5 h-3.5" /> Call Customer</a>
-                      <a href={buildWhatsAppTargets(detail.customer.phone, `Hello ${detail.customer.name}, this is Protohub following up on your order.`).normalUrl ?? undefined} target="_blank" rel="noreferrer" className="!min-h-0 flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp</a>
+                      <a href={`tel:${detail.customer.phone}`} onClick={() => trackRetentionAction(detail.nextAction.orderId ?? detail.latestOrder?.orderId, "call", "customer_drawer")} className="!min-h-0 flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1560a8]"><Phone className="w-3.5 h-3.5" /> Call Customer</a>
+                      <a href={buildWhatsAppTargets(detail.customer.phone, `Hello ${detail.customer.name}, this is Protohub following up on your order.`).normalUrl ?? undefined} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(detail.nextAction.orderId ?? detail.latestOrder?.orderId, "whatsapp", "customer_drawer")} className="!min-h-0 flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"><WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp</a>
                     </div>
                     {detail.nextAction.orderId && (
                       <button

@@ -812,8 +812,10 @@ export interface RetentionWorklistRow {
   assignedRepName: string | null;
   lastTouchpoint: { stage: string; loggedAt: string; satisfactionOutcome: string | null } | null;
   lastContactAt: string | null;
+  nextAction: string | null;
   nextActionAt: string | null;
   nextActionNote: string | null;
+  followUpStatus: "scheduled" | "due" | "overdue" | null;
   discountOwed: boolean;
   reviewRequested: boolean;
   reviewCollected: boolean;
@@ -948,7 +950,13 @@ export interface RetentionCustomerDetail {
   summary: { totalOrders: number; totalSpent: number; delivered: number; wrongDamagedReportsCount: number; ltv: number };
   latestOrder: { orderId: string; product: string; package: string; amount: number; currency: string; deliveredDate: string | null; status: string } | null;
   timeline: Array<{ type: string; at: string; detail: string }>;
-  nextAction: { recommendedText: string; dueStage: string | null; orderId: string | null };
+  nextAction: {
+    recommendedText: string;
+    dueStage: string | null;
+    orderId: string | null;
+    dueAt: string | null;
+    source: "lifecycle" | "scheduled_follow_up";
+  };
 }
 
 export interface RetentionProductTiming {
@@ -961,11 +969,12 @@ export interface RetentionProductTiming {
 
 export interface RetentionActivityLogRow {
   id: string;
+  activityType: "outcome" | "call" | "whatsapp";
   orderId: string;
   customerName: string;
   phone: string;
   productName: string;
-  stage: "satisfaction_check" | "review_referral" | "retention_sale";
+  stage: "satisfaction_check" | "review_referral" | "retention_sale" | null;
   loggedBy: string | null;
   loggedByName: string;
   loggedAt: string;
@@ -1025,6 +1034,8 @@ export const customerRetentionApi = {
     return get<{ rows: RetentionWorklistRow[] }>(`/api/customer-retention/worklist${suffix ? `?${suffix}` : ""}`);
   },
   retentionSuggestion: (orderId: string) => get<{ suggestion: { productId: string; packageId: string | null } | null }>(`/api/customer-retention/order/${encodeURIComponent(orderId)}/retention-suggestion`),
+  trackAction: (body: { orderId: string; actionType: "call" | "whatsapp"; context?: string }) =>
+    post<{ row: Record<string, unknown> }>("/api/customer-retention/action-events", body),
   logTouchpoint: (body: RetentionTouchpointPayload) => post<{ row: Record<string, unknown> }>("/api/customer-retention/touchpoints", body),
   updateTouchpoint: (id: string, body: { mediaUrls?: string[]; customerDiscountCleared?: boolean; resultingOrderId?: string }) =>
     patch<{ row: Record<string, unknown> }>(`/api/customer-retention/touchpoints/${id}`, body),
