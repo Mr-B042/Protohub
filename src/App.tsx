@@ -1,4 +1,4 @@
-import { type Dispatch, type ReactNode, type SetStateAction, Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { type Dispatch, type ReactNode, type SetStateAction, Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { PAGE_HELP, DEFAULT_HELP } from "./help-content";
@@ -27,6 +27,7 @@ import {
   EyeOff,
   ExternalLink,
   Filter,
+  MoreVertical,
   HelpCircle,
   Headphones,
   History,
@@ -122,7 +123,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, customerOptOutApi, customerRetentionApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -239,9 +240,20 @@ const RETENTION_SUBNAV_ITEMS: Array<{ key: RetentionSubPage; label: string; icon
 // into Review Request vs Referral Request; any stage can be superseded by
 // a rep-scheduled callback). Same display-layer convention as order status
 // views: the raw stage still drives all reporting.
+// general_check_in has no lifecycle trigger - it only ever arrives from a
+// manually created task (migration 178).
 type RetentionTaskTypeKey =
   | "satisfaction_check" | "complaint_follow_up" | "review_request" | "referral_request"
-  | "repeat_sale_offer" | "win_back_call" | "scheduled_follow_up";
+  | "repeat_sale_offer" | "win_back_call" | "scheduled_follow_up" | "general_check_in";
+// The reference design labels priority High/Medium/Low. The underlying
+// P1-P6 band system is unchanged and still drives Pipeline and reporting;
+// this is the display grouping the Tasks page uses.
+type RetentionTaskPriority = "high" | "medium" | "low";
+const RETENTION_TASK_PRIORITY_META: Record<RetentionTaskPriority, { emoji: string; label: string; class: string }> = {
+  high: { emoji: "🔥", label: "High", class: "border-rose-200 bg-rose-50 text-rose-700" },
+  medium: { emoji: "⭐", label: "Medium", class: "border-amber-200 bg-amber-50 text-amber-700" },
+  low: { emoji: "🌱", label: "Low", class: "border-emerald-200 bg-emerald-50 text-emerald-700" }
+};
 // Tabs are a status lens. due_today/overdue/upcoming/waiting/cancelled all
 // come from the live worklist; completed is the only one sourced elsewhere
 // (logged touchpoints), because a finished task leaves the worklist.
@@ -254,7 +266,8 @@ const RETENTION_TASK_TYPES: Array<{ key: RetentionTaskTypeKey; label: string; ic
   { key: "referral_request", label: "Referral Request", icon: Gift, tone: "text-violet-600" },
   { key: "repeat_sale_offer", label: "Repeat Sale Offer", icon: ShoppingCart, tone: "text-emerald-600" },
   { key: "win_back_call", label: "Win-back Call", icon: RefreshCw, tone: "text-indigo-600" },
-  { key: "scheduled_follow_up", label: "Scheduled Follow-up", icon: Clock, tone: "text-gray-600" }
+  { key: "scheduled_follow_up", label: "Scheduled Follow-up", icon: Clock, tone: "text-gray-600" },
+  { key: "general_check_in", label: "General Check-in", icon: MessageCircle, tone: "text-teal-600" }
 ];
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
@@ -11092,6 +11105,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionTaskFilter, setRetentionTaskFilter] = useState<RetentionTaskTab>("all");
   const [retentionTaskTypeFilter, setRetentionTaskTypeFilter] = useState<"all" | RetentionTaskTypeKey>("all");
   const [retentionTaskPage, setRetentionTaskPage] = useState(1);
+  const [retentionTaskPriorityFilter, setRetentionTaskPriorityFilter] = useState<"all" | "high" | "medium" | "low">("all");
+  const [retentionTaskStatusFilter, setRetentionTaskStatusFilter] = useState<"all" | RetentionTaskStatus>("all");
+  const [retentionTaskFiltersOpen, setRetentionTaskFiltersOpen] = useState(false);
+  const [retentionTaskDueWindow, setRetentionTaskDueWindow] = useState<"all" | "today" | "week" | "overdue">("all");
+  const [retentionTaskMenuKey, setRetentionTaskMenuKey] = useState<string | null>(null);
+  const [retentionTaskSelection, setRetentionTaskSelection] = useState<string[]>([]);
+  // Manual tasks (migration 178) - alongside the derived lifecycle worklist.
+  const [retentionManualTasks, setRetentionManualTasks] = useState<RetentionManualTask[]>([]);
+  const [retentionManualTasksPending, setRetentionManualTasksPending] = useState(false);
+  const [retentionAddTaskOpen, setRetentionAddTaskOpen] = useState(false);
+  const [retentionAddTaskSaving, setRetentionAddTaskSaving] = useState(false);
+  const [retentionTaskForm, setRetentionTaskForm] = useState<RetentionManualTaskInput>({
+    customerName: "", customerPhone: "", taskType: "general_check_in", title: "",
+    note: "", priority: "medium", dueAt: "", assignedRepId: null, orderId: null
+  });
+  const [retentionImportOpen, setRetentionImportOpen] = useState(false);
+  const [retentionImportText, setRetentionImportText] = useState("");
+  const [retentionImportSaving, setRetentionImportSaving] = useState(false);
+  const [retentionBulkAssignOpen, setRetentionBulkAssignOpen] = useState(false);
+  const [retentionBulkAssignRepId, setRetentionBulkAssignRepId] = useState("");
   const [retentionCustomerSearch, setRetentionCustomerSearch] = useState("");
   const [retentionCustomers, setRetentionCustomers] = useState<RetentionCustomerRow[]>([]);
   const [retentionCustomersLoading, setRetentionCustomersLoading] = useState(false);
@@ -39972,6 +40005,23 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionSubPage, retentionTaskFilter, retentionPeriod, retentionDateRange]);
 
+  // Manual tasks back the Tasks page only. If migration 178 has not reached
+  // this environment the endpoint returns pendingMigration and the page
+  // degrades to derived lifecycle tasks rather than erroring.
+  const reloadRetentionManualTasks = useCallback(() => {
+    customerRetentionApi.tasks()
+      .then((result) => {
+        setRetentionManualTasks(result.rows ?? []);
+        setRetentionManualTasksPending(Boolean(result.pendingMigration));
+      })
+      .catch(() => setRetentionManualTasksPending(true));
+  }, []);
+
+  useEffect(() => {
+    if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || retentionSubPage !== "Tasks") return;
+    reloadRetentionManualTasks();
+  }, [activePage, recoveryRepDashboardTab, retentionSubPage, reloadRetentionManualTasks]);
+
   useEffect(() => {
     if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || retentionSubPage !== "Settings" || currentRole !== "Owner") return;
     customerRetentionApi.productTiming()
@@ -40386,6 +40436,110 @@ ${waybillLineItems(w).length > 1
       .filter((row) => retentionTaskTypeFilter === "all" || taskTypeFor(row) === retentionTaskTypeFilter)
       .filter((row) => retentionStageFilter === "all" || row.dueStage === retentionStageFilter)
     );
+    // The reference design labels priority High/Medium/Low. P1-P6 stays the
+    // engine (and Pipeline still shows the tier names); this is the grouping.
+    // Complaint + overdue read as High, the attention tiers as Medium, and
+    // the longer-horizon revenue tier as Low - matching the design's own rows.
+    const taskPriorityFor = (band: RetentionWorklistRow["priorityBand"]): RetentionTaskPriority =>
+      band === "critical" || band === "overdue" ? "high"
+      : band === "revenue_opportunity" ? "low"
+      : "medium";
+
+    // One shape the task table can render whether a row came from the derived
+    // lifecycle worklist or from a manually created task.
+    type UnifiedRetentionTask = {
+      key: string;
+      source: "derived" | "manual";
+      manualId?: string;
+      worklistRow?: RetentionWorklistRow;
+      orderId: string | null;
+      customerName: string;
+      phone: string;
+      productLabel: string;
+      taskType: RetentionTaskTypeKey;
+      subtitle: string;
+      priority: RetentionTaskPriority;
+      status: RetentionTaskStatus;
+      stageText: string;
+      stageClass: string;
+      dueAt: Date | null;
+      dueIsTimed: boolean;
+      assignedRepId: string | null;
+      assignedRepName: string | null;
+    };
+
+    const derivedUnifiedTasks: UnifiedRetentionTask[] = actionableRetentionTasks.map((row) => ({
+      key: `derived:${row.orderId}`,
+      source: "derived",
+      worklistRow: row,
+      orderId: row.orderId,
+      customerName: row.customerName,
+      phone: row.phone,
+      productLabel: row.productName,
+      taskType: taskTypeFor(row),
+      subtitle: taskSubtitleFor(row),
+      priority: taskPriorityFor(row.priorityBand),
+      status: taskStatusFor(row),
+      stageText: stageLabel(row.dueStage),
+      stageClass: stageTone(row.dueStage),
+      dueAt: row.followUpStatus && row.nextActionAt ? new Date(row.nextActionAt) : row.stageDueDate ? new Date(row.stageDueDate) : null,
+      dueIsTimed: Boolean(row.followUpStatus && row.nextActionAt),
+      assignedRepId: row.assignedRepId,
+      assignedRepName: row.assignedRepName
+    }));
+
+    const manualUnifiedTasks: UnifiedRetentionTask[] = retentionManualTasks.map((task) => {
+      const due = new Date(task.dueAt);
+      const status: RetentionTaskStatus =
+        task.status === "cancelled" ? "cancelled"
+        : due.getTime() < Date.now() ? "overdue"
+        : due.toDateString() === new Date().toDateString() ? "due_today"
+        : "upcoming";
+      return {
+        key: `manual:${task.id}`,
+        source: "manual",
+        manualId: task.id,
+        orderId: task.orderId,
+        customerName: task.customerName,
+        phone: task.customerPhone,
+        productLabel: task.orderId ? `#${task.orderId}` : "Manual task",
+        taskType: task.taskType,
+        subtitle: task.note?.trim() || task.title,
+        priority: task.priority,
+        status,
+        stageText: "Manual",
+        stageClass: "border-gray-200 bg-gray-50 text-gray-600",
+        dueAt: due,
+        dueIsTimed: true,
+        assignedRepId: task.assignedRepId,
+        assignedRepName: task.assignedRepName
+      };
+    });
+
+    // Completed manual tasks are excluded here - the Completed tab reads
+    // finished work from the touchpoint log, and a completed manual task is
+    // shown there too via its own list rather than mixed into open work.
+    const allUnifiedTasks = [
+      ...derivedUnifiedTasks,
+      ...manualUnifiedTasks.filter((t) => retentionManualTasks.find((m) => m.id === t.manualId)?.status !== "completed")
+    ];
+
+    const unifiedDueDisplay = (task: UnifiedRetentionTask): { absolute: string; relative: string; tone: string } => {
+      if (!task.dueAt) return { absolute: "—", relative: "", tone: "text-gray-500" };
+      if (!task.dueIsTimed) {
+        const absolute = task.dueAt.toLocaleDateString([], { dateStyle: "medium" });
+        if (task.status === "overdue" && task.worklistRow) return { absolute, relative: `${task.worklistRow.overdueBy}d overdue`, tone: "text-rose-600" };
+        return { absolute, relative: task.status === "overdue" ? "Overdue" : "Due today", tone: task.status === "overdue" ? "text-rose-600" : "text-sky-600" };
+      }
+      const diffMs = task.dueAt.getTime() - Date.now();
+      const absolute = task.dueAt.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+      const mins = Math.round(Math.abs(diffMs) / 60000);
+      const human = mins < 60 ? `${mins}m` : mins < 1440 ? `${Math.round(mins / 60)}h` : `${Math.round(mins / 1440)}d`;
+      return diffMs < 0
+        ? { absolute, relative: `${human} overdue`, tone: "text-rose-600" }
+        : { absolute, relative: `Due in ${human}`, tone: mins < 1440 ? "text-sky-600" : "text-gray-500" };
+    };
+
     const filteredRetentionWinBack = applyRetentionFilters(retentionWorklist.filter((row) => row.dueStage === "win_back"));
     const retentionActivityQuery = retentionActivitySearch.trim().toLowerCase();
     const filteredRetentionActivity = retentionActivityLog.filter((row) =>
@@ -41404,67 +41558,170 @@ ${waybillLineItems(w).length > 1
       }
 
       if (retentionSubPage === "Tasks") {
-        const scheduledFollowUps = actionableRetentionTasks.filter((r) => r.followUpStatus !== null).length;
-        const upcomingWeek = actionableRetentionTasks.filter((r) => {
-          if (r.followUpStatus !== "scheduled" || !r.nextActionAt) return false;
-          const days = (new Date(r.nextActionAt).getTime() - Date.now()) / 86400000;
-          return days >= 0 && days <= 7;
-        }).length;
         const perf = retentionDashboardSummary?.repPerformance;
         const showingCompleted = retentionTaskFilter === "completed";
-        const pageSize = 10;
-        const totalTasks = filteredRetentionTasks.length;
+        const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+        const endOfToday = new Date(startOfToday.getTime() + 86400000);
+
+        const scheduledFollowUps = allUnifiedTasks.filter((t) => t.dueIsTimed).length;
+        const upcomingWeek = allUnifiedTasks.filter((t) => {
+          if (!t.dueAt) return false;
+          const days = (t.dueAt.getTime() - Date.now()) / 86400000;
+          return days >= 0 && days <= 7;
+        }).length;
+
+        const tabCounts: Record<Exclude<RetentionTaskTab, "completed">, number> = {
+          all: allUnifiedTasks.length,
+          due_today: allUnifiedTasks.filter((t) => t.status === "due_today").length,
+          overdue: allUnifiedTasks.filter((t) => t.status === "overdue").length,
+          upcoming: allUnifiedTasks.filter((t) => t.status === "upcoming").length,
+          waiting: allUnifiedTasks.filter((t) => t.status === "waiting").length,
+          cancelled: allUnifiedTasks.filter((t) => t.status === "cancelled").length
+        };
+        const typeCounts = RETENTION_TASK_TYPES.map((type) => ({
+          ...type,
+          count: allUnifiedTasks.filter((t) => t.taskType === type.key).length
+        }));
+
+        const visibleTasks = allUnifiedTasks
+          .filter((t) => retentionTaskFilter === "all" || retentionTaskFilter === "completed" || t.status === retentionTaskFilter)
+          .filter((t) => retentionTaskStatusFilter === "all" || t.status === retentionTaskStatusFilter)
+          .filter((t) => retentionTaskTypeFilter === "all" || t.taskType === retentionTaskTypeFilter)
+          .filter((t) => retentionTaskPriorityFilter === "all" || t.priority === retentionTaskPriorityFilter)
+          .filter((t) => retentionAssignedRepFilter === "all" || t.assignedRepId === retentionAssignedRepFilter)
+          .filter((t) => retentionStageFilter === "all" || (t.worklistRow ? t.worklistRow.dueStage === retentionStageFilter : false))
+          .filter((t) => {
+            if (retentionTaskDueWindow === "all") return true;
+            if (!t.dueAt) return false;
+            if (retentionTaskDueWindow === "overdue") return t.dueAt.getTime() < Date.now();
+            if (retentionTaskDueWindow === "today") return t.dueAt >= startOfToday && t.dueAt < endOfToday;
+            return t.dueAt.getTime() >= Date.now() && t.dueAt.getTime() <= Date.now() + 7 * 86400000;
+          })
+          .filter((t) => !retentionSearchQuery
+            || t.customerName.toLowerCase().includes(retentionSearchQuery)
+            || t.phone.includes(retentionSearchQuery)
+            || (t.orderId ?? "").toLowerCase().includes(retentionSearchQuery)
+            || t.productLabel.toLowerCase().includes(retentionSearchQuery)
+            || (RETENTION_TASK_TYPES.find((x) => x.key === t.taskType)?.label ?? "").toLowerCase().includes(retentionSearchQuery))
+          .sort((a, b) => (a.dueAt?.getTime() ?? Infinity) - (b.dueAt?.getTime() ?? Infinity));
+
+        const pageSize = 8;
+        const totalTasks = visibleTasks.length;
         const totalPages = Math.max(1, Math.ceil(totalTasks / pageSize));
         const currentPage = Math.min(retentionTaskPage, totalPages);
-        const pagedTasks = filteredRetentionTasks.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-        // Only rep-scheduled callbacks carry a clock time, so the day view
-        // lists those by time and keeps day-granular stage work separate
-        // rather than inventing appointment times.
-        const timedToday = actionableRetentionTasks
-          .filter((r) => r.nextActionAt && new Date(r.nextActionAt).toDateString() === new Date().toDateString())
-          .sort((a, b) => new Date(a.nextActionAt as string).getTime() - new Date(b.nextActionAt as string).getTime());
-        const anyTimeToday = actionableRetentionTasks.filter((r) => !r.nextActionAt && taskStatusFor(r) === "due_today").length;
+        const pagedTasks = visibleTasks.slice((currentPage - 1) * pageSize, currentPage * pageSize);
         const resetTaskPage = () => setRetentionTaskPage(1);
+        const activeFilterCount = [
+          retentionTaskTypeFilter !== "all", retentionTaskPriorityFilter !== "all", retentionTaskStatusFilter !== "all",
+          retentionStageFilter !== "all", retentionAssignedRepFilter !== "all", retentionTaskDueWindow !== "all", Boolean(retentionSearchQuery)
+        ].filter(Boolean).length;
+        const clearTaskFilters = () => {
+          setRetentionTaskTypeFilter("all"); setRetentionTaskPriorityFilter("all"); setRetentionTaskStatusFilter("all");
+          setRetentionStageFilter("all"); setRetentionAssignedRepFilter("all"); setRetentionTaskDueWindow("all");
+          setRetentionSearch(""); resetTaskPage();
+        };
+
+        // Only timed tasks can occupy a slot on the day view; day-granular
+        // lifecycle work is counted separately rather than given a fake time.
+        const timedToday = allUnifiedTasks
+          .filter((t) => t.dueIsTimed && t.dueAt && t.dueAt >= startOfToday && t.dueAt < endOfToday)
+          .sort((a, b) => (a.dueAt as Date).getTime() - (b.dueAt as Date).getTime());
+        const anyTimeToday = allUnifiedTasks.filter((t) => !t.dueIsTimed && t.status === "due_today").length;
+
+        const pageNumbers: Array<number | "gap"> = [];
+        for (let p = 1; p <= totalPages; p += 1) {
+          if (p <= 2 || p > totalPages - 1 || Math.abs(p - currentPage) <= 1) pageNumbers.push(p);
+          else if (pageNumbers[pageNumbers.length - 1] !== "gap") pageNumbers.push("gap");
+        }
+
+        const toggleTaskSelected = (key: string) =>
+          setRetentionTaskSelection((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
+        const selectedManualIds = retentionTaskSelection
+          .filter((k) => k.startsWith("manual:"))
+          .map((k) => k.slice("manual:".length));
+
+        const completeManualTask = async (id: string) => {
+          try {
+            await customerRetentionApi.updateTask(id, { status: "completed" });
+            showToast("Task completed.");
+            reloadRetentionManualTasks();
+          } catch (err: any) { showToast(err?.message ?? "Could not complete the task."); }
+        };
+        const cancelManualTask = async (id: string) => {
+          try {
+            await customerRetentionApi.updateTask(id, { status: "cancelled" });
+            showToast("Task cancelled.");
+            reloadRetentionManualTasks();
+          } catch (err: any) { showToast(err?.message ?? "Could not cancel the task."); }
+        };
 
         return (
           <div className="space-y-4">
+            <header className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <h2 className="text-xl font-black text-gray-900">Retention Tasks</h2>
+                <p className="text-sm font-medium text-gray-500">Complete customer follow-ups in the right order.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => { setRetentionTaskForm({ customerName: "", customerPhone: "", taskType: "general_check_in", title: "", note: "", priority: "medium", dueAt: "", assignedRepId: null, orderId: null }); setRetentionAddTaskOpen(true); }} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-sm font-black text-white hover:bg-emerald-700"><Plus className="h-4 w-4" /> Add Task</button>
+                <button type="button" onClick={exportRetentionPipelineCsv} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-gray-50"><Download className="h-4 w-4" /> Export</button>
+                <div className="relative">
+                  <button type="button" onClick={() => setRetentionTaskMenuKey(retentionTaskMenuKey === "__more" ? null : "__more")} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-gray-50">More <ChevronDown className="h-3.5 w-3.5" /></button>
+                  {retentionTaskMenuKey === "__more" && (
+                    <>
+                      <div className="fixed inset-0 z-20" onClick={() => setRetentionTaskMenuKey(null)} />
+                      <div className="absolute right-0 z-30 mt-1 w-56 rounded-xl border border-gray-200 bg-white p-1 shadow-lg">
+                        <button type="button" onClick={() => { setRetentionTaskMenuKey(null); setRetentionImportText(""); setRetentionImportOpen(true); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"><Upload className="h-4 w-4 text-gray-500" /> Import tasks</button>
+                        <button type="button" disabled={selectedManualIds.length === 0} onClick={() => { setRetentionTaskMenuKey(null); setRetentionBulkAssignRepId(""); setRetentionBulkAssignOpen(true); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-40"><UserPlus className="h-4 w-4 text-gray-500" /> Bulk assign ({selectedManualIds.length})</button>
+                        <button type="button" onClick={() => { setRetentionTaskMenuKey(null); clearTaskFilters(); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"><Filter className="h-4 w-4 text-gray-500" /> Clear all filters</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </header>
+
+            {retentionManualTasksPending && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                Manual tasks are not activated on this environment yet - showing lifecycle tasks only.
+              </p>
+            )}
+
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
               {([
-                ["Due Today", retentionTaskTabCounts.due_today, "text-sky-700", CalendarDays],
-                ["Overdue", retentionTaskTabCounts.overdue, "text-rose-700", AlertTriangle],
-                ["Upcoming (7 days)", upcomingWeek, "text-gray-800", CalendarDays],
-                ["Completed (period)", perf?.tasksCompleted ?? 0, "text-emerald-700", CheckCircle2],
-                ["Completion Rate", perf ? `${Math.round(perf.completionRatePct)}%` : "—", "text-violet-700", Clock],
-                ["Scheduled Follow-ups", scheduledFollowUps, "text-amber-700", Users]
-              ] as const).map(([label, value, tone, Icon]) => (
+                ["Due Today", tabCounts.due_today, "text-sky-700", "bg-sky-50", CalendarDays],
+                ["Overdue", tabCounts.overdue, "text-rose-700", "bg-rose-50", AlertTriangle],
+                ["Upcoming (7 days)", upcomingWeek, "text-indigo-700", "bg-indigo-50", CalendarDays],
+                ["Completed (period)", perf?.tasksCompleted ?? 0, "text-emerald-700", "bg-emerald-50", CheckCircle2],
+                ["Completion Rate", perf ? `${Math.round(perf.completionRatePct)}%` : "—", "text-violet-700", "bg-violet-50", Clock],
+                ["Scheduled Follow-ups", scheduledFollowUps, "text-amber-700", "bg-amber-50", Users]
+              ] as const).map(([label, value, tone, chip, Icon]) => (
                 <div key={label} className="rounded-xl border border-gray-200 bg-white p-4">
                   <div className="flex items-center gap-2">
-                    <Icon className={`h-4 w-4 ${tone}`} />
-                    <span className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-500">{label}</span>
+                    <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${chip}`}><Icon className={`h-4 w-4 ${tone}`} /></span>
+                    <span className="text-[10px] font-black uppercase leading-tight tracking-[0.1em] text-gray-500">{label}</span>
                   </div>
-                  <strong className={`mt-1.5 block text-2xl font-black ${tone}`}>{value}</strong>
+                  <strong className={`mt-2 block text-2xl font-black ${tone}`}>{value}</strong>
                 </div>
               ))}
             </div>
 
             <div className="flex gap-1 overflow-x-auto border-b border-gray-200 pb-px">
               {([
-                ["all", "All Tasks", retentionTaskTabCounts.all],
-                ["due_today", "Due Today", retentionTaskTabCounts.due_today],
-                ["overdue", "Overdue", retentionTaskTabCounts.overdue],
-                ["upcoming", "Upcoming", retentionTaskTabCounts.upcoming],
+                ["all", "All Tasks", tabCounts.all],
+                ["due_today", "Due Today", tabCounts.due_today],
+                ["overdue", "Overdue", tabCounts.overdue],
+                ["upcoming", "Upcoming", tabCounts.upcoming],
                 ["completed", "Completed", perf?.tasksCompleted ?? 0],
-                ["waiting", "Waiting", retentionTaskTabCounts.waiting],
-                ["cancelled", "Cancelled", retentionTaskTabCounts.cancelled]
+                ["waiting", "Waiting", tabCounts.waiting],
+                ["cancelled", "Cancelled", tabCounts.cancelled]
               ] as const).map(([key, label, count]) => (
                 <button
                   key={key}
                   type="button"
                   onClick={() => { setRetentionTaskFilter(key); resetTaskPage(); }}
                   className={`!min-h-0 inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${
-                    retentionTaskFilter === key
-                      ? "border-emerald-600 font-black text-emerald-700"
-                      : "border-transparent font-bold text-gray-500 hover:text-gray-800"
+                    retentionTaskFilter === key ? "border-emerald-600 font-black text-emerald-700" : "border-transparent font-bold text-gray-500 hover:text-gray-800"
                   }`}
                 >
                   {label}
@@ -41476,14 +41733,9 @@ ${waybillLineItems(w).length > 1
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
               <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
                 <div className="flex flex-col gap-2 border-b border-gray-200 p-4 sm:flex-row sm:flex-wrap sm:items-center">
-                  <div className="relative min-w-0 flex-1 sm:min-w-[200px]">
+                  <div className="relative min-w-0 flex-1 sm:min-w-[190px]">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <input
-                      value={retentionSearch}
-                      onChange={(e) => { setRetentionSearch(e.target.value); resetTaskPage(); }}
-                      placeholder="Search task or customer..."
-                      className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm"
-                    />
+                    <input value={retentionSearch} onChange={(e) => { setRetentionSearch(e.target.value); resetTaskPage(); }} placeholder="Search task or customer..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
                   </div>
                   <select value={retentionTaskTypeFilter} onChange={(e) => { setRetentionTaskTypeFilter(e.target.value as typeof retentionTaskTypeFilter); resetTaskPage(); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
                     <option value="all">All Task Types</option>
@@ -41495,11 +41747,11 @@ ${waybillLineItems(w).length > 1
                       <option key={s} value={s}>{stageLabel(s)}</option>
                     ))}
                   </select>
-                  <select value={retentionPriorityFilter} onChange={(e) => { setRetentionPriorityFilter(e.target.value as typeof retentionPriorityFilter); resetTaskPage(); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                  <select value={retentionTaskPriorityFilter} onChange={(e) => { setRetentionTaskPriorityFilter(e.target.value as typeof retentionTaskPriorityFilter); resetTaskPage(); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
                     <option value="all">All Priority</option>
-                    {(["critical", "overdue", "high_value", "satisfaction_due", "review_referral_due", "revenue_opportunity"] as const).map((band) => (
-                      <option key={band} value={band}>{priorityBadge(band).label}</option>
-                    ))}
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
                   </select>
                   {retentionRepOptions.length > 0 && (
                     <select value={retentionAssignedRepFilter} onChange={(e) => { setRetentionAssignedRepFilter(e.target.value); resetTaskPage(); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
@@ -41507,7 +41759,30 @@ ${waybillLineItems(w).length > 1
                       {retentionRepOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
                     </select>
                   )}
+                  <select value={retentionTaskStatusFilter} onChange={(e) => { setRetentionTaskStatusFilter(e.target.value as typeof retentionTaskStatusFilter); resetTaskPage(); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                    <option value="all">All Statuses</option>
+                    <option value="overdue">Overdue</option>
+                    <option value="due_today">Pending</option>
+                    <option value="upcoming">Scheduled</option>
+                    <option value="waiting">Waiting</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                  <button type="button" onClick={() => setRetentionTaskFiltersOpen((v) => !v)} className={`!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-bold ${retentionTaskFiltersOpen || activeFilterCount > 0 ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}>
+                    <Filter className="h-4 w-4" /> Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+                  </button>
                 </div>
+
+                {retentionTaskFiltersOpen && (
+                  <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 px-4 py-3">
+                    <span className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-500">Due window</span>
+                    {([["all", "Any time"], ["overdue", "Overdue only"], ["today", "Today"], ["week", "Next 7 days"]] as const).map(([key, label]) => (
+                      <button key={key} type="button" onClick={() => { setRetentionTaskDueWindow(key); resetTaskPage(); }} className={`!min-h-0 rounded-full border px-3 py-1 text-xs font-bold ${retentionTaskDueWindow === key ? "border-emerald-300 bg-emerald-100 text-emerald-700" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-100"}`}>{label}</button>
+                    ))}
+                    {activeFilterCount > 0 && (
+                      <button type="button" onClick={clearTaskFilters} className="!min-h-0 ml-auto rounded-lg px-2 py-1 text-xs font-black text-rose-600 hover:bg-rose-50">Clear all</button>
+                    )}
+                  </div>
+                )}
 
                 {showingCompleted ? (
                   retentionActivityLogLoading && retentionActivityLog.length === 0 ? (
@@ -41537,47 +41812,50 @@ ${waybillLineItems(w).length > 1
                   <p className="px-5 py-10 text-center text-sm text-gray-400">No tasks match this view.</p>
                 ) : (
                   <>
-                    {/* Mobile cards */}
                     <div className="divide-y divide-gray-100 sm:hidden">
-                      {pagedTasks.map((row) => {
-                        const type = RETENTION_TASK_TYPES.find((t) => t.key === taskTypeFor(row)) as typeof RETENTION_TASK_TYPES[number];
-                        const status = taskStatusBadge(taskStatusFor(row));
-                        const due = taskDueDisplay(row);
-                        const badge = priorityBadge(row.priorityBand);
+                      {pagedTasks.map((task) => {
+                        const type = RETENTION_TASK_TYPES.find((t) => t.key === task.taskType) as typeof RETENTION_TASK_TYPES[number];
+                        const status = taskStatusBadge(task.status);
+                        const due = unifiedDueDisplay(task);
+                        const prio = RETENTION_TASK_PRIORITY_META[task.priority];
                         return (
-                          <article key={row.orderId} className="flex flex-col gap-2 px-4 py-4">
+                          <article key={task.key} className="flex flex-col gap-2 px-4 py-4">
                             <div className="flex items-start justify-between gap-2">
-                              <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 min-w-0 text-left">
+                              <button type="button" onClick={() => setRetentionDrawerPhone(task.phone)} className="!min-h-0 min-w-0 text-left">
                                 <div className="flex items-center gap-1.5">
                                   <type.icon className={`h-4 w-4 shrink-0 ${type.tone}`} />
                                   <span className="truncate font-bold text-gray-900">{type.label}</span>
                                 </div>
-                                <p className="mt-0.5 truncate text-xs text-gray-500">{taskSubtitleFor(row)}</p>
-                                <p className="mt-1 truncate text-sm font-bold text-gray-900">{row.customerName}</p>
-                                <p className="text-xs text-gray-500">{row.phone} · #{row.orderId}</p>
+                                <p className="mt-0.5 truncate text-xs text-gray-500">{task.subtitle}</p>
+                                <p className="mt-1 truncate text-sm font-bold text-gray-900">{task.customerName}</p>
+                                <p className="text-xs text-gray-500">{task.phone} · {task.productLabel}</p>
                               </button>
                               <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${status.class}`}>{status.label}</span>
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span>
+                              <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${prio.class}`}>{prio.emoji} {prio.label}</span>
                               <span className="text-xs text-gray-500">{due.absolute}</span>
                               <span className={`text-xs font-bold ${due.tone}`}>{due.relative}</span>
                             </div>
                             <div className="flex items-center gap-1.5">
-                              <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "tasks")} className="!min-h-0 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700"><Phone className="h-3.5 w-3.5" /> Call</a>
-                              <a href={buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "tasks")} className="!min-h-0 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700"><WhatsAppIcon className="h-3.5 w-3.5" /> WhatsApp</a>
-                              <button type="button" onClick={() => toggleLogging(row.orderId, row.dueStage)} className="!min-h-0 inline-flex h-8 flex-1 items-center justify-center rounded-lg bg-[#1F8FE0] text-xs font-black text-white">Log</button>
+                              <a href={`tel:${task.phone}`} onClick={() => task.orderId && trackRetentionAction(task.orderId, "call", "tasks")} className="!min-h-0 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700"><Phone className="h-3.5 w-3.5" /> Call</a>
+                              <a href={buildWhatsAppTargets(task.phone, `Hello ${task.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined} target="_blank" rel="noreferrer" onClick={() => task.orderId && trackRetentionAction(task.orderId, "whatsapp", "tasks")} className="!min-h-0 inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700"><WhatsAppIcon className="h-3.5 w-3.5" /> WhatsApp</a>
+                              {task.source === "derived" && task.worklistRow ? (
+                                <button type="button" onClick={() => toggleLogging(task.worklistRow!.orderId, task.worklistRow!.dueStage)} className="!min-h-0 inline-flex h-8 flex-1 items-center justify-center rounded-lg bg-[#1F8FE0] text-xs font-black text-white">Log</button>
+                              ) : (
+                                <button type="button" onClick={() => completeManualTask(task.manualId as string)} className="!min-h-0 inline-flex h-8 flex-1 items-center justify-center rounded-lg bg-emerald-600 text-xs font-black text-white">Done</button>
+                              )}
                             </div>
                           </article>
                         );
                       })}
                     </div>
 
-                    {/* Desktop table */}
                     <div className="hidden overflow-x-auto sm:block">
-                      <table className="w-full min-w-[900px] text-sm">
+                      <table className="w-full min-w-[980px] text-sm">
                         <thead className="bg-gray-50 text-[10px] uppercase tracking-wider text-gray-500">
                           <tr>
+                            <th className="w-8 px-3 py-3"></th>
                             <th className="px-4 py-3 text-left font-bold">Priority</th>
                             <th className="px-4 py-3 text-left font-bold">Task</th>
                             <th className="px-4 py-3 text-left font-bold">Customer</th>
@@ -41590,41 +41868,65 @@ ${waybillLineItems(w).length > 1
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                          {pagedTasks.map((row) => {
-                            const type = RETENTION_TASK_TYPES.find((t) => t.key === taskTypeFor(row)) as typeof RETENTION_TASK_TYPES[number];
-                            const status = taskStatusBadge(taskStatusFor(row));
-                            const due = taskDueDisplay(row);
-                            const badge = priorityBadge(row.priorityBand);
-                            const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
+                          {pagedTasks.map((task) => {
+                            const type = RETENTION_TASK_TYPES.find((t) => t.key === task.taskType) as typeof RETENTION_TASK_TYPES[number];
+                            const status = taskStatusBadge(task.status);
+                            const due = unifiedDueDisplay(task);
+                            const prio = RETENTION_TASK_PRIORITY_META[task.priority];
+                            const whatsappUrl = buildWhatsAppTargets(task.phone, `Hello ${task.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
                             return (
-                              <tr key={row.orderId} className="align-top hover:bg-gray-50">
-                                <td className="px-4 py-3"><span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${badge.class}`}>{badge.emoji} {badge.label}</span></td>
+                              <tr key={task.key} className="align-top hover:bg-gray-50">
+                                <td className="px-3 py-3">
+                                  {task.source === "manual" && (
+                                    <input type="checkbox" checked={retentionTaskSelection.includes(task.key)} onChange={() => toggleTaskSelected(task.key)} className="h-4 w-4 rounded border-gray-300" aria-label={`Select ${task.customerName}`} />
+                                  )}
+                                </td>
+                                <td className="px-4 py-3"><span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${prio.class}`}>{prio.emoji} {prio.label}</span></td>
                                 <td className="px-4 py-3">
                                   <div className="flex items-center gap-1.5">
                                     <type.icon className={`h-4 w-4 shrink-0 ${type.tone}`} />
                                     <span className="font-bold text-gray-900">{type.label}</span>
                                   </div>
-                                  <p className="mt-0.5 text-xs text-gray-500">{taskSubtitleFor(row)}</p>
+                                  <p className="mt-0.5 text-xs text-gray-500">{task.subtitle}</p>
                                 </td>
                                 <td className="px-4 py-3">
-                                  <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 text-left">
-                                    <div className="font-bold text-gray-900">{row.customerName}</div>
-                                    <div className="text-xs text-gray-500">{row.phone}</div>
+                                  <button type="button" onClick={() => setRetentionDrawerPhone(task.phone)} className="!min-h-0 text-left">
+                                    <div className="font-bold text-gray-900">{task.customerName}</div>
+                                    <div className="text-xs text-gray-500">{task.phone}</div>
                                   </button>
                                 </td>
-                                <td className="px-4 py-3 text-xs text-gray-600">{row.productName}<br />#{row.orderId}</td>
-                                <td className="px-4 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
+                                <td className="px-4 py-3 text-xs text-gray-600">{task.productLabel}{task.orderId && task.source === "derived" ? <><br />#{task.orderId}</> : null}</td>
+                                <td className="px-4 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${task.stageClass}`}>{task.stageText}</span></td>
                                 <td className="px-4 py-3 text-xs">
                                   <div className="whitespace-nowrap font-semibold text-gray-800">{due.absolute}</div>
                                   <div className={`whitespace-nowrap font-bold ${due.tone}`}>{due.relative}</div>
                                 </td>
                                 <td className="px-4 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold ${status.class}`}>{status.label}</span></td>
-                                <td className="px-4 py-3 text-xs font-semibold text-gray-700">{row.assignedRepName ?? <span className="text-gray-400">Unassigned</span>}</td>
+                                <td className="px-4 py-3 text-xs font-semibold text-gray-700">{task.assignedRepName ?? <span className="text-gray-400">Unassigned</span>}</td>
                                 <td className="px-4 py-3">
                                   <div className="flex items-center gap-1.5">
-                                    <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "tasks")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><Phone className="h-3.5 w-3.5" /></a>
-                                    <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "tasks")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-600 hover:bg-gray-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
-                                    <button type="button" onClick={() => toggleLogging(row.orderId, row.dueStage)} className="!min-h-0 inline-flex items-center whitespace-nowrap rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white hover:bg-[#1560a8]">Log Outcome</button>
+                                    <a href={`tel:${task.phone}`} onClick={() => task.orderId && trackRetentionAction(task.orderId, "call", "tasks")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-emerald-600 hover:bg-gray-50"><Phone className="h-3.5 w-3.5" /></a>
+                                    <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => task.orderId && trackRetentionAction(task.orderId, "whatsapp", "tasks")} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-emerald-600 hover:bg-gray-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+                                    <div className="relative">
+                                      <button type="button" onClick={() => setRetentionTaskMenuKey(retentionTaskMenuKey === task.key ? null : task.key)} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-500 hover:bg-gray-50" aria-label="More actions"><MoreVertical className="h-3.5 w-3.5" /></button>
+                                      {retentionTaskMenuKey === task.key && (
+                                        <>
+                                          <div className="fixed inset-0 z-20" onClick={() => setRetentionTaskMenuKey(null)} />
+                                          <div className="absolute right-0 z-30 mt-1 w-48 rounded-xl border border-gray-200 bg-white p-1 shadow-lg">
+                                            {task.source === "derived" && task.worklistRow && (
+                                              <button type="button" onClick={() => { setRetentionTaskMenuKey(null); toggleLogging(task.worklistRow!.orderId, task.worklistRow!.dueStage); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"><ClipboardCheck className="h-4 w-4 text-gray-500" /> Log outcome</button>
+                                            )}
+                                            <button type="button" onClick={() => { setRetentionTaskMenuKey(null); setRetentionDrawerPhone(task.phone); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"><Users className="h-4 w-4 text-gray-500" /> View customer</button>
+                                            {task.source === "manual" && (
+                                              <>
+                                                <button type="button" onClick={() => { setRetentionTaskMenuKey(null); completeManualTask(task.manualId as string); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50"><CheckCircle2 className="h-4 w-4" /> Mark complete</button>
+                                                <button type="button" onClick={() => { setRetentionTaskMenuKey(null); cancelManualTask(task.manualId as string); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-rose-700 hover:bg-rose-50"><X className="h-4 w-4" /> Cancel task</button>
+                                              </>
+                                            )}
+                                          </div>
+                                        </>
+                                      )}
+                                    </div>
                                   </div>
                                 </td>
                               </tr>
@@ -41640,9 +41942,13 @@ ${waybillLineItems(w).length > 1
                       </span>
                       {totalPages > 1 && (
                         <div className="flex items-center gap-1">
-                          <button type="button" disabled={currentPage === 1} onClick={() => setRetentionTaskPage(currentPage - 1)} className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-xs font-bold text-gray-600 disabled:opacity-40">Prev</button>
-                          <span className="px-2 text-xs font-black text-gray-700">{currentPage} / {totalPages}</span>
-                          <button type="button" disabled={currentPage === totalPages} onClick={() => setRetentionTaskPage(currentPage + 1)} className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-xs font-bold text-gray-600 disabled:opacity-40">Next</button>
+                          <button type="button" disabled={currentPage === 1} onClick={() => setRetentionTaskPage(currentPage - 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-3.5 w-3.5" /></button>
+                          {pageNumbers.map((p, idx) => p === "gap" ? (
+                            <span key={`gap-${idx}`} className="px-1 text-xs text-gray-400">…</span>
+                          ) : (
+                            <button key={p} type="button" onClick={() => setRetentionTaskPage(p)} className={`!min-h-0 inline-flex h-7 min-w-[28px] items-center justify-center rounded-md border px-1.5 text-xs font-bold ${p === currentPage ? "border-emerald-600 bg-emerald-600 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{p}</button>
+                          ))}
+                          <button type="button" disabled={currentPage === totalPages} onClick={() => setRetentionTaskPage(currentPage + 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-3.5 w-3.5" /></button>
                         </div>
                       )}
                     </div>
@@ -41654,7 +41960,7 @@ ${waybillLineItems(w).length > 1
                 <section className="rounded-xl border border-gray-200 bg-white p-4">
                   <h3 className="text-sm font-black text-gray-900">Task Types</h3>
                   <ul className="mt-3 space-y-1">
-                    {retentionTaskTypeCounts.map((type) => (
+                    {typeCounts.map((type) => (
                       <li key={type.key}>
                         <button
                           type="button"
@@ -41668,30 +41974,37 @@ ${waybillLineItems(w).length > 1
                       </li>
                     ))}
                   </ul>
+                  <button type="button" onClick={() => { setRetentionTaskTypeFilter("all"); setRetentionTaskFilter("all"); resetTaskPage(); }} className="!min-h-0 mt-3 w-full rounded-lg border border-gray-200 py-2 text-xs font-black text-gray-700 hover:bg-gray-50">View All</button>
                 </section>
 
                 <section className="rounded-xl border border-gray-200 bg-white p-4">
-                  <h3 className="text-sm font-black text-gray-900">Today</h3>
-                  <p className="mt-0.5 text-xs text-gray-500">{new Date().toLocaleDateString([], { dateStyle: "long" })}</p>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-black text-gray-900">Calendar (Due Today)</h3>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between rounded-lg border border-gray-200 px-2 py-1.5">
+                    <button type="button" onClick={() => setRetentionTaskDueWindow("overdue")} className="!min-h-0 rounded p-1 text-gray-500 hover:bg-gray-100" aria-label="Show overdue"><ChevronLeft className="h-4 w-4" /></button>
+                    <span className="text-xs font-black text-gray-800">{new Date().toLocaleDateString([], { dateStyle: "long" })}</span>
+                    <button type="button" onClick={() => setRetentionTaskDueWindow("week")} className="!min-h-0 rounded p-1 text-gray-500 hover:bg-gray-100" aria-label="Show next 7 days"><ChevronRight className="h-4 w-4" /></button>
+                  </div>
                   {timedToday.length === 0 && anyTimeToday === 0 ? (
                     <p className="mt-3 text-xs italic text-gray-400">Nothing scheduled for today.</p>
                   ) : (
                     <>
                       <ul className="mt-3 space-y-2">
-                        {timedToday.map((row) => {
-                          const overdueNow = new Date(row.nextActionAt as string).getTime() < Date.now();
+                        {timedToday.map((task) => {
+                          const overdueNow = (task.dueAt as Date).getTime() < Date.now();
                           return (
-                            <li key={row.orderId}>
+                            <li key={task.key}>
                               <button
                                 type="button"
-                                onClick={() => setRetentionDrawerPhone(row.phone)}
+                                onClick={() => setRetentionDrawerPhone(task.phone)}
                                 className="!min-h-0 flex w-full items-start gap-2 rounded-lg border-l-2 pl-2 text-left hover:bg-gray-50"
                                 style={{ borderLeftColor: overdueNow ? "#e11d48" : "#0ea5e9" }}
                               >
-                                <span className="w-16 shrink-0 text-xs font-black text-gray-700">{new Date(row.nextActionAt as string).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                <span className="w-16 shrink-0 text-xs font-black text-gray-700">{(task.dueAt as Date).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
                                 <span className="min-w-0 flex-1">
-                                  <span className="block truncate text-xs font-bold text-gray-900">{row.customerName}</span>
-                                  <span className="block truncate text-[11px] text-gray-500">{RETENTION_TASK_TYPES.find((t) => t.key === taskTypeFor(row))?.label}</span>
+                                  <span className="block truncate text-xs font-bold text-gray-900">{task.customerName}</span>
+                                  <span className="block truncate text-[11px] text-gray-500">{RETENTION_TASK_TYPES.find((t) => t.key === task.taskType)?.label}</span>
                                 </span>
                                 {overdueNow && <span className="shrink-0 text-[10px] font-black text-rose-600">Overdue</span>}
                               </button>
@@ -41706,15 +42019,29 @@ ${waybillLineItems(w).length > 1
                       )}
                     </>
                   )}
+                  <button type="button" onClick={() => { setRetentionTaskDueWindow("today"); setRetentionTaskFiltersOpen(true); resetTaskPage(); }} className="!min-h-0 mt-3 w-full rounded-lg border border-gray-200 py-2 text-xs font-black text-gray-700 hover:bg-gray-50">View full calendar</button>
                 </section>
 
                 <section className="rounded-xl border border-gray-200 bg-white p-4">
                   <h3 className="text-sm font-black text-gray-900">Quick Actions</h3>
                   <div className="mt-3 space-y-1.5">
-                    <button type="button" onClick={() => { setRetentionTaskFilter("overdue"); resetTaskPage(); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><AlertTriangle className="h-3.5 w-3.5 text-rose-600" /> Work the overdue list</button>
-                    <button type="button" onClick={() => setRetentionSubPage("Pipeline")} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Repeat2 className="h-3.5 w-3.5 text-sky-600" /> Open full pipeline</button>
-                    <button type="button" onClick={() => setRetentionSubPage("Customers")} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Users className="h-3.5 w-3.5 text-violet-600" /> Browse customers</button>
-                    <button type="button" onClick={exportRetentionPipelineCsv} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Download className="h-3.5 w-3.5 text-gray-500" /> Export queue CSV</button>
+                    <button type="button" onClick={() => { setRetentionTaskForm({ customerName: "", customerPhone: "", taskType: "general_check_in", title: "", note: "", priority: "medium", dueAt: "", assignedRepId: null, orderId: null }); setRetentionAddTaskOpen(true); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Plus className="h-3.5 w-3.5 text-emerald-600" /> Add Task</button>
+                    <button type="button" onClick={() => { setRetentionTaskForm({ customerName: "", customerPhone: "", taskType: "scheduled_follow_up", title: "Scheduled follow-up", note: "", priority: "medium", dueAt: "", assignedRepId: null, orderId: null }); setRetentionAddTaskOpen(true); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Clock className="h-3.5 w-3.5 text-sky-600" /> Schedule Follow-up</button>
+                    <button type="button" disabled={selectedManualIds.length === 0} onClick={() => { setRetentionBulkAssignRepId(""); setRetentionBulkAssignOpen(true); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-40"><UserPlus className="h-3.5 w-3.5 text-violet-600" /> Bulk Assign Tasks{selectedManualIds.length > 0 ? ` (${selectedManualIds.length})` : ""}</button>
+                    <button type="button" onClick={() => { setRetentionImportText(""); setRetentionImportOpen(true); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Upload className="h-3.5 w-3.5 text-amber-600" /> Import Tasks</button>
+                    <div className="pt-1">
+                      <p className="px-1 pb-1 text-[10px] font-black uppercase tracking-[0.12em] text-gray-400">Task Templates</p>
+                      {RETENTION_TASK_TYPES.filter((t) => t.key === "satisfaction_check" || t.key === "complaint_follow_up" || t.key === "review_request" || t.key === "win_back_call").map((t) => (
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => { setRetentionTaskForm({ customerName: "", customerPhone: "", taskType: t.key, title: t.label, note: "", priority: t.key === "complaint_follow_up" ? "high" : "medium", dueAt: "", assignedRepId: null, orderId: null }); setRetentionAddTaskOpen(true); }}
+                          className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                        >
+                          <Copy className="h-3 w-3 text-gray-400" /> {t.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </section>
               </aside>
@@ -41722,6 +42049,7 @@ ${waybillLineItems(w).length > 1
           </div>
         );
       }
+
 
       if (retentionSubPage === "Win-back") return (
         <div className="space-y-4">
@@ -42795,6 +43123,187 @@ ${waybillLineItems(w).length > 1
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end pt-2">
                 <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={closeLogOutcome}>Cancel</button>
                 <button type="button" disabled={retentionOutcomeSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white disabled:opacity-60" onClick={() => submitLogOutcome(logOutcomeRow)}>{retentionOutcomeSaving ? "Saving..." : "Save Outcome"}</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {retentionAddTaskOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setRetentionAddTaskOpen(false)}>
+          <section className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white px-5 py-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-400">New Task</p>
+                <h3 className="text-base font-black text-gray-900">Add Retention Task</h3>
+              </div>
+              <button type="button" onClick={() => setRetentionAddTaskOpen(false)} className="!min-h-0 rounded-md p-1.5 text-gray-400 hover:bg-gray-100"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="space-y-3 p-5">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Customer name *</span>
+                  <input value={retentionTaskForm.customerName} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, customerName: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                </label>
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Phone *</span>
+                  <input value={retentionTaskForm.customerPhone} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, customerPhone: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                </label>
+              </div>
+              <label className="block space-y-1">
+                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Task title *</span>
+                <input value={retentionTaskForm.title} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, title: e.target.value }))} placeholder="e.g. Call back about the damaged lid" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+              </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Task type</span>
+                  <select value={retentionTaskForm.taskType} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, taskType: e.target.value as RetentionManualTaskInput["taskType"] }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                    {RETENTION_TASK_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Priority</span>
+                  <select value={retentionTaskForm.priority} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, priority: e.target.value as RetentionManualTaskInput["priority"] }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                    <option value="high">🔥 High</option>
+                    <option value="medium">⭐ Medium</option>
+                    <option value="low">🌱 Low</option>
+                  </select>
+                </label>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Due date &amp; time *</span>
+                  <input type="datetime-local" value={retentionTaskForm.dueAt} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, dueAt: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                </label>
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Assign to</span>
+                  <select value={retentionTaskForm.assignedRepId ?? ""} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, assignedRepId: e.target.value || null }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                    <option value="">Unassigned</option>
+                    {recoveryRepUsers.filter((u) => u.active !== false).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                </label>
+              </div>
+              <label className="block space-y-1">
+                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Order ID (optional)</span>
+                <input value={retentionTaskForm.orderId ?? ""} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, orderId: e.target.value || null }))} placeholder="Link this task to an order" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+              </label>
+              <label className="block space-y-1">
+                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Note (optional)</span>
+                <textarea value={retentionTaskForm.note ?? ""} onChange={(e) => setRetentionTaskForm((f) => ({ ...f, note: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+              </label>
+              <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+                <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={() => setRetentionAddTaskOpen(false)}>Cancel</button>
+                <button
+                  type="button"
+                  disabled={retentionAddTaskSaving}
+                  className="!min-h-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
+                  onClick={async () => {
+                    if (!retentionTaskForm.customerName.trim() || !retentionTaskForm.customerPhone.trim() || !retentionTaskForm.title.trim() || !retentionTaskForm.dueAt) {
+                      showToast("Customer name, phone, title and due date are required.");
+                      return;
+                    }
+                    setRetentionAddTaskSaving(true);
+                    try {
+                      await customerRetentionApi.createTask({ ...retentionTaskForm, dueAt: new Date(retentionTaskForm.dueAt).toISOString() });
+                      showToast("Task created.");
+                      setRetentionAddTaskOpen(false);
+                      reloadRetentionManualTasks();
+                    } catch (err: any) {
+                      showToast(err?.message ?? "Could not create the task.");
+                    } finally { setRetentionAddTaskSaving(false); }
+                  }}
+                >{retentionAddTaskSaving ? "Saving..." : "Create Task"}</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {retentionImportOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setRetentionImportOpen(false)}>
+          <section className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-gray-100 px-5 py-4">
+              <h3 className="text-base font-black text-gray-900">Import Tasks</h3>
+              <p className="mt-0.5 text-xs text-gray-500">One task per line, comma separated.</p>
+            </div>
+            <div className="space-y-3 p-5">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600">
+                <p className="font-black uppercase tracking-wide text-gray-500">Format</p>
+                <code className="mt-1 block break-all">name, phone, title, YYYY-MM-DD HH:MM, high|medium|low</code>
+                <p className="mt-2 text-gray-500">Example: <code>Ada Obi, 08031234567, Call about refund, 2026-08-01 10:30, high</code></p>
+              </div>
+              <textarea value={retentionImportText} onChange={(e) => setRetentionImportText(e.target.value)} rows={8} className="w-full rounded-lg border border-gray-200 bg-white p-2 font-mono text-xs" placeholder="Ada Obi, 08031234567, Call about refund, 2026-08-01 10:30, high" />
+              <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
+                <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={() => setRetentionImportOpen(false)}>Cancel</button>
+                <button
+                  type="button"
+                  disabled={retentionImportSaving}
+                  className="!min-h-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
+                  onClick={async () => {
+                    const parsed: RetentionManualTaskInput[] = [];
+                    const bad: number[] = [];
+                    retentionImportText.split("\n").map((l) => l.trim()).filter(Boolean).forEach((line, idx) => {
+                      const parts = line.split(",").map((p) => p.trim());
+                      const [name, phone, title, due, priority] = parts;
+                      const dueDate = due ? new Date(due.replace(" ", "T")) : null;
+                      if (!name || !phone || !title || !dueDate || Number.isNaN(dueDate.getTime())) { bad.push(idx + 1); return; }
+                      parsed.push({
+                        customerName: name, customerPhone: phone, title,
+                        taskType: "general_check_in",
+                        priority: priority === "high" || priority === "low" ? priority : "medium",
+                        dueAt: dueDate.toISOString(), note: null, assignedRepId: null, orderId: null
+                      });
+                    });
+                    if (parsed.length === 0) { showToast(`Nothing importable${bad.length ? ` - check line ${bad[0]}` : ""}.`); return; }
+                    setRetentionImportSaving(true);
+                    try {
+                      const result = await customerRetentionApi.importTasks(parsed);
+                      showToast(`Imported ${result.imported} task${result.imported === 1 ? "" : "s"}${bad.length ? ` (${bad.length} line(s) skipped)` : ""}.`);
+                      setRetentionImportOpen(false);
+                      reloadRetentionManualTasks();
+                    } catch (err: any) {
+                      showToast(err?.message ?? "Could not import the tasks.");
+                    } finally { setRetentionImportSaving(false); }
+                  }}
+                >{retentionImportSaving ? "Importing..." : "Import"}</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {retentionBulkAssignOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setRetentionBulkAssignOpen(false)}>
+          <section className="w-full rounded-t-2xl bg-white shadow-2xl sm:max-w-sm sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-gray-100 px-5 py-4">
+              <h3 className="text-base font-black text-gray-900">Bulk Assign Tasks</h3>
+              <p className="mt-0.5 text-xs text-gray-500">{retentionTaskSelection.filter((k) => k.startsWith("manual:")).length} selected task(s)</p>
+            </div>
+            <div className="space-y-3 p-5">
+              <label className="block space-y-1">
+                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Assign to</span>
+                <select value={retentionBulkAssignRepId} onChange={(e) => setRetentionBulkAssignRepId(e.target.value)} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                  <option value="">Unassigned</option>
+                  {recoveryRepUsers.filter((u) => u.active !== false).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </label>
+              <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
+                <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={() => setRetentionBulkAssignOpen(false)}>Cancel</button>
+                <button
+                  type="button"
+                  className="!min-h-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-black text-white"
+                  onClick={async () => {
+                    const ids = retentionTaskSelection.filter((k) => k.startsWith("manual:")).map((k) => k.slice("manual:".length));
+                    if (ids.length === 0) { showToast("Select at least one task."); return; }
+                    try {
+                      const result = await customerRetentionApi.bulkAssignTasks(ids, retentionBulkAssignRepId || null);
+                      showToast(`Reassigned ${result.updated} task${result.updated === 1 ? "" : "s"}.`);
+                      setRetentionBulkAssignOpen(false);
+                      setRetentionTaskSelection([]);
+                      reloadRetentionManualTasks();
+                    } catch (err: any) { showToast(err?.message ?? "Could not reassign the tasks."); }
+                  }}
+                >Assign</button>
               </div>
             </div>
           </section>

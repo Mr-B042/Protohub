@@ -1019,6 +1019,42 @@ export interface RetentionProductTiming {
   winBackEndDays?: number;
 }
 
+// Manually-created retention tasks (migration 178). These sit alongside the
+// derived lifecycle worklist and are deliberately NOT part of the bonus or
+// KPI math - a manual task is a reminder, not a business event.
+export type RetentionManualTaskType =
+  | "satisfaction_check" | "complaint_follow_up" | "review_request" | "referral_request"
+  | "repeat_sale_offer" | "win_back_call" | "scheduled_follow_up" | "general_check_in";
+
+export interface RetentionManualTask {
+  id: string;
+  orderId: string | null;
+  customerName: string;
+  customerPhone: string;
+  taskType: RetentionManualTaskType;
+  title: string;
+  note: string | null;
+  priority: "high" | "medium" | "low";
+  status: "pending" | "completed" | "cancelled";
+  dueAt: string;
+  assignedRepId: string | null;
+  assignedRepName: string | null;
+  completedAt: string | null;
+  createdAt: string;
+}
+
+export interface RetentionManualTaskInput {
+  orderId?: string | null;
+  customerName: string;
+  customerPhone: string;
+  taskType: RetentionManualTaskType;
+  title: string;
+  note?: string | null;
+  priority: "high" | "medium" | "low";
+  dueAt: string;
+  assignedRepId?: string | null;
+}
+
 export interface RetentionActivityLogRow {
   id: string;
   activityType: "outcome" | "call" | "whatsapp";
@@ -1111,7 +1147,18 @@ export const customerRetentionApi = {
   updateSettings: (body: Partial<RetentionBonusSettings>) => patch<{ settings: RetentionBonusSettings }>("/api/customer-retention/settings", body),
   productTiming: () => get<{ products: Array<{ id: string; name: string; timing: RetentionProductTiming | null }> }>("/api/customer-retention/product-timing"),
   updateProductTiming: (productId: string, timing: RetentionProductTiming) =>
-    patch<{ product: { id: string; name: string; timing: RetentionProductTiming | null } }>(`/api/customer-retention/product-timing/${encodeURIComponent(productId)}`, timing)
+    patch<{ product: { id: string; name: string; timing: RetentionProductTiming | null } }>(`/api/customer-retention/product-timing/${encodeURIComponent(productId)}`, timing),
+  // Manual tasks live alongside the derived lifecycle worklist - see
+  // migration 178. `pendingMigration` lets the Tasks page degrade to
+  // derived-only rather than erroring if 178 has not been applied yet.
+  tasks: () => get<{ rows: RetentionManualTask[]; pendingMigration?: boolean }>("/api/customer-retention/tasks"),
+  createTask: (body: RetentionManualTaskInput) => post<{ row: RetentionManualTask }>("/api/customer-retention/tasks", body),
+  updateTask: (id: string, body: Partial<Pick<RetentionManualTask, "status" | "priority" | "dueAt" | "assignedRepId" | "title" | "note">>) =>
+    patch<{ row: RetentionManualTask }>(`/api/customer-retention/tasks/${encodeURIComponent(id)}`, body),
+  bulkAssignTasks: (taskIds: string[], assignedRepId: string | null) =>
+    post<{ updated: number }>("/api/customer-retention/tasks/bulk-assign", { taskIds, assignedRepId }),
+  importTasks: (tasks: RetentionManualTaskInput[]) =>
+    post<{ imported: number }>("/api/customer-retention/tasks/import", { tasks })
 };
 
 export const customerOptOutApi = {
