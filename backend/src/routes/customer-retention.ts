@@ -504,6 +504,17 @@ router.get("/customers", requireRole(...RETENTION_ROLES), async (req, res) => {
       const latestDeliveredOrder = deliveredOrders[deliveredOrders.length - 1];
       const rejectedOrders = customerOrders.filter((order) => ["Cancelled", "Failed", "Rejected"].includes(String(order.status)));
       const totalSpent = deliveredOrders.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
+      // Repeat metrics count only DELIVERED orders, matching totalSpent, so
+      // repeat revenue can never exceed lifetime spend. "Repeat" excludes the
+      // customer's very first delivered order - that one is acquisition, not
+      // retention, and counting it would overstate what retention earned.
+      const firstDeliveredAmount = deliveredOrders.length > 0 ? Number(deliveredOrders[0].amount ?? 0) : 0;
+      const repeatOrders = Math.max(0, deliveredOrders.length - 1);
+      const repeatRevenue = repeatOrders > 0 ? totalSpent - firstDeliveredAmount : 0;
+      const lastDeliveredAt = latestDeliveredOrder?.delivered_date ?? null;
+      const daysSinceLastOrder = lastDeliveredAt
+        ? Math.max(0, Math.floor((Date.now() - new Date(`${String(lastDeliveredAt).slice(0, 10)}T00:00:00`).getTime()) / 86400000))
+        : null;
       const productsPurchased = [...new Set(deliveredOrders.map((order) => String(order.product_name ?? "")).filter(Boolean))];
       const assignedRepId = lifecycle?.assignedRepId ?? assignmentByOrderId.get(latestDeliveredOrder.id) ?? null;
       const assignedRepName = lifecycle?.assignedRepName ?? (assignedRepId ? assignedRepNameById.get(assignedRepId) ?? null : null);
@@ -546,6 +557,11 @@ router.get("/customers", requireRole(...RETENTION_ROLES), async (req, res) => {
         deliveredOrders: deliveredOrders.length,
         rejectedOrders: rejectedOrders.length,
         totalSpent,
+        repeatOrders,
+        repeatRevenue,
+        firstOrderAmount: firstDeliveredAmount,
+        daysSinceLastOrder,
+        lastOrderAmount: Number(latestDeliveredOrder.amount ?? 0),
         currency: latestDeliveredOrder.currency ?? lifecycle?.orderCurrency ?? "NGN",
         lastOrderId: latestDeliveredOrder.id,
         lastProduct: latestDeliveredOrder.product_name ?? lifecycle?.productName ?? "",
