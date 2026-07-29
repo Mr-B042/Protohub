@@ -67,6 +67,8 @@ const checks = [
       "renderOrderPurchaseSummary(order, \"mobile\")",
       "renderOrderPurchaseSummary(order, \"table\")",
       "w-full table-fixed text-sm",
+      "sm:hidden dark:bg-[#07111a]",
+      "hidden w-full overflow-hidden sm:block",
       "Status / Response",
       "Location / Date"
     ]

@@ -46980,9 +46980,8 @@ ${waybillLineItems(w).length > 1
                   </div>
                 )}
 
-                {/* Full-detail cards replace the table whenever the available
-                    desktop width would force horizontal dragging. */}
-                <div className={`${collapsed ? "grid xl:hidden" : "grid min-[1760px]:hidden"} grid-cols-1 gap-3 bg-gray-50/80 p-3 lg:grid-cols-2 dark:bg-[#07111a]`}>
+                {/* Full-detail cards are reserved for mobile screens. */}
+                <div className="grid grid-cols-1 gap-3 bg-gray-50/80 p-3 sm:hidden dark:bg-[#07111a]">
                   {filteredOrderRows.length === 0 ? (
                     <div className="rounded-3xl border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-400 shadow-sm dark:border-slate-800 dark:bg-[#101a24]">
                       {orderWorkspacePage === "Follow-up Queue"
@@ -47151,9 +47150,8 @@ ${waybillLineItems(w).length > 1
                   )}
                 </div>
 
-                {/* Compact desktop table. Secondary fields share columns so the
-                    whole row stays visible in both sidebar states. */}
-                <div className={`${collapsed ? "hidden xl:block" : "hidden min-[1760px]:block"} w-full overflow-hidden`}>
+                {/* Desktop and tablet keep the familiar table in both sidebar states. */}
+                <div className="hidden w-full overflow-hidden sm:block">
                   <table className="w-full table-fixed text-sm" aria-label={activeOrderWorkspaceMeta.tableLabel}>
                     <colgroup>
                       {canUseAdminOrderActions && <col style={{ width: "3%" }} />}
