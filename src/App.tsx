@@ -11049,6 +11049,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionSettingsDraft, setRetentionSettingsDraft] = useState<RetentionBonusSettings | null>(null);
   const [retentionSettingsSaving, setRetentionSettingsSaving] = useState(false);
   const [retentionDashboardSummary, setRetentionDashboardSummary] = useState<RetentionDashboardSummary | null>(null);
+  const [retentionDashboardLoading, setRetentionDashboardLoading] = useState(false);
+  const [retentionDashboardError, setRetentionDashboardError] = useState("");
   const [retentionSearch, setRetentionSearch] = useState("");
   const [retentionPriorityFilter, setRetentionPriorityFilter] = useState("all");
   const [retentionProductFilter, setRetentionProductFilter] = useState("all");
@@ -39641,7 +39643,7 @@ ${waybillLineItems(w).length > 1
   const loadRetentionWorklist = async () => {
     setRetentionWorklistLoading(true);
     try {
-      const result = await customerRetentionApi.worklist({});
+      const result = await customerRetentionApi.worklist({ assignedRepId: recoveryRepViewingId || undefined });
       setRetentionWorklist(result.rows ?? []);
     } catch (err: any) {
       showToast(err?.message ?? "Could not load the customer retention worklist.");
@@ -39653,7 +39655,11 @@ ${waybillLineItems(w).length > 1
   const loadRetentionBonusSummary = async () => {
     try {
       const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
-      const result = await customerRetentionApi.bonusSummary(bounds ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo } : {});
+      const result = await customerRetentionApi.bonusSummary(
+        bounds
+          ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo, userId: recoveryRepViewingId || undefined }
+          : { userId: recoveryRepViewingId || undefined }
+      );
       setRetentionBonusSummary(result);
     } catch {
       // Non-fatal - the bonus banner just won't render.
@@ -39670,12 +39676,20 @@ ${waybillLineItems(w).length > 1
   };
 
   const loadRetentionDashboardSummary = async () => {
+    setRetentionDashboardLoading(true);
+    setRetentionDashboardError("");
     try {
       const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
-      const result = await customerRetentionApi.dashboardSummary(bounds ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo } : {});
+      const result = await customerRetentionApi.dashboardSummary(
+        bounds
+          ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo, repId: recoveryRepViewingId || undefined }
+          : { repId: recoveryRepViewingId || undefined }
+      );
       setRetentionDashboardSummary(result);
-    } catch {
-      // Non-fatal - the KPI cards/Today's Focus just won't render.
+    } catch (err: any) {
+      setRetentionDashboardError(err?.message ?? "Could not load the retention overview.");
+    } finally {
+      setRetentionDashboardLoading(false);
     }
   };
 
@@ -39710,12 +39724,16 @@ ${waybillLineItems(w).length > 1
 
   useEffect(() => {
     if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention") return;
+    setRetentionWorklist([]);
+    setRetentionBonusSummary(null);
+    setRetentionDashboardSummary(null);
+    setRetentionDashboardError("");
     void loadRetentionWorklist();
     void loadRetentionBonusSummary();
     void loadRetentionSettings();
     void loadRetentionDashboardSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, recoveryRepDashboardTab, retentionPeriod, retentionDateRange]);
+  }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionPeriod, retentionDateRange]);
 
   useEffect(() => {
     if (!retentionDrawerPhone) { setRetentionCustomerDetail(null); return; }
@@ -39734,12 +39752,16 @@ ${waybillLineItems(w).length > 1
     const stage = retentionSubPage === "Reviews" || retentionSubPage === "Referrals" ? "review_referral" : retentionSubPage === "Repeat Sales" ? "retention_sale" : undefined;
     setRetentionActivityLogLoading(true);
     const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
-    customerRetentionApi.activityLog(bounds ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo, stage } : { stage })
+    customerRetentionApi.activityLog(
+      bounds
+        ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo, stage, repId: recoveryRepViewingId || undefined }
+        : { stage, repId: recoveryRepViewingId || undefined }
+    )
       .then((result) => setRetentionActivityLog(result.rows ?? []))
       .catch((err: any) => showToast(err?.message ?? "Could not load the activity log."))
       .finally(() => setRetentionActivityLogLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, recoveryRepDashboardTab, retentionSubPage, retentionPeriod, retentionDateRange]);
+  }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionSubPage, retentionPeriod, retentionDateRange]);
 
   useEffect(() => {
     if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || retentionSubPage !== "Settings" || currentRole !== "Owner") return;
@@ -39956,14 +39978,16 @@ ${waybillLineItems(w).length > 1
     // fetched worklist + KPI summary - not a separate data source.
     const needsResolutionCount = retentionWorklist.filter((r) => r.dueStage === "needs_resolution").length;
     const highValueOpportunityCount = retentionWorklist.filter((r) => r.priorityBand === "high_value").length;
-    const todaysFocusLines: string[] = [];
+    const promisedReviewCount = retentionWorklist.filter((r) => r.reviewRequested && !r.reviewCollected).length;
+    const todaysFocusItems: Array<{ label: string; icon: typeof AlertTriangle; tone: string }> = [];
     if (retentionDashboardSummary) {
       const { kpis } = retentionDashboardSummary;
-      if (kpis.dueToday > 0) todaysFocusLines.push(`${kpis.dueToday} customer${kpis.dueToday === 1 ? "" : "s"} need${kpis.dueToday === 1 ? "s" : ""} to be contacted today`);
-      if (kpis.overdue > 0) todaysFocusLines.push(`${kpis.overdue} follow-up${kpis.overdue === 1 ? "" : "s"} ${kpis.overdue === 1 ? "is" : "are"} overdue`);
+      if (kpis.overdue > 0) todaysFocusItems.push({ label: `${kpis.overdue} follow-up${kpis.overdue === 1 ? "" : "s"} ${kpis.overdue === 1 ? "is" : "are"} overdue`, icon: Clock, tone: "bg-amber-50 text-amber-700" });
+      if (kpis.dueToday > 0) todaysFocusItems.push({ label: `${kpis.dueToday} satisfaction or retention call${kpis.dueToday === 1 ? "" : "s"} due today`, icon: Phone, tone: "bg-emerald-50 text-emerald-700" });
     }
-    if (needsResolutionCount > 0) todaysFocusLines.push(`${needsResolutionCount} unresolved customer complaint${needsResolutionCount === 1 ? "" : "s"}`);
-    if (highValueOpportunityCount > 0) todaysFocusLines.push(`${highValueOpportunityCount} high-value repeat-sale opportunit${highValueOpportunityCount === 1 ? "y" : "ies"}`);
+    if (needsResolutionCount > 0) todaysFocusItems.unshift({ label: `${needsResolutionCount} unresolved customer complaint${needsResolutionCount === 1 ? "" : "s"}`, icon: AlertTriangle, tone: "bg-rose-50 text-rose-700" });
+    if (highValueOpportunityCount > 0) todaysFocusItems.push({ label: `${highValueOpportunityCount} high-value repeat-sale opportunit${highValueOpportunityCount === 1 ? "y" : "ies"}`, icon: CircleDollarSign, tone: "bg-sky-50 text-sky-700" });
+    if (promisedReviewCount > 0) todaysFocusItems.push({ label: `${promisedReviewCount} customer${promisedReviewCount === 1 ? "" : "s"} promised a review`, icon: Sparkles, tone: "bg-violet-50 text-violet-700" });
 
     // P1-P6, matching the spec's smart priority system exactly. Color
     // discipline per the spec: "use red only for true urgency... use amber
@@ -40342,100 +40366,343 @@ ${waybillLineItems(w).length > 1
     );
 
     const renderRetentionSubPage = () => {
-      if (retentionSubPage === "Overview") return (
-        <div className="space-y-6">
-          {retentionDashboardSummary && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {([
-                ["Due Today", retentionDashboardSummary.kpis.dueToday, "text-sky-600"],
-                ["Overdue", retentionDashboardSummary.kpis.overdue, "text-red-600"],
-                ["Contacted", retentionDashboardSummary.kpis.contacted, "text-gray-900"],
-                ["Customers Reached", retentionDashboardSummary.repPerformance.customersReached, "text-emerald-700"],
-                ["Issues Resolved", retentionDashboardSummary.kpis.issuesResolved, "text-emerald-600"],
-                ["Reviews", retentionDashboardSummary.kpis.reviews, "text-gray-900"],
-                ["Referrals", retentionDashboardSummary.kpis.referrals, "text-gray-900"],
-                ["Repeat Customers", retentionDashboardSummary.kpis.repeatCustomers, "text-violet-600"],
-                ["Repeat Sales Revenue", formatMoney(retentionDashboardSummary.kpis.repeatSalesRevenue), "text-emerald-700"]
-              ] as const).map(([label, value, tone]) => (
-                <div key={label} className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
-                  <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{label}</div>
-                  <div className={`text-xl font-black mt-1 ${tone}`}>{value}</div>
-                </div>
-              ))}
+      if (retentionSubPage === "Overview") {
+        if (retentionDashboardLoading && !retentionDashboardSummary) {
+          return (
+            <div className="space-y-4" aria-label="Loading retention overview">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+                {Array.from({ length: 8 }).map((_, index) => <div key={index} className="h-28 animate-pulse rounded-lg border border-gray-200 bg-white" />)}
+              </div>
+              <div className="grid gap-4 xl:grid-cols-3">
+                {Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-56 animate-pulse rounded-lg border border-gray-200 bg-white" />)}
+              </div>
+              <div className="h-40 animate-pulse rounded-lg border border-gray-200 bg-white" />
+              <div className="h-72 animate-pulse rounded-lg border border-gray-200 bg-white" />
             </div>
-          )}
+          );
+        }
 
-          {todaysFocusLines.length > 0 && (
-            <section className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
-              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-sky-700">Today&apos;s Focus</p>
-              <ul className="mt-2 space-y-1 text-sm font-semibold text-sky-900">
-                {todaysFocusLines.map((line) => <li key={line}>• {line}</li>)}
-              </ul>
+        if (retentionDashboardError && !retentionDashboardSummary) {
+          return (
+            <section className="rounded-lg border border-rose-200 bg-rose-50 p-6 text-center">
+              <AlertTriangle className="mx-auto h-6 w-6 text-rose-600" />
+              <h3 className="mt-2 text-sm font-black text-rose-900">The retention overview could not load</h3>
+              <p className="mt-1 text-sm text-rose-700">{retentionDashboardError}</p>
+              <button type="button" onClick={refreshRetentionPage} className="!min-h-0 mt-4 rounded-lg bg-rose-700 px-4 py-2 text-sm font-black text-white">
+                Try again
+              </button>
             </section>
-          )}
+          );
+        }
 
-          {retentionDashboardSummary && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Reviews</p>
-                <div className="mt-2 flex items-baseline gap-3">
-                  <span className="text-2xl font-black text-gray-900">{retentionDashboardSummary.reviewsReferrals.reviewsReceived}</span>
-                  <span className="text-xs text-gray-500">of {retentionDashboardSummary.reviewsReferrals.reviewsRequested} requested</span>
-                </div>
-                <p className="mt-1 text-xs font-semibold text-gray-500">
-                  Conversion: {retentionDashboardSummary.reviewsReferrals.reviewConversionPct === null ? "—" : `${retentionDashboardSummary.reviewsReferrals.reviewConversionPct}%`}
-                </p>
-              </section>
-              <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Referrals</p>
-                <div className="mt-2 flex items-baseline gap-3">
-                  <span className="text-2xl font-black text-gray-900">{retentionDashboardSummary.reviewsReferrals.referralsReceived}</span>
-                  <span className="text-xs text-gray-500">of {retentionDashboardSummary.reviewsReferrals.referralsRequested} requested</span>
-                </div>
-                <p className="mt-1 text-xs font-semibold text-gray-500">
-                  Conversion: {retentionDashboardSummary.reviewsReferrals.referralConversionPct === null ? "—" : `${retentionDashboardSummary.reviewsReferrals.referralConversionPct}%`}
-                </p>
-              </section>
-            </div>
-          )}
+        if (!retentionDashboardSummary) return null;
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {retentionBonusSummary && (
-              <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">My Retention Bonus</p>
-                <strong className="mt-1 block text-2xl font-black text-emerald-700">{formatMoney(retentionBonusSummary.breakdown?.total ?? 0)}</strong>
-                {retentionDashboardSummary && (
-                  <>
-                    <div className="mt-2 h-1.5 w-full rounded-full bg-gray-100">
-                      <div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${retentionDashboardSummary.bonus.progressPct}%` }} />
+        const summary = retentionDashboardSummary;
+        const overviewKpis = [
+          { label: "Due Today", value: summary.kpis.dueToday, detail: "live task queue", icon: CalendarClock, iconTone: "bg-emerald-50 text-emerald-700", valueTone: "text-emerald-700" },
+          { label: "Overdue", value: summary.kpis.overdue, detail: summary.kpis.overdue > 0 ? "needs attention" : "queue is clear", icon: Clock, iconTone: "bg-rose-50 text-rose-600", valueTone: "text-rose-600" },
+          { label: "Contacted", value: summary.kpis.contacted, detail: "selected period", icon: Phone, iconTone: "bg-sky-50 text-sky-700", valueTone: "text-sky-700" },
+          { label: "Customers Reached", value: summary.repPerformance.customersReached, detail: `${summary.repPerformance.contactRatePct}% contact rate`, icon: Users, iconTone: "bg-cyan-50 text-cyan-700", valueTone: "text-cyan-700" },
+          { label: "Issues Resolved", value: summary.kpis.issuesResolved, detail: "selected period", icon: ShieldCheck, iconTone: "bg-amber-50 text-amber-700", valueTone: "text-amber-700" },
+          { label: "Reviews Received", value: summary.kpis.reviews, detail: summary.reviewsReferrals.reviewConversionPct === null ? "no requests yet" : `${summary.reviewsReferrals.reviewConversionPct}% conversion`, icon: Sparkles, iconTone: "bg-violet-50 text-violet-700", valueTone: "text-violet-700" },
+          { label: "Referrals Received", value: summary.kpis.referrals, detail: summary.reviewsReferrals.referralConversionPct === null ? "no requests yet" : `${summary.reviewsReferrals.referralConversionPct}% conversion`, icon: UserPlus, iconTone: "bg-emerald-50 text-emerald-700", valueTone: "text-emerald-700" },
+          { label: "Repeat Sales", value: formatMoney(summary.kpis.repeatSalesRevenue), detail: `${summary.kpis.repeatCustomers} repeat customer${summary.kpis.repeatCustomers === 1 ? "" : "s"}`, icon: Repeat2, iconTone: "bg-green-50 text-green-700", valueTone: "text-green-700" }
+        ];
+        const stageOverdueCount = (predicate: (row: RetentionWorklistRow) => boolean) =>
+          retentionWorklist.filter((row) => predicate(row) && row.overdueBy > 0).length;
+        const overviewLifecycleStages = [
+          {
+            label: "Needs Resolution",
+            count: summary.lifecyclePipeline.needsResolution,
+            overdue: stageOverdueCount((row) => row.dueStage === "needs_resolution"),
+            stage: "needs_resolution" as const,
+            icon: AlertTriangle,
+            tone: "border-rose-200 bg-rose-50 text-rose-700"
+          },
+          {
+            label: "Satisfaction Check",
+            count: summary.lifecyclePipeline.satisfactionDue,
+            overdue: stageOverdueCount((row) => row.dueStage === "satisfaction_check"),
+            stage: "satisfaction_check" as const,
+            icon: Phone,
+            tone: "border-amber-200 bg-amber-50 text-amber-700"
+          },
+          {
+            label: "Review / Testimonial",
+            count: summary.lifecyclePipeline.reviewDue,
+            overdue: stageOverdueCount((row) => row.dueStage === "review_referral" && !row.reviewCollected),
+            stage: "review_referral" as const,
+            icon: Sparkles,
+            tone: "border-sky-200 bg-sky-50 text-sky-700"
+          },
+          {
+            label: "Referral",
+            count: summary.lifecyclePipeline.referralDue,
+            overdue: stageOverdueCount((row) => row.dueStage === "review_referral" && !row.referralCollected && row.daysSinceDelivery >= 14),
+            stage: "review_referral" as const,
+            icon: UserPlus,
+            tone: "border-violet-200 bg-violet-50 text-violet-700"
+          },
+          {
+            label: "Repeat Sale / Cross-sell",
+            count: summary.lifecyclePipeline.retentionSaleDue,
+            overdue: stageOverdueCount((row) => row.dueStage === "retention_sale"),
+            stage: "retention_sale" as const,
+            icon: Repeat2,
+            tone: "border-emerald-200 bg-emerald-50 text-emerald-700"
+          },
+          {
+            label: "Win-back",
+            count: summary.lifecyclePipeline.winBack,
+            overdue: stageOverdueCount((row) => row.dueStage === "win_back"),
+            stage: "win_back" as const,
+            icon: RefreshCw,
+            tone: "border-indigo-200 bg-indigo-50 text-indigo-700"
+          }
+        ];
+        const priorityRank = (band: RetentionWorklistRow["priorityBand"]) =>
+          ["critical", "overdue", "high_value", "satisfaction_due", "review_referral_due", "revenue_opportunity"].indexOf(band);
+        const overviewPriorityRows = [...retentionWorklist]
+          .filter((row) => row.dueStage !== null)
+          .sort((a, b) => priorityRank(a.priorityBand) - priorityRank(b.priorityBand) || b.overdueBy - a.overdueBy || b.orderAmount - a.orderAmount)
+          .slice(0, 5);
+        const overviewDueLabel = (row: RetentionWorklistRow) =>
+          row.overdueBy > 0
+            ? `${row.overdueBy}d overdue`
+            : row.nextActionAt
+              ? new Date(row.nextActionAt).toLocaleDateString()
+              : "Today";
+
+        return (
+          <div className="space-y-4">
+            <section className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+              {overviewKpis.map((card) => {
+                const Icon = card.icon;
+                return (
+                  <article key={card.label} className="min-w-0 rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+                    <div className="flex items-center gap-2.5">
+                      <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${card.iconTone}`}>
+                        <Icon className="h-[18px] w-[18px]" />
+                      </span>
+                      <p className="min-w-0 text-[10px] font-black uppercase leading-4 tracking-[0.08em] text-gray-500">{card.label}</p>
                     </div>
-                    <p className="mt-1 text-xs font-semibold text-gray-500">
-                      {retentionDashboardSummary.bonus.progressPct}% of {formatMoney(retentionDashboardSummary.bonus.target)} target
-                    </p>
-                  </>
-                )}
-                <p className="mt-2 text-xs text-gray-500">
-                  {retentionBonusSummary.satisfactionChecksLogged} satisfaction checks · {retentionBonusSummary.writtenReviewsCollected} reviews · {retentionBonusSummary.videoTestimonialsCollected} videos · {retentionBonusSummary.referralsCollected} referrals · {retentionBonusSummary.retentionSalesConverted?.length ?? 0} retention sales
-                </p>
-              </section>
-            )}
+                    <strong className={`mt-2 block whitespace-nowrap text-xl font-black leading-tight ${card.valueTone}`}>{card.value}</strong>
+                    <p className="mt-1 truncate text-[10px] font-semibold text-gray-400">{card.detail}</p>
+                  </article>
+                );
+              })}
+            </section>
 
-            {retentionDashboardSummary && (
-              <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Retention Revenue</p>
-                <strong className="mt-1 block text-2xl font-black text-gray-900">{formatMoney(retentionDashboardSummary.retentionRevenue.repeatSalesRevenue)}</strong>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-600">
-                  <span>{retentionDashboardSummary.retentionRevenue.repeatCustomers} repeat customers</span>
-                  <span>Avg order {formatMoney(retentionDashboardSummary.retentionRevenue.avgRepeatOrder)}</span>
-                  <span>Gross contribution {formatMoney(retentionDashboardSummary.retentionRevenue.grossContribution)}</span>
-                  <span>ROI {retentionDashboardSummary.retentionRevenue.roi === null ? "—" : `${retentionDashboardSummary.retentionRevenue.roi}x`}</span>
+            <section className="grid gap-4 xl:grid-cols-12">
+              <article className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm xl:col-span-4">
+                <div className="flex items-center gap-2">
+                  <Target className="h-4 w-4 text-gray-700" />
+                  <h3 className="text-sm font-black text-gray-900">Today&apos;s Focus</h3>
                 </div>
-                <p className="mt-2 text-[11px] text-gray-400">Gross contribution = revenue − product cost − delivery cost. ROI = gross contribution ÷ team cost (retention bonus actually paid this period, {formatMoney(retentionDashboardSummary.retentionRevenue.retentionRepCost)} — not a duplicate salary charge).</p>
-              </section>
-            )}
+                <div className="mt-3 space-y-2.5">
+                  {todaysFocusItems.length === 0 ? (
+                    <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-5 text-center">
+                      <CheckCircle2 className="mx-auto h-5 w-5 text-emerald-600" />
+                      <p className="mt-1 text-xs font-bold text-emerald-800">No urgent retention work right now.</p>
+                    </div>
+                  ) : todaysFocusItems.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <div key={item.label} className="flex items-center gap-2.5">
+                        <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${item.tone}`}><Icon className="h-3.5 w-3.5" /></span>
+                        <span className="text-xs font-semibold leading-5 text-gray-700">{item.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button type="button" onClick={() => setRetentionSubPage("Tasks")} className="!min-h-0 mt-4 inline-flex items-center gap-1 text-xs font-black text-sky-700 hover:text-sky-900">
+                  View all tasks <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </article>
+
+              <article className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm xl:col-span-4">
+                <div className="flex items-center gap-2">
+                  <Trophy className="h-4 w-4 text-gray-700" />
+                  <h3 className="text-sm font-black text-gray-900">My Retention Bonus</h3>
+                </div>
+                <div className="mt-4 flex items-end justify-between gap-3">
+                  <div>
+                    <strong className="block text-2xl font-black text-emerald-700">{formatMoney(retentionBonusSummary?.breakdown?.total ?? summary.bonus.earned)}</strong>
+                    <span className="text-xs text-gray-500">earned in selected period</span>
+                  </div>
+                  <span className="text-sm font-black text-gray-800">{summary.bonus.progressPct}%</span>
+                </div>
+                <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                  <div className="h-full rounded-full bg-emerald-600 transition-[width]" style={{ width: `${summary.bonus.progressPct}%` }} />
+                </div>
+                <p className="mt-2 text-xs font-semibold text-gray-500">Target: {formatMoney(summary.bonus.target)}</p>
+                {retentionBonusSummary && (
+                  <p className="mt-4 border-t border-gray-100 pt-3 text-[11px] leading-5 text-gray-500">
+                    {retentionBonusSummary.satisfactionChecksLogged} checks · {retentionBonusSummary.writtenReviewsCollected} reviews · {retentionBonusSummary.videoTestimonialsCollected} videos · {retentionBonusSummary.referralsCollected} referrals · {retentionBonusSummary.retentionSalesConverted?.length ?? 0} repeat sales
+                  </p>
+                )}
+                <button type="button" onClick={() => setRetentionSubPage("Reports")} className="!min-h-0 mt-3 inline-flex items-center gap-1 text-xs font-black text-sky-700 hover:text-sky-900">
+                  View calculation <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </article>
+
+              <article className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm xl:col-span-4">
+                <div className="flex items-center gap-2">
+                  <CircleDollarSign className="h-4 w-4 text-gray-700" />
+                  <h3 className="text-sm font-black text-gray-900">Retention Revenue</h3>
+                </div>
+                <strong className="mt-3 block text-2xl font-black text-emerald-700">{formatMoney(summary.retentionRevenue.repeatSalesRevenue)}</strong>
+                <p className="text-xs text-gray-500">Total retention revenue</p>
+                <div className="mt-3 grid grid-cols-2 divide-x divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-100 sm:grid-cols-3">
+                  {[
+                    ["Repeat Customers", summary.retentionRevenue.repeatCustomers],
+                    ["Avg. Repeat Order", formatMoney(summary.retentionRevenue.avgRepeatOrder)],
+                    ["Gross Contribution", formatMoney(summary.retentionRevenue.grossContribution)],
+                    ["Team Cost", formatMoney(summary.retentionRevenue.retentionRepCost)],
+                    ["ROI", summary.retentionRevenue.roi === null ? "—" : `${summary.retentionRevenue.roi}x`]
+                  ].map(([label, value]) => (
+                    <div key={label} className="min-w-0 px-2 py-2.5 text-center">
+                      <strong className="block break-words text-sm font-black text-emerald-700">{value}</strong>
+                      <span className="mt-0.5 block text-[9px] font-semibold uppercase leading-3 tracking-wide text-gray-400">{label}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </section>
+
+            <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+              <header className="flex flex-col gap-2 border-b border-gray-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-black text-gray-900">Customer Lifecycle Pipeline</h3>
+                  <p className="mt-0.5 text-[11px] text-gray-500">Track customers at each stage of the retention journey.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setRetentionPipelineView("board"); setRetentionSubPage("Pipeline"); }}
+                  className="!min-h-0 inline-flex w-fit items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-black text-gray-700 hover:bg-gray-50"
+                >
+                  <LayoutPanelTop className="h-3.5 w-3.5" /> View pipeline
+                </button>
+              </header>
+              <div className="overflow-x-auto p-3">
+                <div className="flex min-w-[940px] items-stretch gap-2">
+                  {overviewLifecycleStages.map((item, index) => {
+                    const Icon = item.icon;
+                    return (
+                      <Fragment key={item.label}>
+                        <button
+                          type="button"
+                          onClick={() => { setRetentionStageFilter(item.stage); setRetentionPipelineView("table"); setRetentionSubPage("Pipeline"); }}
+                          className={`!min-h-0 min-w-0 flex-1 rounded-lg border px-3 py-3 text-center transition-shadow hover:shadow-sm ${item.tone}`}
+                        >
+                          <Icon className="mx-auto h-4 w-4" />
+                          <span className="mt-1.5 block text-[10px] font-black uppercase leading-4 tracking-wide">{item.label}</span>
+                          <strong className="mt-1 block text-xl font-black text-gray-900">{item.count}</strong>
+                          <span className="mt-0.5 block text-[10px] font-semibold">{item.overdue > 0 ? `${item.overdue} overdue` : "On schedule"}</span>
+                        </button>
+                        {index < overviewLifecycleStages.length - 1 && <ChevronRight className="my-auto h-4 w-4 shrink-0 text-gray-400" />}
+                      </Fragment>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
+
+            <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+              <header className="flex flex-col gap-2 border-b border-gray-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-black text-gray-900">Top Priority Tasks</h3>
+                  <p className="mt-0.5 text-[11px] text-gray-500">The customers who need attention first.</p>
+                </div>
+                <button type="button" onClick={() => setRetentionSubPage("Tasks")} className="!min-h-0 inline-flex w-fit items-center gap-1 text-xs font-black text-sky-700 hover:text-sky-900">
+                  View all tasks <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </header>
+              {overviewPriorityRows.length === 0 ? (
+                <div className="px-4 py-10 text-center text-sm text-gray-400">No priority retention tasks right now.</div>
+              ) : (
+                <>
+                  <div className="divide-y divide-gray-100 sm:hidden">
+                    {overviewPriorityRows.map((row) => {
+                      const badge = priorityBadge(row.priorityBand);
+                      const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
+                      return (
+                        <article key={row.orderId} className="p-4">
+                          <div className="flex items-start gap-3">
+                            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.orderId)}`}>{customerInitial(row.customerName)}</span>
+                            <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 min-w-0 flex-1 text-left">
+                              <p className="truncate text-sm font-black text-gray-900">{row.customerName}</p>
+                              <p className="text-xs text-gray-500">{row.phone}</p>
+                              <p className="mt-1 text-xs font-semibold text-gray-600">#{row.orderId} · {row.productName}</p>
+                            </button>
+                            <span className={`inline-flex shrink-0 rounded-full border px-2 py-1 text-[9px] font-black ${badge.class}`}>{badge.label.replace(/\s\(P\d\)/, "")}</span>
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 text-xs">
+                            <span><span className="block text-gray-400">Next action</span><strong className="text-gray-800">{nextActionLabelFor(row)}</strong></span>
+                            <span><span className="block text-gray-400">Due</span><strong className={row.overdueBy > 0 ? "text-rose-600" : "text-gray-800"}>{overviewDueLabel(row)}</strong></span>
+                          </div>
+                          <div className="mt-3 flex items-center gap-2">
+                            <a href={`tel:${row.phone}`} aria-label={`Call ${row.customerName}`} className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-emerald-700"><Phone className="h-4 w-4" /></a>
+                            <a href={whatsappUrl} target="_blank" rel="noreferrer" aria-label={`WhatsApp ${row.customerName}`} className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-emerald-700"><WhatsAppIcon className="h-4 w-4" /></a>
+                            <button type="button" onClick={() => toggleLogging(row.orderId, row.dueStage)} className="!min-h-0 ml-auto rounded-lg bg-emerald-700 px-3 py-2 text-xs font-black text-white">Log outcome</button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  <div className="hidden overflow-x-auto sm:block">
+                    <table className="w-full min-w-[980px] text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-gray-200 bg-gray-50 text-[9px] font-black uppercase tracking-wider text-gray-500">
+                          <th className="px-3 py-2.5">Priority</th>
+                          <th className="px-3 py-2.5">Customer</th>
+                          <th className="px-3 py-2.5">Product / Order</th>
+                          <th className="px-3 py-2.5">Stage</th>
+                          <th className="px-3 py-2.5">Last Contact</th>
+                          <th className="px-3 py-2.5">Next Action</th>
+                          <th className="px-3 py-2.5">Due</th>
+                          <th className="px-3 py-2.5">Value</th>
+                          <th className="px-3 py-2.5 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {overviewPriorityRows.map((row) => {
+                          const badge = priorityBadge(row.priorityBand);
+                          const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
+                          return (
+                            <tr key={row.orderId} className="hover:bg-gray-50">
+                              <td className="px-3 py-2.5"><span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-1 text-[9px] font-black ${badge.class}`}>{badge.label.replace(/\s\(P\d\)/, "")}</span></td>
+                              <td className="px-3 py-2.5">
+                                <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 text-left">
+                                  <span className="block font-black text-gray-900">{row.customerName}</span>
+                                  <span className="text-[10px] text-gray-500">{row.phone}</span>
+                                </button>
+                              </td>
+                              <td className="px-3 py-2.5"><span className="block font-bold text-gray-800">{row.productName}</span><span className="text-[10px] text-gray-500">#{row.orderId}</span></td>
+                              <td className="px-3 py-2.5"><span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-1 text-[9px] font-black ${stageTone(row.dueStage)}`}>{stageLabel(row.dueStage)}</span></td>
+                              <td className="px-3 py-2.5 text-gray-600">{row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</td>
+                              <td className="px-3 py-2.5 font-semibold text-gray-800">{nextActionLabelFor(row)}</td>
+                              <td className={`px-3 py-2.5 font-black ${row.overdueBy > 0 ? "text-rose-600" : "text-gray-800"}`}>{overviewDueLabel(row)}</td>
+                              <td className="px-3 py-2.5 font-black text-gray-800">{formatMoney(row.orderAmount)}</td>
+                              <td className="px-3 py-2.5">
+                                <div className="flex justify-end gap-1.5">
+                                  <a href={`tel:${row.phone}`} title={`Call ${row.customerName}`} aria-label={`Call ${row.customerName}`} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" /></a>
+                                  <a href={whatsappUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${row.customerName}`} aria-label={`WhatsApp ${row.customerName}`} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-emerald-700 hover:bg-emerald-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+                                  <button type="button" onClick={() => toggleLogging(row.orderId, row.dueStage)} title="Log outcome" aria-label={`Log outcome for ${row.customerName}`} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-emerald-700 hover:bg-emerald-50"><FileText className="h-3.5 w-3.5" /></button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </section>
           </div>
-        </div>
-      );
+        );
+      }
 
       if (retentionSubPage === "Pipeline") return (
         <div className="space-y-6">
@@ -40990,7 +41257,7 @@ ${waybillLineItems(w).length > 1
     };
 
     const retentionPageMeta: Record<RetentionSubPage, { title: string; description: string }> = {
-      Overview: { title: "Retention Overview", description: "Today's priorities, lifecycle health, bonuses and retained revenue." },
+      Overview: { title: "Customer Retention Overview", description: "Daily performance, urgent tasks, lifecycle health and retention revenue." },
       Pipeline: { title: "Customer Pipeline", description: "Move delivered customers through resolution, satisfaction, advocacy and repeat sales." },
       Customers: { title: "Retention Customers", description: "A single customer record with order value, lifecycle status and full history." },
       Tasks: { title: "Retention Tasks", description: "The due-today, overdue and complaint work that needs action first." },
@@ -41015,7 +41282,11 @@ ${waybillLineItems(w).length > 1
           : retentionSubPage === "Repeat Sales"
             ? "retention_sale"
             : undefined;
-        customerRetentionApi.activityLog(bounds ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo, stage } : { stage })
+        customerRetentionApi.activityLog(
+          bounds
+            ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo, stage, repId: recoveryRepViewingId || undefined }
+            : { stage, repId: recoveryRepViewingId || undefined }
+        )
           .then((result) => setRetentionActivityLog(result.rows ?? []))
           .catch((error: any) => showToast(error?.message ?? "Could not refresh retention activity."))
           .finally(() => setRetentionActivityLogLoading(false));
@@ -41035,11 +41306,11 @@ ${waybillLineItems(w).length > 1
             <button
               type="button"
               onClick={refreshRetentionPage}
-              disabled={retentionWorklistLoading || retentionActivityLogLoading}
+              disabled={retentionWorklistLoading || retentionActivityLogLoading || retentionDashboardLoading}
               title="Refresh retention data"
               className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50"
             >
-              <RefreshCw className={`h-4 w-4 ${retentionWorklistLoading || retentionActivityLogLoading ? "animate-spin" : ""}`} />
+              <RefreshCw className={`h-4 w-4 ${retentionWorklistLoading || retentionActivityLogLoading || retentionDashboardLoading ? "animate-spin" : ""}`} />
             </button>
             <select
               className="h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"

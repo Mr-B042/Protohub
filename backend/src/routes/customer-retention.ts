@@ -15,7 +15,17 @@ const router = Router();
 router.use(requireAuth);
 
 const RETENTION_ROLES = ["Owner", "Admin", "Manager", "Recovery Rep"] as const;
+const RETENTION_SUPERVISOR_ROLES = new Set(["Owner", "Admin", "Manager"]);
 const NON_REACH_STATUSES = new Set(["not_reached", "not_reachable", "wrong_number"]);
+
+function retentionRepScope(role: string, userId: string, requested: unknown): string | null {
+  if (!RETENTION_SUPERVISOR_ROLES.has(role)) return userId;
+  return typeof requested === "string" && requested !== "" && requested !== "all" ? requested : null;
+}
+
+function canAccessAssignedRetentionOrder(role: string, userId: string, assignedRepId: string | null | undefined) {
+  return RETENTION_SUPERVISOR_ROLES.has(role) || assignedRepId === userId;
+}
 
 // Real per-order COGS lookup, same pattern as manager-bonuses.ts's
 // loadPricingMap/cogsForOrder and recovery-rep-kpi.ts's costForOrders -
@@ -209,7 +219,7 @@ router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
     const minValue = typeof req.query.minValue === "string" && !Number.isNaN(Number(req.query.minValue)) ? Number(req.query.minValue) : null;
     const priorityFilter = typeof req.query.priority === "string" && req.query.priority !== "all" ? req.query.priority : null;
     const productFilter = typeof req.query.product === "string" && req.query.product !== "all" ? req.query.product : null;
-    const assignedRepFilter = typeof req.query.assignedRepId === "string" && req.query.assignedRepId !== "all" ? req.query.assignedRepId : null;
+    const assignedRepFilter = retentionRepScope(req.user!.role, req.user!.id, req.query.assignedRepId);
 
     const settings = await loadBonusSettings(orgId);
     const allRows = await loadWorklistRows(orgId, settings);
@@ -237,10 +247,14 @@ router.get("/order/:orderId/retention-suggestion", requireRole(...RETENTION_ROLE
     const orgId = req.user!.orgId;
     const { data: order } = await supabase
       .from("orders")
-      .select("id, product_id, package_id")
+      .select("id, product_id, package_id, assigned_rep_id")
       .eq("org_id", orgId)
       .eq("id", req.params.orderId)
       .maybeSingle();
+    if (order && !canAccessAssignedRetentionOrder(req.user!.role, req.user!.id, order.assigned_rep_id)) {
+      res.status(403).json({ error: "This retention order is not assigned to you." });
+      return;
+    }
     if (!order?.package_id) { res.json({ suggestion: null }); return; }
     const { data: pkg } = await supabase
       .from("product_packages")
@@ -267,10 +281,13 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
 
     const { data: allOrders, error } = await supabase
       .from("orders")
-      .select("id, customer, phone, city, state, product_name, package_name, amount, currency, status, delivered_date, created_at")
+      .select("id, customer, phone, city, state, product_name, package_name, amount, currency, status, delivered_date, created_at, assigned_rep_id")
       .eq("org_id", orgId);
     if (error) { res.status(500).json({ error: error.message }); return; }
-    const orders = (allOrders ?? []).filter((o) => String(o.phone).replace(/\D/g, "") === targetPhone);
+    const orders = (allOrders ?? []).filter((o) =>
+      String(o.phone).replace(/\D/g, "") === targetPhone
+      && canAccessAssignedRetentionOrder(req.user!.role, req.user!.id, o.assigned_rep_id)
+    );
     if (orders.length === 0) { res.status(404).json({ error: "No orders found for this customer." }); return; }
 
     const byCreatedAsc = [...orders].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
@@ -429,11 +446,15 @@ router.post("/touchpoints", requireRole(...RETENTION_ROLES), async (req, res) =>
 
   const { data: order } = await supabase
     .from("orders")
-    .select("id, status")
+    .select("id, status, assigned_rep_id")
     .eq("org_id", orgId)
     .eq("id", d.orderId)
     .maybeSingle();
   if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+  if (!canAccessAssignedRetentionOrder(req.user!.role, req.user!.id, order.assigned_rep_id)) {
+    res.status(403).json({ error: "This retention order is not assigned to you." });
+    return;
+  }
   if (order.status !== "Delivered") { res.status(400).json({ error: "Only Delivered orders can have a retention touchpoint logged." }); return; }
 
   const row: Record<string, unknown> = {
@@ -492,11 +513,15 @@ router.patch("/touchpoints/:id", requireRole(...RETENTION_ROLES), async (req, re
   if (parsed.data.resultingOrderId) update.resulting_order_id = parsed.data.resultingOrderId;
   if (Object.keys(update).length === 0) { res.status(400).json({ error: "Nothing to update." }); return; }
 
-  const { data, error } = await supabase
+  let updateQuery = supabase
     .from("customer_retention_touchpoints")
     .update(update)
     .eq("org_id", req.user!.orgId)
-    .eq("id", req.params.id)
+    .eq("id", req.params.id);
+  if (!RETENTION_SUPERVISOR_ROLES.has(req.user!.role)) {
+    updateQuery = updateQuery.eq("logged_by", req.user!.id);
+  }
+  const { data, error } = await updateQuery
     .select("*")
     .maybeSingle();
   if (error) { res.status(500).json({ error: error.message }); return; }
@@ -596,7 +621,7 @@ router.get("/bonus-summary", requireRole(...RETENTION_ROLES), async (req, res) =
     const inclusiveEndDate = new Date(`${exclusiveEnd}T00:00:00Z`);
     inclusiveEndDate.setUTCDate(inclusiveEndDate.getUTCDate() - 1);
     const dateTo = inclusiveEndDate.toISOString().slice(0, 10);
-    const userId = typeof req.query.userId === "string" ? req.query.userId : req.user!.id;
+    const userId = retentionRepScope(req.user!.role, req.user!.id, req.query.userId) ?? req.user!.id;
 
     const result = await computeBonusBreakdown(orgId, settings, start, exclusiveEnd, userId);
     res.json({ dateFrom: start, dateTo, userId, ...result });
@@ -610,26 +635,27 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     const orgId = req.user!.orgId;
     const settings = await loadBonusSettings(orgId);
     const { start, exclusiveEnd } = resolveDateBounds(req.query as Record<string, unknown>);
-    const repId = typeof req.query.repId === "string" && req.query.repId ? req.query.repId : null;
+    const repId = retentionRepScope(req.user!.role, req.user!.id, req.query.repId);
 
     // Point-in-time snapshot (NOT date-ranged) - "Due Today"/"Overdue" and
     // the lifecycle pipeline describe the current state of every order in
     // the retention window, same rows the worklist itself uses.
     const allRows = await loadWorklistRows(orgId, settings);
-    const dueToday = allRows.filter((r) => r.dueStage !== null && r.dueStage !== "needs_resolution" && r.overdueBy === 0).length;
-    const overdue = allRows.filter((r) => r.overdueBy > 0).length;
+    const scopedRows = repId ? allRows.filter((row) => row.assignedRepId === repId) : allRows;
+    const dueToday = scopedRows.filter((r) => r.dueStage !== null && r.dueStage !== "needs_resolution" && r.overdueBy === 0).length;
+    const overdue = scopedRows.filter((r) => r.overdueBy > 0).length;
     const lifecyclePipeline = {
-      delivered: allRows.length,
-      satisfactionDue: allRows.filter((r) => r.dueStage === "satisfaction_check").length,
-      reviewDue: allRows.filter((r) => r.dueStage === "review_referral" && !r.reviewCollected).length,
+      delivered: scopedRows.length,
+      satisfactionDue: scopedRows.filter((r) => r.dueStage === "satisfaction_check").length,
+      reviewDue: scopedRows.filter((r) => r.dueStage === "review_referral" && !r.reviewCollected).length,
       // Referral has its own later window (Day 14-30, vs Review's Day 7-14)
       // per the spec's lifecycle model - it only counts as "due" once that
       // window opens, even though both share one underlying touchpoints
       // stage (Decision A).
-      referralDue: allRows.filter((r) => r.dueStage === "review_referral" && !r.referralCollected && r.daysSinceDelivery >= 14).length,
-      retentionSaleDue: allRows.filter((r) => r.dueStage === "retention_sale").length,
-      winBack: allRows.filter((r) => r.dueStage === "win_back").length,
-      needsResolution: allRows.filter((r) => r.dueStage === "needs_resolution").length
+      referralDue: scopedRows.filter((r) => r.dueStage === "review_referral" && !r.referralCollected && r.daysSinceDelivery >= 14).length,
+      retentionSaleDue: scopedRows.filter((r) => r.dueStage === "retention_sale").length,
+      winBack: scopedRows.filter((r) => r.dueStage === "win_back").length,
+      needsResolution: scopedRows.filter((r) => r.dueStage === "needs_resolution").length
     };
 
     // Date-range-scoped activity (what actually happened in the selected
@@ -869,7 +895,7 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
     const orgId = req.user!.orgId;
     const { start, exclusiveEnd } = resolveDateBounds(req.query as Record<string, unknown>);
     const stageFilter = typeof req.query.stage === "string" ? req.query.stage : null;
-    const repId = typeof req.query.repId === "string" && req.query.repId ? req.query.repId : null;
+    const repId = retentionRepScope(req.user!.role, req.user!.id, req.query.repId);
     const search = typeof req.query.search === "string" ? req.query.search.trim().toLowerCase() : "";
 
     let query = supabase
