@@ -11143,10 +11143,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionActivitySearch, setRetentionActivitySearch] = useState("");
   const [retentionActivityLog, setRetentionActivityLog] = useState<RetentionActivityLogRow[]>([]);
   const [retentionActivityLogLoading, setRetentionActivityLogLoading] = useState(false);
+  // Previous equal-length period, used only for the Calls & Outcomes deltas.
+  const [retentionActivityPrev, setRetentionActivityPrev] = useState<RetentionActivityLogRow[] | null>(null);
+  const [retentionActivityPrevLabel, setRetentionActivityPrevLabel] = useState("");
+  const [retentionCallsTab, setRetentionCallsTab] = useState<"all" | "reached" | "not_reached" | "complaints" | "sales" | "needs_follow_up">("all");
+  const [retentionCallsPage, setRetentionCallsPage] = useState(1);
+  const [retentionCallsReachFilter, setRetentionCallsReachFilter] = useState("all");
+  const [retentionCallsResponseFilter, setRetentionCallsResponseFilter] = useState("all");
+  const [retentionCallsOutcomeFilter, setRetentionCallsOutcomeFilter] = useState("all");
+  const [retentionCallsTypeFilter, setRetentionCallsTypeFilter] = useState("all");
+  const [retentionCallsProductFilter, setRetentionCallsProductFilter] = useState("all");
+  const [retentionCallsRepFilter, setRetentionCallsRepFilter] = useState("all");
+  const [retentionCallsMenuId, setRetentionCallsMenuId] = useState<string | null>(null);
   const [retentionProductTimingList, setRetentionProductTimingList] = useState<Array<{ id: string; name: string; timing: RetentionProductTiming | null }>>([]);
   const [retentionProductTimingDrafts, setRetentionProductTimingDrafts] = useState<Record<string, RetentionProductTiming>>({});
   const [retentionProductTimingSavingId, setRetentionProductTimingSavingId] = useState<string | null>(null);
   const [retentionOutcomeReachStatus, setRetentionOutcomeReachStatus] = useState<"" | "reached" | "not_reached" | "not_reachable" | "wrong_number">("");
+  // mm:ss as typed by the rep; parsed to seconds on save (migration 179).
+  const [retentionOutcomeDuration, setRetentionOutcomeDuration] = useState("");
   const [retentionOutcomeResponse, setRetentionOutcomeResponse] = useState<"" | "satisfied" | "neutral" | "complaint">("");
   const [retentionOutcomeNextAction, setRetentionOutcomeNextAction] = useState<"" | "request_review" | "request_referral" | "offer_another_product" | "schedule_follow_up" | "needs_resolution" | "not_interested" | "do_not_contact">("");
   const [retentionOutcomeNote, setRetentionOutcomeNote] = useState("");
@@ -40005,6 +40019,26 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, recoveryRepDashboardTab, recoveryRepViewingId, retentionSubPage, retentionTaskFilter, retentionPeriod, retentionDateRange]);
 
+  // Calls & Outcomes shows "vs <previous period>" deltas. Those need a real
+  // baseline, so fetch the immediately preceding window of equal length
+  // rather than estimating. Null = no baseline yet, and the tiles then show
+  // no delta instead of a made-up one.
+  useEffect(() => {
+    if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || retentionSubPage !== "Calls & Outcomes") return;
+    const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
+    if (!bounds) { setRetentionActivityPrev(null); setRetentionActivityPrevLabel(""); return; }
+    const from = new Date(`${bounds.dateFrom}T00:00:00`);
+    const to = new Date(`${bounds.dateTo}T00:00:00`);
+    const spanDays = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86400000) + 1);
+    const prevTo = new Date(from.getTime() - 86400000);
+    const prevFrom = new Date(prevTo.getTime() - (spanDays - 1) * 86400000);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    setRetentionActivityPrevLabel(`${prevFrom.toLocaleDateString([], { month: "short", day: "numeric" })} - ${prevTo.toLocaleDateString([], { month: "short", day: "numeric" })}`);
+    customerRetentionApi.activityLog({ dateFrom: iso(prevFrom), dateTo: iso(prevTo), repId: recoveryRepViewingId || undefined })
+      .then((result) => setRetentionActivityPrev(result.rows ?? []))
+      .catch(() => setRetentionActivityPrev(null));
+  }, [activePage, recoveryRepDashboardTab, retentionSubPage, retentionPeriod, retentionDateRange, recoveryRepViewingId]);
+
   // Manual tasks back the Tasks page only. If migration 178 has not reached
   // this environment the endpoint returns pendingMigration and the page
   // degrades to derived lifecycle tasks rather than erroring.
@@ -40058,6 +40092,7 @@ ${waybillLineItems(w).length > 1
       // workflow so satisfaction and next-action controls are never hidden
       // behind an unexplained first click.
       setRetentionOutcomeReachStatus("reached");
+      setRetentionOutcomeDuration("");
       setRetentionOutcomeResponse("");
       setRetentionOutcomeNextAction("");
       setRetentionOutcomeNote("");
@@ -40137,6 +40172,21 @@ ${waybillLineItems(w).length > 1
     // see the mapping table in the Customer Retention v2 plan.
     const submitLogOutcome = async (row: RetentionWorklistRow) => {
       if (!retentionOutcomeReachStatus) { showToast("Choose whether the customer was reached."); return; }
+      // "3:12" -> 192s, "45" -> 45s. Left null when blank so the average
+      // skips it rather than counting a zero-second call.
+      const parseDurationSeconds = (raw: string): number | null => {
+        const text = raw.trim();
+        if (!text) return null;
+        const parts = text.split(":").map((p) => p.trim());
+        if (parts.some((p) => p === "" || !/^\d+$/.test(p)) || parts.length > 2) return null;
+        const seconds = parts.length === 2 ? Number(parts[0]) * 60 + Number(parts[1]) : Number(parts[0]);
+        return Number.isFinite(seconds) && seconds >= 0 && seconds <= 86400 ? seconds : null;
+      };
+      if (retentionOutcomeDuration.trim() && parseDurationSeconds(retentionOutcomeDuration) === null) {
+        showToast("Call duration must look like 3:12 (minutes:seconds).");
+        return;
+      }
+      const callDurationSeconds = parseDurationSeconds(retentionOutcomeDuration);
       setRetentionOutcomeSaving(true);
       try {
         if (retentionOutcomeReachStatus !== "reached") {
@@ -40155,7 +40205,8 @@ ${waybillLineItems(w).length > 1
             reachStatus: retentionOutcomeReachStatus,
             nextAction: retentionOutcomeNextAction === "schedule_follow_up" ? "schedule_follow_up" : undefined,
             nextActionAt: retryAt,
-            nextActionNote: retentionOutcomeNote.trim() || undefined
+            nextActionNote: retentionOutcomeNote.trim() || undefined,
+            callDurationSeconds
           });
           showToast(retryAt ? "Contact attempt logged and retry scheduled." : "Contact attempt logged.");
           closeLogOutcome();
@@ -40173,7 +40224,8 @@ ${waybillLineItems(w).length > 1
             reachStatus: "reached",
             customerResponse: retentionOutcomeResponse,
             nextAction: "do_not_contact",
-            nextActionNote: retentionOutcomeNote.trim() || undefined
+            nextActionNote: retentionOutcomeNote.trim() || undefined,
+            callDurationSeconds
           });
           await customerOptOutApi.optOut(row.phone, retentionOutcomeNote.trim() || "Requested via Customer Retention Log Outcome");
           showToast("Customer marked do-not-contact.");
@@ -40193,7 +40245,8 @@ ${waybillLineItems(w).length > 1
           customerResponse: retentionOutcomeResponse,
           nextAction: retentionOutcomeNextAction,
           nextActionAt,
-          nextActionNote: retentionOutcomeNote.trim() || undefined
+          nextActionNote: retentionOutcomeNote.trim() || undefined,
+          callDurationSeconds
         };
 
         if (retentionOutcomeNextAction === "needs_resolution") {
@@ -40378,25 +40431,6 @@ ${waybillLineItems(w).length > 1
       : status === "waiting" ? { label: "Waiting", class: "border-amber-200 bg-amber-50 text-amber-700" }
       : { label: "Cancelled", class: "border-gray-200 bg-gray-100 text-gray-500" };
 
-    // Absolute due moment + a relative hint. Scheduled callbacks carry a real
-    // time; lifecycle stages are day-granular, so those read as dates only
-    // rather than inventing a clock time the data does not have.
-    const taskDueDisplay = (row: RetentionWorklistRow): { absolute: string; relative: string; tone: string } => {
-      if (row.followUpStatus && row.nextActionAt) {
-        const at = new Date(row.nextActionAt);
-        const diffMs = at.getTime() - Date.now();
-        const absolute = at.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
-        if (diffMs < 0) {
-          const mins = Math.round(-diffMs / 60000);
-          return { absolute, relative: mins < 60 ? `${mins}m overdue` : mins < 1440 ? `${Math.round(mins / 60)}h overdue` : `${Math.round(mins / 1440)}d overdue`, tone: "text-rose-600" };
-        }
-        const mins = Math.round(diffMs / 60000);
-        return { absolute, relative: mins < 60 ? `Due in ${mins}m` : mins < 1440 ? `Due in ${Math.round(mins / 60)}h` : `Due in ${Math.round(mins / 1440)}d`, tone: mins < 1440 ? "text-sky-600" : "text-gray-500" };
-      }
-      const absolute = row.stageDueDate ? new Date(row.stageDueDate).toLocaleDateString([], { dateStyle: "medium" }) : "—";
-      if (row.overdueBy > 0) return { absolute, relative: `${row.overdueBy}d overdue`, tone: "text-rose-600" };
-      return { absolute, relative: "Due today", tone: "text-sky-600" };
-    };
 
     const retentionSearchQuery = retentionSearch.trim().toLowerCase();
     const retentionProductOptions = Array.from(new Set(retentionWorklist.map((r) => r.productName))).sort();
@@ -40417,25 +40451,6 @@ ${waybillLineItems(w).length > 1
     // opportunity" tier (retention_sale/win_back), which is a longer-
     // horizon sales opportunity rather than an urgent task.
     const actionableRetentionTasks = retentionWorklist.filter((row) => row.followUpStatus !== null || row.priorityBand !== "revenue_opportunity");
-    // Tab counts come from the whole task set, so a tab always shows how
-    // much work it holds regardless of the other filters in effect.
-    const retentionTaskTabCounts: Record<Exclude<RetentionTaskTab, "completed">, number> = {
-      all: actionableRetentionTasks.length,
-      due_today: actionableRetentionTasks.filter((r) => taskStatusFor(r) === "due_today").length,
-      overdue: actionableRetentionTasks.filter((r) => taskStatusFor(r) === "overdue").length,
-      upcoming: actionableRetentionTasks.filter((r) => taskStatusFor(r) === "upcoming").length,
-      waiting: actionableRetentionTasks.filter((r) => taskStatusFor(r) === "waiting").length,
-      cancelled: actionableRetentionTasks.filter((r) => taskStatusFor(r) === "cancelled").length
-    };
-    const retentionTaskTypeCounts = RETENTION_TASK_TYPES.map((type) => ({
-      ...type,
-      count: actionableRetentionTasks.filter((row) => taskTypeFor(row) === type.key).length
-    }));
-    const filteredRetentionTasks = applyRetentionFilters(actionableRetentionTasks
-      .filter((row) => retentionTaskFilter === "all" || retentionTaskFilter === "completed" || taskStatusFor(row) === retentionTaskFilter)
-      .filter((row) => retentionTaskTypeFilter === "all" || taskTypeFor(row) === retentionTaskTypeFilter)
-      .filter((row) => retentionStageFilter === "all" || row.dueStage === retentionStageFilter)
-    );
     // The reference design labels priority High/Medium/Low. P1-P6 stays the
     // engine (and Pipeline still shows the tier names); this is the grouping.
     // Complaint + overdue read as High, the attention tiers as Medium, and
@@ -42455,26 +42470,505 @@ ${waybillLineItems(w).length > 1
       );
 
       if (retentionSubPage === "Calls & Outcomes") {
-        const reached = retentionActivityLog.filter((row) => row.reachStatus === "reached").length;
-        const notReached = retentionActivityLog.filter((row) => row.reachStatus === "not_reached").length;
-        const notReachable = retentionActivityLog.filter((row) => row.reachStatus === "not_reachable" || row.reachStatus === "wrong_number").length;
-        const complaintsLogged = retentionActivityLog.filter((row) => row.customerResponse === "complaint").length;
+        // A logged touchpoint always records a call attempt (reach status is
+        // mandatory in the Log Outcome flow). The channel-open events tracked
+        // separately are shown as their own type, never counted as attempts -
+        // opening WhatsApp is not a call.
+        const callRows = retentionActivityLog.filter((r) => r.activityType === "outcome");
+        const prevCallRows = (retentionActivityPrev ?? []).filter((r) => r.activityType === "outcome");
+
+        const statsFor = (rows: RetentionActivityLogRow[]) => {
+          const attempted = rows.length;
+          const reached = rows.filter((r) => r.reachStatus === "reached").length;
+          const notPicking = rows.filter((r) => r.reachStatus === "not_reached").length;
+          const notReachable = rows.filter((r) => r.reachStatus === "not_reachable" || r.reachStatus === "wrong_number").length;
+          const complaints = rows.filter((r) => r.customerResponse === "complaint").length;
+          // Only rows where a duration was actually recorded (migration 179)
+          // count toward the average - blanks are unknown, not zero.
+          const timed = rows.filter((r) => typeof r.callDurationSeconds === "number" && r.callDurationSeconds !== null);
+          const avgDuration = timed.length > 0
+            ? Math.round(timed.reduce((sum, r) => sum + (r.callDurationSeconds as number), 0) / timed.length)
+            : null;
+          return {
+            attempted, reached, notPicking, notReachable, complaints, avgDuration,
+            timedCount: timed.length,
+            contactRate: attempted > 0 ? (reached / attempted) * 100 : null
+          };
+        };
+        const now = statsFor(callRows);
+        const prev = retentionActivityPrev ? statsFor(prevCallRows) : null;
+
+        const mmss = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+        // Delta is rendered only when a real baseline exists. `goodWhenUp`
+        // flips the colour for metrics where an increase is bad (missed
+        // calls, complaints) so green always means "better".
+        const deltaFor = (current: number | null, before: number | null | undefined, goodWhenUp: boolean, format: (n: number) => string) => {
+          if (!prev || current === null || before === null || before === undefined) return null;
+          const diff = current - before;
+          if (Math.abs(diff) < 0.0001) return { text: `No change vs ${retentionActivityPrevLabel}`, tone: "text-gray-400", up: false };
+          const improving = goodWhenUp ? diff > 0 : diff < 0;
+          return {
+            text: `${diff > 0 ? "▲" : "▼"} ${format(Math.abs(diff))} vs ${retentionActivityPrevLabel}`,
+            tone: improving ? "text-emerald-600" : "text-rose-600",
+            up: diff > 0
+          };
+        };
+
+        // Call type is finer than the stored 3-value stage: a satisfaction
+        // call that surfaced a complaint is a complaint follow-up, and the
+        // review/referral stage splits by which one was actually worked.
+        const callTypeFor = (row: RetentionActivityLogRow): { key: string; label: string; class: string } => {
+          if (row.activityType === "call") return { key: "channel_call", label: "Call Opened", class: "border-sky-200 bg-sky-50 text-sky-700" };
+          if (row.activityType === "whatsapp") return { key: "channel_whatsapp", label: "WhatsApp Opened", class: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+          if (row.customerResponse === "complaint" || row.nextAction === "needs_resolution") return { key: "complaint_follow_up", label: "Complaint Follow-up", class: "border-rose-200 bg-rose-50 text-rose-700" };
+          if (row.stage === "satisfaction_check") return { key: "satisfaction_check", label: "Satisfaction Check", class: "border-amber-200 bg-amber-50 text-amber-700" };
+          if (row.stage === "review_referral") {
+            return row.referralRequestedAt || row.referralCollected
+              ? { key: "referral_request", label: "Referral Request", class: "border-violet-200 bg-violet-50 text-violet-700" }
+              : { key: "review_request", label: "Review Request", class: "border-sky-200 bg-sky-50 text-sky-700" };
+          }
+          if (row.stage === "retention_sale") return { key: "repeat_sale_offer", label: "Repeat Sale Offer", class: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+          return { key: "general_check_in", label: "General Check-in", class: "border-gray-200 bg-gray-50 text-gray-600" };
+        };
+
+        // What the call actually produced, read from whichever stage field
+        // the rep filled in.
+        const outcomeFor = (row: RetentionActivityLogRow): { key: string; label: string; class: string } => {
+          if (row.reachStatus === "not_reached") return { key: "no_answer", label: "No Answer", class: "border-amber-200 bg-amber-50 text-amber-700" };
+          if (row.reachStatus === "not_reachable" || row.reachStatus === "wrong_number") return { key: "number_not_reachable", label: "Number Not Reachable", class: "border-rose-200 bg-rose-50 text-rose-700" };
+          if (row.satisfactionOutcome === "wrong_damaged_or_incomplete" || row.satisfactionOutcome === "not_satisfied" || row.customerResponse === "complaint") return { key: "issue_logged", label: "Issue Logged", class: "border-rose-200 bg-rose-50 text-rose-700" };
+          if (row.reviewCollected) return { key: "review_collected", label: "Review Collected", class: "border-sky-200 bg-sky-50 text-sky-700" };
+          if (row.referralCollected) return { key: "referral_collected", label: "Referral Collected", class: "border-violet-200 bg-violet-50 text-violet-700" };
+          if (row.retentionOutcome === "accepted") return { key: "offer_accepted", label: "Offer Accepted", class: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+          if (row.retentionOutcome === "declined" || row.nextAction === "not_interested") return { key: "not_interested", label: "Not Interested", class: "border-gray-200 bg-gray-100 text-gray-600" };
+          if (row.referralRequestedAt) return { key: "referral_promised", label: "Referral Promised", class: "border-violet-200 bg-violet-50 text-violet-700" };
+          if (row.reviewRequestedAt) return { key: "review_promised", label: "Review Promised", class: "border-sky-200 bg-sky-50 text-sky-700" };
+          if (row.satisfactionOutcome) return { key: "satisfaction_confirmed", label: "Satisfaction Confirmed", class: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+          return { key: "logged", label: "Logged", class: "border-gray-200 bg-gray-50 text-gray-600" };
+        };
+
+        const nextActionLabel = (value: string | null) =>
+          value === "request_review" ? "Request Review"
+          : value === "request_referral" ? "Request Referral"
+          : value === "offer_another_product" ? "Offer Product"
+          : value === "schedule_follow_up" ? "Follow Up"
+          : value === "needs_resolution" ? "Escalate to Manager"
+          : value === "not_interested" ? "Close Out"
+          : value === "do_not_contact" ? "Do Not Contact"
+          : "—";
+
+        const reachBadge = (value: string | null) =>
+          value === "reached" ? { label: "Reached", class: "border-emerald-200 bg-emerald-50 text-emerald-700" }
+          : value === "not_reached" ? { label: "Not Picking", class: "border-amber-200 bg-amber-50 text-amber-700" }
+          : value === "not_reachable" ? { label: "Not Reachable", class: "border-rose-200 bg-rose-50 text-rose-700" }
+          : value === "wrong_number" ? { label: "Wrong Number", class: "border-rose-200 bg-rose-50 text-rose-700" }
+          : { label: "—", class: "border-gray-200 bg-gray-50 text-gray-500" };
+
+        const responseBadge = (value: string | null) =>
+          value === "satisfied" ? { label: "Satisfied", class: "border-emerald-200 bg-emerald-50 text-emerald-700" }
+          : value === "neutral" ? { label: "Neutral", class: "border-gray-200 bg-gray-50 text-gray-600" }
+          : value === "complaint" ? { label: "Complaint", class: "border-rose-200 bg-rose-50 text-rose-700" }
+          : { label: "—", class: "border-gray-200 bg-gray-50 text-gray-400" };
+
+        const tabbed = retentionActivityLog.filter((row) => {
+          if (retentionCallsTab === "all") return true;
+          if (retentionCallsTab === "reached") return row.reachStatus === "reached";
+          if (retentionCallsTab === "not_reached") return row.reachStatus === "not_reached" || row.reachStatus === "not_reachable" || row.reachStatus === "wrong_number";
+          if (retentionCallsTab === "complaints") return row.customerResponse === "complaint" || row.nextAction === "needs_resolution";
+          if (retentionCallsTab === "sales") return row.retentionOutcome === "accepted" || Boolean(row.resultingOrderId);
+          return Boolean(row.nextActionAt);
+        });
+
+        const callsQuery = retentionActivitySearch.trim().toLowerCase();
+        const visibleCalls = tabbed
+          .filter((r) => retentionCallsReachFilter === "all" || r.reachStatus === retentionCallsReachFilter)
+          .filter((r) => retentionCallsResponseFilter === "all" || r.customerResponse === retentionCallsResponseFilter)
+          .filter((r) => retentionCallsOutcomeFilter === "all" || outcomeFor(r).key === retentionCallsOutcomeFilter)
+          .filter((r) => retentionCallsTypeFilter === "all" || callTypeFor(r).key === retentionCallsTypeFilter)
+          .filter((r) => retentionCallsProductFilter === "all" || r.productName === retentionCallsProductFilter)
+          .filter((r) => retentionCallsRepFilter === "all" || r.loggedBy === retentionCallsRepFilter)
+          .filter((r) => !callsQuery
+            || r.customerName.toLowerCase().includes(callsQuery)
+            || r.phone.includes(callsQuery)
+            || r.orderId.toLowerCase().includes(callsQuery)
+            || r.productName.toLowerCase().includes(callsQuery)
+            || r.loggedByName.toLowerCase().includes(callsQuery));
+
+        const callsPageSize = 8;
+        const totalCalls = visibleCalls.length;
+        const callsTotalPages = Math.max(1, Math.ceil(totalCalls / callsPageSize));
+        const callsPage = Math.min(retentionCallsPage, callsTotalPages);
+        const pagedCalls = visibleCalls.slice((callsPage - 1) * callsPageSize, callsPage * callsPageSize);
+        const resetCallsPage = () => setRetentionCallsPage(1);
+        const callsPageNumbers: Array<number | "gap"> = [];
+        for (let p = 1; p <= callsTotalPages; p += 1) {
+          if (p <= 2 || p > callsTotalPages - 1 || Math.abs(p - callsPage) <= 1) callsPageNumbers.push(p);
+          else if (callsPageNumbers[callsPageNumbers.length - 1] !== "gap") callsPageNumbers.push("gap");
+        }
+
+        const callProductOptions = Array.from(new Set(retentionActivityLog.map((r) => r.productName).filter(Boolean))).sort();
+        const callRepOptions = Array.from(new Map(retentionActivityLog.filter((r) => r.loggedBy).map((r) => [r.loggedBy as string, r.loggedByName])).entries()).sort((a, b) => a[1].localeCompare(b[1]));
+        const outcomeOptions = Array.from(new Map(callRows.map((r) => { const o = outcomeFor(r); return [o.key, o.label]; })).entries());
+        const callTypeOptions = Array.from(new Map(retentionActivityLog.map((r) => { const t = callTypeFor(r); return [t.key, t.label]; })).entries());
+
+        const resetCallFilters = () => {
+          setRetentionCallsReachFilter("all"); setRetentionCallsResponseFilter("all"); setRetentionCallsOutcomeFilter("all");
+          setRetentionCallsTypeFilter("all"); setRetentionCallsProductFilter("all"); setRetentionCallsRepFilter("all");
+          setRetentionActivitySearch(""); resetCallsPage();
+        };
+
+        // Reach breakdown, as a donut built from stroke-dasharray arcs.
+        const donutSegments = [
+          { label: "Reached", value: now.reached, color: "#10b981" },
+          { label: "Not Picking", value: now.notPicking, color: "#f59e0b" },
+          { label: "Not Reachable", value: now.notReachable, color: "#e11d48" },
+          { label: "Others", value: Math.max(0, now.attempted - now.reached - now.notPicking - now.notReachable), color: "#cbd5e1" }
+        ];
+        const donutTotal = donutSegments.reduce((s, seg) => s + seg.value, 0);
+        const circumference = 2 * Math.PI * 42;
+        let donutOffset = 0;
+
+        const outcomeTotals = outcomeOptions.map(([key, label]) => {
+          const count = callRows.filter((r) => outcomeFor(r).key === key).length;
+          return { key, label, count, pct: callRows.length > 0 ? (count / callRows.length) * 100 : 0 };
+        }).filter((o) => o.count > 0).sort((a, b) => b.count - a.count);
+        const outcomeBarColor: Record<string, string> = {
+          satisfaction_confirmed: "#10b981", issue_logged: "#e11d48", review_promised: "#3b82f6",
+          review_collected: "#0ea5e9", referral_promised: "#8b5cf6", referral_collected: "#a855f7",
+          offer_accepted: "#22c55e", not_interested: "#94a3b8", no_answer: "#f59e0b",
+          number_not_reachable: "#f43f5e", logged: "#cbd5e1"
+        };
+
+        const exportCallsCsv = () => {
+          const header = ["Date & Time", "Customer", "Phone", "Order", "Product", "Amount", "Call Type", "Duration", "Reach Status", "Customer Response", "Outcome", "Next Action", "Follow-up", "Rep"];
+          const body = visibleCalls.map((r) => [
+            new Date(r.loggedAt).toLocaleString(),
+            r.customerName, r.phone, r.orderId, r.productName, String(r.orderAmount ?? ""),
+            callTypeFor(r).label,
+            typeof r.callDurationSeconds === "number" ? mmss(r.callDurationSeconds) : "",
+            reachBadge(r.reachStatus).label, responseBadge(r.customerResponse).label,
+            outcomeFor(r).label, nextActionLabel(r.nextAction),
+            r.nextActionAt ? new Date(r.nextActionAt).toLocaleString() : "",
+            r.loggedByName
+          ]);
+          const csv = [header, ...body].map((cells) => cells.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+          const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `calls-and-outcomes-${new Date().toISOString().slice(0, 10)}.csv`;
+          link.click();
+          URL.revokeObjectURL(url);
+        };
+
+        const kpiTiles = [
+          { label: "Calls Attempted", value: String(now.attempted), tone: "text-emerald-700", chip: "bg-emerald-50", Icon: Phone, delta: deltaFor(now.attempted, prev?.attempted, true, (n) => String(Math.round(n))) },
+          { label: "Customers Reached", value: String(now.reached), tone: "text-sky-700", chip: "bg-sky-50", Icon: Users, delta: deltaFor(now.reached, prev?.reached, true, (n) => String(Math.round(n))) },
+          { label: "Contact Rate", value: now.contactRate === null ? "—" : `${now.contactRate.toFixed(1)}%`, tone: "text-violet-700", chip: "bg-violet-50", Icon: TrendingUp, delta: deltaFor(now.contactRate, prev?.contactRate, true, (n) => `${n.toFixed(1)}%`) },
+          { label: "Avg. Call Duration", value: now.avgDuration === null ? "—" : mmss(now.avgDuration), tone: "text-indigo-700", chip: "bg-indigo-50", Icon: Clock, delta: deltaFor(now.avgDuration, prev?.avgDuration, true, (n) => mmss(Math.round(n))) },
+          { label: "Not Picking", value: String(now.notPicking), tone: "text-amber-700", chip: "bg-amber-50", Icon: PhoneOff, delta: deltaFor(now.notPicking, prev?.notPicking, false, (n) => String(Math.round(n))) },
+          { label: "Not Reachable", value: String(now.notReachable), tone: "text-rose-700", chip: "bg-rose-50", Icon: PhoneOff, delta: deltaFor(now.notReachable, prev?.notReachable, false, (n) => String(Math.round(n))) },
+          { label: "Complaints", value: String(now.complaints), tone: "text-orange-700", chip: "bg-orange-50", Icon: AlertTriangle, delta: deltaFor(now.complaints, prev?.complaints, false, (n) => String(Math.round(n))) }
+        ];
+
         return (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              {([
-                ["Reached", reached, "text-emerald-700"],
-                ["No Answer", notReached, "text-amber-700"],
-                ["Invalid / Unreachable", notReachable, "text-rose-700"],
-                ["Complaints Logged", complaintsLogged, "text-gray-900"]
-              ] as const).map(([label, value, tone]) => (
-                <div key={label} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-                  <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">{label}</p>
-                  <p className={`mt-1 text-2xl font-black ${tone}`}>{value}</p>
+            <header>
+              <h2 className="text-xl font-black text-gray-900">Calls &amp; Outcomes</h2>
+              <p className="text-sm font-medium text-gray-500">Track every customer interaction and the outcomes.</p>
+            </header>
+
+            {now.avgDuration === null && callRows.length > 0 && (
+              <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-800">
+                Avg. Call Duration starts filling in once reps record a call length in Log Outcome - existing calls have none stored.
+              </p>
+            )}
+            {retentionActivityLog.length >= 200 && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                Showing the most recent 200 interactions for this period - totals below count those only. Narrow the date range for exact figures.
+              </p>
+            )}
+
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-7">
+              {kpiTiles.map((tile) => (
+                <div key={tile.label} className="rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tile.chip}`}><tile.Icon className={`h-4 w-4 ${tile.tone}`} /></span>
+                    <span className="text-[10px] font-black uppercase leading-tight tracking-[0.1em] text-gray-500">{tile.label}</span>
+                  </div>
+                  <strong className={`mt-2 block text-2xl font-black ${tile.tone}`}>{tile.value}</strong>
+                  {tile.delta && <span className={`mt-0.5 block text-[10px] font-bold ${tile.delta.tone}`}>{tile.delta.text}</span>}
                 </div>
               ))}
             </div>
-            {renderActivityFeed("Call Activity & Outcomes", "No touchpoints logged in this period yet.")}
+
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_290px]">
+              <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="-mb-3 flex gap-1 overflow-x-auto lg:mb-0">
+                    {([
+                      ["all", "All Calls"],
+                      ["reached", "Reached"],
+                      ["not_reached", "Not Reached"],
+                      ["complaints", "Complaints"],
+                      ["sales", "Sales Generated"],
+                      ["needs_follow_up", "Needs Follow-up"]
+                    ] as const).map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => { setRetentionCallsTab(key); resetCallsPage(); }}
+                        className={`!min-h-0 shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${retentionCallsTab === key ? "border-emerald-600 font-black text-emerald-700" : "border-transparent font-bold text-gray-500 hover:text-gray-800"}`}
+                      >{label}</button>
+                    ))}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button type="button" onClick={exportCallsCsv} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-gray-50"><Download className="h-4 w-4" /> Export</button>
+                    <button type="button" onClick={() => setRetentionSubPage("Tasks")} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-sm font-black text-white hover:bg-emerald-700"><Plus className="h-4 w-4" /> Log Outcome</button>
+                  </div>
+                </div>
+
+                <div className="border-b border-gray-200 px-4 py-3">
+                  <label className="relative block w-full sm:max-w-xs">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                    <input value={retentionActivitySearch} onChange={(e) => { setRetentionActivitySearch(e.target.value); resetCallsPage(); }} placeholder="Search customer, phone, order..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
+                  </label>
+                </div>
+
+                {retentionActivityLogLoading && retentionActivityLog.length === 0 ? (
+                  <p className="px-5 py-10 text-center text-sm text-gray-400">Loading…</p>
+                ) : pagedCalls.length === 0 ? (
+                  <p className="px-5 py-10 text-center text-sm text-gray-400">No interactions match this view.</p>
+                ) : (
+                  <>
+                    <div className="divide-y divide-gray-100 lg:hidden">
+                      {pagedCalls.map((row) => {
+                        const type = callTypeFor(row);
+                        const outcome = outcomeFor(row);
+                        const reach = reachBadge(row.reachStatus);
+                        return (
+                          <article key={row.id} className="flex flex-col gap-2 px-4 py-4">
+                            <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 min-w-0 text-left">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${type.class}`}>{type.label}</span>
+                                <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${reach.class}`}>{reach.label}</span>
+                              </div>
+                              <p className="mt-1 truncate text-sm font-bold text-gray-900">{row.customerName}</p>
+                              <p className="text-xs text-gray-500">{row.phone} · #{row.orderId} · {row.productName}</p>
+                              <p className="mt-1 text-[11px] text-gray-400">{new Date(row.loggedAt).toLocaleString()} · by {row.loggedByName}{typeof row.callDurationSeconds === "number" ? ` · ${mmss(row.callDurationSeconds)}` : ""}</p>
+                            </button>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${outcome.class}`}>{outcome.label}</span>
+                              {row.nextAction && <span className="inline-flex items-center whitespace-nowrap rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700">{nextActionLabel(row.nextAction)}</span>}
+                              {row.nextActionAt && <span className="text-[11px] font-semibold text-gray-500">{new Date(row.nextActionAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+
+                    <div className="hidden overflow-x-auto lg:block">
+                      <table className="w-full min-w-[1240px] text-sm">
+                        <thead className="bg-gray-50 text-[10px] uppercase tracking-wider text-gray-500">
+                          <tr>
+                            <th className="px-3 py-3 text-left font-bold">Date &amp; Time</th>
+                            <th className="px-3 py-3 text-left font-bold">Customer</th>
+                            <th className="px-3 py-3 text-left font-bold">Phone</th>
+                            <th className="px-3 py-3 text-left font-bold">Product / Order</th>
+                            <th className="px-3 py-3 text-left font-bold">Call Type</th>
+                            <th className="px-3 py-3 text-left font-bold">Duration</th>
+                            <th className="px-3 py-3 text-left font-bold">Reach Status</th>
+                            <th className="px-3 py-3 text-left font-bold">Customer Response</th>
+                            <th className="px-3 py-3 text-left font-bold">Outcome</th>
+                            <th className="px-3 py-3 text-left font-bold">Next Action</th>
+                            <th className="px-3 py-3 text-left font-bold">Follow-up</th>
+                            <th className="px-3 py-3 text-left font-bold">Rep</th>
+                            <th className="px-3 py-3 text-left font-bold">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {pagedCalls.map((row) => {
+                            const type = callTypeFor(row);
+                            const outcome = outcomeFor(row);
+                            const reach = reachBadge(row.reachStatus);
+                            const response = responseBadge(row.customerResponse);
+                            const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
+                            return (
+                              <tr key={row.id} className="align-top hover:bg-gray-50">
+                                <td className="px-3 py-3 text-xs text-gray-600">
+                                  <div className="whitespace-nowrap font-semibold text-gray-800">{new Date(row.loggedAt).toLocaleDateString([], { month: "short", day: "numeric" })},</div>
+                                  <div className="whitespace-nowrap">{new Date(row.loggedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 text-left">
+                                    <div className="font-bold text-gray-900">{row.customerName}</div>
+                                    <div className="text-xs text-gray-500">#{row.orderId}</div>
+                                  </button>
+                                </td>
+                                <td className="px-3 py-3 whitespace-nowrap text-xs text-gray-600">{row.phone}</td>
+                                <td className="px-3 py-3 text-xs text-gray-600">
+                                  <div>{row.productName}</div>
+                                  {row.orderAmount > 0 && <div className="font-semibold text-gray-800">{formatMoney(row.orderAmount)}</div>}
+                                </td>
+                                <td className="px-3 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${type.class}`}>{type.label}</span></td>
+                                <td className="px-3 py-3 whitespace-nowrap text-xs font-semibold text-gray-700">{typeof row.callDurationSeconds === "number" ? mmss(row.callDurationSeconds) : <span className="text-gray-300">—</span>}</td>
+                                <td className="px-3 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${reach.class}`}>{reach.label}</span></td>
+                                <td className="px-3 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${response.class}`}>{response.label}</span></td>
+                                <td className="px-3 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${outcome.class}`}>{outcome.label}</span></td>
+                                <td className="px-3 py-3">
+                                  {row.nextAction
+                                    ? <span className="inline-flex items-center whitespace-nowrap rounded-full border border-sky-200 bg-sky-50 px-2 py-1 text-[10px] font-bold text-sky-700">{nextActionLabel(row.nextAction)}</span>
+                                    : <span className="text-xs text-gray-300">—</span>}
+                                </td>
+                                <td className="px-3 py-3 text-xs text-gray-600">
+                                  {row.nextActionAt ? (
+                                    <>
+                                      <div className="whitespace-nowrap font-semibold text-gray-800">{new Date(row.nextActionAt).toLocaleDateString([], { month: "short", day: "numeric" })}</div>
+                                      <div className="whitespace-nowrap">{new Date(row.nextActionAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>
+                                    </>
+                                  ) : <span className="text-gray-300">—</span>}
+                                </td>
+                                <td className="px-3 py-3 whitespace-nowrap text-xs font-semibold text-gray-700">{row.loggedByName}</td>
+                                <td className="px-3 py-3">
+                                  <div className="flex items-center gap-1.5">
+                                    <a href={`tel:${row.phone}`} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-emerald-600 hover:bg-gray-50"><Phone className="h-3.5 w-3.5" /></a>
+                                    <a href={whatsappUrl} target="_blank" rel="noreferrer" className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-emerald-600 hover:bg-gray-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+                                    <div className="relative">
+                                      <button type="button" onClick={() => setRetentionCallsMenuId(retentionCallsMenuId === row.id ? null : row.id)} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-500 hover:bg-gray-50" aria-label="More actions"><MoreVertical className="h-3.5 w-3.5" /></button>
+                                      {retentionCallsMenuId === row.id && (
+                                        <>
+                                          <div className="fixed inset-0 z-20" onClick={() => setRetentionCallsMenuId(null)} />
+                                          <div className="absolute right-0 z-30 mt-1 w-48 rounded-xl border border-gray-200 bg-white p-1 shadow-lg">
+                                            <button type="button" onClick={() => { setRetentionCallsMenuId(null); setRetentionDrawerPhone(row.phone); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"><Users className="h-4 w-4 text-gray-500" /> View customer</button>
+                                            <button type="button" onClick={() => { setRetentionCallsMenuId(null); toggleLogging(row.orderId, row.stage); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"><ClipboardCheck className="h-4 w-4 text-gray-500" /> Log new outcome</button>
+                                          </div>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="flex flex-col items-center justify-between gap-2 border-t border-gray-200 px-4 py-3 sm:flex-row">
+                      <span className="text-xs font-semibold text-gray-500">
+                        Showing {(callsPage - 1) * callsPageSize + 1} to {Math.min(callsPage * callsPageSize, totalCalls)} of {totalCalls} call{totalCalls === 1 ? "" : "s"}
+                      </span>
+                      {callsTotalPages > 1 && (
+                        <div className="flex items-center gap-1">
+                          <button type="button" disabled={callsPage === 1} onClick={() => setRetentionCallsPage(callsPage - 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-3.5 w-3.5" /></button>
+                          {callsPageNumbers.map((p, idx) => p === "gap" ? (
+                            <span key={`gap-${idx}`} className="px-1 text-xs text-gray-400">…</span>
+                          ) : (
+                            <button key={p} type="button" onClick={() => setRetentionCallsPage(p)} className={`!min-h-0 inline-flex h-7 min-w-[28px] items-center justify-center rounded-md border px-1.5 text-xs font-bold ${p === callsPage ? "border-emerald-600 bg-emerald-600 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{p}</button>
+                          ))}
+                          <button type="button" disabled={callsPage === callsTotalPages} onClick={() => setRetentionCallsPage(callsPage + 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-3.5 w-3.5" /></button>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </section>
+
+              <aside className="space-y-4">
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-black text-gray-900">Filters</h3>
+                    <button type="button" onClick={resetCallFilters} className="!min-h-0 text-xs font-black text-emerald-700 hover:underline">Clear All</button>
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    {([
+                      ["Reach Status", retentionCallsReachFilter, setRetentionCallsReachFilter, [["reached", "Reached"], ["not_reached", "Not Picking"], ["not_reachable", "Not Reachable"], ["wrong_number", "Wrong Number"]]],
+                      ["Customer Response", retentionCallsResponseFilter, setRetentionCallsResponseFilter, [["satisfied", "Satisfied"], ["neutral", "Neutral"], ["complaint", "Complaint"]]],
+                      ["Outcome", retentionCallsOutcomeFilter, setRetentionCallsOutcomeFilter, outcomeOptions],
+                      ["Call Type", retentionCallsTypeFilter, setRetentionCallsTypeFilter, callTypeOptions],
+                      ["Product", retentionCallsProductFilter, setRetentionCallsProductFilter, callProductOptions.map((p) => [p, p] as [string, string])],
+                      ["Rep", retentionCallsRepFilter, setRetentionCallsRepFilter, callRepOptions]
+                    ] as Array<[string, string, (v: string) => void, Array<[string, string]>]>).map(([label, value, setter, options]) => (
+                      <label key={label} className="block space-y-1">
+                        <span className="block text-[11px] font-bold text-gray-600">{label}</span>
+                        <select value={value} onChange={(e) => { setter(e.target.value); resetCallsPage(); }} className="h-9 w-full rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                          <option value="all">All</option>
+                          {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Reach Status Breakdown</h3>
+                  {donutTotal === 0 ? (
+                    <p className="mt-3 text-xs italic text-gray-400">No calls logged in this period.</p>
+                  ) : (
+                    <div className="mt-3 flex items-center gap-3">
+                      <svg viewBox="0 0 100 100" className="h-24 w-24 shrink-0 -rotate-90">
+                        <circle cx="50" cy="50" r="42" fill="none" stroke="#f1f5f9" strokeWidth="12" />
+                        {donutSegments.filter((seg) => seg.value > 0).map((seg) => {
+                          const length = (seg.value / donutTotal) * circumference;
+                          const el = (
+                            <circle
+                              key={seg.label}
+                              cx="50" cy="50" r="42" fill="none"
+                              stroke={seg.color} strokeWidth="12"
+                              strokeDasharray={`${length} ${circumference - length}`}
+                              strokeDashoffset={-donutOffset}
+                            />
+                          );
+                          donutOffset += length;
+                          return el;
+                        })}
+                      </svg>
+                      <ul className="min-w-0 flex-1 space-y-1">
+                        {donutSegments.map((seg) => (
+                          <li key={seg.label} className="flex items-center gap-1.5 text-[11px]">
+                            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: seg.color }} />
+                            <span className="flex-1 truncate font-semibold text-gray-600">{seg.label}</span>
+                            <span className="shrink-0 font-black text-gray-800">{seg.value}</span>
+                            <span className="shrink-0 text-gray-400">({donutTotal > 0 ? ((seg.value / donutTotal) * 100).toFixed(1) : "0.0"}%)</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <p className="mt-2 text-center text-[11px] font-bold text-gray-500">{donutTotal} total call{donutTotal === 1 ? "" : "s"}</p>
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Outcomes Overview</h3>
+                  {outcomeTotals.length === 0 ? (
+                    <p className="mt-3 text-xs italic text-gray-400">No outcomes logged in this period.</p>
+                  ) : (
+                    <ul className="mt-3 space-y-2">
+                      {outcomeTotals.map((o) => (
+                        <li key={o.key}>
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="min-w-0 flex-1 truncate font-semibold text-gray-600">{o.label}</span>
+                            <span className="shrink-0 font-black text-gray-800">{o.count}</span>
+                            <span className="shrink-0 text-gray-400">({o.pct.toFixed(1)}%)</span>
+                          </div>
+                          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                            <div className="h-full rounded-full" style={{ width: `${Math.max(2, o.pct)}%`, backgroundColor: outcomeBarColor[o.key] ?? "#94a3b8" }} />
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Quick Actions</h3>
+                  <div className="mt-3 space-y-1.5">
+                    <button type="button" onClick={() => setRetentionSubPage("Tasks")} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><ClipboardCheck className="h-3.5 w-3.5 text-emerald-600" /> Log Call Outcome</button>
+                    <button type="button" onClick={() => { setRetentionTaskForm({ customerName: "", customerPhone: "", taskType: "scheduled_follow_up", title: "Scheduled follow-up", note: "", priority: "medium", dueAt: "", assignedRepId: null, orderId: null }); setRetentionAddTaskOpen(true); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Clock className="h-3.5 w-3.5 text-sky-600" /> Schedule Follow-up</button>
+                  </div>
+                </section>
+              </aside>
+            </div>
           </div>
         );
       }
@@ -42900,6 +43394,17 @@ ${waybillLineItems(w).length > 1
                     <button key={value} type="button" onClick={() => selectReachStatus(value)} className={`!min-h-0 min-w-0 rounded-lg border px-2 py-2.5 text-xs font-bold ${retentionOutcomeReachStatus === value ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-[#1F8FE0]"}`}>{label}</button>
                   ))}
                 </div>
+                <label className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold text-gray-600">Call duration</span>
+                  <input
+                    value={retentionOutcomeDuration}
+                    onChange={(e) => setRetentionOutcomeDuration(e.target.value)}
+                    placeholder="3:12"
+                    inputMode="numeric"
+                    className="h-8 w-24 rounded-lg border border-gray-200 bg-white px-2 text-sm"
+                  />
+                  <span className="text-[11px] text-gray-400">minutes:seconds - optional, powers the Avg. Call Duration KPI</span>
+                </label>
               </div>
 
               {retentionOutcomeReachStatus === "reached" && (

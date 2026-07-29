@@ -913,6 +913,7 @@ export interface RetentionTouchpointPayload {
   nextAction?: "request_review" | "request_referral" | "offer_another_product" | "schedule_follow_up" | "needs_resolution" | "not_interested" | "do_not_contact";
   nextActionAt?: string;
   nextActionNote?: string;
+  callDurationSeconds?: number | null;
   // satisfaction_check
   satisfactionOutcome?: string;
   satisfactionNotes?: string;
@@ -1062,6 +1063,8 @@ export interface RetentionActivityLogRow {
   customerName: string;
   phone: string;
   productName: string;
+  orderAmount: number;
+  orderCurrency: string;
   stage: "satisfaction_check" | "review_referral" | "retention_sale" | null;
   loggedBy: string | null;
   loggedByName: string;
@@ -1069,7 +1072,11 @@ export interface RetentionActivityLogRow {
   reachStatus: string | null;
   customerResponse: string | null;
   nextAction: string | null;
+  nextActionAt: string | null;
   nextActionNote: string | null;
+  // Migration 179. Null means the rep did not record a duration (every
+  // touchpoint before that migration) - averages must skip those.
+  callDurationSeconds: number | null;
   satisfactionOutcome: string | null;
   satisfactionNotes: string | null;
   reviewRequestedAt: string | null;

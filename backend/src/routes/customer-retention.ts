@@ -983,7 +983,10 @@ const OutcomeFields = {
     "schedule_follow_up", "needs_resolution", "not_interested", "do_not_contact"
   ]).optional(),
   nextActionAt: z.string().optional(),
-  nextActionNote: z.string().max(500).optional()
+  nextActionNote: z.string().max(500).optional(),
+  // Migration 179. Null/absent means "not recorded" - averages skip those
+  // rows rather than treating them as a zero-second call.
+  callDurationSeconds: z.number().int().min(0).max(86400).nullable().optional()
 };
 
 const TouchpointSchema = z.discriminatedUnion("stage", [
@@ -1064,7 +1067,8 @@ router.post("/touchpoints", requireRole(...RETENTION_ROLES), async (req, res) =>
     customer_response: d.customerResponse ?? null,
     next_action: d.nextAction ?? null,
     next_action_at: d.nextActionAt ?? null,
-    next_action_note: d.nextActionNote ?? null
+    next_action_note: d.nextActionNote ?? null,
+    call_duration_seconds: d.callDurationSeconds ?? null
   };
   if (d.stage === "satisfaction_check") {
     row.satisfaction_outcome = d.satisfactionOutcome ?? null;
@@ -1533,7 +1537,7 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
 
     let query = supabase
       .from("customer_retention_touchpoints")
-      .select("id, order_id, stage, logged_by, logged_at, reach_status, customer_response, next_action, next_action_note, satisfaction_outcome, satisfaction_notes, review_requested_at, review_collected, review_is_video, review_text, media_urls, ad_permission_granted, referral_requested_at, referral_collected, referral_contact_name, referral_contact_phone, customer_discount_owed, customer_discount_cleared_at, offered_product_id, offered_package_id, retention_outcome, resulting_order_id")
+      .select("id, order_id, stage, logged_by, logged_at, reach_status, customer_response, next_action, next_action_at, next_action_note, call_duration_seconds, satisfaction_outcome, satisfaction_notes, review_requested_at, review_collected, review_is_video, review_text, media_urls, ad_permission_granted, referral_requested_at, referral_collected, referral_contact_name, referral_contact_phone, customer_discount_owed, customer_discount_cleared_at, offered_product_id, offered_package_id, retention_outcome, resulting_order_id")
       .eq("org_id", orgId)
       .gte("logged_at", `${start}T00:00:00`)
       .lt("logged_at", `${exclusiveEnd}T00:00:00`)
@@ -1566,7 +1570,7 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
     if (rows.length === 0 && actionRows.length === 0) { res.json({ rows: [] }); return; }
 
     const orderIds = [...new Set([...rows.map((r) => r.order_id), ...actionRows.map((r) => r.order_id)])];
-    const { data: orders } = await supabase.from("orders").select("id, customer, phone, product_name").in("id", orderIds);
+    const { data: orders } = await supabase.from("orders").select("id, customer, phone, product_name, amount, currency").in("id", orderIds);
     const orderById = new Map((orders ?? []).map((o) => [o.id, o]));
 
     const repIds = [...new Set([...rows.map((r) => r.logged_by), ...actionRows.map((r) => r.logged_by)].filter(Boolean))] as string[];
@@ -1583,6 +1587,8 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
           customerName: order?.customer ?? "Unknown",
           phone: order?.phone ?? "",
           productName: order?.product_name ?? "",
+          orderAmount: numericAmount(order?.amount),
+          orderCurrency: order?.currency ?? "NGN",
           stage: r.stage,
           loggedBy: r.logged_by,
           loggedByName: r.logged_by ? (repNameById.get(r.logged_by) ?? "Unknown") : "Unknown",
@@ -1590,7 +1596,9 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
           reachStatus: r.reach_status,
           customerResponse: r.customer_response,
           nextAction: r.next_action,
+          nextActionAt: r.next_action_at ?? null,
           nextActionNote: r.next_action_note,
+          callDurationSeconds: r.call_duration_seconds ?? null,
           satisfactionOutcome: r.satisfaction_outcome,
           satisfactionNotes: r.satisfaction_notes,
           reviewRequestedAt: r.review_requested_at,
@@ -1620,6 +1628,8 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
         customerName: order?.customer ?? "Unknown",
         phone: order?.phone ?? "",
         productName: order?.product_name ?? "",
+        orderAmount: numericAmount(order?.amount),
+        orderCurrency: order?.currency ?? "NGN",
         stage: null,
         loggedBy: r.logged_by,
         loggedByName: r.logged_by ? (repNameById.get(r.logged_by) ?? "Unknown") : "Unknown",
@@ -1628,7 +1638,9 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
         reachStatus: null,
         customerResponse: null,
         nextAction: null,
+        nextActionAt: null,
         nextActionNote: null,
+        callDurationSeconds: null,
         satisfactionOutcome: null,
         satisfactionNotes: null,
         reviewRequestedAt: null,
