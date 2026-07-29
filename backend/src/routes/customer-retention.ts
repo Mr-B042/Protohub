@@ -745,6 +745,71 @@ router.get("/order/:orderId/retention-suggestion", requireRole(...RETENTION_ROLE
 // GET /customer/:phone - Customer Detail Drawer aggregation. No existing
 // endpoint does this (customers.ts only does org-list-level aggregation);
 // reuses its phone-digits-only normalization convention.
+// Itemises what a customer actually bought on one order: the main product,
+// any upsell, every cross-sell add-on (and who added it), and the free gifts
+// bundled in the package.
+//
+// The retention rep was previously shown only the headline product against
+// the full order total, which hid the add-ons entirely - so a ₦50,000 order
+// looked like a single ₦50,000 product when it was ₦39,500 main + a ₦10,500
+// cross-sell. Knowing the real basket is what tells the rep how to approach
+// the call.
+//
+// Main-product amount is derived as `amount - crossSellTotal`, NOT from
+// `original_amount`. Verified against every order carrying cross-sell lines:
+// that subtraction is always positive and lands on the real package price,
+// whereas `original_amount` means different things row to row (sometimes the
+// pre-cross-sell figure, sometimes the full total, sometimes the pre-upsell
+// figure) because it exists for upsell bonus math, not line breakdown.
+function orderPurchaseBreakdown(order: any) {
+  const lines = Array.isArray(order.cross_sell_lines) ? order.cross_sell_lines : [];
+  const crossSells = lines.map((line: any) => ({
+    productId: line?.productId ?? null,
+    productName: line?.productName ?? "Add-on",
+    quantity: Number(line?.quantity ?? 0),
+    amount: numericAmount(line?.amount),
+    addedByName: line?.addedByName ?? null,
+    addedByRole: line?.addedByRole ?? null,
+    addedAt: line?.addedAt ?? null,
+    // "manual_rep" means a rep pitched it live; other sources come from the
+    // order form's own offer slots.
+    selectionSource: line?.selectionSource ?? null
+  }));
+  const crossSellTotal = crossSells.reduce((sum: number, line: any) => sum + line.amount, 0);
+  const total = numericAmount(order.amount);
+
+  // Free gifts arrive from two places: components bundled into the package,
+  // and standalone gift lines. Neither costs the customer anything, so they
+  // never affect the money math - but the rep must know they were promised.
+  const componentGifts = (Array.isArray(order.package_components_snapshot) ? order.package_components_snapshot : [])
+    .filter((c: any) => c?.isFreeGift && !c?.hiddenFromCustomer)
+    .map((c: any) => ({ productName: c?.productName ?? "Gift", quantity: Number(c?.quantity ?? 0), source: "package" as const }));
+  const standaloneGifts = (Array.isArray(order.free_gift_lines) ? order.free_gift_lines : [])
+    .map((g: any) => ({ productName: g?.productName ?? "Gift", quantity: Number(g?.quantity ?? 0), source: "added" as const }));
+
+  const upsoldFrom = order.upsell_from_qty === null || order.upsell_from_qty === undefined ? null : Number(order.upsell_from_qty);
+  const upsoldTo = order.upsell_to_qty === null || order.upsell_to_qty === undefined ? null : Number(order.upsell_to_qty);
+
+  return {
+    orderId: order.id,
+    product: order.product_name,
+    package: order.package_name,
+    quantity: Number(order.quantity ?? 0),
+    mainAmount: total - crossSellTotal,
+    crossSellTotal,
+    amount: total,
+    currency: order.currency,
+    deliveredDate: order.delivered_date,
+    createdAt: order.created_at,
+    status: order.status,
+    crossSells,
+    freeGifts: [...componentGifts, ...standaloneGifts],
+    upsell: upsoldTo !== null && upsoldTo !== upsoldFrom
+      ? { fromQty: upsoldFrom, toQty: upsoldTo, note: order.upsell_note ?? null }
+      : null
+  };
+}
+
 router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res) => {
   try {
     const orgId = req.user!.orgId;
@@ -753,7 +818,7 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
 
     const { data: allOrders, error } = await fetchAllRows<any>((from, to) => supabase
       .from("orders")
-      .select("id, customer, phone, city, state, product_id, product_name, package_name, amount, currency, status, delivered_date, created_at")
+      .select("id, customer, phone, address, city, state, product_id, product_name, package_name, quantity, amount, currency, status, delivered_date, created_at, cross_sell_lines, free_gift_lines, package_components_snapshot, upsell_from_qty, upsell_to_qty, upsell_note")
       .eq("org_id", orgId)
       .order("id", { ascending: true })
       .range(from, to));
@@ -961,12 +1026,15 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
     const customerStatus = nextAction.dueStage === "needs_resolution" ? "Needs Attention" : delivered.length > 1 ? "Repeat Buyer" : "New Customer";
 
     res.json({
-      customer: { name: first.customer, phone: first.phone, city: first.city, state: first.state, customerSince: first.created_at, status: customerStatus },
+      // Address comes off the LATEST order - if a customer moved, the rep
+      // needs where to reach them now, not where their first parcel went.
+      customer: { name: first.customer, phone: first.phone, address: latestOrder?.address ?? first.address ?? "", city: first.city, state: first.state, customerSince: first.created_at, status: customerStatus },
       summary: { totalOrders: orders.length, totalSpent, delivered: delivered.length, wrongDamagedReportsCount, ltv: totalSpent },
-      latestOrder: latestOrder ? {
-        orderId: latestOrder.id, product: latestOrder.product_name, package: latestOrder.package_name,
-        amount: Number(latestOrder.amount ?? 0), currency: latestOrder.currency, deliveredDate: latestOrder.delivered_date, status: latestOrder.status
-      } : null,
+      latestOrder: latestOrder ? orderPurchaseBreakdown(latestOrder) : null,
+      // Every order this customer has placed, itemised the same way, so the
+      // rep can see the whole buying history - what was upsold, what was
+      // cross-sold and by whom - before making the retention call.
+      orderHistory: byCreatedDesc.map(orderPurchaseBreakdown),
       timeline,
       nextAction
     });
