@@ -795,6 +795,7 @@ export const recoveryRepKpiApi = {
 
 export type RetentionDueStage = "satisfaction_check" | "review_referral" | "retention_sale" | "needs_resolution" | "win_back" | null;
 export type RetentionPriorityBand = "critical" | "overdue" | "high_value" | "satisfaction_due" | "review_referral_due" | "revenue_opportunity";
+export type RetentionLifecycleStage = "delivered" | "satisfaction_check" | "review_testimonial" | "referral" | "repeat_sale" | "win_back" | "needs_resolution";
 
 export interface RetentionWorklistRow {
   orderId: string;
@@ -803,6 +804,9 @@ export interface RetentionWorklistRow {
   deliveredDate: string;
   daysSinceDelivery: number;
   dueStage: RetentionDueStage;
+  lifecycleStage: RetentionLifecycleStage;
+  stageEnteredDate: string;
+  stageDueDate: string;
   overdueBy: number;
   priorityBand: RetentionPriorityBand;
   orderAmount: number;
@@ -810,7 +814,17 @@ export interface RetentionWorklistRow {
   productName: string;
   assignedRepId: string | null;
   assignedRepName: string | null;
-  lastTouchpoint: { stage: string; loggedAt: string; satisfactionOutcome: string | null } | null;
+  lastTouchpoint: {
+    stage: string;
+    loggedAt: string;
+    satisfactionOutcome: string | null;
+    reachStatus: string | null;
+    customerResponse: string | null;
+    nextAction: string | null;
+    reviewCollected: boolean;
+    referralCollected: boolean;
+    retentionOutcome: string | null;
+  } | null;
   lastContactAt: string | null;
   nextAction: string | null;
   nextActionAt: string | null;
@@ -1022,7 +1036,7 @@ export const customerRetentionApi = {
     const suffix = qs.toString();
     return get<RetentionDashboardSummary>(`/api/customer-retention/dashboard-summary${suffix ? `?${suffix}` : ""}`);
   },
-  worklist: (params: { stage?: string; search?: string; minValue?: number; priority?: string; product?: string; assignedRepId?: string } = {}) => {
+  worklist: (params: { stage?: string; search?: string; minValue?: number; priority?: string; product?: string; assignedRepId?: string; includeAll?: boolean } = {}) => {
     const qs = new URLSearchParams();
     if (params.stage && params.stage !== "all") qs.set("stage", params.stage);
     if (params.search) qs.set("search", params.search);
@@ -1030,6 +1044,7 @@ export const customerRetentionApi = {
     if (params.priority && params.priority !== "all") qs.set("priority", params.priority);
     if (params.product && params.product !== "all") qs.set("product", params.product);
     if (params.assignedRepId && params.assignedRepId !== "all") qs.set("assignedRepId", params.assignedRepId);
+    if (params.includeAll) qs.set("includeAll", "true");
     const suffix = qs.toString();
     return get<{ rows: RetentionWorklistRow[] }>(`/api/customer-retention/worklist${suffix ? `?${suffix}` : ""}`);
   },

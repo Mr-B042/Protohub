@@ -5,6 +5,14 @@
 
 export type RetentionStage = "satisfaction_check" | "review_referral" | "retention_sale";
 export type DueStage = RetentionStage | "needs_resolution" | "win_back" | null;
+export type LifecycleStage =
+  | "delivered"
+  | "satisfaction_check"
+  | "review_testimonial"
+  | "referral"
+  | "repeat_sale"
+  | "win_back"
+  | "needs_resolution";
 
 // The spec's P1-P6 smart priority system, matched exactly:
 // P1 unresolved complaint, P2 overdue follow-up, P3 high-value customer,
@@ -123,6 +131,35 @@ export function dueStageFor(
   }
 
   return { dueStage: null, overdueBy: 0 };
+}
+
+// `dueStageFor` answers "what action is due now?". The Pipeline needs a
+// different answer: "where is this customer in the lifecycle?", including
+// the quiet waiting windows before an action becomes due.
+export function lifecycleStageFor(
+  deliveredDateKey: string,
+  todayKey: string,
+  touchpoints: RetentionTouchpointRecord[],
+  timing: RetentionTiming = DEFAULT_RETENTION_TIMING
+): LifecycleStage {
+  const age = daysBetween(deliveredDateKey, todayKey);
+  const satisfactionOutcome = latestSatisfactionOutcome(touchpoints);
+  if (satisfactionOutcome && NEGATIVE_SATISFACTION_OUTCOMES.has(satisfactionOutcome)) {
+    return "needs_resolution";
+  }
+
+  if (!stageCompleted(touchpoints, "satisfaction_check")) {
+    return age < timing.satisfactionDays ? "delivered" : "satisfaction_check";
+  }
+
+  const reviewCollected = touchpoints.some((row) => row.stage === "review_referral" && !!row.review_collected);
+  if (!reviewCollected) return "review_testimonial";
+
+  const referralCollected = touchpoints.some((row) => row.stage === "review_referral" && !!row.referral_collected);
+  if (!referralCollected && age < timing.repeatSaleStartDays) return "referral";
+
+  if (age <= timing.repeatSaleEndDays) return "repeat_sale";
+  return "win_back";
 }
 
 export interface PriorityInput {

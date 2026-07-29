@@ -8,8 +8,8 @@ import { resolveDateBounds } from "../lib/date-bounds.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import { fetchAllRows } from "../lib/paginated-query.js";
 import {
-  dueStageFor, scheduledFollowUpFor, priorityBandFor, compareByPriority, dayKey, daysBetween, NEGATIVE_SATISFACTION_OUTCOMES,
-  DEFAULT_RETENTION_TIMING, type RetentionTouchpointRecord, type RetentionTiming
+  dueStageFor, lifecycleStageFor, scheduledFollowUpFor, priorityBandFor, compareByPriority, dayKey, daysBetween, NEGATIVE_SATISFACTION_OUTCOMES,
+  DEFAULT_RETENTION_TIMING, type LifecycleStage, type RetentionTouchpointRecord, type RetentionTiming
 } from "../lib/customer-retention-logic.js";
 
 const router = Router();
@@ -162,13 +162,69 @@ const SATISFACTION_OUTCOMES = [
 type WorklistRow = {
   orderId: string; customerName: string; phone: string; deliveredDate: string; daysSinceDelivery: number;
   dueStage: ReturnType<typeof dueStageFor>["dueStage"]; overdueBy: number; priorityBand: ReturnType<typeof priorityBandFor>;
+  lifecycleStage: LifecycleStage; stageEnteredDate: string; stageDueDate: string;
   orderAmount: number; orderCurrency: string; productName: string;
   assignedRepId: string | null; assignedRepName: string | null;
-  lastTouchpoint: { stage: string; loggedAt: string; satisfactionOutcome: string | null } | null;
+  lastTouchpoint: {
+    stage: string; loggedAt: string; satisfactionOutcome: string | null; reachStatus: string | null;
+    customerResponse: string | null; nextAction: string | null; reviewCollected: boolean;
+    referralCollected: boolean; retentionOutcome: string | null;
+  } | null;
   lastContactAt: string | null; nextAction: string | null; nextActionAt: string | null; nextActionNote: string | null;
   followUpStatus: "scheduled" | "due" | "overdue" | null;
   discountOwed: boolean; reviewRequested: boolean; reviewCollected: boolean; referralRequested: boolean; referralCollected: boolean;
 };
+
+function addDaysToDateKey(dateKey: string, days: number) {
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function pipelineStageDates(
+  stage: LifecycleStage,
+  deliveredDate: string,
+  timing: RetentionTiming,
+  touchpoints: Array<RetentionTouchpointRecord & Record<string, any>>
+) {
+  const latestNegative = [...touchpoints].reverse().find((row) =>
+    row.stage === "satisfaction_check"
+    && row.satisfaction_outcome
+    && NEGATIVE_SATISFACTION_OUTCOMES.has(row.satisfaction_outcome)
+  );
+  if (stage === "needs_resolution") {
+    const date = latestNegative?.logged_at?.slice(0, 10) ?? deliveredDate;
+    return { stageEnteredDate: date, stageDueDate: date };
+  }
+  if (stage === "delivered" || stage === "satisfaction_check") {
+    return {
+      stageEnteredDate: deliveredDate,
+      stageDueDate: addDaysToDateKey(deliveredDate, timing.satisfactionDays)
+    };
+  }
+  if (stage === "review_testimonial") {
+    return {
+      stageEnteredDate: addDaysToDateKey(deliveredDate, timing.satisfactionDays),
+      stageDueDate: addDaysToDateKey(deliveredDate, timing.reviewDays)
+    };
+  }
+  if (stage === "referral") {
+    return {
+      stageEnteredDate: addDaysToDateKey(deliveredDate, timing.reviewDays),
+      stageDueDate: addDaysToDateKey(deliveredDate, timing.repeatSaleStartDays)
+    };
+  }
+  if (stage === "repeat_sale") {
+    return {
+      stageEnteredDate: addDaysToDateKey(deliveredDate, timing.repeatSaleStartDays),
+      stageDueDate: addDaysToDateKey(deliveredDate, timing.repeatSaleEndDays)
+    };
+  }
+  return {
+    stageEnteredDate: addDaysToDateKey(deliveredDate, timing.repeatSaleEndDays + 1),
+    stageDueDate: addDaysToDateKey(deliveredDate, timing.winBackEndDays)
+  };
+}
 
 // Shared point-in-time worklist computation - used by both /worklist
 // (filtered/sorted for the rep-facing queue) and /dashboard-summary (raw
@@ -219,7 +275,7 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
   for (const orderIdChunk of chunksOf(orderIds)) {
     const { data, error } = await fetchAllRows<any>((from, to) => supabase
       .from("customer_retention_touchpoints")
-      .select("order_id, stage, satisfaction_outcome, review_collected, referral_collected, review_is_video, review_requested_at, referral_requested_at, retention_outcome, customer_discount_owed, customer_discount_cleared_at, next_action, next_action_at, next_action_note, reach_status, logged_at")
+      .select("order_id, stage, satisfaction_outcome, review_collected, referral_collected, review_is_video, review_requested_at, referral_requested_at, retention_outcome, customer_discount_owed, customer_discount_cleared_at, next_action, next_action_at, next_action_note, reach_status, customer_response, logged_at")
       .eq("org_id", orgId)
       .in("order_id", orderIdChunk)
       .order("logged_at", { ascending: true })
@@ -253,6 +309,8 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
     const deliveredKey = String(order.delivered_date).slice(0, 10);
     const timing = (order.product_id && timingByProductId.get(order.product_id)) || DEFAULT_RETENTION_TIMING;
     const lifecycleDue = dueStageFor(deliveredKey, today, tps, timing);
+    const lifecycleStage = lifecycleStageFor(deliveredKey, today, tps, timing);
+    const stageDates = pipelineStageDates(lifecycleStage, deliveredKey, timing, tps);
     const followUp = scheduledFollowUpFor(tps, nowIso);
     const dueStage = lifecycleDue.dueStage;
     const overdueBy = followUp ? followUp.overdueBy : lifecycleDue.overdueBy;
@@ -275,12 +333,24 @@ async function loadWorklistRows(orgId: string, settings: Awaited<ReturnType<type
       dueStage,
       overdueBy,
       priorityBand,
+      lifecycleStage,
+      ...stageDates,
       orderAmount,
       orderCurrency: order.currency,
       productName: order.product_name,
       assignedRepId: recoveryRepId,
       assignedRepName: recoveryRepId ? (repNameById.get(recoveryRepId) ?? null) : null,
-      lastTouchpoint: last ? { stage: last.stage, loggedAt: last.logged_at, satisfactionOutcome: last.satisfaction_outcome } : null,
+      lastTouchpoint: last ? {
+        stage: last.stage,
+        loggedAt: last.logged_at,
+        satisfactionOutcome: last.satisfaction_outcome,
+        reachStatus: last.reach_status ?? null,
+        customerResponse: last.customer_response ?? null,
+        nextAction: last.next_action ?? null,
+        reviewCollected: !!last.review_collected,
+        referralCollected: !!last.referral_collected,
+        retentionOutcome: last.retention_outcome ?? null
+      } : null,
       lastContactAt,
       nextAction: followUp ? "schedule_follow_up" : (last?.next_action ?? null),
       nextActionAt: followUp?.nextActionAt ?? null,
@@ -300,6 +370,7 @@ router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
     const minValue = typeof req.query.minValue === "string" && !Number.isNaN(Number(req.query.minValue)) ? Number(req.query.minValue) : null;
     const priorityFilter = typeof req.query.priority === "string" && req.query.priority !== "all" ? req.query.priority : null;
     const productFilter = typeof req.query.product === "string" && req.query.product !== "all" ? req.query.product : null;
+    const includeAll = req.query.includeAll === "true";
     const assignedRepFilter = retentionRepScope(req.user!.role, req.user!.id, req.query.assignedRepId);
 
     const settings = await loadBonusSettings(orgId);
@@ -309,7 +380,11 @@ router.get("/worklist", requireRole(...RETENTION_ROLES), async (req, res) => {
       // "all" means "everything actionable" - rows with no due stage (fully
       // progressed / not yet eligible) are noise in a work queue and are
       // still reachable individually via the stage-specific filters.
-      .filter((row) => (stageFilter === "all" ? row.dueStage !== null || row.followUpStatus !== null : row.dueStage === stageFilter))
+      .filter((row) =>
+        stageFilter === "all"
+          ? includeAll || row.dueStage !== null || row.followUpStatus !== null
+          : row.dueStage === stageFilter
+      )
       .filter((row) => !search || row.customerName.toLowerCase().includes(search) || String(row.phone).includes(search) || row.orderId.toLowerCase().includes(search))
       .filter((row) => minValue === null || row.orderAmount >= minValue)
       .filter((row) => !priorityFilter || row.priorityBand === priorityFilter)

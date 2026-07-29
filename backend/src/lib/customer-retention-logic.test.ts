@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   dueStageFor,
+  lifecycleStageFor,
   scheduledFollowUpFor,
   priorityBandFor,
   compareByPriority,
@@ -79,6 +80,31 @@ test("retention_sale window: due 21-45 days, then win_back 46-90, then nothing p
   assert.equal(daysBetween("2026-01-01", "2026-04-01"), 90);
   assert.equal(dueStageFor("2026-01-01", "2026-04-01", base).dueStage, "win_back"); // day 90, last day of the win-back window
   assert.equal(dueStageFor("2026-01-01", "2026-04-02", base).dueStage, null); // day 91, past win-back
+});
+
+test("lifecycleStageFor keeps recently delivered customers visible before the first check is due", () => {
+  assert.equal(lifecycleStageFor("2026-01-01", "2026-01-02", []), "delivered");
+  assert.equal(lifecycleStageFor("2026-01-01", "2026-01-04", []), "satisfaction_check");
+});
+
+test("lifecycleStageFor progresses through advocacy and revenue stages", () => {
+  const satisfied = [tp({ satisfaction_outcome: "satisfied", logged_at: "2026-01-04T00:00:00Z" })];
+  assert.equal(lifecycleStageFor("2026-01-01", "2026-01-08", satisfied), "review_testimonial");
+
+  const reviewed = [
+    ...satisfied,
+    tp({ stage: "review_referral", review_collected: true, logged_at: "2026-01-09T00:00:00Z" })
+  ];
+  assert.equal(lifecycleStageFor("2026-01-01", "2026-01-10", reviewed), "referral");
+  assert.equal(lifecycleStageFor("2026-01-01", "2026-01-25", reviewed), "repeat_sale");
+  assert.equal(lifecycleStageFor("2026-01-01", "2026-02-20", reviewed), "win_back");
+});
+
+test("lifecycleStageFor sends unresolved negative feedback to resolution", () => {
+  assert.equal(
+    lifecycleStageFor("2026-01-01", "2026-01-05", [tp({ satisfaction_outcome: "not_satisfied" })]),
+    "needs_resolution"
+  );
 });
 
 test("a retention_sale row with any outcome closes out that stage (no win_back after)", () => {

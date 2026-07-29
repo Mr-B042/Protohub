@@ -11060,6 +11060,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionAssignedRepFilter, setRetentionAssignedRepFilter] = useState("all");
   const [retentionSubPage, setRetentionSubPage] = useState<RetentionSubPage>("Overview");
   const [retentionPipelineView, setRetentionPipelineView] = useState<"board" | "table">("board");
+  const [retentionPipelineStageFilter, setRetentionPipelineStageFilter] = useState("all");
+  const [retentionPipelineFiltersOpen, setRetentionPipelineFiltersOpen] = useState(false);
   const [retentionTaskFilter, setRetentionTaskFilter] = useState<"all" | "due_today" | "overdue" | "complaints">("all");
   const [retentionCustomerSearch, setRetentionCustomerSearch] = useState("");
   const [retentionActivitySearch, setRetentionActivitySearch] = useState("");
@@ -39746,14 +39748,16 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, recoveryRepViewingId, recoveryRepPeriod, recoveryRepDateRange]);
 
-  // Always fetches every actionable row ("stage" omitted = server default
-  // "all") - the Pipeline/Tasks/Win-back pages each narrow this same set
-  // client-side by their own criteria, so switching between them (or
-  // clicking a lifecycle stage tile) never needs a re-fetch.
+  // Fetch the complete 90-day lifecycle. Tasks still derives only actionable
+  // rows, while Pipeline can also show newly delivered customers whose first
+  // satisfaction check is not due yet.
   const loadRetentionWorklist = async () => {
     setRetentionWorklistLoading(true);
     try {
-      const result = await customerRetentionApi.worklist({ assignedRepId: recoveryRepViewingId || undefined });
+      const result = await customerRetentionApi.worklist({
+        assignedRepId: recoveryRepViewingId || undefined,
+        includeAll: true
+      });
       setRetentionWorklist(result.rows ?? []);
     } catch (err: any) {
       showToast(err?.message ?? "Could not load the customer retention worklist.");
@@ -40192,7 +40196,7 @@ ${waybillLineItems(w).length > 1
       new Map(retentionWorklist.filter((r) => r.assignedRepId).map((r) => [r.assignedRepId as string, r.assignedRepName ?? "Unknown"])).entries()
     ).sort((a, b) => a[1].localeCompare(b[1]));
     const applyRetentionFilters = (rows: RetentionWorklistRow[]) => rows
-      .filter((row) => !retentionSearchQuery || row.customerName.toLowerCase().includes(retentionSearchQuery) || row.phone.includes(retentionSearchQuery) || row.orderId.toLowerCase().includes(retentionSearchQuery))
+      .filter((row) => !retentionSearchQuery || row.customerName.toLowerCase().includes(retentionSearchQuery) || row.phone.includes(retentionSearchQuery) || row.orderId.toLowerCase().includes(retentionSearchQuery) || row.productName.toLowerCase().includes(retentionSearchQuery))
       .filter((row) => retentionPriorityFilter === "all" || row.priorityBand === retentionPriorityFilter)
       .filter((row) => retentionProductFilter === "all" || row.productName === retentionProductFilter)
       .filter((row) => retentionAssignedRepFilter === "all" || row.assignedRepId === retentionAssignedRepFilter);
@@ -40377,147 +40381,235 @@ ${waybillLineItems(w).length > 1
       </section>
     );
 
-    const pipelineBoardRows = applyRetentionFilters(retentionWorklist);
-    const pipelineColumns: Array<{
-      key: string;
-      label: string;
-      helper: string;
-      tone: string;
-      rows: RetentionWorklistRow[];
-    }> = [
-      {
-        key: "needs-resolution",
-        label: "Needs Resolution",
-        helper: "Complaints and order issues",
-        tone: "border-rose-200 bg-rose-50/60",
-        rows: pipelineBoardRows.filter((row) => row.dueStage === "needs_resolution")
-      },
-      {
-        key: "satisfaction",
-        label: "Satisfaction",
-        helper: "Check product experience",
-        tone: "border-amber-200 bg-amber-50/60",
-        rows: pipelineBoardRows.filter((row) => row.dueStage === "satisfaction_check")
-      },
-      {
-        key: "reviews",
-        label: "Review",
-        helper: "Request proof and permission",
-        tone: "border-sky-200 bg-sky-50/60",
-        rows: pipelineBoardRows.filter((row) => row.dueStage === "review_referral" && !row.reviewCollected)
-      },
-      {
-        key: "referrals",
-        label: "Referral",
-        helper: "Collect a qualified contact",
-        tone: "border-indigo-200 bg-indigo-50/60",
-        rows: pipelineBoardRows.filter((row) => row.dueStage === "review_referral" && row.reviewCollected)
-      },
-      {
-        key: "repeat-sales",
-        label: "Repeat Sale",
-        helper: "Recommend the next product",
-        tone: "border-emerald-200 bg-emerald-50/60",
-        rows: pipelineBoardRows.filter((row) => row.dueStage === "retention_sale")
-      },
-      {
-        key: "win-back",
-        label: "Win-back",
-        helper: "Re-engage dormant buyers",
-        tone: "border-slate-200 bg-slate-50",
-        rows: pipelineBoardRows.filter((row) => row.dueStage === "win_back")
-      }
-    ];
+    const lifecycleStageLabel = (stage: string) =>
+      stage === "delivered" ? "Delivered"
+      : stage === "satisfaction_check" ? "Satisfaction Check"
+      : stage === "review_testimonial" ? "Review / Testimonial"
+      : stage === "referral" ? "Referral"
+      : stage === "repeat_sale" ? "Repeat Sale"
+      : stage === "win_back" ? "Win-back"
+      : "Needs Resolution";
+
+    const pipelineStageConfig = [
+      { key: "delivered", label: "Delivered", helper: "Waiting for the first follow-up window", Icon: PackageCheck, tone: "border-sky-200 bg-sky-50/50", iconTone: "text-sky-700" },
+      { key: "satisfaction_check", label: "Satisfaction Check", helper: "Confirm the product experience", Icon: Smile, tone: "border-amber-200 bg-amber-50/50", iconTone: "text-amber-700" },
+      { key: "review_testimonial", label: "Review / Testimonial", helper: "Request proof and permission", Icon: Sparkles, tone: "border-blue-200 bg-blue-50/50", iconTone: "text-blue-700" },
+      { key: "referral", label: "Referral", helper: "Ask for a qualified referral", Icon: UserPlus, tone: "border-violet-200 bg-violet-50/50", iconTone: "text-violet-700" },
+      { key: "repeat_sale", label: "Repeat Sale", helper: "Recommend the next useful offer", Icon: ShoppingCart, tone: "border-emerald-200 bg-emerald-50/50", iconTone: "text-emerald-700" },
+      { key: "win_back", label: "Win-back", helper: "Re-engage an inactive buyer", Icon: RefreshCw, tone: "border-indigo-200 bg-indigo-50/50", iconTone: "text-indigo-700" },
+      { key: "needs_resolution", label: "Needs Resolution", helper: "Complaints and unresolved issues", Icon: AlertTriangle, tone: "border-rose-200 bg-rose-50/60", iconTone: "text-rose-700" }
+    ] as const;
+
+    const pipelineToday = todayKey();
+    const pipelineRowIsOverdue = (row: RetentionWorklistRow) =>
+      row.lifecycleStage === "needs_resolution"
+      || row.followUpStatus === "overdue"
+      || (row.dueStage !== null && row.overdueBy > 0);
+    const pipelineRowIsDueToday = (row: RetentionWorklistRow) =>
+      row.followUpStatus === "due"
+      || (row.lifecycleStage !== "needs_resolution" && row.dueStage !== null && row.overdueBy === 0);
+    const pipelineLastOutcome = (row: RetentionWorklistRow) => {
+      const last = row.lastTouchpoint;
+      if (!last) return "No contact yet";
+      if (last.reachStatus === "not_reached") return "No answer";
+      if (last.reachStatus === "not_reachable") return "Number unavailable";
+      if (last.reachStatus === "wrong_number") return "Wrong number";
+      if (last.customerResponse === "complaint") return "Complaint";
+      if (last.customerResponse === "satisfied" || last.satisfactionOutcome === "satisfied") return "Satisfied";
+      if (last.customerResponse === "neutral") return "Neutral";
+      if (last.reviewCollected) return "Review received";
+      if (last.referralCollected) return "Referral received";
+      if (last.retentionOutcome === "accepted") return "Repeat sale accepted";
+      if (last.retentionOutcome === "declined") return "Offer declined";
+      return stageLabel(last.stage);
+    };
+    const pipelineDueLabel = (row: RetentionWorklistRow) => {
+      if (row.followUpStatus && row.nextActionAt) return nextActionInstructionFor(row);
+      if (row.dueStage !== null) return nextActionInstructionFor(row);
+      const dueDate = new Date(`${row.stageDueDate}T00:00:00`);
+      const dateLabel = dueDate.toLocaleDateString([], { month: "short", day: "numeric" });
+      if (row.lifecycleStage === "delivered") return `First check opens ${dateLabel}`;
+      if (row.lifecycleStage === "repeat_sale") return `Offer window closes ${dateLabel}`;
+      if (row.lifecycleStage === "win_back") return `Win-back window closes ${dateLabel}`;
+      return `Next action opens ${dateLabel}`;
+    };
+    const pipelineDaysInStage = (row: RetentionWorklistRow) => Math.max(
+      0,
+      Math.floor((new Date(`${pipelineToday}T00:00:00`).getTime() - new Date(`${row.stageEnteredDate}T00:00:00`).getTime()) / 86400000)
+    );
+    const pipelineBoardRows = applyRetentionFilters(retentionWorklist)
+      .filter((row) => retentionPipelineStageFilter === "all" || row.lifecycleStage === retentionPipelineStageFilter);
+    const pipelineColumns = pipelineStageConfig.map((stage) => {
+      const rows = pipelineBoardRows.filter((row) => row.lifecycleStage === stage.key);
+      return {
+        ...stage,
+        rows,
+        dueToday: rows.filter(pipelineRowIsDueToday).length,
+        overdue: rows.filter(pipelineRowIsOverdue).length,
+        value: rows.reduce((sum, row) => sum + row.orderAmount, 0)
+      };
+    });
+    const pipelineFiltersActive = retentionSearch !== ""
+      || retentionProductFilter !== "all"
+      || retentionAssignedRepFilter !== "all"
+      || retentionPriorityFilter !== "all"
+      || retentionPipelineStageFilter !== "all";
+    const resetPipelineFilters = () => {
+      setRetentionSearch("");
+      setRetentionProductFilter("all");
+      setRetentionAssignedRepFilter("all");
+      setRetentionPriorityFilter("all");
+      setRetentionPipelineStageFilter("all");
+    };
+    const exportRetentionPipelineCsv = () => {
+      const quote = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+      const header = ["Order", "Customer", "Phone", "Product", "Lifecycle stage", "Days in stage", "Last contact", "Last outcome", "Next action", "Due date", "Priority", "Customer value", "Assigned rep"];
+      const lines = pipelineBoardRows.map((row) => [
+        row.orderId,
+        row.customerName,
+        row.phone,
+        row.productName,
+        lifecycleStageLabel(row.lifecycleStage),
+        pipelineDaysInStage(row),
+        row.lastContactAt ? new Date(row.lastContactAt).toLocaleString() : "Never",
+        pipelineLastOutcome(row),
+        pipelineDueLabel(row),
+        row.stageDueDate,
+        priorityBadge(row.priorityBand).label,
+        row.orderAmount,
+        row.assignedRepName ?? "Unassigned"
+      ].map(quote).join(","));
+      const url = URL.createObjectURL(new Blob([[header.map(quote).join(","), ...lines].join("\n")], { type: "text/csv;charset=utf-8" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `customer-retention-pipeline-${pipelineToday}.csv`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    };
+
+    const renderPipelineCard = (row: RetentionWorklistRow) => {
+      const badge = priorityBadge(row.priorityBand);
+      const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
+      const overdue = pipelineRowIsOverdue(row);
+      return (
+        <article key={row.orderId} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+          <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 w-full text-left">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-black text-gray-900">{row.customerName}</p>
+                <p className="mt-0.5 truncate text-[11px] font-semibold text-gray-500">{row.productName} · #{row.orderId}</p>
+              </div>
+              <span className={`inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-black ${badge.class}`}>{badge.label.replace(/\s\(P\d\)/, "")}</span>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-2 text-[11px]">
+              <strong className="text-sky-700">{formatMoney(row.orderAmount)}</strong>
+              <span className="text-gray-500">{row.daysSinceDelivery}d since delivery</span>
+            </div>
+            <p className={`mt-2 text-[11px] font-bold ${overdue ? "text-rose-600" : "text-gray-700"}`}>{pipelineDueLabel(row)}</p>
+            <div className="mt-2 border-t border-gray-100 pt-2 text-[10px] text-gray-500">
+              <p className="truncate">Rep: <strong className="text-gray-700">{row.assignedRepName ?? "Unassigned"}</strong></p>
+              <p className="mt-0.5 truncate">Last outcome: <strong className="text-gray-700">{pipelineLastOutcome(row)}</strong></p>
+            </div>
+          </button>
+          <div className="mt-3 grid grid-cols-4 gap-1.5">
+            <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "pipeline_board")} title={`Call ${row.customerName}`} aria-label={`Call ${row.customerName}`} className="!min-h-0 inline-flex h-8 items-center justify-center rounded-md border border-gray-200 text-emerald-700 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" /></a>
+            <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "pipeline_board")} title={`WhatsApp ${row.customerName}`} aria-label={`WhatsApp ${row.customerName}`} className="!min-h-0 inline-flex h-8 items-center justify-center rounded-md border border-gray-200 text-emerald-700 hover:bg-emerald-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+            <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} title="Open customer history" aria-label={`Open ${row.customerName} history`} className="!min-h-0 inline-flex h-8 items-center justify-center rounded-md border border-gray-200 text-sky-700 hover:bg-sky-50"><Eye className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={() => toggleLogging(row.orderId, row.dueStage)} title="Log outcome" aria-label={`Log outcome for ${row.customerName}`} className="!min-h-0 inline-flex h-8 items-center justify-center rounded-md bg-emerald-600 text-white hover:bg-emerald-700"><FileText className="h-3.5 w-3.5" /></button>
+          </div>
+        </article>
+      );
+    };
 
     const renderPipelineBoard = () => (
-      <section className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-        <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h2 className="text-base font-black text-gray-900">Customer Lifecycle Board</h2>
-            <p className="mt-0.5 text-xs text-gray-500">Every card is a live customer action. Log an outcome to move the customer forward.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="text"
-              value={retentionSearch}
-              onChange={(event) => setRetentionSearch(event.target.value)}
-              placeholder="Search customer or order"
-              className="!min-h-0 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm sm:w-56 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-            />
-            <select
-              value={retentionProductFilter}
-              onChange={(event) => setRetentionProductFilter(event.target.value)}
-              className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-            >
-              <option value="all">All products</option>
-              {retentionProductOptions.map((product) => <option key={product} value={product}>{product}</option>)}
-            </select>
-            <select
-              value={retentionAssignedRepFilter}
-              onChange={(event) => setRetentionAssignedRepFilter(event.target.value)}
-              className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-            >
-              <option value="all">All assigned reps</option>
-              {retentionRepOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-            </select>
-          </div>
-        </div>
+      <section className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm sm:p-4">
         {retentionWorklistLoading && retentionWorklist.length === 0 ? (
-          <div className="px-5 py-12 text-center text-sm text-gray-400">Loading lifecycle board…</div>
+          <div className="px-5 py-12 text-center text-sm text-gray-400">Loading lifecycle board...</div>
         ) : (
-          <div className="overflow-x-auto p-4">
-            <div className="grid min-w-[1560px] grid-cols-6 gap-3">
-              {pipelineColumns.map((column) => (
-                <section key={column.key} className={`min-h-[420px] rounded-lg border p-3 ${column.tone}`}>
-                  <div className="mb-3 flex items-start justify-between gap-2">
-                    <div>
-                      <h3 className="text-sm font-black text-gray-900">{column.label}</h3>
-                      <p className="mt-0.5 text-[11px] text-gray-500">{column.helper}</p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 min-[1850px]:grid-cols-7">
+            {pipelineColumns.map((column) => (
+              <section key={column.key} className={`min-h-[380px] rounded-lg border p-3 ${column.tone}`}>
+                <div className="mb-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-start gap-2">
+                      <column.Icon className={`mt-0.5 h-4 w-4 shrink-0 ${column.iconTone}`} />
+                      <div className="min-w-0">
+                        <h3 className="text-xs font-black text-gray-900">{column.label}</h3>
+                        <p className="mt-0.5 text-[10px] leading-4 text-gray-500">{column.helper}</p>
+                      </div>
                     </div>
-                    <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-white px-2 text-xs font-black text-gray-700 shadow-sm">{column.rows.length}</span>
+                    <span className="inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full bg-white px-2 text-xs font-black text-gray-700 shadow-sm">{column.rows.length}</span>
                   </div>
-                  <div className="space-y-2">
-                    {column.rows.length === 0 ? (
-                      <div className="rounded-lg border border-dashed border-gray-200 bg-white/70 px-3 py-8 text-center text-xs text-gray-400">No customers here</div>
-                    ) : column.rows.map((row) => {
-                      const badge = priorityBadge(row.priorityBand);
-                      return (
-                        <article key={row.orderId} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-                          <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 w-full text-left">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-black text-gray-900">{row.customerName}</p>
-                                <p className="mt-0.5 truncate text-[11px] text-gray-500">#{row.orderId} · {row.productName}</p>
-                              </div>
-                              <span className={`inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-black ${badge.class}`}>{badge.label.replace(/\s\(P\d\)/, "")}</span>
-                            </div>
-                            <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                              <div>
-                                <span className="block text-gray-400">Customer value</span>
-                                <strong className="text-gray-800">{formatMoney(row.orderAmount)}</strong>
-                              </div>
-                              <div>
-                                <span className="block text-gray-400">Assigned</span>
-                                <strong className="block truncate text-gray-800">{row.assignedRepName ?? "Unassigned"}</strong>
-                              </div>
-                            </div>
-                            <p className={`mt-2 text-[11px] font-bold ${row.overdueBy > 0 || row.dueStage === "needs_resolution" ? "text-rose-600" : "text-gray-600"}`}>{nextActionInstructionFor(row)}</p>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => toggleLogging(row.orderId, row.dueStage)}
-                            className="!min-h-0 mt-3 w-full rounded-md bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700"
-                          >
-                            Log outcome
-                          </button>
-                        </article>
-                      );
-                    })}
+                  <div className="mt-3 grid grid-cols-3 gap-1 border-t border-gray-200/70 pt-2 text-center">
+                    <div><span className="block text-[9px] font-bold uppercase text-gray-400">Due</span><strong className="text-[11px] text-gray-800">{column.dueToday}</strong></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-gray-400">Overdue</span><strong className={column.overdue > 0 ? "text-[11px] text-rose-600" : "text-[11px] text-gray-800"}>{column.overdue}</strong></div>
+                    <div><span className="block text-[9px] font-bold uppercase text-gray-400">Value</span><strong className="block truncate text-[10px] text-gray-800">{formatMoney(column.value)}</strong></div>
                   </div>
-                </section>
+                </div>
+                <div className="space-y-2">
+                  {column.rows.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-gray-200 bg-white/70 px-3 py-8 text-center text-xs text-gray-400">No customers here</div>
+                  ) : column.rows.map(renderPipelineCard)}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+      </section>
+    );
+
+    const renderPipelineTable = () => (
+      <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        {retentionWorklistLoading && retentionWorklist.length === 0 ? (
+          <div className="px-5 py-12 text-center text-sm text-gray-400">Loading lifecycle table...</div>
+        ) : pipelineBoardRows.length === 0 ? (
+          <div className="px-5 py-12 text-center text-sm text-gray-400">No customers match these filters.</div>
+        ) : (
+          <>
+            <div className="divide-y divide-gray-100 sm:hidden">
+              {pipelineBoardRows.map((row) => (
+                <div key={row.orderId} className="p-4">{renderPipelineCard(row)}</div>
               ))}
             </div>
-          </div>
+            <div className="hidden overflow-x-auto sm:block">
+              <table className="w-full min-w-[1320px] text-left text-xs">
+                <thead className="border-b border-gray-200 bg-gray-50 text-[9px] font-black uppercase tracking-[0.12em] text-gray-500">
+                  <tr>
+                    {["Customer", "Product / order", "Stage", "Days", "Last contact", "Last outcome", "Next action", "Due", "Priority", "Value", "Assigned rep", "Actions"].map((heading) => <th key={heading} className="px-3 py-3">{heading}</th>)}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {pipelineBoardRows.map((row) => {
+                    const badge = priorityBadge(row.priorityBand);
+                    const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customerName}, this is Protohub following up on your order.`).normalUrl ?? undefined;
+                    return (
+                      <tr key={row.orderId} className={`align-top hover:bg-gray-50 ${pipelineDaysInStage(row) > 14 && pipelineRowIsOverdue(row) ? "bg-rose-50/30" : ""}`}>
+                        <td className="px-3 py-3"><button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 text-left"><strong className="block text-gray-900">{row.customerName}</strong><span className="text-gray-500">{row.phone}</span></button></td>
+                        <td className="max-w-[180px] px-3 py-3"><strong className="block truncate text-gray-800">{row.productName}</strong><span className="text-gray-500">#{row.orderId} · delivered {new Date(`${row.deliveredDate}T00:00:00`).toLocaleDateString()}</span></td>
+                        <td className="px-3 py-3 font-bold text-gray-800">{lifecycleStageLabel(row.lifecycleStage)}</td>
+                        <td className="px-3 py-3 text-gray-600">{pipelineDaysInStage(row)}d</td>
+                        <td className="px-3 py-3 text-gray-600">{row.lastContactAt ? new Date(row.lastContactAt).toLocaleDateString() : "Never"}</td>
+                        <td className="px-3 py-3 font-semibold text-gray-700">{pipelineLastOutcome(row)}</td>
+                        <td className={`max-w-[190px] px-3 py-3 font-bold ${pipelineRowIsOverdue(row) ? "text-rose-600" : "text-gray-700"}`}>{pipelineDueLabel(row)}</td>
+                        <td className="px-3 py-3 text-gray-600">{new Date(`${row.stageDueDate}T00:00:00`).toLocaleDateString()}</td>
+                        <td className="px-3 py-3"><span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-1 text-[9px] font-black ${badge.class}`}>{badge.label}</span></td>
+                        <td className="px-3 py-3 font-black text-gray-900">{formatMoney(row.orderAmount)}</td>
+                        <td className="px-3 py-3 text-gray-700">{row.assignedRepName ?? "Unassigned"}</td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-1">
+                            <a href={`tel:${row.phone}`} onClick={() => trackRetentionAction(row.orderId, "call", "pipeline_table")} title="Call" className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-emerald-700"><Phone className="h-3.5 w-3.5" /></a>
+                            <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => trackRetentionAction(row.orderId, "whatsapp", "pipeline_table")} title="WhatsApp" className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-emerald-700"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+                            <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} title="Customer history" className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-sky-700"><Eye className="h-3.5 w-3.5" /></button>
+                            <button type="button" onClick={() => toggleLogging(row.orderId, row.dueStage)} title="Log outcome" className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-600 text-white"><FileText className="h-3.5 w-3.5" /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </section>
     );
@@ -40893,60 +40985,159 @@ ${waybillLineItems(w).length > 1
         );
       }
 
-      if (retentionSubPage === "Pipeline") return (
-        <div className="space-y-6">
-          {retentionDashboardSummary && (
-            <section className="space-y-3">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">Customer Lifecycle Pipeline</p>
-                  <p className="mt-1 text-xs text-gray-500">{retentionDashboardSummary.lifecyclePipeline.delivered} delivered customers are currently inside the retention lifecycle.</p>
-                </div>
-                <div className="inline-flex w-fit rounded-lg border border-gray-200 bg-white p-1">
+      if (retentionSubPage === "Pipeline") {
+        const nextPipelineAction = pipelineBoardRows.find((row) => row.dueStage !== null || row.followUpStatus !== null);
+        return (
+          <div className="space-y-4">
+            <section className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-sm font-black text-gray-900">{pipelineBoardRows.length} customers in view</p>
+                <p className="mt-0.5 text-xs text-gray-500">Live lifecycle position, deadlines, value and the next contact action.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRetentionPipelineFiltersOpen((open) => !open)}
+                  className={`!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-black ${retentionPipelineFiltersOpen || pipelineFiltersActive ? "border-sky-300 bg-sky-50 text-sky-700" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
+                >
+                  <Filter className="h-3.5 w-3.5" /> Filters {pipelineFiltersActive ? "on" : ""}
+                </button>
+                <button type="button" onClick={exportRetentionPipelineCsv} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-black text-gray-700 hover:bg-gray-50">
+                  <Download className="h-3.5 w-3.5" /> Export
+                </button>
+                {currentRole === "Owner" && (
+                  <button type="button" onClick={() => setRetentionSubPage("Settings")} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-black text-gray-700 hover:bg-gray-50">
+                    <Settings className="h-3.5 w-3.5" /> Pipeline settings
+                  </button>
+                )}
+                <div className="inline-flex h-9 rounded-lg border border-gray-200 bg-white p-1">
                   <button
                     type="button"
                     onClick={() => setRetentionPipelineView("board")}
-                    className={`!min-h-0 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-black ${retentionPipelineView === "board" ? "bg-emerald-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+                    className={`!min-h-0 inline-flex items-center gap-1.5 rounded-md px-3 text-xs font-black ${retentionPipelineView === "board" ? "bg-emerald-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}
                   >
-                    <LayoutPanelTop className="h-3.5 w-3.5" /> Board
+                    <LayoutPanelTop className="h-3.5 w-3.5" /> Kanban
                   </button>
                   <button
                     type="button"
                     onClick={() => setRetentionPipelineView("table")}
-                    className={`!min-h-0 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-black ${retentionPipelineView === "table" ? "bg-emerald-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+                    className={`!min-h-0 inline-flex items-center gap-1.5 rounded-md px-3 text-xs font-black ${retentionPipelineView === "table" ? "bg-emerald-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}
                   >
                     <FileText className="h-3.5 w-3.5" /> Table
                   </button>
                 </div>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
-                {([
-                  ["all", "Delivered", retentionDashboardSummary.lifecyclePipeline.delivered, "border-gray-200 bg-white"],
-                  ["needs_resolution", "Needs Resolution", retentionDashboardSummary.lifecyclePipeline.needsResolution, "border-rose-200 bg-rose-50"],
-                  ["satisfaction_check", "Satisfaction Check", retentionDashboardSummary.lifecyclePipeline.satisfactionDue, "border-amber-200 bg-amber-50"],
-                  ["review_referral", "Review", retentionDashboardSummary.lifecyclePipeline.reviewDue, "border-blue-200 bg-blue-50"],
-                  ["review_referral", "Referral", retentionDashboardSummary.lifecyclePipeline.referralDue, "border-indigo-200 bg-indigo-50"],
-                  ["retention_sale", "Repeat Sale", retentionDashboardSummary.lifecyclePipeline.retentionSaleDue, "border-violet-200 bg-violet-50"],
-                  ["win_back", "Win-back", retentionDashboardSummary.lifecyclePipeline.winBack, "border-slate-200 bg-slate-50"]
-                ] as const).map(([stage, label, count, tone], idx) => (
-                  <button
-                    key={`${stage}-${label}-${idx}`}
-                    type="button"
-                    onClick={() => { setRetentionStageFilter(stage); setRetentionPipelineView("table"); }}
-                    className={`!min-h-0 text-left rounded-lg border px-2.5 py-2 transition-shadow hover:shadow-sm ${tone} ${count > 0 ? "" : "opacity-60"} ${stage !== "all" && retentionStageFilter === stage ? "ring-2 ring-emerald-500" : ""}`}
-                  >
-                    <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">{label}</div>
-                    <div className="text-lg font-black text-gray-900 mt-0.5">{count}</div>
-                  </button>
+            </section>
+
+            {retentionPipelineFiltersOpen && (
+              <section className="grid gap-2 rounded-xl border border-sky-200 bg-sky-50/50 p-3 sm:grid-cols-2 xl:grid-cols-5">
+                <label className="sm:col-span-2 xl:col-span-1">
+                  <span className="sr-only">Search pipeline</span>
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                    <input value={retentionSearch} onChange={(event) => setRetentionSearch(event.target.value)} placeholder="Customer, phone, order, product" className="!min-h-0 h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20" />
+                  </div>
+                </label>
+                <select value={retentionPipelineStageFilter} onChange={(event) => setRetentionPipelineStageFilter(event.target.value)} className="!min-h-0 h-9 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700">
+                  <option value="all">All lifecycle stages</option>
+                  {pipelineStageConfig.map((stage) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}
+                </select>
+                <select value={retentionProductFilter} onChange={(event) => setRetentionProductFilter(event.target.value)} className="!min-h-0 h-9 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700">
+                  <option value="all">All products</option>
+                  {retentionProductOptions.map((product) => <option key={product} value={product}>{product}</option>)}
+                </select>
+                <select value={retentionPriorityFilter} onChange={(event) => setRetentionPriorityFilter(event.target.value)} className="!min-h-0 h-9 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700">
+                  <option value="all">All priorities</option>
+                  {(["critical", "overdue", "high_value", "satisfaction_due", "review_referral_due", "revenue_opportunity"] as const).map((band) => <option key={band} value={band}>{priorityBadge(band).label}</option>)}
+                </select>
+                <div className="flex gap-2">
+                  <select value={retentionAssignedRepFilter} onChange={(event) => setRetentionAssignedRepFilter(event.target.value)} className="!min-h-0 h-9 min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700">
+                    <option value="all">All assigned reps</option>
+                    {retentionRepOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                  </select>
+                  {pipelineFiltersActive && <button type="button" onClick={resetPipelineFilters} title="Reset filters" aria-label="Reset pipeline filters" className="!min-h-0 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 hover:text-gray-800"><X className="h-4 w-4" /></button>}
+                </div>
+              </section>
+            )}
+
+            <section className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+              {pipelineColumns.map((stage) => (
+                <button
+                  key={stage.key}
+                  type="button"
+                  onClick={() => setRetentionPipelineStageFilter((current) => current === stage.key ? "all" : stage.key)}
+                  className={`!min-h-0 min-w-0 rounded-lg border p-3 text-left transition-shadow hover:shadow-sm ${stage.tone} ${retentionPipelineStageFilter === stage.key ? "ring-2 ring-emerald-500 ring-offset-1" : ""}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <stage.Icon className={`h-4 w-4 shrink-0 ${stage.iconTone}`} />
+                    <strong className="text-lg leading-none text-gray-900">{stage.rows.length}</strong>
+                  </div>
+                  <p className="mt-2 min-h-8 text-[10px] font-black uppercase leading-4 text-gray-700">{stage.label}</p>
+                  <div className="mt-2 flex flex-wrap gap-x-2 gap-y-0.5 text-[9px] font-bold text-gray-500">
+                    <span>Due {stage.dueToday}</span>
+                    <span className={stage.overdue > 0 ? "text-rose-600" : ""}>Overdue {stage.overdue}</span>
+                  </div>
+                  <p className="mt-1 truncate text-[10px] font-black text-gray-800">{formatMoney(stage.value)}</p>
+                </button>
+              ))}
+            </section>
+
+            {retentionPipelineView === "board" ? renderPipelineBoard() : renderPipelineTable()}
+
+            <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-black text-gray-900">Lifecycle Guide</h3>
+                  <p className="mt-0.5 text-xs text-gray-500">The customer moves automatically when the rep logs a real outcome.</p>
+                </div>
+                <button type="button" onClick={() => setRetentionSubPage("Settings")} className="!min-h-0 hidden text-xs font-black text-sky-700 hover:text-sky-900 sm:inline-flex">View timing rules <ChevronRight className="h-4 w-4" /></button>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+                {pipelineStageConfig.map((stage, index) => (
+                  <div key={stage.key} className="relative rounded-lg border border-gray-100 bg-gray-50 px-3 py-3 text-center">
+                    <stage.Icon className={`mx-auto h-5 w-5 ${stage.iconTone}`} />
+                    <p className="mt-2 text-[10px] font-black text-gray-800">{stage.label}</p>
+                    <p className="mt-1 text-[9px] leading-4 text-gray-500">{
+                      stage.key === "delivered" ? "Day 0"
+                      : stage.key === "satisfaction_check" ? "Day 2-4"
+                      : stage.key === "review_testimonial" ? "Day 7-14"
+                      : stage.key === "referral" ? "Day 14-30"
+                      : stage.key === "repeat_sale" ? "Day 21-45"
+                      : stage.key === "win_back" ? "Day 45-90"
+                      : "Any time"
+                    }</p>
+                    {index < pipelineStageConfig.length - 1 && <ChevronRight className="absolute -right-2.5 top-1/2 z-10 hidden h-4 w-4 -translate-y-1/2 text-gray-300 xl:block" />}
+                  </div>
                 ))}
               </div>
             </section>
-          )}
-          {retentionPipelineView === "board"
-            ? renderPipelineBoard()
-            : renderRetentionQueue(filteredRetentionWorklist, { title: "Priority Work Queue", showStageClear: true, emptyMessage: retentionWorklist.length === 0 ? "No delivered orders are due for a retention touchpoint right now." : "No candidates match your search." })}
-        </div>
-      );
+
+            <section className="grid gap-3 lg:grid-cols-[1fr_1.2fr]">
+              <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                <h3 className="text-sm font-black text-gray-900">Legend</h3>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-600">
+                  {pipelineStageConfig.map((stage) => (
+                    <span key={stage.key} className="inline-flex min-w-0 items-center gap-2"><span className={`h-2.5 w-2.5 shrink-0 rounded-full border ${stage.tone}`} /><span className="truncate">{stage.label}</span></span>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                <h3 className="text-sm font-black text-gray-900">Quick Actions</h3>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {nextPipelineAction ? (
+                    <a href={`tel:${nextPipelineAction.phone}`} onClick={() => trackRetentionAction(nextPipelineAction.orderId, "call", "pipeline_quick_action")} className="!min-h-0 inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-black text-white hover:bg-emerald-700"><Phone className="h-3.5 w-3.5" /> Call next</a>
+                  ) : (
+                    <button type="button" disabled className="!min-h-0 inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-gray-100 px-3 text-xs font-black text-gray-400"><Phone className="h-3.5 w-3.5" /> Queue clear</button>
+                  )}
+                  <button type="button" onClick={() => setRetentionSubPage("Tasks")} className="!min-h-0 inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 text-xs font-black text-gray-700 hover:bg-gray-50"><ClipboardCheck className="h-3.5 w-3.5" /> Open tasks</button>
+                  <button type="button" onClick={() => setRetentionSubPage("Customers")} className="!min-h-0 inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 text-xs font-black text-gray-700 hover:bg-gray-50"><Users className="h-3.5 w-3.5" /> Customers</button>
+                  <button type="button" onClick={exportRetentionPipelineCsv} className="!min-h-0 inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 text-xs font-black text-gray-700 hover:bg-gray-50"><Download className="h-3.5 w-3.5" /> Export</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        );
+      }
 
       if (retentionSubPage === "Tasks") {
         const dueToday = actionableRetentionTasks.filter((row) =>
@@ -41459,7 +41650,7 @@ ${waybillLineItems(w).length > 1
 
     const retentionPageMeta: Record<RetentionSubPage, { title: string; description: string }> = {
       Overview: { title: "Customer Retention Overview", description: "Daily performance, urgent tasks, lifecycle health and retention revenue." },
-      Pipeline: { title: "Customer Pipeline", description: "Move delivered customers through resolution, satisfaction, advocacy and repeat sales." },
+      Pipeline: { title: "Customer Lifecycle Pipeline", description: "Track customers from delivery to repeat purchase and win-back." },
       Customers: { title: "Retention Customers", description: "A single customer record with order value, lifecycle status and full history." },
       Tasks: { title: "Retention Tasks", description: "The due-today, overdue and complaint work that needs action first." },
       "Calls & Outcomes": { title: "Calls & Outcomes", description: "Every contact attempt, response, action and quality signal in one audit trail." },
