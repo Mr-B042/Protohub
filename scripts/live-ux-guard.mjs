@@ -58,6 +58,17 @@ const checks = [
     ]
   },
   {
+    name: "Orders purchase summary",
+    why: "Every order row and mobile card must show the main package, combo contents, add-ons, gifts, and total without opening the order.",
+    required: [
+      "renderOrderPurchaseSummary",
+      "What Customer Ordered",
+      "crossSellLineDisplayDetail(line)",
+      "renderOrderPurchaseSummary(order, \"mobile\")",
+      "renderOrderPurchaseSummary(order, \"table\")"
+    ]
+  },
+  {
     name: "Cart details customer journey",
     why: "Cart Details must keep the restored Customer Journey analytics and timeline UX.",
     required: [

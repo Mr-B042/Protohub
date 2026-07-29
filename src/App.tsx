@@ -13292,6 +13292,97 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const packageRecord = product?.packages.find((item) => item.id === order.packageId);
     return order.quantity ?? packageRecord?.quantity ?? 1;
   };
+  const renderOrderPurchaseSummary = (order: TrackedOrder, variant: "mobile" | "table" = "table") => {
+    const quantity = Math.max(1, quantityForOrder(order));
+    const addOnTotal = (order.crossSellLines ?? [])
+      .reduce((sum, line) => sum + Math.max(0, Number(line.amount) || 0), 0);
+    const mainAmount = Math.max(0, (Number(order.amount) || 0) - addOnTotal);
+    const packageName = (order.packageName ?? "").trim();
+    const productName = (order.productName ?? "").trim() || "Unnamed product";
+    const mainTitle = packageName && packageName.toLowerCase() !== productName.toLowerCase()
+      ? `${productName} · ${packageName}`
+      : productName;
+    const mainComboDetail = orderLineComponentsDescribeCombo(order.packageComponentsSnapshot)
+      ? orderLineComponentDetail(order.packageComponentsSnapshot)
+      : "";
+    const addOns = order.crossSellLines ?? [];
+    const gifts = order.freeGiftLines ?? [];
+    const hasExtras = addOns.length > 0 || gifts.length > 0;
+
+    return (
+      <section
+        aria-label={`What customer ordered for order ${order.id}`}
+        className={
+          variant === "mobile"
+            ? "relative mt-4 overflow-hidden rounded-[24px] border border-sky-100 bg-white/85 px-4 py-3.5 shadow-sm dark:border-sky-400/20 dark:bg-white/[0.05]"
+            : "min-w-[260px] max-w-[360px] py-0.5"
+        }
+      >
+        {variant === "mobile" && (
+          <div className="pointer-events-none absolute -right-8 -top-10 h-24 w-24 rounded-full bg-sky-200/30 blur-2xl dark:bg-sky-400/10" />
+        )}
+        <div className="relative flex min-w-0 items-start gap-2.5">
+          <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-[#1F8FE0] dark:bg-sky-400/12 dark:text-sky-200">
+            <Package className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className={`m-0 text-[10px] font-black uppercase tracking-[0.14em] ${orderFaintTextClass}`}>What customer ordered</p>
+            <p className={`m-0 mt-1 break-words text-[13px] font-black leading-5 ${orderTitleTextClass}`}>{mainTitle}</p>
+            <p className={`m-0 mt-0.5 text-[11px] font-bold leading-4 ${orderMutedTextClass}`}>
+              {quantity} {quantity === 1 ? "pc" : "pcs"} · {formatProductMoney(mainAmount, order.currency)}
+            </p>
+            {mainComboDetail && (
+              <p className={`m-0 mt-1 break-words text-[11px] font-semibold leading-4 ${orderMutedTextClass}`}>{mainComboDetail}</p>
+            )}
+          </div>
+        </div>
+
+        {hasExtras && (
+          <div className="relative mt-2.5 space-y-1.5 border-t border-gray-100 pt-2.5 dark:border-slate-700/80">
+            {addOns.map((line, index) => {
+              const name = crossSellLineDisplayName(line);
+              const detail = crossSellLineDisplayDetail(line);
+              return (
+                <div key={crossSellLineRenderKey(line, index)} className="flex min-w-0 items-start gap-2">
+                  <span className="mt-0.5 shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-800 dark:bg-amber-400/15 dark:text-amber-100">
+                    Add-on
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="m-0 break-words text-[11px] font-black leading-4 text-amber-950 dark:text-amber-50">{name}</p>
+                    {detail && detail !== name && (
+                      <p className={`m-0 mt-0.5 break-words text-[10px] font-semibold leading-4 ${orderMutedTextClass}`}>{detail}</p>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-[10px] font-black text-amber-800 dark:text-amber-100">
+                    {formatProductMoney(Math.max(0, Number(line.amount) || 0), order.currency)}
+                  </span>
+                </div>
+              );
+            })}
+            {gifts.map((line, index) => {
+              const giftQuantity = Math.max(1, Number(line.quantity) || 1);
+              return (
+                <div key={line.id || `${line.productName}:${index}`} className="flex min-w-0 items-start gap-2">
+                  <span className="mt-0.5 shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-100">
+                    Gift
+                  </span>
+                  <p className="m-0 min-w-0 flex-1 break-words text-[11px] font-black leading-4 text-emerald-900 dark:text-emerald-100">
+                    {giftQuantity} {giftQuantity === 1 ? "pc" : "pcs"} of {line.productName}
+                  </p>
+                  <span className="shrink-0 text-[10px] font-black text-emerald-700 dark:text-emerald-200">FREE</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="relative mt-2.5 flex items-center justify-between gap-3 border-t border-gray-100 pt-2 dark:border-slate-700/80">
+          <span className={`text-[10px] font-black uppercase tracking-[0.12em] ${orderFaintTextClass}`}>Order total</span>
+          <strong className="text-[12px] font-black text-[#1F8FE0] dark:text-sky-200">{formatProductMoney(order.amount, order.currency)}</strong>
+        </div>
+      </section>
+    );
+  };
   const CUSTOMER_SELECTED_CROSS_SELL_BONUS = 100;
   const isCustomerSelectedCrossSell = (line?: CrossSellLine | null) => {
     const source = line?.selectionSource ?? "";
@@ -15791,6 +15882,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       order.id,
       order.productName,
       order.packageName,
+      ...(order.crossSellLines ?? []).flatMap((line) => [
+        crossSellLineDisplayName(line),
+        crossSellLineDisplayDetail(line)
+      ]),
+      ...(order.freeGiftLines ?? []).map((line) => line.productName),
       source,
       location,
       order.city,
@@ -15803,7 +15899,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       !search ||
       (isMarketerOrderView
         ? marketerSearchText
-        : `${order.id} ${order.customer} ${order.phone} ${order.productName} ${order.packageName}`
+        : [
+            order.id,
+            order.customer,
+            order.phone,
+            order.productName,
+            order.packageName,
+            ...(order.crossSellLines ?? []).flatMap((line) => [
+              crossSellLineDisplayName(line),
+              crossSellLineDisplayDetail(line)
+            ]),
+            ...(order.freeGiftLines ?? []).map((line) => line.productName)
+          ].join(" ")
       ).toLowerCase().includes(search);
     const matchesStatus = orderStatus === "All Orders" || orderStatusLabelFor(order) === orderStatus;
     const matchesScheduleFilter =
@@ -15899,7 +16006,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const ordersPageClamped = Math.min(ordersPage, ordersTotalPages);
   const pagedOrderRows = prioritizedOrderRows.slice((ordersPageClamped - 1) * ORDERS_PAGE_SIZE, ordersPageClamped * ORDERS_PAGE_SIZE);
   const showOrderAssignmentColumn = !isMarketerOrderView;
-  const orderTableColumnCount = (canUseAdminOrderActions ? 10 : 9) - (showOrderAssignmentColumn ? 0 : 1);
+  const orderTableColumnCount = (canUseAdminOrderActions ? 11 : 10) - (showOrderAssignmentColumn ? 0 : 1);
   // Product-filtered stats - drive summary cards so they reflect the active product filter
   const assignmentScopedPeriodOrders = periodOrders.filter(matchesOrderAssignmentScope);
   const assignmentScopedWorkspaceOrders = assignmentScopedPeriodOrders.filter(matchesOrderWorkspacePage);
@@ -46779,7 +46886,7 @@ ${waybillLineItems(w).length > 1
                       className="w-full pl-9 pr-4 h-9 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] focus:bg-white transition-colors"
                       value={orderSearch}
                       onChange={(e) => setOrderSearch(e.target.value)}
-                      placeholder={isMarketerOrderView ? "Order #, product, campaign, city…" : "Order #, name, phone…"}
+                      placeholder={isMarketerOrderView ? "Order #, product, campaign, city…" : "Order #, name, phone, product, add-on…"}
                     />
                   </label>
                   <select className="!min-h-0 w-full sm:w-auto h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]" aria-label="Order status" value={orderStatus} onChange={(e) => setOrderStatus(e.target.value)}>
@@ -46966,6 +47073,8 @@ ${waybillLineItems(w).length > 1
                             </section>
                           )}
 
+                          {renderOrderPurchaseSummary(order, "mobile")}
+
                           {!isMarketerOrderView && renderOrderAssigneeBadge(order, "mobile")}
 
                           <div className="relative mt-4 grid grid-cols-1 gap-2">
@@ -47068,6 +47177,7 @@ ${waybillLineItems(w).length > 1
                         )}
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Order ID</th>
                         <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>{isMarketerOrderView ? "Lead" : "Customer Name"}</th>
+                        <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>What Customer Ordered</th>
                         {showOrderAssignmentColumn && (
                           <th className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap text-left ${orderFaintTextClass}`}>Assigned To</th>
                         )}
@@ -47112,6 +47222,9 @@ ${waybillLineItems(w).length > 1
                                 {order.id}
                               </td>
                               <td className={`px-4 py-3.5 font-semibold text-sm whitespace-nowrap ${orderTitleTextClass}`}>{isMarketerOrderView ? marketerLeadLabel(order) : order.customer}</td>
+                              <td className="px-4 py-3.5 align-top">
+                                {renderOrderPurchaseSummary(order, "table")}
+                              </td>
                               {showOrderAssignmentColumn && (
                                 <td className="px-4 py-3.5 whitespace-nowrap">{renderOrderAssigneeBadge(order, "table")}</td>
                               )}
