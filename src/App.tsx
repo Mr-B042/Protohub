@@ -11054,7 +11054,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionProductFilter, setRetentionProductFilter] = useState("all");
   const [retentionAssignedRepFilter, setRetentionAssignedRepFilter] = useState("all");
   const [retentionSubPage, setRetentionSubPage] = useState<RetentionSubPage>("Overview");
+  const [retentionPipelineView, setRetentionPipelineView] = useState<"board" | "table">("board");
+  const [retentionTaskFilter, setRetentionTaskFilter] = useState<"all" | "due_today" | "overdue" | "complaints">("all");
   const [retentionCustomerSearch, setRetentionCustomerSearch] = useState("");
+  const [retentionActivitySearch, setRetentionActivitySearch] = useState("");
   const [retentionActivityLog, setRetentionActivityLog] = useState<RetentionActivityLogRow[]>([]);
   const [retentionActivityLogLoading, setRetentionActivityLogLoading] = useState(false);
   const [retentionProductTimingList, setRetentionProductTimingList] = useState<Array<{ id: string; name: string; timing: RetentionProductTiming | null }>>([]);
@@ -39721,7 +39724,6 @@ ${waybillLineItems(w).length > 1
       .then(setRetentionCustomerDetail)
       .catch((err: any) => { showToast(err?.message ?? "Could not load customer detail."); setRetentionDrawerPhone(null); })
       .finally(() => setRetentionCustomerDetailLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [retentionDrawerPhone]);
 
   // Backs Calls & Outcomes (all activity) and the Reviews/Referrals/Repeat
@@ -39747,7 +39749,6 @@ ${waybillLineItems(w).length > 1
         setRetentionProductTimingDrafts(Object.fromEntries(result.products.map((p) => [p.id, p.timing ?? {}])));
       })
       .catch((err: any) => showToast(err?.message ?? "Could not load per-product retention timing."));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, recoveryRepDashboardTab, retentionSubPage, currentRole]);
 
   const renderCustomerRetentionTab = () => {
@@ -40016,8 +40017,23 @@ ${waybillLineItems(w).length > 1
     // Tasks = the must-do-now subset (P1-P5) - excludes the P6 "revenue
     // opportunity" tier (retention_sale/win_back), which is a longer-
     // horizon sales opportunity rather than an urgent task.
-    const filteredRetentionTasks = applyRetentionFilters(retentionWorklist.filter((row) => row.priorityBand !== "revenue_opportunity"));
+    const actionableRetentionTasks = retentionWorklist.filter((row) => row.priorityBand !== "revenue_opportunity");
+    const filteredRetentionTasks = applyRetentionFilters(actionableRetentionTasks.filter((row) =>
+      retentionTaskFilter === "all"
+      || (retentionTaskFilter === "due_today" && row.overdueBy === 0)
+      || (retentionTaskFilter === "overdue" && row.overdueBy > 0)
+      || (retentionTaskFilter === "complaints" && row.dueStage === "needs_resolution")
+    ));
     const filteredRetentionWinBack = applyRetentionFilters(retentionWorklist.filter((row) => row.dueStage === "win_back"));
+    const retentionActivityQuery = retentionActivitySearch.trim().toLowerCase();
+    const filteredRetentionActivity = retentionActivityLog.filter((row) =>
+      !retentionActivityQuery
+      || row.customerName.toLowerCase().includes(retentionActivityQuery)
+      || row.phone.includes(retentionActivityQuery)
+      || row.orderId.toLowerCase().includes(retentionActivityQuery)
+      || row.productName.toLowerCase().includes(retentionActivityQuery)
+      || row.loggedByName.toLowerCase().includes(retentionActivityQuery)
+    );
 
     const logOutcomeRow = retentionWorklist.find((r) => r.orderId === retentionLoggingOrderId) ?? null;
 
@@ -40174,6 +40190,151 @@ ${waybillLineItems(w).length > 1
       </section>
     );
 
+    const pipelineBoardRows = applyRetentionFilters(retentionWorklist);
+    const pipelineColumns: Array<{
+      key: string;
+      label: string;
+      helper: string;
+      tone: string;
+      rows: RetentionWorklistRow[];
+    }> = [
+      {
+        key: "needs-resolution",
+        label: "Needs Resolution",
+        helper: "Complaints and order issues",
+        tone: "border-rose-200 bg-rose-50/60",
+        rows: pipelineBoardRows.filter((row) => row.dueStage === "needs_resolution")
+      },
+      {
+        key: "satisfaction",
+        label: "Satisfaction",
+        helper: "Check product experience",
+        tone: "border-amber-200 bg-amber-50/60",
+        rows: pipelineBoardRows.filter((row) => row.dueStage === "satisfaction_check")
+      },
+      {
+        key: "reviews",
+        label: "Review",
+        helper: "Request proof and permission",
+        tone: "border-sky-200 bg-sky-50/60",
+        rows: pipelineBoardRows.filter((row) => row.dueStage === "review_referral" && !row.reviewCollected)
+      },
+      {
+        key: "referrals",
+        label: "Referral",
+        helper: "Collect a qualified contact",
+        tone: "border-indigo-200 bg-indigo-50/60",
+        rows: pipelineBoardRows.filter((row) => row.dueStage === "review_referral" && row.reviewCollected)
+      },
+      {
+        key: "repeat-sales",
+        label: "Repeat Sale",
+        helper: "Recommend the next product",
+        tone: "border-emerald-200 bg-emerald-50/60",
+        rows: pipelineBoardRows.filter((row) => row.dueStage === "retention_sale")
+      },
+      {
+        key: "win-back",
+        label: "Win-back",
+        helper: "Re-engage dormant buyers",
+        tone: "border-slate-200 bg-slate-50",
+        rows: pipelineBoardRows.filter((row) => row.dueStage === "win_back")
+      }
+    ];
+
+    const renderPipelineBoard = () => (
+      <section className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-base font-black text-gray-900">Customer Lifecycle Board</h2>
+            <p className="mt-0.5 text-xs text-gray-500">Every card is a live customer action. Log an outcome to move the customer forward.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={retentionSearch}
+              onChange={(event) => setRetentionSearch(event.target.value)}
+              placeholder="Search customer or order"
+              className="!min-h-0 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm sm:w-56 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+            />
+            <select
+              value={retentionProductFilter}
+              onChange={(event) => setRetentionProductFilter(event.target.value)}
+              className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+            >
+              <option value="all">All products</option>
+              {retentionProductOptions.map((product) => <option key={product} value={product}>{product}</option>)}
+            </select>
+            <select
+              value={retentionAssignedRepFilter}
+              onChange={(event) => setRetentionAssignedRepFilter(event.target.value)}
+              className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+            >
+              <option value="all">All assigned reps</option>
+              {retentionRepOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+          </div>
+        </div>
+        {retentionWorklistLoading && retentionWorklist.length === 0 ? (
+          <div className="px-5 py-12 text-center text-sm text-gray-400">Loading lifecycle board…</div>
+        ) : (
+          <div className="overflow-x-auto p-4">
+            <div className="grid min-w-[1560px] grid-cols-6 gap-3">
+              {pipelineColumns.map((column) => (
+                <section key={column.key} className={`min-h-[420px] rounded-lg border p-3 ${column.tone}`}>
+                  <div className="mb-3 flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-black text-gray-900">{column.label}</h3>
+                      <p className="mt-0.5 text-[11px] text-gray-500">{column.helper}</p>
+                    </div>
+                    <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-white px-2 text-xs font-black text-gray-700 shadow-sm">{column.rows.length}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {column.rows.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-gray-200 bg-white/70 px-3 py-8 text-center text-xs text-gray-400">No customers here</div>
+                    ) : column.rows.map((row) => {
+                      const badge = priorityBadge(row.priorityBand);
+                      return (
+                        <article key={row.orderId} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+                          <button type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 w-full text-left">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-black text-gray-900">{row.customerName}</p>
+                                <p className="mt-0.5 truncate text-[11px] text-gray-500">#{row.orderId} · {row.productName}</p>
+                              </div>
+                              <span className={`inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-black ${badge.class}`}>{badge.label.replace(/\s\(P\d\)/, "")}</span>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                              <div>
+                                <span className="block text-gray-400">Customer value</span>
+                                <strong className="text-gray-800">{formatMoney(row.orderAmount)}</strong>
+                              </div>
+                              <div>
+                                <span className="block text-gray-400">Assigned</span>
+                                <strong className="block truncate text-gray-800">{row.assignedRepName ?? "Unassigned"}</strong>
+                              </div>
+                            </div>
+                            <p className={`mt-2 text-[11px] font-bold ${row.overdueBy > 0 || row.dueStage === "needs_resolution" ? "text-rose-600" : "text-gray-600"}`}>{nextActionInstructionFor(row)}</p>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleLogging(row.orderId, row.dueStage)}
+                            className="!min-h-0 mt-3 w-full rounded-md bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700"
+                          >
+                            Log outcome
+                          </button>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+    );
+
     const renderRetentionComingSoon = (label: string) => (
       <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-10 text-center text-sm text-gray-400">
         {label} is coming in a follow-up update.
@@ -40189,6 +40350,7 @@ ${waybillLineItems(w).length > 1
                 ["Due Today", retentionDashboardSummary.kpis.dueToday, "text-sky-600"],
                 ["Overdue", retentionDashboardSummary.kpis.overdue, "text-red-600"],
                 ["Contacted", retentionDashboardSummary.kpis.contacted, "text-gray-900"],
+                ["Customers Reached", retentionDashboardSummary.repPerformance.customersReached, "text-emerald-700"],
                 ["Issues Resolved", retentionDashboardSummary.kpis.issuesResolved, "text-emerald-600"],
                 ["Reviews", retentionDashboardSummary.kpis.reviews, "text-gray-900"],
                 ["Referrals", retentionDashboardSummary.kpis.referrals, "text-gray-900"],
@@ -40278,8 +40440,29 @@ ${waybillLineItems(w).length > 1
       if (retentionSubPage === "Pipeline") return (
         <div className="space-y-6">
           {retentionDashboardSummary && (
-            <section className="space-y-2">
-              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Customer Lifecycle Pipeline</p>
+            <section className="space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">Customer Lifecycle Pipeline</p>
+                  <p className="mt-1 text-xs text-gray-500">{retentionDashboardSummary.lifecyclePipeline.delivered} delivered customers are currently inside the retention lifecycle.</p>
+                </div>
+                <div className="inline-flex w-fit rounded-lg border border-gray-200 bg-white p-1">
+                  <button
+                    type="button"
+                    onClick={() => setRetentionPipelineView("board")}
+                    className={`!min-h-0 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-black ${retentionPipelineView === "board" ? "bg-emerald-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+                  >
+                    <LayoutPanelTop className="h-3.5 w-3.5" /> Board
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRetentionPipelineView("table")}
+                    className={`!min-h-0 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-black ${retentionPipelineView === "table" ? "bg-emerald-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+                  >
+                    <FileText className="h-3.5 w-3.5" /> Table
+                  </button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
                 {([
                   ["all", "Delivered", retentionDashboardSummary.lifecyclePipeline.delivered, "border-gray-200 bg-white"],
@@ -40293,8 +40476,8 @@ ${waybillLineItems(w).length > 1
                   <button
                     key={`${stage}-${label}-${idx}`}
                     type="button"
-                    onClick={() => setRetentionStageFilter(stage)}
-                    className={`!min-h-0 text-left rounded-xl border px-2.5 py-2 transition-shadow ${tone} ${count > 0 ? "" : "opacity-60"} ${stage !== "all" && retentionStageFilter === stage ? "ring-2 ring-[#1F8FE0]" : ""}`}
+                    onClick={() => { setRetentionStageFilter(stage); setRetentionPipelineView("table"); }}
+                    className={`!min-h-0 text-left rounded-lg border px-2.5 py-2 transition-shadow hover:shadow-sm ${tone} ${count > 0 ? "" : "opacity-60"} ${stage !== "all" && retentionStageFilter === stage ? "ring-2 ring-emerald-500" : ""}`}
                   >
                     <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">{label}</div>
                     <div className="text-lg font-black text-gray-900 mt-0.5">{count}</div>
@@ -40303,13 +40486,60 @@ ${waybillLineItems(w).length > 1
               </div>
             </section>
           )}
-          {renderRetentionQueue(filteredRetentionWorklist, { title: "Priority Work Queue", showStageClear: true, emptyMessage: retentionWorklist.length === 0 ? "No delivered orders are due for a retention touchpoint right now." : "No candidates match your search." })}
+          {retentionPipelineView === "board"
+            ? renderPipelineBoard()
+            : renderRetentionQueue(filteredRetentionWorklist, { title: "Priority Work Queue", showStageClear: true, emptyMessage: retentionWorklist.length === 0 ? "No delivered orders are due for a retention touchpoint right now." : "No candidates match your search." })}
         </div>
       );
 
-      if (retentionSubPage === "Tasks") return renderRetentionQueue(filteredRetentionTasks, { title: "Tasks — due today & overdue", emptyMessage: "Nothing urgent right now." });
+      if (retentionSubPage === "Tasks") {
+        const dueToday = actionableRetentionTasks.filter((row) => row.overdueBy === 0).length;
+        const overdue = actionableRetentionTasks.filter((row) => row.overdueBy > 0).length;
+        const complaints = actionableRetentionTasks.filter((row) => row.dueStage === "needs_resolution").length;
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {([
+                ["all", "Open Tasks", actionableRetentionTasks.length, "border-gray-200 bg-white text-gray-900"],
+                ["due_today", "Due Today", dueToday, "border-sky-200 bg-sky-50 text-sky-700"],
+                ["overdue", "Overdue", overdue, "border-rose-200 bg-rose-50 text-rose-700"],
+                ["complaints", "Needs Resolution", complaints, "border-amber-200 bg-amber-50 text-amber-700"]
+              ] as const).map(([key, label, count, tone]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setRetentionTaskFilter(key)}
+                  className={`!min-h-0 rounded-lg border p-4 text-left ${tone} ${retentionTaskFilter === key ? "ring-2 ring-emerald-500 ring-offset-1" : ""}`}
+                >
+                  <span className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">{label}</span>
+                  <strong className="mt-1 block text-2xl font-black">{count}</strong>
+                </button>
+              ))}
+            </div>
+            {renderRetentionQueue(filteredRetentionTasks, { title: "Action Queue", emptyMessage: "Nothing urgent right now." })}
+          </div>
+        );
+      }
 
-      if (retentionSubPage === "Win-back") return renderRetentionQueue(filteredRetentionWinBack, { title: "Win-back (Day 45-90)", emptyMessage: "No customers are in the win-back window right now." });
+      if (retentionSubPage === "Win-back") return (
+        <div className="space-y-4">
+          <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-gray-200 bg-white p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">Eligible Customers</p>
+              <p className="mt-1 text-2xl font-black text-gray-900">{filteredRetentionWinBack.length}</p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">Potential Value</p>
+              <p className="mt-1 text-2xl font-black text-emerald-700">{formatMoney(filteredRetentionWinBack.reduce((sum, row) => sum + row.orderAmount, 0))}</p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">Oldest Opportunity</p>
+              <p className="mt-1 text-2xl font-black text-gray-900">{filteredRetentionWinBack.reduce((max, row) => Math.max(max, row.daysSinceDelivery), 0)}d</p>
+            </div>
+          </section>
+          {renderRetentionQueue(filteredRetentionWinBack, { title: "Win-back Queue", emptyMessage: "No customers are in the win-back window right now." })}
+        </div>
+      );
 
       if (retentionSubPage === "Customers") {
         // One row per customer (deduped by phone - a customer can have more
@@ -40386,20 +40616,32 @@ ${waybillLineItems(w).length > 1
         return "Contact attempt";
       };
 
-      const renderActivityFeed = (title: string, emptyMessage: string) => (
+      const renderActivityFeed = (title: string, emptyMessage: string, rows: RetentionActivityLogRow[] = filteredRetentionActivity) => (
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-200">
-            <h2 className="text-base font-bold text-gray-900">{title}</h2>
-            <p className="text-xs text-gray-500 mt-0.5">For the selected period ({retentionPeriod}).</p>
+          <div className="flex flex-col gap-3 border-b border-gray-200 px-5 py-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-base font-bold text-gray-900">{title}</h2>
+              <p className="text-xs text-gray-500 mt-0.5">For the selected period ({retentionPeriod}).</p>
+            </div>
+            <label className="relative block w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+              <input
+                type="search"
+                value={retentionActivitySearch}
+                onChange={(event) => setRetentionActivitySearch(event.target.value)}
+                placeholder="Search activity"
+                className="!min-h-0 w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+              />
+            </label>
           </div>
           {retentionActivityLogLoading && retentionActivityLog.length === 0 ? (
             <div className="px-5 py-10 text-sm text-gray-400 text-center">Loading…</div>
-          ) : retentionActivityLog.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="px-5 py-10 text-sm text-gray-400 text-center">{emptyMessage}</div>
           ) : (
             <div className="divide-y divide-gray-100">
-              {retentionActivityLog.map((row) => (
-                <button key={row.id} type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 w-full flex items-start justify-between gap-3 px-5 py-3 text-left hover:bg-gray-50">
+              {rows.map((row) => (
+                <button key={row.id} type="button" onClick={() => setRetentionDrawerPhone(row.phone)} className="!min-h-0 w-full flex flex-col gap-2 px-5 py-3 text-left hover:bg-gray-50 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${stageTone(row.stage)}`}>{stageLabel(row.stage)}</span>
@@ -40408,7 +40650,10 @@ ${waybillLineItems(w).length > 1
                     <p className="text-xs text-gray-600 mt-1">{activityDetailFor(row)}</p>
                     <p className="text-[11px] text-gray-400 mt-0.5">#{row.orderId} · {row.productName} · by {row.loggedByName}</p>
                   </div>
-                  <span className="shrink-0 text-xs text-gray-400">{new Date(row.loggedAt).toLocaleString()}</span>
+                  <div className="shrink-0 text-left sm:text-right">
+                    <p className="text-xs font-semibold text-gray-600">{row.loggedByName}</p>
+                    <p className="text-[11px] text-gray-400">{new Date(row.loggedAt).toLocaleString()}</p>
+                  </div>
                 </button>
               ))}
             </div>
@@ -40416,12 +40661,39 @@ ${waybillLineItems(w).length > 1
         </section>
       );
 
-      if (retentionSubPage === "Calls & Outcomes") return renderActivityFeed("Calls & Outcomes", "No touchpoints logged in this period yet.");
+      if (retentionSubPage === "Calls & Outcomes") {
+        const reached = retentionActivityLog.filter((row) => row.reachStatus === "reached").length;
+        const notReached = retentionActivityLog.filter((row) => row.reachStatus === "not_reached").length;
+        const notReachable = retentionActivityLog.filter((row) => row.reachStatus === "not_reachable" || row.reachStatus === "wrong_number").length;
+        const complaintsLogged = retentionActivityLog.filter((row) => row.customerResponse === "complaint").length;
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {([
+                ["Reached", reached, "text-emerald-700"],
+                ["No Answer", notReached, "text-amber-700"],
+                ["Invalid / Unreachable", notReachable, "text-rose-700"],
+                ["Complaints Logged", complaintsLogged, "text-gray-900"]
+              ] as const).map(([label, value, tone]) => (
+                <div key={label} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                  <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">{label}</p>
+                  <p className={`mt-1 text-2xl font-black ${tone}`}>{value}</p>
+                </div>
+              ))}
+            </div>
+            {renderActivityFeed("Call Activity & Outcomes", "No touchpoints logged in this period yet.")}
+          </div>
+        );
+      }
+
+      const reviewActivity = filteredRetentionActivity.filter((row) => row.reviewRequestedAt || row.reviewCollected || row.nextAction === "request_review");
+      const referralActivity = filteredRetentionActivity.filter((row) => row.referralRequestedAt || row.referralCollected || row.nextAction === "request_referral");
+      const repeatSaleActivity = filteredRetentionActivity.filter((row) => row.stage === "retention_sale");
 
       if (retentionSubPage === "Reviews") return (
         <div className="space-y-4">
           {retentionDashboardSummary && (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
                 <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Requested</div>
                 <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.reviewsRequested}</div>
@@ -40434,16 +40706,20 @@ ${waybillLineItems(w).length > 1
                 <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Conversion</div>
                 <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.reviewConversionPct === null ? "—" : `${retentionDashboardSummary.reviewsReferrals.reviewConversionPct}%`}</div>
               </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Ad Permission</div>
+                <div className="text-xl font-black text-violet-700 mt-1">{retentionActivityLog.filter((row) => row.adPermissionGranted).length}</div>
+              </div>
             </div>
           )}
-          {renderActivityFeed("Reviews", "No review activity logged in this period yet.")}
+          {renderActivityFeed("Review Requests & Evidence", "No review activity logged in this period yet.", reviewActivity)}
         </div>
       );
 
       if (retentionSubPage === "Referrals") return (
         <div className="space-y-4">
           {retentionDashboardSummary && (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
                 <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Requested</div>
                 <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.referralsRequested}</div>
@@ -40456,9 +40732,13 @@ ${waybillLineItems(w).length > 1
                 <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Conversion</div>
                 <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.referralConversionPct === null ? "—" : `${retentionDashboardSummary.reviewsReferrals.referralConversionPct}%`}</div>
               </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Rewards Owed</div>
+                <div className="text-xl font-black text-amber-700 mt-1">{retentionActivityLog.filter((row) => row.customerDiscountOwed && !row.customerDiscountClearedAt).length}</div>
+              </div>
             </div>
           )}
-          {renderActivityFeed("Referrals", "No referral activity logged in this period yet.")}
+          {renderActivityFeed("Referral Requests & Contacts", "No referral activity logged in this period yet.", referralActivity)}
         </div>
       );
 
@@ -40488,7 +40768,7 @@ ${waybillLineItems(w).length > 1
               </div>
             </div>
           )}
-          {renderActivityFeed("Repeat Sales", "No retention-sale activity logged in this period yet.")}
+          {renderActivityFeed("Repeat-sale Offers & Outcomes", "No retention-sale activity logged in this period yet.", repeatSaleActivity)}
         </div>
       );
 
@@ -40709,15 +40989,58 @@ ${waybillLineItems(w).length > 1
       return renderRetentionComingSoon(retentionSubPage);
     };
 
+    const retentionPageMeta: Record<RetentionSubPage, { title: string; description: string }> = {
+      Overview: { title: "Retention Overview", description: "Today's priorities, lifecycle health, bonuses and retained revenue." },
+      Pipeline: { title: "Customer Pipeline", description: "Move delivered customers through resolution, satisfaction, advocacy and repeat sales." },
+      Customers: { title: "Retention Customers", description: "A single customer record with order value, lifecycle status and full history." },
+      Tasks: { title: "Retention Tasks", description: "The due-today, overdue and complaint work that needs action first." },
+      "Calls & Outcomes": { title: "Calls & Outcomes", description: "Every contact attempt, response, action and quality signal in one audit trail." },
+      Reviews: { title: "Customer Reviews", description: "Track requests, evidence, permissions and review conversion." },
+      Referrals: { title: "Customer Referrals", description: "Track referral requests, contacts and customer rewards." },
+      "Repeat Sales": { title: "Repeat Sales", description: "Monitor product recommendations, accepted offers and retained revenue." },
+      "Win-back": { title: "Win-back", description: "Prioritize dormant customers who are ready for a focused recovery offer." },
+      Reports: { title: "Retention Reports", description: "Performance, conversion, revenue, contribution and workload by rep." },
+      Settings: { title: "Retention Settings", description: "Owner controls for bonuses and product-specific lifecycle timing." }
+    };
+    const currentRetentionMeta = retentionPageMeta[retentionSubPage];
+    const refreshRetentionPage = () => {
+      void loadRetentionWorklist();
+      void loadRetentionBonusSummary();
+      void loadRetentionDashboardSummary();
+      if (ACTIVITY_LOG_PAGES.includes(retentionSubPage)) {
+        setRetentionActivityLogLoading(true);
+        const bounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
+        const stage = retentionSubPage === "Reviews" || retentionSubPage === "Referrals"
+          ? "review_referral"
+          : retentionSubPage === "Repeat Sales"
+            ? "retention_sale"
+            : undefined;
+        customerRetentionApi.activityLog(bounds ? { dateFrom: bounds.dateFrom, dateTo: bounds.dateTo, stage } : { stage })
+          .then((result) => setRetentionActivityLog(result.rows ?? []))
+          .catch((error: any) => showToast(error?.message ?? "Could not refresh retention activity."))
+          .finally(() => setRetentionActivityLogLoading(false));
+      }
+    };
+
     return (
       <>
       <div className="space-y-4">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-lg font-black text-gray-900">Customer Retention</h2>
-            <p className="text-sm font-medium text-gray-500">Post-delivery satisfaction, reviews, referrals and repeat sales.</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">Customer Retention</p>
+            <h2 className="mt-1 text-xl font-black text-gray-900">{currentRetentionMeta.title}</h2>
+            <p className="mt-1 max-w-2xl text-sm font-medium text-gray-500">{currentRetentionMeta.description}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={refreshRetentionPage}
+              disabled={retentionWorklistLoading || retentionActivityLogLoading}
+              title="Refresh retention data"
+              className="!min-h-0 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-4 w-4 ${retentionWorklistLoading || retentionActivityLogLoading ? "animate-spin" : ""}`} />
+            </button>
             <select
               className="h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
               value={retentionPeriod}
@@ -40738,6 +41061,19 @@ ${waybillLineItems(w).length > 1
             </div>
           </div>
         </header>
+
+        <label className="block lg:hidden">
+          <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">Retention page</span>
+          <select
+            value={retentionSubPage}
+            onChange={(event) => setRetentionSubPage(event.target.value as RetentionSubPage)}
+            className="!min-h-0 w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+          >
+            {RETENTION_SUBNAV_ITEMS
+              .filter((item) => !item.ownerOnly || currentRole === "Owner")
+              .map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+          </select>
+        </label>
 
         {renderRetentionSubPage()}
       </div>

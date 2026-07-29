@@ -874,7 +874,7 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
 
     let query = supabase
       .from("customer_retention_touchpoints")
-      .select("id, order_id, stage, logged_by, logged_at, reach_status, customer_response, next_action, next_action_note, satisfaction_outcome, satisfaction_notes, review_collected, review_is_video, review_text, referral_collected, referral_contact_name, retention_outcome, resulting_order_id")
+      .select("id, order_id, stage, logged_by, logged_at, reach_status, customer_response, next_action, next_action_note, satisfaction_outcome, satisfaction_notes, review_requested_at, review_collected, review_is_video, review_text, media_urls, ad_permission_granted, referral_requested_at, referral_collected, referral_contact_name, referral_contact_phone, customer_discount_owed, customer_discount_cleared_at, offered_product_id, offered_package_id, retention_outcome, resulting_order_id")
       .eq("org_id", orgId)
       .gte("logged_at", `${start}T00:00:00`)
       .lt("logged_at", `${exclusiveEnd}T00:00:00`)
@@ -914,11 +914,20 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
           nextActionNote: r.next_action_note,
           satisfactionOutcome: r.satisfaction_outcome,
           satisfactionNotes: r.satisfaction_notes,
+          reviewRequestedAt: r.review_requested_at,
           reviewCollected: r.review_collected,
           reviewIsVideo: r.review_is_video,
           reviewText: r.review_text,
+          mediaUrls: r.media_urls,
+          adPermissionGranted: r.ad_permission_granted,
+          referralRequestedAt: r.referral_requested_at,
           referralCollected: r.referral_collected,
           referralContactName: r.referral_contact_name,
+          referralContactPhone: r.referral_contact_phone,
+          customerDiscountOwed: r.customer_discount_owed,
+          customerDiscountClearedAt: r.customer_discount_cleared_at,
+          offeredProductId: r.offered_product_id,
+          offeredPackageId: r.offered_package_id,
           retentionOutcome: r.retention_outcome,
           resultingOrderId: r.resulting_order_id
         };

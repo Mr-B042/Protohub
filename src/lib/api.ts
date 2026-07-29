@@ -975,11 +975,20 @@ export interface RetentionActivityLogRow {
   nextActionNote: string | null;
   satisfactionOutcome: string | null;
   satisfactionNotes: string | null;
+  reviewRequestedAt: string | null;
   reviewCollected: boolean | null;
   reviewIsVideo: boolean | null;
   reviewText: string | null;
+  mediaUrls: string[] | null;
+  adPermissionGranted: boolean | null;
+  referralRequestedAt: string | null;
   referralCollected: boolean | null;
   referralContactName: string | null;
+  referralContactPhone: string | null;
+  customerDiscountOwed: boolean | null;
+  customerDiscountClearedAt: string | null;
+  offeredProductId: string | null;
+  offeredPackageId: string | null;
   retentionOutcome: string | null;
   resultingOrderId: string | null;
 }
