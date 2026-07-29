@@ -41672,12 +41672,9 @@ ${waybillLineItems(w).length > 1
 
         return (
           <div className="space-y-4">
-            <header className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <h2 className="text-xl font-black text-gray-900">Retention Tasks</h2>
-                <p className="text-sm font-medium text-gray-500">Complete customer follow-ups in the right order.</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
+            {/* Title/subtitle come from the shared retentionPageMeta header
+                above - only the page's own actions live here. */}
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                 <button type="button" onClick={() => { setRetentionTaskForm({ customerName: "", customerPhone: "", taskType: "general_check_in", title: "", note: "", priority: "medium", dueAt: "", assignedRepId: null, orderId: null }); setRetentionAddTaskOpen(true); }} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-sm font-black text-white hover:bg-emerald-700"><Plus className="h-4 w-4" /> Add Task</button>
                 <button type="button" onClick={exportRetentionPipelineCsv} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-gray-50"><Download className="h-4 w-4" /> Export</button>
                 <div className="relative">
@@ -41693,8 +41690,7 @@ ${waybillLineItems(w).length > 1
                     </>
                   )}
                 </div>
-              </div>
-            </header>
+            </div>
 
             {retentionManualTasksPending && (
               <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
@@ -42673,11 +42669,6 @@ ${waybillLineItems(w).length > 1
 
         return (
           <div className="space-y-4">
-            <header>
-              <h2 className="text-xl font-black text-gray-900">Calls &amp; Outcomes</h2>
-              <p className="text-sm font-medium text-gray-500">Track every customer interaction and the outcomes.</p>
-            </header>
-
             {now.avgDuration === null && callRows.length > 0 && (
               <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-800">
                 Avg. Call Duration starts filling in once reps record a call length in Log Outcome - existing calls have none stored.
@@ -43280,8 +43271,8 @@ ${waybillLineItems(w).length > 1
       Overview: { title: "Customer Retention Overview", description: "Daily performance, urgent tasks, lifecycle health and retention revenue." },
       Pipeline: { title: "Customer Lifecycle Pipeline", description: "Track customers from delivery to repeat purchase and win-back." },
       Customers: { title: "Customers", description: "View every buyer, purchase relationship, lifecycle stage and next retention action." },
-      Tasks: { title: "Retention Tasks", description: "The due-today, overdue and complaint work that needs action first." },
-      "Calls & Outcomes": { title: "Calls & Outcomes", description: "Every contact attempt, response, action and quality signal in one audit trail." },
+      Tasks: { title: "Retention Tasks", description: "Complete customer follow-ups in the right order." },
+      "Calls & Outcomes": { title: "Calls & Outcomes", description: "Track every customer interaction and the outcomes." },
       Reviews: { title: "Customer Reviews", description: "Track requests, evidence, permissions and review conversion." },
       Referrals: { title: "Customer Referrals", description: "Track referral requests, contacts and customer rewards." },
       "Repeat Sales": { title: "Repeat Sales", description: "Monitor product recommendations, accepted offers and retained revenue." },
