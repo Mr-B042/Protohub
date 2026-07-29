@@ -1621,7 +1621,7 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
 
     let query = supabase
       .from("customer_retention_touchpoints")
-      .select("id, order_id, stage, logged_by, logged_at, reach_status, customer_response, next_action, next_action_at, next_action_note, call_duration_seconds, satisfaction_outcome, satisfaction_notes, review_requested_at, review_collected, review_is_video, review_text, media_urls, ad_permission_granted, referral_requested_at, referral_collected, referral_contact_name, referral_contact_phone, customer_discount_owed, customer_discount_cleared_at, offered_product_id, offered_package_id, retention_outcome, resulting_order_id")
+      .select("id, order_id, stage, logged_by, logged_at, reach_status, customer_response, next_action, next_action_at, next_action_note, call_duration_seconds, satisfaction_outcome, satisfaction_notes, review_requested_at, review_collected, review_is_video, review_text, media_urls, ad_permission_granted, review_rating, review_source, review_status, review_shared_count, referral_requested_at, referral_collected, referral_contact_name, referral_contact_phone, customer_discount_owed, customer_discount_cleared_at, offered_product_id, offered_package_id, retention_outcome, resulting_order_id")
       .eq("org_id", orgId)
       .gte("logged_at", `${start}T00:00:00`)
       .lt("logged_at", `${exclusiveEnd}T00:00:00`)
@@ -1689,6 +1689,12 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
           reviewCollected: r.review_collected,
           reviewIsVideo: r.review_is_video,
           reviewText: r.review_text,
+          reviewRating: r.review_rating ?? null,
+          reviewSource: r.review_source ?? null,
+          // Null status means "not yet triaged" - the UI treats that as
+          // pending so nothing is auto-published without a human.
+          reviewStatus: r.review_status ?? null,
+          reviewSharedCount: Number(r.review_shared_count ?? 0),
           mediaUrls: r.media_urls,
           adPermissionGranted: r.ad_permission_granted,
           referralRequestedAt: r.referral_requested_at,
@@ -1731,6 +1737,10 @@ router.get("/activity-log", requireRole(...RETENTION_ROLES), async (req, res) =>
         reviewCollected: false,
         reviewIsVideo: false,
         reviewText: null,
+        reviewRating: null,
+        reviewSource: null,
+        reviewStatus: null,
+        reviewSharedCount: 0,
         mediaUrls: [],
         adPermissionGranted: false,
         referralRequestedAt: null,
@@ -2054,6 +2064,244 @@ router.post("/tasks/import", requireRole("Owner", "Admin", "Manager"), async (re
     res.status(201).json({ imported: (data ?? []).length });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not import the tasks." });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Review moderation (migration 180). Rating/source are captured with the
+// review itself; status and share count are editorial decisions made later,
+// so they get their own small endpoint rather than forcing a re-log.
+// ---------------------------------------------------------------------------
+
+const ReviewModerationSchema = z.object({
+  reviewStatus: z.enum(["pending", "published", "not_approved", "rejected"]).optional(),
+  reviewRating: z.number().int().min(1).max(5).nullable().optional(),
+  reviewSource: z.enum(["whatsapp", "facebook", "instagram", "website", "phone", "other"]).nullable().optional(),
+  // Incremental, so "shared again" never needs the client to know the old count.
+  incrementShared: z.boolean().optional()
+});
+
+router.patch("/reviews/:touchpointId", requireRole(...RETENTION_ROLES), async (req, res) => {
+  const parsed = ReviewModerationSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const { data: existing, error: findError } = await supabase
+      .from("customer_retention_touchpoints")
+      .select("id, review_shared_count")
+      .eq("org_id", orgId)
+      .eq("id", req.params.touchpointId)
+      .maybeSingle();
+    if (findError) { res.status(500).json({ error: findError.message }); return; }
+    if (!existing) { res.status(404).json({ error: "Review not found." }); return; }
+
+    const patch: Record<string, unknown> = {};
+    if (parsed.data.reviewStatus !== undefined) patch.review_status = parsed.data.reviewStatus;
+    if (parsed.data.reviewRating !== undefined) patch.review_rating = parsed.data.reviewRating;
+    if (parsed.data.reviewSource !== undefined) patch.review_source = parsed.data.reviewSource;
+    if (parsed.data.incrementShared) patch.review_shared_count = Number(existing.review_shared_count ?? 0) + 1;
+    if (Object.keys(patch).length === 0) { res.status(400).json({ error: "Nothing to update." }); return; }
+
+    const { error } = await supabase
+      .from("customer_retention_touchpoints")
+      .update(patch)
+      .eq("org_id", orgId)
+      .eq("id", req.params.touchpointId);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update the review." });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Referrals (migration 181). A referral is its own object with its own
+// lifecycle - see the migration for why it is not more touchpoint columns.
+// ---------------------------------------------------------------------------
+
+const REFERRALS_TABLE = "customer_retention_referrals";
+
+function isMissingReferralsTable(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  return error.code === "42P01"
+    || error.code === "PGRST205"
+    || /customer_retention_referrals.*(does not exist|schema cache)/i.test(error.message ?? "");
+}
+
+const ReferralSchema = z.object({
+  referrerOrderId: z.string().trim().min(1).nullable().optional(),
+  referrerName: z.string().trim().min(1, "Referrer name is required."),
+  referrerPhone: z.string().trim().min(1, "Referrer phone is required."),
+  refereeName: z.string().trim().min(1, "Referred person's name is required."),
+  refereePhone: z.string().trim().min(1, "Referred person's phone is required."),
+  productInterested: z.string().trim().max(200).nullable().optional(),
+  source: z.enum(["whatsapp", "facebook", "instagram", "website", "phone", "other"]).default("whatsapp"),
+  assignedRepId: z.string().uuid().nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional()
+});
+
+const ReferralUpdateSchema = z.object({
+  status: z.enum(["new_lead", "in_progress", "converted", "not_converted"]).optional(),
+  convertedOrderId: z.string().trim().min(1).nullable().optional(),
+  rewardAmount: z.number().min(0).optional(),
+  rewardStatus: z.enum(["not_eligible", "pending", "paid"]).optional(),
+  assignedRepId: z.string().uuid().nullable().optional(),
+  productInterested: z.string().trim().max(200).nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional()
+});
+
+const REFERRAL_SELECT = "id, referrer_order_id, referrer_name, referrer_phone, referee_name, referee_phone, product_interested, source, status, referral_date, converted_at, converted_order_id, reward_amount, reward_status, reward_paid_at, assigned_rep_id, notes, created_at";
+
+function referralRow(row: any, repNameById: Map<string, string>) {
+  return {
+    id: row.id,
+    referrerOrderId: row.referrer_order_id ?? null,
+    referrerName: row.referrer_name,
+    referrerPhone: row.referrer_phone,
+    refereeName: row.referee_name,
+    refereePhone: row.referee_phone,
+    productInterested: row.product_interested ?? null,
+    source: row.source,
+    status: row.status,
+    referralDate: row.referral_date,
+    convertedAt: row.converted_at ?? null,
+    convertedOrderId: row.converted_order_id ?? null,
+    rewardAmount: numericAmount(row.reward_amount),
+    rewardStatus: row.reward_status,
+    rewardPaidAt: row.reward_paid_at ?? null,
+    assignedRepId: row.assigned_rep_id ?? null,
+    assignedRepName: row.assigned_rep_id ? (repNameById.get(row.assigned_rep_id) ?? null) : null,
+    notes: row.notes ?? null,
+    createdAt: row.created_at
+  };
+}
+
+router.get("/referrals", requireRole(...RETENTION_ROLES), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    let query = supabase
+      .from(REFERRALS_TABLE)
+      .select(REFERRAL_SELECT)
+      .eq("org_id", orgId)
+      .order("referral_date", { ascending: false })
+      .limit(500);
+    if (!RETENTION_SUPERVISOR_ROLES.has(req.user!.role)) {
+      query = query.or(`assigned_rep_id.eq.${req.user!.id},assigned_rep_id.is.null`);
+    }
+    const { data, error } = await query;
+    if (error) {
+      if (isMissingReferralsTable(error)) { res.json({ rows: [], pendingMigration: true }); return; }
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    const rows = data ?? [];
+    const repIds = [...new Set(rows.map((r: any) => r.assigned_rep_id).filter(Boolean))] as string[];
+    const { data: reps } = repIds.length > 0
+      ? await supabase.from("users").select("id, name").in("id", repIds)
+      : { data: [] as { id: string; name: string }[] };
+    const repNameById = new Map((reps ?? []).map((u) => [u.id, u.name]));
+    res.json({ rows: rows.map((r: any) => referralRow(r, repNameById)) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load referrals." });
+  }
+});
+
+router.post("/referrals", requireRole(...RETENTION_ROLES), async (req, res) => {
+  const parsed = ReferralSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const { data, error } = await supabase
+      .from(REFERRALS_TABLE)
+      .insert({
+        org_id: req.user!.orgId,
+        referrer_order_id: parsed.data.referrerOrderId ?? null,
+        referrer_name: parsed.data.referrerName,
+        referrer_phone: parsed.data.referrerPhone,
+        referee_name: parsed.data.refereeName,
+        referee_phone: parsed.data.refereePhone,
+        product_interested: parsed.data.productInterested ?? null,
+        source: parsed.data.source,
+        assigned_rep_id: parsed.data.assignedRepId ?? null,
+        notes: parsed.data.notes ?? null,
+        created_by: req.user!.id
+      })
+      .select(REFERRAL_SELECT)
+      .single();
+    if (error) {
+      if (isMissingReferralsTable(error)) { res.status(503).json({ error: "Referral tracking is still being activated on this environment." }); return; }
+      // The unique constraint on (org_id, referee_phone) is a real business
+      // rule, so name it plainly instead of leaking a constraint error.
+      if (error.code === "23505" || /unique/i.test(error.message)) {
+        res.status(409).json({ error: "That person has already been logged as a referred lead." });
+        return;
+      }
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.status(201).json({ row: referralRow(data, new Map()) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not create the referral." });
+  }
+});
+
+router.patch("/referrals/:id", requireRole(...RETENTION_ROLES), async (req, res) => {
+  const parsed = ReferralUpdateSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const { data: existing, error: findError } = await supabase
+      .from(REFERRALS_TABLE)
+      .select("id, assigned_rep_id, status")
+      .eq("org_id", orgId)
+      .eq("id", req.params.id)
+      .maybeSingle();
+    if (findError) {
+      if (isMissingReferralsTable(findError)) { res.status(503).json({ error: "Referral tracking is still being activated on this environment." }); return; }
+      res.status(500).json({ error: findError.message });
+      return;
+    }
+    if (!existing) { res.status(404).json({ error: "Referral not found." }); return; }
+    if (!RETENTION_SUPERVISOR_ROLES.has(req.user!.role) && existing.assigned_rep_id && existing.assigned_rep_id !== req.user!.id) {
+      res.status(403).json({ error: "This referral is not assigned to you." });
+      return;
+    }
+    // Paying a reward is money leaving the business - supervisors only.
+    if (parsed.data.rewardStatus === "paid" && !RETENTION_SUPERVISOR_ROLES.has(req.user!.role)) {
+      res.status(403).json({ error: "Only an Owner, Admin or Manager can mark a referral reward as paid." });
+      return;
+    }
+
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (parsed.data.status !== undefined) {
+      patch.status = parsed.data.status;
+      // Converted timestamp is set on the transition, and cleared if the
+      // status is walked back, so it never claims a conversion that was undone.
+      patch.converted_at = parsed.data.status === "converted"
+        ? (existing.status === "converted" ? undefined : new Date().toISOString())
+        : null;
+      if (patch.converted_at === undefined) delete patch.converted_at;
+    }
+    if (parsed.data.convertedOrderId !== undefined) patch.converted_order_id = parsed.data.convertedOrderId;
+    if (parsed.data.rewardAmount !== undefined) patch.reward_amount = parsed.data.rewardAmount;
+    if (parsed.data.rewardStatus !== undefined) {
+      patch.reward_status = parsed.data.rewardStatus;
+      patch.reward_paid_at = parsed.data.rewardStatus === "paid" ? new Date().toISOString() : null;
+    }
+    if (parsed.data.assignedRepId !== undefined) patch.assigned_rep_id = parsed.data.assignedRepId;
+    if (parsed.data.productInterested !== undefined) patch.product_interested = parsed.data.productInterested;
+    if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
+
+    const { data, error } = await supabase
+      .from(REFERRALS_TABLE)
+      .update(patch)
+      .eq("org_id", orgId)
+      .eq("id", req.params.id)
+      .select(REFERRAL_SELECT)
+      .single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ row: referralRow(data, new Map()) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update the referral." });
   }
 });
 

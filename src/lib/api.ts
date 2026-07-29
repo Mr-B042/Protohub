@@ -1093,6 +1093,43 @@ export interface RetentionManualTaskInput {
   assignedRepId?: string | null;
 }
 
+// Referrals (migration 181) have their own lifecycle: a lead becomes
+// converted only when the referee actually places an order, and the reward
+// is tracked separately from the conversion.
+export interface RetentionReferral {
+  id: string;
+  referrerOrderId: string | null;
+  referrerName: string;
+  referrerPhone: string;
+  refereeName: string;
+  refereePhone: string;
+  productInterested: string | null;
+  source: "whatsapp" | "facebook" | "instagram" | "website" | "phone" | "other";
+  status: "new_lead" | "in_progress" | "converted" | "not_converted";
+  referralDate: string;
+  convertedAt: string | null;
+  convertedOrderId: string | null;
+  rewardAmount: number;
+  rewardStatus: "not_eligible" | "pending" | "paid";
+  rewardPaidAt: string | null;
+  assignedRepId: string | null;
+  assignedRepName: string | null;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface RetentionReferralInput {
+  referrerOrderId?: string | null;
+  referrerName: string;
+  referrerPhone: string;
+  refereeName: string;
+  refereePhone: string;
+  productInterested?: string | null;
+  source: RetentionReferral["source"];
+  assignedRepId?: string | null;
+  notes?: string | null;
+}
+
 export interface RetentionActivityLogRow {
   id: string;
   activityType: "outcome" | "call" | "whatsapp";
@@ -1120,6 +1157,13 @@ export interface RetentionActivityLogRow {
   reviewCollected: boolean | null;
   reviewIsVideo: boolean | null;
   reviewText: string | null;
+  // Migration 180. Null rating = not scored; averages must skip those.
+  reviewRating: number | null;
+  reviewSource: string | null;
+  // Null status = not yet triaged; the UI treats it as pending so nothing
+  // is auto-published without a human.
+  reviewStatus: "pending" | "published" | "not_approved" | "rejected" | null;
+  reviewSharedCount: number;
   mediaUrls: string[] | null;
   adPermissionGranted: boolean | null;
   referralRequestedAt: string | null;
@@ -1202,7 +1246,19 @@ export const customerRetentionApi = {
   bulkAssignTasks: (taskIds: string[], assignedRepId: string | null) =>
     post<{ updated: number }>("/api/customer-retention/tasks/bulk-assign", { taskIds, assignedRepId }),
   importTasks: (tasks: RetentionManualTaskInput[]) =>
-    post<{ imported: number }>("/api/customer-retention/tasks/import", { tasks })
+    post<{ imported: number }>("/api/customer-retention/tasks/import", { tasks }),
+  // Review moderation (migration 180) - status/rating/source are editorial
+  // decisions made after the review was captured.
+  moderateReview: (touchpointId: string, body: {
+    reviewStatus?: "pending" | "published" | "not_approved" | "rejected";
+    reviewRating?: number | null;
+    reviewSource?: string | null;
+    incrementShared?: boolean;
+  }) => patch<{ ok: true }>(`/api/customer-retention/reviews/${encodeURIComponent(touchpointId)}`, body),
+  referrals: () => get<{ rows: RetentionReferral[]; pendingMigration?: boolean }>("/api/customer-retention/referrals"),
+  createReferral: (body: RetentionReferralInput) => post<{ row: RetentionReferral }>("/api/customer-retention/referrals", body),
+  updateReferral: (id: string, body: Partial<Pick<RetentionReferral, "status" | "convertedOrderId" | "rewardAmount" | "rewardStatus" | "assignedRepId" | "productInterested" | "notes">>) =>
+    patch<{ row: RetentionReferral }>(`/api/customer-retention/referrals/${encodeURIComponent(id)}`, body)
 };
 
 export const customerOptOutApi = {

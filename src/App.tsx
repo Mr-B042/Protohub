@@ -28,6 +28,7 @@ import {
   ExternalLink,
   Filter,
   MoreVertical,
+  Star,
   HelpCircle,
   Headphones,
   History,
@@ -123,7 +124,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, customerOptOutApi, customerRetentionApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11165,6 +11166,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionWinbackStatusFilter, setRetentionWinbackStatusFilter] = useState("all");
   const [retentionWinbackRepFilter, setRetentionWinbackRepFilter] = useState("all");
   const [retentionWinbackPage, setRetentionWinbackPage] = useState(1);
+  const [retentionReviewTab, setRetentionReviewTab] = useState<"all" | "pending" | "published" | "not_approved" | "rejected">("all");
+  const [retentionReviewRatingFilter, setRetentionReviewRatingFilter] = useState("all");
+  const [retentionReviewSourceFilter, setRetentionReviewSourceFilter] = useState("all");
+  const [retentionReviewProductFilter, setRetentionReviewProductFilter] = useState("all");
+  const [retentionReviewPage, setRetentionReviewPage] = useState(1);
+  const [retentionReviewMenuId, setRetentionReviewMenuId] = useState<string | null>(null);
+  const [retentionReferrals, setRetentionReferrals] = useState<RetentionReferral[]>([]);
+  const [retentionReferralsPending, setRetentionReferralsPending] = useState(false);
+  const [retentionReferralTab, setRetentionReferralTab] = useState<"all" | "new_lead" | "in_progress" | "converted" | "not_converted">("all");
+  const [retentionReferralSearch, setRetentionReferralSearch] = useState("");
+  const [retentionReferralSourceFilter, setRetentionReferralSourceFilter] = useState("all");
+  const [retentionReferralRepFilter, setRetentionReferralRepFilter] = useState("all");
+  const [retentionReferralPage, setRetentionReferralPage] = useState(1);
+  const [retentionReferralMenuId, setRetentionReferralMenuId] = useState<string | null>(null);
+  const [retentionAddReferralOpen, setRetentionAddReferralOpen] = useState(false);
+  const [retentionReferralSaving, setRetentionReferralSaving] = useState(false);
+  const [retentionReferralForm, setRetentionReferralForm] = useState<RetentionReferralInput>({
+    referrerName: "", referrerPhone: "", refereeName: "", refereePhone: "",
+    productInterested: "", source: "whatsapp", assignedRepId: null, notes: "", referrerOrderId: null
+  });
   const [retentionProductTimingList, setRetentionProductTimingList] = useState<Array<{ id: string; name: string; timing: RetentionProductTiming | null }>>([]);
   const [retentionProductTimingDrafts, setRetentionProductTimingDrafts] = useState<Record<string, RetentionProductTiming>>({});
   const [retentionProductTimingSavingId, setRetentionProductTimingSavingId] = useState<string | null>(null);
@@ -40069,6 +40090,22 @@ ${waybillLineItems(w).length > 1
     reloadRetentionManualTasks();
   }, [activePage, recoveryRepDashboardTab, retentionSubPage, reloadRetentionManualTasks]);
 
+  // Referrals back the Referrals page and the Reports referral figures.
+  const reloadRetentionReferrals = useCallback(() => {
+    customerRetentionApi.referrals()
+      .then((result) => {
+        setRetentionReferrals(result.rows ?? []);
+        setRetentionReferralsPending(Boolean(result.pendingMigration));
+      })
+      .catch(() => setRetentionReferralsPending(true));
+  }, []);
+
+  useEffect(() => {
+    if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention") return;
+    if (retentionSubPage !== "Referrals" && retentionSubPage !== "Reports") return;
+    reloadRetentionReferrals();
+  }, [activePage, recoveryRepDashboardTab, retentionSubPage, reloadRetentionReferrals]);
+
   useEffect(() => {
     if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || retentionSubPage !== "Settings" || currentRole !== "Owner") return;
     customerRetentionApi.productTiming()
@@ -43156,57 +43193,809 @@ ${waybillLineItems(w).length > 1
       const referralActivity = filteredRetentionActivity.filter((row) => row.referralRequestedAt || row.referralCollected || row.nextAction === "request_referral");
       const repeatSaleActivity = filteredRetentionActivity.filter((row) => row.stage === "retention_sale");
 
-      if (retentionSubPage === "Reviews") return (
-        <div className="space-y-4">
-          {retentionDashboardSummary && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Requested</div>
-                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.reviewsRequested}</div>
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Received</div>
-                <div className="text-xl font-black text-emerald-600 mt-1">{retentionDashboardSummary.reviewsReferrals.reviewsReceived}</div>
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Conversion</div>
-                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.reviewConversionPct === null ? "—" : `${retentionDashboardSummary.reviewsReferrals.reviewConversionPct}%`}</div>
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Ad Permission</div>
-                <div className="text-xl font-black text-violet-700 mt-1">{retentionActivityLog.filter((row) => row.adPermissionGranted).length}</div>
-              </div>
-            </div>
-          )}
-          {renderActivityFeed("Review Requests & Evidence", "No review activity logged in this period yet.", reviewActivity)}
-        </div>
-      );
+      if (retentionSubPage === "Reviews") {
+        const reviews = retentionActivityLog.filter((r) => r.reviewCollected);
+        const prevReviews = (retentionActivityPrev ?? []).filter((r) => r.reviewCollected);
+        // A null status has never been triaged, so it counts as pending -
+        // nothing is treated as published without a human deciding.
+        const statusOf = (r: RetentionActivityLogRow) => r.reviewStatus ?? "pending";
+        // Averages skip unrated reviews rather than counting them as zero,
+        // which would drag the score down and misreport sentiment.
+        const ratedReviews = reviews.filter((r) => typeof r.reviewRating === "number" && r.reviewRating !== null);
+        const avgRating = ratedReviews.length > 0
+          ? ratedReviews.reduce((s, r) => s + (r.reviewRating as number), 0) / ratedReviews.length
+          : null;
+        const prevRated = prevReviews.filter((r) => typeof r.reviewRating === "number" && r.reviewRating !== null);
+        const prevAvg = prevRated.length > 0 ? prevRated.reduce((s, r) => s + (r.reviewRating as number), 0) / prevRated.length : null;
 
-      if (retentionSubPage === "Referrals") return (
-        <div className="space-y-4">
-          {retentionDashboardSummary && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Requested</div>
-                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.referralsRequested}</div>
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Received</div>
-                <div className="text-xl font-black text-emerald-600 mt-1">{retentionDashboardSummary.reviewsReferrals.referralsReceived}</div>
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Conversion</div>
-                <div className="text-xl font-black text-gray-900 mt-1">{retentionDashboardSummary.reviewsReferrals.referralConversionPct === null ? "—" : `${retentionDashboardSummary.reviewsReferrals.referralConversionPct}%`}</div>
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Rewards Owed</div>
-                <div className="text-xl font-black text-amber-700 mt-1">{retentionActivityLog.filter((row) => row.customerDiscountOwed && !row.customerDiscountClearedAt).length}</div>
-              </div>
+        const published = reviews.filter((r) => statusOf(r) === "published");
+        const pending = reviews.filter((r) => statusOf(r) === "pending");
+        const notApproved = reviews.filter((r) => statusOf(r) === "not_approved");
+        const rejected = reviews.filter((r) => statusOf(r) === "rejected");
+        const sharedTotal = reviews.reduce((s, r) => s + (r.reviewSharedCount ?? 0), 0);
+
+        const pctOf = (n: number) => reviews.length > 0 ? (n / reviews.length) * 100 : 0;
+        const delta = (current: number | null, before: number | null, goodWhenUp: boolean, fmt: (n: number) => string) => {
+          if (!retentionActivityPrev || current === null || before === null) return null;
+          const diff = current - before;
+          if (Math.abs(diff) < 0.0001) return { text: `No change vs ${retentionActivityPrevLabel}`, tone: "text-gray-400" };
+          const improving = goodWhenUp ? diff > 0 : diff < 0;
+          return { text: `${diff > 0 ? "▲" : "▼"} ${fmt(Math.abs(diff))} vs ${retentionActivityPrevLabel}`, tone: improving ? "text-emerald-600" : "text-rose-600" };
+        };
+
+        const sourceMeta: Record<string, { label: string; color: string }> = {
+          whatsapp: { label: "WhatsApp", color: "#22c55e" },
+          facebook: { label: "Facebook", color: "#3b82f6" },
+          instagram: { label: "Instagram", color: "#ec4899" },
+          website: { label: "Website", color: "#f59e0b" },
+          phone: { label: "Phone", color: "#8b5cf6" },
+          other: { label: "Other", color: "#94a3b8" }
+        };
+        const statusMeta: Record<string, { label: string; class: string }> = {
+          published: { label: "Published", class: "border-emerald-200 bg-emerald-50 text-emerald-700" },
+          pending: { label: "Pending", class: "border-amber-200 bg-amber-50 text-amber-700" },
+          not_approved: { label: "Not Approved", class: "border-rose-200 bg-rose-50 text-rose-700" },
+          rejected: { label: "Rejected", class: "border-gray-200 bg-gray-100 text-gray-600" }
+        };
+
+        const reviewQuery = retentionActivitySearch.trim().toLowerCase();
+        const visibleReviews = reviews
+          .filter((r) => retentionReviewTab === "all" || statusOf(r) === retentionReviewTab)
+          .filter((r) => retentionReviewRatingFilter === "all" || String(r.reviewRating ?? "") === retentionReviewRatingFilter)
+          .filter((r) => retentionReviewSourceFilter === "all" || (r.reviewSource ?? "other") === retentionReviewSourceFilter)
+          .filter((r) => retentionReviewProductFilter === "all" || r.productName === retentionReviewProductFilter)
+          .filter((r) => !reviewQuery || r.customerName.toLowerCase().includes(reviewQuery) || (r.reviewText ?? "").toLowerCase().includes(reviewQuery) || r.productName.toLowerCase().includes(reviewQuery) || r.orderId.toLowerCase().includes(reviewQuery));
+
+        const pageSize = 8;
+        const totalRows = visibleReviews.length;
+        const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+        const page = Math.min(retentionReviewPage, totalPages);
+        const paged = visibleReviews.slice((page - 1) * pageSize, page * pageSize);
+        const pageNums: Array<number | "gap"> = [];
+        for (let p = 1; p <= totalPages; p += 1) {
+          if (p <= 2 || p > totalPages - 1 || Math.abs(p - page) <= 1) pageNums.push(p);
+          else if (pageNums[pageNums.length - 1] !== "gap") pageNums.push("gap");
+        }
+
+        const ratingRows = [5, 4, 3, 2, 1].map((star) => {
+          const count = ratedReviews.filter((r) => r.reviewRating === star).length;
+          return { star, count, pct: ratedReviews.length > 0 ? (count / ratedReviews.length) * 100 : 0 };
+        });
+        const starColor: Record<number, string> = { 5: "#10b981", 4: "#84cc16", 3: "#f59e0b", 2: "#fb923c", 1: "#e11d48" };
+
+        const topProducts = (() => {
+          const map = new Map<string, { count: number; ratingSum: number; rated: number }>();
+          reviews.forEach((r) => {
+            const cur = map.get(r.productName) ?? { count: 0, ratingSum: 0, rated: 0 };
+            cur.count += 1;
+            if (typeof r.reviewRating === "number") { cur.ratingSum += r.reviewRating; cur.rated += 1; }
+            map.set(r.productName, cur);
+          });
+          return [...map.entries()]
+            .map(([name, v]) => ({ name, count: v.count, avg: v.rated > 0 ? v.ratingSum / v.rated : null }))
+            .sort((a, b) => b.count - a.count).slice(0, 6);
+        })();
+
+        const sourceCounts = Object.keys(sourceMeta)
+          .map((key) => ({ key, ...sourceMeta[key], count: reviews.filter((r) => (r.reviewSource ?? "other") === key).length }))
+          .filter((s) => s.count > 0);
+        const sourceTotal = sourceCounts.reduce((s, x) => s + x.count, 0);
+        const circumference = 2 * Math.PI * 42;
+        let offset = 0;
+
+        const reviewProducts = Array.from(new Set(reviews.map((r) => r.productName).filter(Boolean))).sort();
+        const unratedCount = reviews.length - ratedReviews.length;
+        const unsourcedCount = reviews.filter((r) => !r.reviewSource).length;
+
+        const moderate = async (id: string, body: Parameters<typeof customerRetentionApi.moderateReview>[1], okMessage: string) => {
+          try {
+            await customerRetentionApi.moderateReview(id, body);
+            showToast(okMessage);
+            refreshRetentionPage();
+          } catch (err: any) { showToast(err?.message ?? "Could not update the review."); }
+        };
+
+        const stars = (rating: number | null) => (
+          <span className="inline-flex items-center gap-0.5" title={rating === null ? "Not rated" : `${rating} of 5`}>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <Star key={n} className={`h-3 w-3 ${rating !== null && n <= rating ? "fill-amber-400 text-amber-400" : "text-gray-300"}`} />
+            ))}
+          </span>
+        );
+
+        const exportReviewsCsv = () => {
+          const header = ["Date", "Customer", "Phone", "Order", "Product", "Rating", "Review", "Source", "Status", "Times Shared", "Logged By"];
+          const body = visibleReviews.map((r) => [
+            new Date(r.loggedAt).toLocaleString(), r.customerName, r.phone, r.orderId, r.productName,
+            r.reviewRating === null ? "" : String(r.reviewRating), r.reviewText ?? "",
+            r.reviewSource ? sourceMeta[r.reviewSource]?.label ?? r.reviewSource : "",
+            statusMeta[statusOf(r)].label, String(r.reviewSharedCount ?? 0), r.loggedByName
+          ]);
+          const csv = [header, ...body].map((row) => row.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+          const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url; link.download = `reviews-${new Date().toISOString().slice(0, 10)}.csv`; link.click();
+          URL.revokeObjectURL(url);
+        };
+
+        return (
+          <div className="space-y-4">
+            {(unratedCount > 0 || unsourcedCount > 0) && (
+              <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-800">
+                {unratedCount > 0 && `${unratedCount} review${unratedCount === 1 ? "" : "s"} have no star rating`}
+                {unratedCount > 0 && unsourcedCount > 0 && " and "}
+                {unsourcedCount > 0 && `${unsourcedCount} have no source`}
+                {" "}- they were captured before rating and channel were tracked. Set them from each row's ⋮ menu; averages skip unrated reviews rather than counting them as zero.
+              </p>
+            )}
+
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+              {([
+                ["Reviews Received", String(reviews.length), "text-emerald-700", "bg-emerald-50", MessageCircle, delta(reviews.length, retentionActivityPrev ? prevReviews.length : null, true, (n) => String(Math.round(n)))],
+                ["Avg. Rating", avgRating === null ? "—" : `${avgRating.toFixed(1)} / 5`, "text-amber-700", "bg-amber-50", Star, delta(avgRating, prevAvg, true, (n) => n.toFixed(1))],
+                ["Published", `${published.length} (${pctOf(published.length).toFixed(0)}%)`, "text-sky-700", "bg-sky-50", CheckCircle2, null],
+                ["Pending", `${pending.length} (${pctOf(pending.length).toFixed(0)}%)`, "text-orange-700", "bg-orange-50", Clock, null],
+                ["Shared / Used", String(sharedTotal), "text-violet-700", "bg-violet-50", Gift, null],
+                ["With Media", String(reviews.filter((r) => (r.mediaUrls ?? []).length > 0 || r.reviewIsVideo).length), "text-indigo-700", "bg-indigo-50", Sparkles, null]
+              ] as const).map(([label, value, tone, chip, Icon, d]) => (
+                <div key={label} className="rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${chip}`}><Icon className={`h-4 w-4 ${tone}`} /></span>
+                    <span className="text-[10px] font-black uppercase leading-tight tracking-[0.1em] text-gray-500">{label}</span>
+                  </div>
+                  <strong className={`mt-2 block text-2xl font-black ${tone}`}>{value}</strong>
+                  {d && <span className={`mt-0.5 block text-[10px] font-bold ${d.tone}`}>{d.text}</span>}
+                </div>
+              ))}
             </div>
-          )}
-          {renderActivityFeed("Referral Requests & Contacts", "No referral activity logged in this period yet.", referralActivity)}
-        </div>
-      );
+
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_290px]">
+              <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="-mb-3 flex gap-1 overflow-x-auto lg:mb-0">
+                    {([
+                      ["all", "All Reviews", reviews.length],
+                      ["pending", "Pending", pending.length],
+                      ["published", "Published", published.length],
+                      ["not_approved", "Not Approved", notApproved.length],
+                      ["rejected", "Rejected", rejected.length]
+                    ] as const).map(([key, label, count]) => (
+                      <button key={key} type="button" onClick={() => { setRetentionReviewTab(key); setRetentionReviewPage(1); }}
+                        className={`!min-h-0 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${retentionReviewTab === key ? "border-emerald-600 font-black text-emerald-700" : "border-transparent font-bold text-gray-500 hover:text-gray-800"}`}>
+                        {label}
+                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${retentionReviewTab === key ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>{count}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button type="button" onClick={exportReviewsCsv} className="!min-h-0 inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-gray-50"><Download className="h-4 w-4" /> Export</button>
+                </div>
+
+                <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
+                  <div className="relative min-w-0 flex-1 sm:min-w-[190px]">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                    <input value={retentionActivitySearch} onChange={(e) => { setRetentionActivitySearch(e.target.value); setRetentionReviewPage(1); }} placeholder="Search review or customer..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
+                  </div>
+                  <select value={retentionReviewRatingFilter} onChange={(e) => { setRetentionReviewRatingFilter(e.target.value); setRetentionReviewPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                    <option value="all">All Ratings</option>
+                    {[5, 4, 3, 2, 1].map((n) => <option key={n} value={String(n)}>{n} star{n === 1 ? "" : "s"}</option>)}
+                  </select>
+                  <select value={retentionReviewProductFilter} onChange={(e) => { setRetentionReviewProductFilter(e.target.value); setRetentionReviewPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                    <option value="all">All Products</option>
+                    {reviewProducts.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  <select value={retentionReviewSourceFilter} onChange={(e) => { setRetentionReviewSourceFilter(e.target.value); setRetentionReviewPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                    <option value="all">All Sources</option>
+                    {Object.entries(sourceMeta).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                  </select>
+                </div>
+
+                {retentionActivityLogLoading && retentionActivityLog.length === 0 ? (
+                  <p className="px-5 py-10 text-center text-sm text-gray-400">Loading reviews…</p>
+                ) : paged.length === 0 ? (
+                  <p className="px-5 py-10 text-center text-sm text-gray-400">{reviews.length === 0 ? "No reviews collected in this period yet." : "No reviews match this view."}</p>
+                ) : (
+                  <>
+                    <div className="hidden overflow-x-auto lg:block">
+                      <table className="w-full min-w-[1000px] text-sm">
+                        <thead className="bg-gray-50 text-[10px] uppercase tracking-wider text-gray-500">
+                          <tr>
+                            <th className="px-3 py-3 text-left font-bold">Customer</th>
+                            <th className="px-3 py-3 text-left font-bold">Product / Order</th>
+                            <th className="px-3 py-3 text-left font-bold">Rating</th>
+                            <th className="px-3 py-3 text-left font-bold">Review</th>
+                            <th className="px-3 py-3 text-left font-bold">Source</th>
+                            <th className="px-3 py-3 text-left font-bold">Status</th>
+                            <th className="px-3 py-3 text-left font-bold">Date</th>
+                            <th className="px-3 py-3 text-left font-bold">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {paged.map((r) => {
+                            const st = statusMeta[statusOf(r)];
+                            const src = r.reviewSource ? sourceMeta[r.reviewSource] : null;
+                            return (
+                              <tr key={r.id} className="align-top hover:bg-gray-50">
+                                <td className="px-3 py-3">
+                                  <button type="button" onClick={() => setRetentionDrawerPhone(r.phone)} className="!min-h-0 text-left">
+                                    <div className="font-bold text-gray-900">{r.customerName}</div>
+                                    <div className="text-xs text-gray-500">{r.phone}</div>
+                                  </button>
+                                </td>
+                                <td className="px-3 py-3 text-xs text-gray-600">{r.productName}<div className="text-[10px] text-gray-400">#{r.orderId} · {formatMoney(r.orderAmount)}</div></td>
+                                <td className="px-3 py-3">
+                                  {stars(r.reviewRating)}
+                                  <div className="mt-0.5 text-[10px] font-black text-gray-600">{r.reviewRating === null ? <span className="text-gray-400">Not rated</span> : `${r.reviewRating}.0`}</div>
+                                </td>
+                                <td className="px-3 py-3 text-xs text-gray-700">
+                                  <p className="max-w-[280px] whitespace-pre-wrap break-words">{r.reviewText ? `"${r.reviewText}"` : <span className="italic text-gray-400">No text captured</span>}</p>
+                                  {(r.reviewIsVideo || (r.mediaUrls ?? []).length > 0) && (
+                                    <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-1.5 text-[10px] font-bold text-indigo-700">
+                                      {r.reviewIsVideo ? "Video" : `${(r.mediaUrls ?? []).length} photo(s)`}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-3">
+                                  {src
+                                    ? <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-bold text-gray-700"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: src.color }} />{src.label}</span>
+                                    : <span className="text-xs text-gray-300">—</span>}
+                                </td>
+                                <td className="px-3 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${st.class}`}>{st.label}</span></td>
+                                <td className="px-3 py-3 text-xs text-gray-600">
+                                  <div className="whitespace-nowrap">{new Date(r.loggedAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}</div>
+                                  <div className="whitespace-nowrap text-[10px] text-gray-400">{new Date(r.loggedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <div className="flex items-center gap-1.5">
+                                    <button type="button" onClick={() => setRetentionDrawerPhone(r.phone)} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-500 hover:bg-gray-50" aria-label="View customer"><Eye className="h-3.5 w-3.5" /></button>
+                                    <div className="relative">
+                                      <button type="button" onClick={() => setRetentionReviewMenuId(retentionReviewMenuId === r.id ? null : r.id)} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-500 hover:bg-gray-50" aria-label="Moderate review"><MoreVertical className="h-3.5 w-3.5" /></button>
+                                      {retentionReviewMenuId === r.id && (
+                                        <>
+                                          <div className="fixed inset-0 z-20" onClick={() => setRetentionReviewMenuId(null)} />
+                                          <div className="absolute right-0 z-30 mt-1 w-56 rounded-xl border border-gray-200 bg-white p-1 shadow-lg">
+                                            <p className="px-3 py-1 text-[10px] font-black uppercase tracking-wide text-gray-400">Status</p>
+                                            {(["published", "pending", "not_approved", "rejected"] as const).map((st2) => (
+                                              <button key={st2} type="button" onClick={() => { setRetentionReviewMenuId(null); moderate(r.id, { reviewStatus: st2 }, `Review marked ${statusMeta[st2].label.toLowerCase()}.`); }}
+                                                className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                                                {statusMeta[st2].label}
+                                              </button>
+                                            ))}
+                                            <p className="mt-1 border-t border-gray-100 px-3 pt-1.5 text-[10px] font-black uppercase tracking-wide text-gray-400">Set rating</p>
+                                            <div className="flex gap-1 px-2 pb-1">
+                                              {[1, 2, 3, 4, 5].map((n) => (
+                                                <button key={n} type="button" onClick={() => { setRetentionReviewMenuId(null); moderate(r.id, { reviewRating: n }, `Rated ${n} star${n === 1 ? "" : "s"}.`); }}
+                                                  className="!min-h-0 flex-1 rounded border border-gray-200 py-1 text-xs font-black text-gray-700 hover:bg-amber-50">{n}</button>
+                                              ))}
+                                            </div>
+                                            <p className="mt-1 border-t border-gray-100 px-3 pt-1.5 text-[10px] font-black uppercase tracking-wide text-gray-400">Source</p>
+                                            <div className="grid grid-cols-2 gap-1 px-2 pb-1">
+                                              {Object.entries(sourceMeta).map(([k, v]) => (
+                                                <button key={k} type="button" onClick={() => { setRetentionReviewMenuId(null); moderate(r.id, { reviewSource: k }, `Source set to ${v.label}.`); }}
+                                                  className="!min-h-0 rounded border border-gray-200 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50">{v.label}</button>
+                                              ))}
+                                            </div>
+                                            <button type="button" onClick={() => { setRetentionReviewMenuId(null); moderate(r.id, { incrementShared: true }, "Marked as shared."); }}
+                                              className="!min-h-0 mt-1 flex w-full items-center gap-2 border-t border-gray-100 px-3 py-2 text-left text-sm font-semibold text-violet-700 hover:bg-violet-50">
+                                              <Gift className="h-4 w-4" /> Mark as shared ({r.reviewSharedCount ?? 0})
+                                            </button>
+                                          </div>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="divide-y divide-gray-100 lg:hidden">
+                      {paged.map((r) => {
+                        const st = statusMeta[statusOf(r)];
+                        return (
+                          <article key={r.id} className="flex flex-col gap-2 px-4 py-4">
+                            <button type="button" onClick={() => setRetentionDrawerPhone(r.phone)} className="!min-h-0 text-left">
+                              <div className="flex items-center gap-2">{stars(r.reviewRating)}<span className="font-bold text-gray-900">{r.customerName}</span></div>
+                              <p className="mt-1 text-xs text-gray-700">{r.reviewText ? `"${r.reviewText}"` : <span className="italic text-gray-400">No text captured</span>}</p>
+                              <p className="mt-1 text-[11px] text-gray-400">{r.productName} · #{r.orderId} · {new Date(r.loggedAt).toLocaleDateString()}</p>
+                            </button>
+                            <span className={`inline-flex w-fit items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${st.class}`}>{st.label}</span>
+                          </article>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex flex-col items-center justify-between gap-2 border-t border-gray-200 px-4 py-3 sm:flex-row">
+                      <span className="text-xs font-semibold text-gray-500">Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, totalRows)} of {totalRows} review{totalRows === 1 ? "" : "s"}</span>
+                      {totalPages > 1 && (
+                        <div className="flex items-center gap-1">
+                          <button type="button" disabled={page === 1} onClick={() => setRetentionReviewPage(page - 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-3.5 w-3.5" /></button>
+                          {pageNums.map((p, i) => p === "gap"
+                            ? <span key={`g${i}`} className="px-1 text-xs text-gray-400">…</span>
+                            : <button key={p} type="button" onClick={() => setRetentionReviewPage(p)} className={`!min-h-0 inline-flex h-7 min-w-[28px] items-center justify-center rounded-md border px-1.5 text-xs font-bold ${p === page ? "border-emerald-600 bg-emerald-600 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{p}</button>)}
+                          <button type="button" disabled={page === totalPages} onClick={() => setRetentionReviewPage(page + 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-3.5 w-3.5" /></button>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </section>
+
+              <aside className="space-y-4">
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Rating Breakdown</h3>
+                  {ratedReviews.length === 0 ? (
+                    <p className="mt-3 text-xs italic text-gray-400">No reviews have been rated yet.</p>
+                  ) : (
+                    <>
+                      <div className="mt-2 flex items-center gap-3">
+                        <div>
+                          <strong className="block text-3xl font-black text-gray-900">{avgRating === null ? "—" : avgRating.toFixed(1)}</strong>
+                          {stars(avgRating === null ? null : Math.round(avgRating))}
+                          <p className="mt-0.5 text-[10px] text-gray-400">Based on {ratedReviews.length} rated review{ratedReviews.length === 1 ? "" : "s"}</p>
+                        </div>
+                      </div>
+                      <ul className="mt-3 space-y-1.5">
+                        {ratingRows.map((row) => (
+                          <li key={row.star} className="flex items-center gap-2 text-[11px]">
+                            <span className="w-12 shrink-0 font-bold text-gray-600">{row.star} Star{row.star === 1 ? "" : "s"}</span>
+                            <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-gray-100">
+                              <span className="block h-full rounded-full" style={{ width: `${Math.max(row.count > 0 ? 3 : 0, row.pct)}%`, backgroundColor: starColor[row.star] }} />
+                            </span>
+                            <span className="shrink-0 font-black text-gray-800">{row.count}</span>
+                            <span className="shrink-0 text-gray-400">({row.pct.toFixed(1)}%)</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Top Products by Reviews</h3>
+                  {topProducts.length === 0 ? (
+                    <p className="mt-3 text-xs italic text-gray-400">No reviews yet.</p>
+                  ) : (
+                    <ul className="mt-3 space-y-2">
+                      {topProducts.map((p) => (
+                        <li key={p.name} className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-bold text-gray-800">{p.name}</p>
+                            <p className="text-[10px] text-gray-400">{p.count} review{p.count === 1 ? "" : "s"}</p>
+                          </div>
+                          <span className="inline-flex shrink-0 items-center gap-1 text-xs font-black text-gray-700">
+                            {p.avg === null ? <span className="text-gray-300">—</span> : <>{p.avg.toFixed(1)}<Star className="h-3 w-3 fill-amber-400 text-amber-400" /></>}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Sources Breakdown</h3>
+                  {sourceTotal === 0 ? (
+                    <p className="mt-3 text-xs italic text-gray-400">No review sources recorded yet.</p>
+                  ) : (
+                    <div className="mt-3 flex items-center gap-3">
+                      <svg viewBox="0 0 100 100" className="h-24 w-24 shrink-0 -rotate-90">
+                        <circle cx="50" cy="50" r="42" fill="none" stroke="#f1f5f9" strokeWidth="12" />
+                        {sourceCounts.map((s) => {
+                          const len = (s.count / sourceTotal) * circumference;
+                          const el = <circle key={s.key} cx="50" cy="50" r="42" fill="none" stroke={s.color} strokeWidth="12" strokeDasharray={`${len} ${circumference - len}`} strokeDashoffset={-offset} />;
+                          offset += len;
+                          return el;
+                        })}
+                      </svg>
+                      <ul className="min-w-0 flex-1 space-y-1">
+                        {sourceCounts.map((s) => (
+                          <li key={s.key} className="flex items-center gap-1.5 text-[11px]">
+                            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: s.color }} />
+                            <span className="flex-1 truncate font-semibold text-gray-600">{s.label}</span>
+                            <span className="shrink-0 font-black text-gray-800">{s.count}</span>
+                            <span className="shrink-0 text-gray-400">({((s.count / sourceTotal) * 100).toFixed(1)}%)</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Quick Actions</h3>
+                  <div className="mt-3 space-y-1.5">
+                    <button type="button" onClick={() => { setRetentionReviewTab("pending"); setRetentionReviewPage(1); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Clock className="h-3.5 w-3.5 text-amber-600" /> Moderate pending ({pending.length})</button>
+                    <button type="button" onClick={() => setRetentionSubPage("Tasks")} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Sparkles className="h-3.5 w-3.5 text-sky-600" /> Request more reviews</button>
+                    <button type="button" onClick={exportReviewsCsv} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Download className="h-3.5 w-3.5 text-gray-500" /> Export testimonials</button>
+                  </div>
+                  <p className="mt-3 border-t border-gray-100 pt-2 text-[11px] text-gray-400">
+                    The design's "Engagement" tile needs likes/views from Facebook and Instagram. Protohub has no social analytics connection, so it is left out rather than invented.
+                  </p>
+                </section>
+              </aside>
+            </div>
+          </div>
+        );
+      }
+
+      if (retentionSubPage === "Referrals") {
+        // Referrals asked for vs leads captured come from touchpoints (the ask
+        // happens on a call); everything after that lives in the referral
+        // table, because only it knows whether the referee actually bought.
+        const referralsAsked = retentionActivityLog.filter((r) => r.referralRequestedAt).length;
+        const refs = retentionReferrals;
+        const newLeads = refs.filter((r) => r.status === "new_lead");
+        const inProgress = refs.filter((r) => r.status === "in_progress");
+        const converted = refs.filter((r) => r.status === "converted");
+        const notConverted = refs.filter((r) => r.status === "not_converted");
+        // Earned = every reward attached to a converted referral. Paid = the
+        // subset actually paid out. Kept separate so the gap is visible.
+        const rewardsEarned = refs.filter((r) => r.rewardStatus !== "not_eligible").reduce((s, r) => s + r.rewardAmount, 0);
+        const rewardsPaid = refs.filter((r) => r.rewardStatus === "paid").reduce((s, r) => s + r.rewardAmount, 0);
+        const conversionRate = refs.length > 0 ? (converted.length / refs.length) * 100 : null;
+
+        const statusMeta: Record<string, { label: string; class: string; color: string }> = {
+          new_lead: { label: "New Lead", class: "border-sky-200 bg-sky-50 text-sky-700", color: "#eab308" },
+          in_progress: { label: "In Progress", class: "border-amber-200 bg-amber-50 text-amber-700", color: "#f59e0b" },
+          converted: { label: "Converted", class: "border-emerald-200 bg-emerald-50 text-emerald-700", color: "#10b981" },
+          not_converted: { label: "Not Converted", class: "border-rose-200 bg-rose-50 text-rose-700", color: "#e11d48" }
+        };
+        const rewardMeta: Record<string, { label: string; class: string }> = {
+          paid: { label: "Paid", class: "text-emerald-700" },
+          pending: { label: "Pending", class: "text-amber-700" },
+          not_eligible: { label: "Not Eligible", class: "text-gray-400" }
+        };
+        const sourceLabel: Record<string, string> = {
+          whatsapp: "WhatsApp", facebook: "Facebook", instagram: "Instagram",
+          website: "Website", phone: "Phone", other: "Other"
+        };
+
+        const refQuery = retentionReferralSearch.trim().toLowerCase();
+        const visibleRefs = refs
+          .filter((r) => retentionReferralTab === "all" || r.status === retentionReferralTab)
+          .filter((r) => retentionReferralSourceFilter === "all" || r.source === retentionReferralSourceFilter)
+          .filter((r) => retentionReferralRepFilter === "all" || r.assignedRepId === retentionReferralRepFilter)
+          .filter((r) => !refQuery
+            || r.referrerName.toLowerCase().includes(refQuery) || r.referrerPhone.includes(refQuery)
+            || r.refereeName.toLowerCase().includes(refQuery) || r.refereePhone.includes(refQuery)
+            || (r.productInterested ?? "").toLowerCase().includes(refQuery));
+
+        const pageSize = 8;
+        const totalRows = visibleRefs.length;
+        const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+        const page = Math.min(retentionReferralPage, totalPages);
+        const paged = visibleRefs.slice((page - 1) * pageSize, page * pageSize);
+        const pageNums: Array<number | "gap"> = [];
+        for (let p = 1; p <= totalPages; p += 1) {
+          if (p <= 2 || p > totalPages - 1 || Math.abs(p - page) <= 1) pageNums.push(p);
+          else if (pageNums[pageNums.length - 1] !== "gap") pageNums.push("gap");
+        }
+
+        // Funnel: asked → captured as a lead → worked → converted. The first
+        // stage comes from touchpoints, so it can exceed the table count when
+        // an ask produced no contact.
+        const funnelBase = Math.max(referralsAsked, refs.length, 1);
+        const funnel = [
+          { label: "Referrals Asked", value: referralsAsked, color: "#a7f3d0" },
+          { label: "Leads Captured", value: refs.length, color: "#fde68a" },
+          { label: "In Progress", value: inProgress.length, color: "#fdba74" },
+          { label: "Converted", value: converted.length, color: "#fca5a5" }
+        ];
+
+        const topReferrers = (() => {
+          const map = new Map<string, { name: string; conversions: number; revenue: number }>();
+          converted.forEach((r) => {
+            const key = r.referrerPhone;
+            const cur = map.get(key) ?? { name: r.referrerName, conversions: 0, revenue: 0 };
+            cur.conversions += 1;
+            cur.revenue += r.rewardAmount;
+            map.set(key, cur);
+          });
+          return [...map.values()].sort((a, b) => b.conversions - a.conversions).slice(0, 5);
+        })();
+
+        const refReps = Array.from(new Map(refs.filter((r) => r.assignedRepId).map((r) => [r.assignedRepId as string, r.assignedRepName ?? "Unknown"])).entries()).sort((a, b) => a[1].localeCompare(b[1]));
+
+        const updateReferral = async (id: string, body: Parameters<typeof customerRetentionApi.updateReferral>[1], okMessage: string) => {
+          try {
+            await customerRetentionApi.updateReferral(id, body);
+            showToast(okMessage);
+            reloadRetentionReferrals();
+          } catch (err: any) { showToast(err?.message ?? "Could not update the referral."); }
+        };
+
+        const exportReferralsCsv = () => {
+          const header = ["Referrer", "Referrer Phone", "Referee", "Referee Phone", "Product Interested", "Source", "Status", "Referral Date", "Converted Date", "Converted Order", "Reward", "Reward Status", "Assigned Rep"];
+          const body = visibleRefs.map((r) => [
+            r.referrerName, r.referrerPhone, r.refereeName, r.refereePhone,
+            r.productInterested ?? "", sourceLabel[r.source] ?? r.source, statusMeta[r.status].label,
+            new Date(r.referralDate).toLocaleString(),
+            r.convertedAt ? new Date(r.convertedAt).toLocaleString() : "",
+            r.convertedOrderId ?? "", String(r.rewardAmount), rewardMeta[r.rewardStatus].label,
+            r.assignedRepName ?? ""
+          ]);
+          const csv = [header, ...body].map((row) => row.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+          const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url; link.download = `referrals-${new Date().toISOString().slice(0, 10)}.csv`; link.click();
+          URL.revokeObjectURL(url);
+        };
+
+        return (
+          <div className="space-y-4">
+            {retentionReferralsPending && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                Referral tracking is not activated on this environment yet.
+              </p>
+            )}
+
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+              {([
+                ["Referrals Asked", String(referralsAsked), "text-sky-700", "bg-sky-50", Users],
+                ["New Leads", String(newLeads.length + inProgress.length), "text-indigo-700", "bg-indigo-50", UserPlus],
+                ["Converted Referrals", String(converted.length), "text-emerald-700", "bg-emerald-50", ShoppingCart],
+                ["Rewards Earned", formatMoney(rewardsEarned), "text-amber-700", "bg-amber-50", CircleDollarSign],
+                ["Rewards Paid", formatMoney(rewardsPaid), "text-violet-700", "bg-violet-50", Gift],
+                ["Conversion Rate", conversionRate === null ? "—" : `${conversionRate.toFixed(1)}%`, "text-rose-700", "bg-rose-50", TrendingUp]
+              ] as const).map(([label, value, tone, chip, Icon]) => (
+                <div key={label} className="rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${chip}`}><Icon className={`h-4 w-4 ${tone}`} /></span>
+                    <span className="text-[10px] font-black uppercase leading-tight tracking-[0.1em] text-gray-500">{label}</span>
+                  </div>
+                  <strong className={`mt-2 block text-2xl font-black ${tone}`}>{value}</strong>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_290px]">
+              <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div className="flex flex-col gap-3 border-b border-gray-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="-mb-3 flex gap-1 overflow-x-auto lg:mb-0">
+                    {([
+                      ["all", "All Referrals", refs.length],
+                      ["new_lead", "New Leads", newLeads.length],
+                      ["in_progress", "In Progress", inProgress.length],
+                      ["converted", "Converted", converted.length],
+                      ["not_converted", "Not Converted", notConverted.length]
+                    ] as const).map(([key, label, count]) => (
+                      <button key={key} type="button" onClick={() => { setRetentionReferralTab(key); setRetentionReferralPage(1); }}
+                        className={`!min-h-0 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${retentionReferralTab === key ? "border-emerald-600 font-black text-emerald-700" : "border-transparent font-bold text-gray-500 hover:text-gray-800"}`}>
+                        {label}
+                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${retentionReferralTab === key ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>{count}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button type="button" onClick={exportReferralsCsv} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-gray-50"><Download className="h-4 w-4" /> Export</button>
+                    <button type="button" onClick={() => { setRetentionReferralForm({ referrerName: "", referrerPhone: "", refereeName: "", refereePhone: "", productInterested: "", source: "whatsapp", assignedRepId: null, notes: "", referrerOrderId: null }); setRetentionAddReferralOpen(true); }} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-sm font-black text-white hover:bg-emerald-700"><Plus className="h-4 w-4" /> Add Referral</button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
+                  <div className="relative min-w-0 flex-1 sm:min-w-[190px]">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                    <input value={retentionReferralSearch} onChange={(e) => { setRetentionReferralSearch(e.target.value); setRetentionReferralPage(1); }} placeholder="Search referrer or referee..." className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm" />
+                  </div>
+                  <select value={retentionReferralSourceFilter} onChange={(e) => { setRetentionReferralSourceFilter(e.target.value); setRetentionReferralPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                    <option value="all">All Sources</option>
+                    {Object.entries(sourceLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                  {refReps.length > 0 && (
+                    <select value={retentionReferralRepFilter} onChange={(e) => { setRetentionReferralRepFilter(e.target.value); setRetentionReferralPage(1); }} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-700">
+                      <option value="all">All Reps</option>
+                      {refReps.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                    </select>
+                  )}
+                </div>
+
+                {paged.length === 0 ? (
+                  <p className="px-5 py-10 text-center text-sm text-gray-400">
+                    {refs.length === 0 ? "No referrals logged yet. Use Add Referral to record one." : "No referrals match this view."}
+                  </p>
+                ) : (
+                  <>
+                    <div className="hidden overflow-x-auto lg:block">
+                      <table className="w-full min-w-[1160px] text-sm">
+                        <thead className="bg-gray-50 text-[10px] uppercase tracking-wider text-gray-500">
+                          <tr>
+                            <th className="px-3 py-3 text-left font-bold">Referrer</th>
+                            <th className="px-3 py-3 text-left font-bold">Referee (Lead)</th>
+                            <th className="px-3 py-3 text-left font-bold">Product Interested</th>
+                            <th className="px-3 py-3 text-left font-bold">Source</th>
+                            <th className="px-3 py-3 text-left font-bold">Status</th>
+                            <th className="px-3 py-3 text-left font-bold">Referral Date</th>
+                            <th className="px-3 py-3 text-left font-bold">Converted Date</th>
+                            <th className="px-3 py-3 text-left font-bold">Reward</th>
+                            <th className="px-3 py-3 text-left font-bold">Assigned Rep</th>
+                            <th className="px-3 py-3 text-left font-bold">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {paged.map((r) => {
+                            const st = statusMeta[r.status];
+                            const rw = rewardMeta[r.rewardStatus];
+                            const whatsappUrl = buildWhatsAppTargets(r.refereePhone, `Hello ${r.refereeName}, ${r.referrerName} recommended Protohub to you.`).normalUrl ?? undefined;
+                            return (
+                              <tr key={r.id} className="align-top hover:bg-gray-50">
+                                <td className="px-3 py-3">
+                                  <button type="button" onClick={() => setRetentionDrawerPhone(r.referrerPhone)} className="!min-h-0 text-left">
+                                    <div className="font-bold text-gray-900">{r.referrerName}</div>
+                                    <div className="text-xs text-gray-500">{r.referrerPhone}</div>
+                                  </button>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <div className="font-bold text-gray-900">{r.refereeName}</div>
+                                  <div className="text-xs text-gray-500">{r.refereePhone}</div>
+                                </td>
+                                <td className="px-3 py-3 text-xs text-gray-600">{r.productInterested || <span className="text-gray-300">—</span>}</td>
+                                <td className="px-3 py-3 whitespace-nowrap text-xs font-semibold text-gray-700">{sourceLabel[r.source] ?? r.source}</td>
+                                <td className="px-3 py-3"><span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${st.class}`}>{st.label}</span></td>
+                                <td className="px-3 py-3 text-xs text-gray-600">
+                                  <div className="whitespace-nowrap">{new Date(r.referralDate).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}</div>
+                                  <div className="whitespace-nowrap text-[10px] text-gray-400">{new Date(r.referralDate).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>
+                                </td>
+                                <td className="px-3 py-3 text-xs text-gray-600">
+                                  {r.convertedAt
+                                    ? <>
+                                        <div className="whitespace-nowrap">{new Date(r.convertedAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}</div>
+                                        {r.convertedOrderId && <div className="whitespace-nowrap text-[10px] text-gray-400">#{r.convertedOrderId}</div>}
+                                      </>
+                                    : <span className="text-gray-300">—</span>}
+                                </td>
+                                <td className="px-3 py-3 text-xs">
+                                  <div className="font-black text-gray-900">{r.rewardAmount > 0 ? formatMoney(r.rewardAmount) : <span className="text-gray-400">NO</span>}</div>
+                                  <div className={`text-[10px] font-bold ${rw.class}`}>{rw.label}</div>
+                                </td>
+                                <td className="px-3 py-3 text-xs font-semibold text-gray-700">{r.assignedRepName ?? <span className="text-gray-400">Unassigned</span>}</td>
+                                <td className="px-3 py-3">
+                                  <div className="flex items-center gap-1.5">
+                                    <a href={`tel:${r.refereePhone}`} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-emerald-600 hover:bg-gray-50"><Phone className="h-3.5 w-3.5" /></a>
+                                    <a href={whatsappUrl} target="_blank" rel="noreferrer" className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-emerald-600 hover:bg-gray-50"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+                                    <div className="relative">
+                                      <button type="button" onClick={() => setRetentionReferralMenuId(retentionReferralMenuId === r.id ? null : r.id)} className="!min-h-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white p-1.5 text-gray-500 hover:bg-gray-50" aria-label="Referral actions"><MoreVertical className="h-3.5 w-3.5" /></button>
+                                      {retentionReferralMenuId === r.id && (
+                                        <>
+                                          <div className="fixed inset-0 z-20" onClick={() => setRetentionReferralMenuId(null)} />
+                                          <div className="absolute right-0 z-30 mt-1 w-56 rounded-xl border border-gray-200 bg-white p-1 shadow-lg">
+                                            <p className="px-3 py-1 text-[10px] font-black uppercase tracking-wide text-gray-400">Status</p>
+                                            {(["new_lead", "in_progress", "converted", "not_converted"] as const).map((s2) => (
+                                              <button key={s2} type="button" onClick={() => { setRetentionReferralMenuId(null); updateReferral(r.id, { status: s2 }, `Marked ${statusMeta[s2].label.toLowerCase()}.`); }}
+                                                className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50">{statusMeta[s2].label}</button>
+                                            ))}
+                                            <p className="mt-1 border-t border-gray-100 px-3 pt-1.5 text-[10px] font-black uppercase tracking-wide text-gray-400">Reward</p>
+                                            <button type="button" onClick={() => {
+                                              setRetentionReferralMenuId(null);
+                                              const raw = window.prompt(`Reward amount for ${r.referrerName} (₦):`, String(r.rewardAmount || ""));
+                                              if (raw === null) return;
+                                              const amount = Number(raw.replace(/[^\d.]/g, ""));
+                                              if (!Number.isFinite(amount) || amount < 0) { showToast("Enter a valid amount."); return; }
+                                              updateReferral(r.id, { rewardAmount: amount, rewardStatus: amount > 0 ? "pending" : "not_eligible" }, "Reward updated.");
+                                            }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"><CircleDollarSign className="h-4 w-4 text-gray-500" /> Set reward amount</button>
+                                            {isOwnerOrAdmin || currentRole === "Manager" ? (
+                                              <button type="button" disabled={r.rewardStatus === "paid" || r.rewardAmount <= 0}
+                                                onClick={() => { setRetentionReferralMenuId(null); updateReferral(r.id, { rewardStatus: "paid" }, "Reward marked paid."); }}
+                                                className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"><CheckCircle2 className="h-4 w-4" /> Mark reward paid</button>
+                                            ) : (
+                                              <p className="px-3 py-1.5 text-[11px] italic text-gray-400">Only Owner/Admin/Manager can mark a reward paid.</p>
+                                            )}
+                                          </div>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="divide-y divide-gray-100 lg:hidden">
+                      {paged.map((r) => {
+                        const st = statusMeta[r.status];
+                        return (
+                          <article key={r.id} className="flex flex-col gap-2 px-4 py-4">
+                            <div>
+                              <p className="text-xs text-gray-400">Referrer</p>
+                              <p className="font-bold text-gray-900">{r.referrerName} <span className="text-xs font-medium text-gray-500">{r.referrerPhone}</span></p>
+                              <p className="mt-1 text-xs text-gray-400">Referred</p>
+                              <p className="font-bold text-gray-900">{r.refereeName} <span className="text-xs font-medium text-gray-500">{r.refereePhone}</span></p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${st.class}`}>{st.label}</span>
+                              <span className="text-[11px] font-semibold text-gray-500">{sourceLabel[r.source]}</span>
+                              {r.rewardAmount > 0 && <span className={`text-[11px] font-bold ${rewardMeta[r.rewardStatus].class}`}>{formatMoney(r.rewardAmount)} · {rewardMeta[r.rewardStatus].label}</span>}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex flex-col items-center justify-between gap-2 border-t border-gray-200 px-4 py-3 sm:flex-row">
+                      <span className="text-xs font-semibold text-gray-500">Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, totalRows)} of {totalRows} referral{totalRows === 1 ? "" : "s"}</span>
+                      {totalPages > 1 && (
+                        <div className="flex items-center gap-1">
+                          <button type="button" disabled={page === 1} onClick={() => setRetentionReferralPage(page - 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-3.5 w-3.5" /></button>
+                          {pageNums.map((p, i) => p === "gap"
+                            ? <span key={`g${i}`} className="px-1 text-xs text-gray-400">…</span>
+                            : <button key={p} type="button" onClick={() => setRetentionReferralPage(p)} className={`!min-h-0 inline-flex h-7 min-w-[28px] items-center justify-center rounded-md border px-1.5 text-xs font-bold ${p === page ? "border-emerald-600 bg-emerald-600 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{p}</button>)}
+                          <button type="button" disabled={page === totalPages} onClick={() => setRetentionReferralPage(page + 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-3.5 w-3.5" /></button>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </section>
+
+              <aside className="space-y-4">
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Referral Conversion Funnel</h3>
+                  <ul className="mt-3 space-y-2">
+                    {funnel.map((step) => (
+                      <li key={step.label}>
+                        <div className="flex items-center justify-between gap-2 text-[11px]">
+                          <span className="min-w-0 flex-1 truncate font-semibold text-gray-600">{step.label}</span>
+                          <span className="shrink-0 font-black text-gray-800">{step.value}</span>
+                          <span className="shrink-0 text-gray-400">({((step.value / funnelBase) * 100).toFixed(0)}%)</span>
+                        </div>
+                        <div className="mt-1 h-3 w-full overflow-hidden rounded bg-gray-100">
+                          <div className="h-full rounded" style={{ width: `${Math.max(2, (step.value / funnelBase) * 100)}%`, backgroundColor: step.color }} />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-[10px] text-gray-400">"Asked" comes from logged calls, so it can exceed leads when an ask produced no contact.</p>
+                </section>
+
+                <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-[0.12em] text-emerald-700">Conversion Rate</p>
+                  <strong className="mt-1 block text-2xl font-black text-emerald-800">{conversionRate === null ? "—" : `${conversionRate.toFixed(1)}%`}</strong>
+                  <p className="mt-1 text-[11px] font-semibold text-emerald-700">{converted.length} converted of {refs.length} lead{refs.length === 1 ? "" : "s"}</p>
+                  {rewardsEarned - rewardsPaid > 0 && (
+                    <p className="mt-2 border-t border-emerald-200 pt-2 text-[11px] font-bold text-emerald-800">{formatMoney(rewardsEarned - rewardsPaid)} in rewards still unpaid</p>
+                  )}
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Top Referrers</h3>
+                  {topReferrers.length === 0 ? (
+                    <p className="mt-3 text-xs italic text-gray-400">No converted referrals yet.</p>
+                  ) : (
+                    <ul className="mt-3 space-y-2">
+                      {topReferrers.map((t) => (
+                        <li key={t.name} className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-bold text-gray-800">{t.name}</p>
+                            <p className="text-[10px] text-gray-400">{t.conversions} conversion{t.conversions === 1 ? "" : "s"}</p>
+                          </div>
+                          <span className="shrink-0 text-xs font-black text-emerald-700">{formatMoney(t.revenue)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-2 border-t border-gray-100 pt-2 text-[10px] text-gray-400">Ranked by conversions; the amount is rewards earned, not the referee's order value.</p>
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Quick Actions</h3>
+                  <div className="mt-3 space-y-1.5">
+                    <button type="button" onClick={() => { setRetentionReferralForm({ referrerName: "", referrerPhone: "", refereeName: "", refereePhone: "", productInterested: "", source: "whatsapp", assignedRepId: null, notes: "", referrerOrderId: null }); setRetentionAddReferralOpen(true); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Plus className="h-3.5 w-3.5 text-emerald-600" /> Add Referral</button>
+                    <button type="button" onClick={() => { setRetentionReferralTab("new_lead"); setRetentionReferralPage(1); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><UserPlus className="h-3.5 w-3.5 text-sky-600" /> Work new leads ({newLeads.length})</button>
+                    <button type="button" onClick={() => { setRetentionReferralTab("converted"); setRetentionReferralPage(1); }} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Gift className="h-3.5 w-3.5 text-violet-600" /> Rewards to pay</button>
+                    <button type="button" onClick={exportReferralsCsv} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Download className="h-3.5 w-3.5 text-gray-500" /> Export referrals</button>
+                  </div>
+                </section>
+              </aside>
+            </div>
+          </div>
+        );
+      }
 
       if (retentionSubPage === "Repeat Sales") {
         // A repeat customer is one with more than one DELIVERED order. Repeat
@@ -44243,6 +45032,97 @@ ${waybillLineItems(w).length > 1
                     } finally { setRetentionAddTaskSaving(false); }
                   }}
                 >{retentionAddTaskSaving ? "Saving..." : "Create Task"}</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {retentionAddReferralOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setRetentionAddReferralOpen(false)}>
+          <section className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white px-5 py-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-400">New Referral</p>
+                <h3 className="text-base font-black text-gray-900">Log a Referral</h3>
+              </div>
+              <button type="button" onClick={() => setRetentionAddReferralOpen(false)} className="!min-h-0 rounded-md p-1.5 text-gray-400 hover:bg-gray-100"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="space-y-3 p-5">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Referrer name *</span>
+                  <input value={retentionReferralForm.referrerName} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, referrerName: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                </label>
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Referrer phone *</span>
+                  <input value={retentionReferralForm.referrerPhone} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, referrerPhone: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                </label>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Referred person *</span>
+                  <input value={retentionReferralForm.refereeName} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, refereeName: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                </label>
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Their phone *</span>
+                  <input value={retentionReferralForm.refereePhone} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, refereePhone: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                </label>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Product interested in</span>
+                  <input value={retentionReferralForm.productInterested ?? ""} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, productInterested: e.target.value }))} placeholder="e.g. Corner Shelf" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                </label>
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Source</span>
+                  <select value={retentionReferralForm.source} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, source: e.target.value as RetentionReferralInput["source"] }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                    {(["whatsapp", "facebook", "instagram", "website", "phone", "other"] as const).map((s) => (
+                      <option key={s} value={s}>{s === "whatsapp" ? "WhatsApp" : s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Referrer's order ID</span>
+                  <input value={retentionReferralForm.referrerOrderId ?? ""} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, referrerOrderId: e.target.value || null }))} placeholder="Optional" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                </label>
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Assign to</span>
+                  <select value={retentionReferralForm.assignedRepId ?? ""} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, assignedRepId: e.target.value || null }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                    <option value="">Unassigned</option>
+                    {recoveryRepUsers.filter((u) => u.active !== false).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                </label>
+              </div>
+              <label className="block space-y-1">
+                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Notes</span>
+                <textarea value={retentionReferralForm.notes ?? ""} onChange={(e) => setRetentionReferralForm((f) => ({ ...f, notes: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+              </label>
+              <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+                <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={() => setRetentionAddReferralOpen(false)}>Cancel</button>
+                <button
+                  type="button"
+                  disabled={retentionReferralSaving}
+                  className="!min-h-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
+                  onClick={async () => {
+                    const f = retentionReferralForm;
+                    if (!f.referrerName.trim() || !f.referrerPhone.trim() || !f.refereeName.trim() || !f.refereePhone.trim()) {
+                      showToast("Referrer and referred person's name and phone are all required.");
+                      return;
+                    }
+                    setRetentionReferralSaving(true);
+                    try {
+                      await customerRetentionApi.createReferral({ ...f, productInterested: f.productInterested?.trim() || null, notes: f.notes?.trim() || null });
+                      showToast("Referral logged.");
+                      setRetentionAddReferralOpen(false);
+                      reloadRetentionReferrals();
+                    } catch (err: any) {
+                      showToast(err?.message ?? "Could not log the referral.");
+                    } finally { setRetentionReferralSaving(false); }
+                  }}
+                >{retentionReferralSaving ? "Saving..." : "Log Referral"}</button>
               </div>
             </div>
           </section>
