@@ -44373,111 +44373,348 @@ ${waybillLineItems(w).length > 1
         );
       }
 
-      if (retentionSubPage === "Reports") return (
-        <div className="space-y-6">
-          {retentionDashboardSummary && (
-            <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
-              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">My Retention Performance</p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {([
-                  ["Tasks Assigned", retentionDashboardSummary.repPerformance.tasksAssigned],
-                  ["Tasks Completed", retentionDashboardSummary.repPerformance.tasksCompleted],
-                  ["Completion Rate", `${retentionDashboardSummary.repPerformance.completionRatePct}%`],
-                  ["Customers Reached", retentionDashboardSummary.repPerformance.customersReached],
-                  ["Contact Rate", `${retentionDashboardSummary.repPerformance.contactRatePct}%`],
-                  ["Issues Resolved", retentionDashboardSummary.repPerformance.issuesResolved],
-                  ["Reviews Received", retentionDashboardSummary.repPerformance.reviewsReceived],
-                  ["Referrals Generated", retentionDashboardSummary.repPerformance.referralsGenerated],
-                  ["Repeat Purchases", retentionDashboardSummary.repPerformance.repeatPurchases],
-                  ["Retention Revenue", formatMoney(retentionDashboardSummary.repPerformance.retentionRevenue)],
-                  ["Avg Repeat Order", formatMoney(retentionDashboardSummary.repPerformance.avgRepeatOrder)],
-                  ["ROI", retentionDashboardSummary.repPerformance.roi === null ? "—" : `${retentionDashboardSummary.repPerformance.roi}x`]
-                ] as const).map(([label, value]) => (
-                  <div key={label} className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
-                    <div className="text-[10px] font-bold uppercase tracking-wide text-gray-400">{label}</div>
-                    <div className="text-base font-black text-gray-900 mt-0.5">{value}</div>
+      if (retentionSubPage === "Reports") {
+        const summary = retentionDashboardSummary;
+        const perf = summary?.repPerformance;
+        const rev = summary?.retentionRevenue;
+        const rr = summary?.reviewsReferrals;
+        const isSupervisor = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
+
+        const outcomeRows = retentionActivityLog.filter((r) => r.activityType === "outcome");
+        const prevOutcomeRows = (retentionActivityPrev ?? []).filter((r) => r.activityType === "outcome");
+        const reachedNow = outcomeRows.filter((r) => r.reachStatus === "reached").length;
+        const reachedPrev = prevOutcomeRows.filter((r) => r.reachStatus === "reached").length;
+
+        const delta = (current: number | null, before: number | null, goodWhenUp: boolean, fmt: (n: number) => string) => {
+          if (!retentionActivityPrev || current === null || before === null) return null;
+          const diff = current - before;
+          if (Math.abs(diff) < 0.0001) return { text: `No change vs ${retentionActivityPrevLabel}`, tone: "text-gray-400" };
+          const improving = goodWhenUp ? diff > 0 : diff < 0;
+          return { text: `${diff > 0 ? "▲" : "▼"} ${fmt(Math.abs(diff))} vs ${retentionActivityPrevLabel}`, tone: improving ? "text-emerald-600" : "text-rose-600" };
+        };
+
+        // Alerts are thresholds against this org's own configured targets and
+        // its previous period - never hard-coded industry numbers.
+        const alerts: Array<{ tone: string; icon: typeof AlertTriangle; title: string; detail: string; action?: () => void; actionLabel?: string }> = [];
+        if (summary && summary.kpis.overdue > 0) {
+          alerts.push({
+            tone: "border-rose-200 bg-rose-50 text-rose-800", icon: AlertTriangle,
+            title: `${summary.kpis.overdue} follow-up${summary.kpis.overdue === 1 ? "" : "s"} overdue`,
+            detail: "Overdue retention work loses the customer's attention fastest.",
+            action: () => { setRetentionSubPage("Tasks"); setRetentionTaskFilter("overdue"); }, actionLabel: "Open overdue tasks"
+          });
+        }
+        if (summary && summary.lifecyclePipeline.needsResolution > 0) {
+          alerts.push({
+            tone: "border-amber-200 bg-amber-50 text-amber-800", icon: MessageCircle,
+            title: `${summary.lifecyclePipeline.needsResolution} unresolved complaint${summary.lifecyclePipeline.needsResolution === 1 ? "" : "s"}`,
+            detail: "Unresolved issues block reviews, referrals and repeat sales.",
+            action: () => { setRetentionSubPage("Tasks"); setRetentionTaskFilter("all"); }, actionLabel: "Work complaints"
+          });
+        }
+        if (rr && rr.reviewConversionPct !== null && rr.reviewsRequested > 0 && rr.reviewConversionPct < 50) {
+          alerts.push({
+            tone: "border-sky-200 bg-sky-50 text-sky-800", icon: Star,
+            title: `Review conversion is ${rr.reviewConversionPct}%`,
+            detail: `${rr.reviewsRequested} asked, ${rr.reviewsReceived} received. Reviews promised but not collected are the usual gap.`,
+            action: () => setRetentionSubPage("Reviews"), actionLabel: "Open Reviews"
+          });
+        }
+        if (rev && rev.roi !== null && rev.roi < 1 && rev.retentionRepCost > 0) {
+          alerts.push({
+            tone: "border-rose-200 bg-rose-50 text-rose-800", icon: TrendingUp,
+            title: `Retention ROI is ${rev.roi}x`,
+            detail: `Gross contribution ${formatMoney(rev.grossContribution)} against ${formatMoney(rev.retentionRepCost)} in bonus payout - below break-even.`,
+            action: () => setRetentionSubPage("Repeat Sales"), actionLabel: "Review repeat sales"
+          });
+        }
+        if (retentionReferrals.length > 0) {
+          const unpaid = retentionReferrals.filter((r) => r.rewardStatus === "pending").reduce((s, r) => s + r.rewardAmount, 0);
+          if (unpaid > 0) {
+            alerts.push({
+              tone: "border-violet-200 bg-violet-50 text-violet-800", icon: Gift,
+              title: `${formatMoney(unpaid)} in referral rewards unpaid`,
+              detail: "Unpaid rewards discourage further referrals from your best advocates.",
+              action: () => { setRetentionSubPage("Referrals"); setRetentionReferralTab("converted"); }, actionLabel: "Open Referrals"
+            });
+          }
+        }
+
+        const funnel = summary ? [
+          { label: "Delivered", value: summary.lifecyclePipeline.delivered, color: "#10b981" },
+          { label: "Contacted", value: summary.kpis.contacted, color: "#0ea5e9" },
+          { label: "Reviews received", value: summary.kpis.reviews, color: "#8b5cf6" },
+          { label: "Referrals received", value: summary.kpis.referrals, color: "#ec4899" },
+          { label: "Repeat customers", value: summary.kpis.repeatCustomers, color: "#f59e0b" }
+        ] : [];
+        const funnelBase = Math.max(1, ...funnel.map((f) => f.value));
+
+        const exportReportCsv = () => {
+          if (!summary) { showToast("No report data loaded yet."); return; }
+          const lines: string[][] = [
+            ["Retention Report", `${summary.dateFrom} to ${summary.dateTo}`],
+            [],
+            ["Metric", "Value"],
+            ["Due today", String(summary.kpis.dueToday)],
+            ["Overdue", String(summary.kpis.overdue)],
+            ["Customers contacted", String(summary.kpis.contacted)],
+            ["Issues resolved", String(summary.kpis.issuesResolved)],
+            ["Reviews received", String(summary.kpis.reviews)],
+            ["Referrals received", String(summary.kpis.referrals)],
+            ["Repeat customers", String(summary.kpis.repeatCustomers)],
+            ["Repeat sales revenue", String(rev?.repeatSalesRevenue ?? 0)],
+            ["Gross contribution", String(rev?.grossContribution ?? 0)],
+            ["Retention cost (bonus payout)", String(rev?.retentionRepCost ?? 0)],
+            ["ROI", rev?.roi === null || rev?.roi === undefined ? "" : `${rev.roi}x`],
+            ["Review conversion %", rr?.reviewConversionPct === null || rr?.reviewConversionPct === undefined ? "" : String(rr.reviewConversionPct)],
+            ["Referral conversion %", rr?.referralConversionPct === null || rr?.referralConversionPct === undefined ? "" : String(rr.referralConversionPct)]
+          ];
+          if (summary.repBreakdown && summary.repBreakdown.length > 0) {
+            lines.push([], ["Rep", "Tasks assigned", "Tasks completed", "Completion %", "Issues resolved", "Retention revenue"]);
+            summary.repBreakdown.forEach((r) => lines.push([r.repName, String(r.tasksAssigned), String(r.tasksCompleted), String(r.completionRatePct), String(r.issuesResolved), String(r.retentionRevenue)]));
+          }
+          const csv = lines.map((row) => row.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+          const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url; link.download = `retention-report-${new Date().toISOString().slice(0, 10)}.csv`; link.click();
+          URL.revokeObjectURL(url);
+        };
+
+        if (!summary) {
+          return <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-400">Loading retention report…</p>;
+        }
+
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+              {([
+                ["Customers Contacted", String(summary.kpis.contacted), "text-sky-700", "bg-sky-50", Phone, delta(reachedNow, retentionActivityPrev ? reachedPrev : null, true, (n) => String(Math.round(n)))],
+                ["Issues Resolved", String(summary.kpis.issuesResolved), "text-emerald-700", "bg-emerald-50", CheckCircle2, null],
+                ["Reviews Received", String(summary.kpis.reviews), "text-amber-700", "bg-amber-50", Star, null],
+                ["Referrals Received", String(summary.kpis.referrals), "text-violet-700", "bg-violet-50", Gift, null],
+                ["Retention Revenue", formatMoney(rev?.repeatSalesRevenue ?? 0), "text-indigo-700", "bg-indigo-50", CircleDollarSign, null],
+                ["Retention ROI", rev?.roi === null || rev?.roi === undefined ? "—" : `${rev.roi}x`, "text-rose-700", "bg-rose-50", TrendingUp, null]
+              ] as const).map(([label, value, tone, chip, Icon, d]) => (
+                <div key={label} className="rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${chip}`}><Icon className={`h-4 w-4 ${tone}`} /></span>
+                    <span className="text-[10px] font-black uppercase leading-tight tracking-[0.1em] text-gray-500">{label}</span>
                   </div>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
-                <div>
-                  <p className="text-xs font-bold text-gray-500 mb-2">Retention Revenue Over Time</p>
-                  {retentionDashboardSummary.repPerformance.revenueOverTime.length === 0 ? (
-                    <div className="h-[180px] flex items-center justify-center text-xs text-gray-400 border border-dashed border-gray-200 rounded-xl">No retention sales logged in this period yet.</div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height={180}>
-                      <LineChart data={retentionDashboardSummary.repPerformance.revenueOverTime} margin={{ left: -24, right: 16, top: 8, bottom: 0 }}>
-                        <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#9ca3af" }} />
-                        <YAxis hide />
-                        <Tooltip
-                          contentStyle={{ borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12 }}
-                          formatter={(value: number | string) => [formatMoney(typeof value === "number" ? value : Number(value)), "Revenue"]}
-                        />
-                        <Line type="monotone" dataKey="current" name="Revenue" stroke="#10b981" strokeWidth={2.5} dot={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  )}
+                  <strong className={`mt-2 block text-2xl font-black ${tone}`}>{value}</strong>
+                  {d && <span className={`mt-0.5 block text-[10px] font-bold ${d.tone}`}>{d.text}</span>}
                 </div>
-                <div>
-                  <p className="text-xs font-bold text-gray-500 mb-2">Revenue by Source</p>
-                  {retentionDashboardSummary.repPerformance.revenueBySource.length === 0 ? (
-                    <div className="h-[180px] flex items-center justify-center text-xs text-gray-400 border border-dashed border-gray-200 rounded-xl">No retention sales logged in this period yet.</div>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {retentionDashboardSummary.repPerformance.revenueBySource.map((row) => (
-                        <div key={row.label}>
-                          <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
-                            <span className="truncate">{row.label}</span>
-                            <span className="font-semibold text-gray-800">{formatMoney(row.amount)} ({row.pct}%)</span>
-                          </div>
-                          <div className="h-2 rounded-full bg-blue-100/60">
-                            <div className="h-2 rounded-full bg-[#1F8FE0]" style={{ width: `${row.pct}%` }} />
-                          </div>
-                        </div>
-                      ))}
+              ))}
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_290px]">
+              <div className="min-w-0 space-y-4">
+                <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-base font-black text-gray-900">Retention Funnel</h3>
+                      <p className="text-xs text-gray-500">Delivered customers through to a repeat purchase, for {summary.dateFrom} - {summary.dateTo}.</p>
                     </div>
-                  )}
-                </div>
-              </div>
-            </section>
-          )}
-
-          {retentionDashboardSummary?.repBreakdown && retentionDashboardSummary.repBreakdown.length > 0 && (
-            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-gray-200">
-                <h2 className="text-base font-bold text-gray-900">Workload by Rep</h2>
-                <p className="text-xs text-gray-500 mt-0.5">Owner/Manager view — every rep with assigned retention work or activity in this period.</p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[720px] text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                      {["Rep", "Assigned", "Completed", "Completion Rate", "Issues Resolved", "Review Conv.", "Referral Conv.", "Retention Revenue"].map((h) => (
-                        <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {retentionDashboardSummary.repBreakdown.map((rep) => (
-                      <tr key={rep.repId} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 font-bold text-gray-900">{rep.repName}</td>
-                        <td className="px-4 py-3 text-gray-600">{rep.tasksAssigned}</td>
-                        <td className="px-4 py-3 text-gray-600">{rep.tasksCompleted}</td>
-                        <td className="px-4 py-3 text-gray-600">{rep.completionRatePct}%</td>
-                        <td className="px-4 py-3 text-gray-600">{rep.issuesResolved}</td>
-                        <td className="px-4 py-3 text-gray-600">{rep.reviewConversionPct === null ? "—" : `${rep.reviewConversionPct}%`}</td>
-                        <td className="px-4 py-3 text-gray-600">{rep.referralConversionPct === null ? "—" : `${rep.referralConversionPct}%`}</td>
-                        <td className="px-4 py-3 font-semibold text-gray-800">{formatMoney(rep.retentionRevenue)}</td>
-                      </tr>
+                    <button type="button" onClick={exportReportCsv} className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-gray-50"><Download className="h-4 w-4" /> Export Report</button>
+                  </div>
+                  <ul className="mt-4 space-y-2.5">
+                    {funnel.map((step) => (
+                      <li key={step.label}>
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="min-w-0 flex-1 truncate font-bold text-gray-700">{step.label}</span>
+                          <span className="shrink-0 font-black text-gray-900">{step.value}</span>
+                          <span className="shrink-0 text-gray-400">({((step.value / funnelBase) * 100).toFixed(0)}%)</span>
+                        </div>
+                        <div className="mt-1 h-3 w-full overflow-hidden rounded bg-gray-100">
+                          <div className="h-full rounded" style={{ width: `${Math.max(2, (step.value / funnelBase) * 100)}%`, backgroundColor: step.color }} />
+                        </div>
+                      </li>
                     ))}
-                  </tbody>
-                </table>
+                  </ul>
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <h3 className="text-base font-black text-gray-900">Retention Economics</h3>
+                  <p className="text-xs text-gray-500">Gross contribution is real per-order COGS and logistics, not a margin estimate.</p>
+                  <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {([
+                      ["Repeat sales revenue", formatMoney(rev?.repeatSalesRevenue ?? 0), "text-gray-900"],
+                      ["Gross contribution", formatMoney(rev?.grossContribution ?? 0), "text-emerald-700"],
+                      ["Retention cost", formatMoney(rev?.retentionRepCost ?? 0), "text-rose-700"],
+                      ["Repeat customers", String(rev?.repeatCustomers ?? 0), "text-gray-900"],
+                      ["Avg repeat order", formatMoney(rev?.avgRepeatOrder ?? 0), "text-gray-900"],
+                      ["ROI", rev?.roi === null || rev?.roi === undefined ? "—" : `${rev.roi}x`, (rev?.roi ?? 0) >= 1 ? "text-emerald-700" : "text-rose-700"]
+                    ] as const).map(([label, value, tone]) => (
+                      <div key={label} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                        <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">{label}</p>
+                        <strong className={`mt-0.5 block text-lg font-black ${tone}`}>{value}</strong>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 border-t border-gray-100 pt-2 text-[11px] text-gray-500">
+                    Retention cost is the actual retention bonus payout for this period - never a second salary charge, which the Recovery Rep Overview tab already accounts for.
+                  </p>
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <h3 className="text-base font-black text-gray-900">Review &amp; Referral Conversion</h3>
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    {([
+                      ["Reviews", rr?.reviewsRequested ?? 0, rr?.reviewsReceived ?? 0, rr?.reviewConversionPct ?? null, "#0ea5e9"],
+                      ["Referrals", rr?.referralsRequested ?? 0, rr?.referralsReceived ?? 0, rr?.referralConversionPct ?? null, "#8b5cf6"]
+                    ] as const).map(([label, requested, received, pct, color]) => (
+                      <div key={label} className="rounded-lg border border-gray-100 p-3">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-black text-gray-800">{label}</p>
+                          <span className="text-lg font-black" style={{ color }}>{pct === null ? "—" : `${pct}%`}</span>
+                        </div>
+                        <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                          <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(2, pct ?? 0))}%`, backgroundColor: color }} />
+                        </div>
+                        <p className="mt-1.5 text-[11px] font-semibold text-gray-500">{requested} asked · {received} received</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">My Retention Performance</p>
+                  <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {([
+                      ["Tasks Assigned", String(perf?.tasksAssigned ?? 0)],
+                      ["Tasks Completed", String(perf?.tasksCompleted ?? 0)],
+                      ["Completion Rate", `${perf?.completionRatePct ?? 0}%`],
+                      ["Customers Reached", String(perf?.customersReached ?? 0)],
+                      ["Contact Rate", `${perf?.contactRatePct ?? 0}%`],
+                      ["Issues Resolved", String(perf?.issuesResolved ?? 0)],
+                      ["Reviews Received", String(perf?.reviewsReceived ?? 0)],
+                      ["Referrals Generated", String(perf?.referralsGenerated ?? 0)]
+                    ] as const).map(([label, value]) => (
+                      <div key={label} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                        <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">{label}</p>
+                        <strong className="mt-0.5 block text-lg font-black text-gray-900">{value}</strong>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 border-t border-gray-100 pt-2 text-[11px] text-gray-500">
+                    The worklist is a shared org-wide queue, so "assigned" means orders this rep touched and "completed" the subset where they advanced the stage.
+                  </p>
+                </section>
+
+                {isSupervisor && summary.repBreakdown && summary.repBreakdown.length > 0 && (
+                  <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div className="border-b border-gray-200 px-5 py-4">
+                      <h3 className="text-base font-black text-gray-900">Workload by Rep</h3>
+                      <p className="text-xs text-gray-500">Every rep who logged retention activity in this period.</p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[760px] text-sm">
+                        <thead className="bg-gray-50 text-[10px] uppercase tracking-wider text-gray-500">
+                          <tr>
+                            <th className="px-4 py-3 text-left font-bold">Rep</th>
+                            <th className="px-4 py-3 text-left font-bold">Assigned</th>
+                            <th className="px-4 py-3 text-left font-bold">Completed</th>
+                            <th className="px-4 py-3 text-left font-bold">Completion</th>
+                            <th className="px-4 py-3 text-left font-bold">Issues Resolved</th>
+                            <th className="px-4 py-3 text-left font-bold">Review Conv.</th>
+                            <th className="px-4 py-3 text-left font-bold">Referral Conv.</th>
+                            <th className="px-4 py-3 text-left font-bold">Retention Revenue</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {summary.repBreakdown.map((rep) => (
+                            <tr key={rep.repId} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 font-bold text-gray-900">{rep.repName}</td>
+                              <td className="px-4 py-3 text-xs font-semibold text-gray-700">{rep.tasksAssigned}</td>
+                              <td className="px-4 py-3 text-xs font-semibold text-gray-700">{rep.tasksCompleted}</td>
+                              <td className="px-4 py-3 text-xs font-black text-gray-900">{rep.completionRatePct}%</td>
+                              <td className="px-4 py-3 text-xs font-semibold text-gray-700">{rep.issuesResolved}</td>
+                              <td className="px-4 py-3 text-xs font-semibold text-gray-700">{rep.reviewConversionPct === null ? "—" : `${rep.reviewConversionPct}%`}</td>
+                              <td className="px-4 py-3 text-xs font-semibold text-gray-700">{rep.referralConversionPct === null ? "—" : `${rep.referralConversionPct}%`}</td>
+                              <td className="px-4 py-3 text-xs font-black text-emerald-700">{formatMoney(rep.retentionRevenue)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                )}
               </div>
-            </section>
-          )}
-        </div>
-      );
+
+              <aside className="space-y-4">
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Report Shortcuts</h3>
+                  <div className="mt-3 space-y-1">
+                    {([
+                      ["Calls & Outcomes", Phone, "Calls & Outcomes" as RetentionSubPage],
+                      ["Reviews", Star, "Reviews" as RetentionSubPage],
+                      ["Referrals", Gift, "Referrals" as RetentionSubPage],
+                      ["Repeat Sales", ShoppingCart, "Repeat Sales" as RetentionSubPage],
+                      ["Win-back", RefreshCw, "Win-back" as RetentionSubPage],
+                      ["Pipeline", Repeat2, "Pipeline" as RetentionSubPage]
+                    ] as const).map(([label, Icon, target]) => (
+                      <button key={label} type="button" onClick={() => setRetentionSubPage(target)} className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                        <Icon className="h-4 w-4 shrink-0 text-gray-400" /> {label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Alerts &amp; Insights</h3>
+                  {alerts.length === 0 ? (
+                    <p className="mt-3 text-xs italic text-gray-400">Nothing needs attention in this period.</p>
+                  ) : (
+                    <ul className="mt-3 space-y-2">
+                      {alerts.map((a) => (
+                        <li key={a.title} className={`rounded-lg border p-2.5 ${a.tone}`}>
+                          <div className="flex items-start gap-2">
+                            <a.icon className="mt-0.5 h-4 w-4 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="text-xs font-black">{a.title}</p>
+                              <p className="mt-0.5 text-[11px] font-medium opacity-90">{a.detail}</p>
+                              {a.action && (
+                                <button type="button" onClick={a.action} className="!min-h-0 mt-1 text-[11px] font-black underline">{a.actionLabel}</button>
+                              )}
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                {/* Company-wide revenue, delivery rate, AOV and net profit are
+                    owned by Dashboard and Finance. They are linked, not
+                    duplicated: Protohub already keeps two intentionally
+                    different delivery-rate definitions (throughput vs cohort),
+                    and re-deriving them here would create a third that quietly
+                    disagreed with both. */}
+                <section className="rounded-xl border border-sky-200 bg-sky-50 p-4">
+                  <h3 className="text-sm font-black text-sky-900">Company-wide reporting</h3>
+                  <p className="mt-1 text-[11px] font-medium text-sky-800">
+                    Total revenue, orders, delivery rate, AOV and net profit live in Dashboard and Finance, which own those definitions. This page reports retention only, so the two can never disagree.
+                  </p>
+                  <div className="mt-3 space-y-1.5">
+                    <button type="button" onClick={() => handleNavClick("Dashboard")} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-sky-200 bg-white px-3 py-2 text-left text-xs font-bold text-sky-800 hover:bg-sky-100"><BarChart3 className="h-3.5 w-3.5" /> Open Dashboard</button>
+                    {currentAllowedPages.includes("Finance & Accounting") && (
+                      <button type="button" onClick={() => handleNavClick("Finance & Accounting")} className="!min-h-0 flex w-full items-center gap-2 rounded-lg border border-sky-200 bg-white px-3 py-2 text-left text-xs font-bold text-sky-800 hover:bg-sky-100"><CircleDollarSign className="h-3.5 w-3.5" /> Open Finance &amp; P&amp;L</button>
+                    )}
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <h3 className="text-sm font-black text-gray-900">Export</h3>
+                  <button type="button" onClick={exportReportCsv} className="!min-h-0 mt-3 flex w-full items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-xs font-bold text-gray-700 hover:bg-gray-50"><Download className="h-3.5 w-3.5 text-gray-500" /> Download retention report (CSV)</button>
+                  <p className="mt-2 text-[10px] text-gray-400">
+                    Scheduled email reports from the design need a mail scheduler; Protohub has no retention report scheduler yet, so this is a direct download.
+                  </p>
+                </section>
+              </aside>
+            </div>
+          </div>
+        );
+      }
 
       if (retentionSubPage === "Settings") return (
         <div className="space-y-6">
