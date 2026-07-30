@@ -42,19 +42,59 @@ export async function totalMonthlySalary(orgId: string): Promise<number> {
     .reduce((sum: number, s: any) => sum + salariedFixed(s), 0);
 }
 
-// 4 consecutive Sunday-anchored weeks covering "the month" — week 1 starts on
-// the Sunday on/before the 1st, so dating an expense there lands inside the
-// same Sun–Sat week bucket the rest of Finance/break-even already use.
-export function weekStartsForMonth(monthKey: string): string[] {
+// The Sunday on/before the 1st of a month — week 1's anchor. Dating an expense
+// there lands inside the same Sun–Sat week bucket the rest of Finance/
+// break-even already use.
+function week1StartDate(monthKey: string): Date {
   const [y, m] = monthKey.split("-").map(Number);
   const firstOfMonth = new Date(Date.UTC(y, (m || 1) - 1, 1, 12));
-  const week1Start = new Date(firstOfMonth);
-  week1Start.setUTCDate(week1Start.getUTCDate() - firstOfMonth.getUTCDay());
-  return [0, 1, 2, 3].map((i) => {
+  const d = new Date(firstOfMonth);
+  d.setUTCDate(d.getUTCDate() - firstOfMonth.getUTCDay());
+  return d;
+}
+
+function nextMonthKey(monthKey: string): string {
+  const [y, m] = monthKey.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, (m || 1), 1, 12));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+// How many Sunday-anchored weeks this month owns: every week from its own
+// anchor up to (not including) the next month's anchor. Always 4 or 5.
+//
+// This used to be hardcoded to 4, which silently orphaned four weeks a YEAR:
+// 52 Sundays do not divide into 12 x 4 = 48, so whenever two consecutive
+// months' anchors were 5 weeks apart, the 5th week belonged to no month at
+// all - nobody could spread it and the cron never fired for it, so that
+// week's salary never reached break-even or net profit. Deriving the count
+// from the next month's anchor guarantees complete coverage with no gaps and
+// no week counted twice, while keeping every existing anchor (and therefore
+// every already-recorded expense id) exactly where it was.
+export function weeksInSpreadMonth(monthKey: string): number {
+  const start = week1StartDate(monthKey).getTime();
+  const nextStart = week1StartDate(nextMonthKey(monthKey)).getTime();
+  return Math.round((nextStart - start) / (7 * 24 * 60 * 60 * 1000));
+}
+
+export function weekStartsForMonth(monthKey: string): string[] {
+  const week1Start = week1StartDate(monthKey);
+  return Array.from({ length: weeksInSpreadMonth(monthKey) }, (_, i) => {
     const d = new Date(week1Start);
     d.setUTCDate(d.getUTCDate() + i * 7);
     return d.toISOString().slice(0, 10);
   });
+}
+
+// Salaried people are paid the same each month whatever the calendar does, so
+// a month must total its real monthly salary. Weeks before the last keep the
+// familiar monthly/4 rate; the LAST week of the month is charged whatever is
+// still outstanding. In a 4-week month that is the usual quarter. In a
+// 5-week month it absorbs the remainder (often zero) rather than adding a
+// fifth full week and overstating salary by 25%.
+export function weekAmountFor(monthKey: string, week: number, monthlyTotal: number, alreadyRecordedThisMonth: number): number {
+  const weeks = weeksInSpreadMonth(monthKey);
+  if (week >= weeks) return Math.max(0, monthlyTotal - alreadyRecordedThisMonth);
+  return Math.min(Math.round(monthlyTotal / 4), Math.max(0, monthlyTotal - alreadyRecordedThisMonth));
 }
 
 export const WEEKDAY_SPREAD_LABELS = ["Sun", "Mon", "Tue", "Wed"] as const;
@@ -93,10 +133,10 @@ export async function dropDueDailySalaryForAllOrgs(): Promise<{ orgsChecked: num
     return { orgsChecked: 0, created: 0 };
   }
 
-  // A week can start in the tail of the PREVIOUS month (e.g. week 1 of a month
-  // that doesn't open on a Sunday) — never in the next month (week 4's start
-  // is at most 21 days after week 1's, which is always within the same month).
-  const candidateMonths = [0, -1].map((offset) => {
+  // A week can start in the tail of the PREVIOUS month (week 1 of a month that
+  // doesn't open on a Sunday). It can also run into the NEXT month, since a
+  // 5-week month's last week starts up to 28 days after its anchor.
+  const candidateMonths = [0, -1, 1].map((offset) => {
     const dt = new Date(Date.UTC(y, (m || 1) - 1 + offset, 1, 12));
     return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
   });
@@ -106,7 +146,8 @@ export async function dropDueDailySalaryForAllOrgs(): Promise<{ orgsChecked: num
     const orgId = org.id;
     let bucket: { monthKey: string; week: number; dayIndex: number } | null = null;
     for (const monthKey of candidateMonths) {
-      for (let week = 1; week <= 4 && !bucket; week++) {
+      const weekCount = weeksInSpreadMonth(monthKey);
+      for (let week = 1; week <= weekCount && !bucket; week++) {
         const idx = weekdaySpreadDates(monthKey, week).indexOf(todayKey);
         if (idx !== -1) bucket = { monthKey, week, dayIndex: idx };
       }
@@ -124,7 +165,12 @@ export async function dropDueDailySalaryForAllOrgs(): Promise<{ orgsChecked: num
 
     const total = await totalMonthlySalary(orgId);
     if (total <= 0) continue;
-    const dailyAmount = Math.round(Math.round(total / 4) / 4);
+    // Continue the week at the same daily rate the week was started with, so a
+    // week's four days are always consistent - the prior day's row is the
+    // authority, not a recomputation that could have drifted mid-week.
+    const { data: priorRow } = await supabase.from("expenses").select("amount").eq("org_id", orgId).eq("id", priorId).maybeSingle();
+    const dailyAmount = priorRow ? Number(priorRow.amount) : Math.round(Math.round(total / 4) / 4);
+    if (dailyAmount <= 0) continue; // last week of the month absorbed a zero remainder
     const { error } = await supabase.from("expenses").insert({
       id: todayId, org_id: orgId, date: todayKey, category: "Salary",
       description: `Weekly salary spread · Week ${bucket.week}, ${WEEKDAY_SPREAD_LABELS[bucket.dayIndex]} · ${salaryMonthLabel(bucket.monthKey)}`,
