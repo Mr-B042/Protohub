@@ -6,7 +6,7 @@ import { sendToUser } from "../lib/mailer.js";
 import { calculatePayrollPreview, payrollPeriodKey } from "../lib/payroll-calculator.js";
 import {
   elapsedDayIndices, lagosTodayKey, salaryMonthKey, salaryMonthLabel, totalMonthlySalary,
-  weekdaySpreadDates, weekdaySpreadIds, WEEKDAY_SPREAD_LABELS
+  weekdaySpreadDates, weekdaySpreadIds, WEEKDAY_SPREAD_LABELS, weeksInSpreadMonth, weekAmountFor
 } from "../lib/salary-spread.js";
 
 const router = Router();
@@ -145,8 +145,15 @@ router.patch("/:id/approve", async (req, res) => {
 // automatically, one per day, on that actual day.
 router.post("/spread-weekly-salary", async (req, res) => {
   const week = Number(req.body?.week);
-  if (![1, 2, 3, 4].includes(week)) { res.status(400).json({ error: "week must be 1, 2, 3, or 4." }); return; }
   const monthKey = salaryMonthKey(req.body?.month);
+  // A month owns 4 or 5 Sunday-anchored weeks depending on the calendar - see
+  // weeksInSpreadMonth. This used to accept 1-4 only, which is what made the
+  // 5th week of some months unreachable.
+  const monthWeekCount = weeksInSpreadMonth(monthKey);
+  if (!Number.isInteger(week) || week < 1 || week > monthWeekCount) {
+    res.status(400).json({ error: `week must be between 1 and ${monthWeekCount} for ${salaryMonthLabel(monthKey)}.` });
+    return;
+  }
   const orgId = req.user!.orgId;
   const ids = weekdaySpreadIds(monthKey, week);
   const dayDates = weekdaySpreadDates(monthKey, week);
@@ -173,7 +180,23 @@ router.post("/spread-weekly-salary", async (req, res) => {
   // not wait until next month.
   const total = await totalMonthlySalary(orgId);
   if (total <= 0) { res.status(400).json({ error: "No active users have a monthly salary set in their pay structure." }); return; }
-  const dailyAmount = Math.round(Math.round(total / 4) / 4);
+
+  // Weeks before the last take the familiar monthly/4; the last week of the
+  // month takes whatever is still outstanding, so the month totals the real
+  // monthly salary instead of overstating it in a 5-week month.
+  const monthIdPrefix = `SAL-WEEKLY-${monthKey}-W`;
+  const { data: monthRows } = await supabase
+    .from("expenses").select("id, amount")
+    .eq("org_id", orgId).like("id", `${monthIdPrefix}%`);
+  const alreadyRecorded = (monthRows ?? [])
+    .filter((r: any) => !ids.includes(r.id as string))
+    .reduce((sum: number, r: any) => sum + Number(r.amount ?? 0), 0);
+  const weekAmount = weekAmountFor(monthKey, week, total, alreadyRecorded);
+  if (weekAmount <= 0) {
+    res.status(400).json({ error: `${salaryMonthLabel(monthKey)}'s full monthly salary is already recorded across its earlier weeks — nothing left to spread for week ${week}.` });
+    return;
+  }
+  const dailyAmount = Math.round(weekAmount / 4);
 
   // Insert only the elapsed days not already recorded — never a future day
   // (the cron drops those on their own date), and idempotent completion if a

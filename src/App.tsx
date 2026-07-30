@@ -36010,12 +36010,24 @@ ${waybillLineItems(w).length > 1
   const WEEKDAY_SPREAD_LABELS = ["Sun", "Mon", "Tue", "Wed"] as const;
   // Mirrors the backend's weekStartsForMonth/weekdaySpreadDates exactly, so
   // button labels match what actually gets recorded on click.
-  const weekStartsForMonthClient = (monthKey: string): string[] => {
+  const week1StartClient = (monthKey: string): Date => {
     const [y, m] = monthKey.split("-").map(Number);
     const firstOfMonth = new Date(Date.UTC(y, (m || 1) - 1, 1, 12));
-    const week1Start = new Date(firstOfMonth);
-    week1Start.setUTCDate(week1Start.getUTCDate() - firstOfMonth.getUTCDay());
-    return [0, 1, 2, 3].map((i) => {
+    const d = new Date(firstOfMonth);
+    d.setUTCDate(d.getUTCDate() - firstOfMonth.getUTCDay());
+    return d;
+  };
+  // A month owns 4 or 5 Sunday-anchored weeks: every week from its own anchor
+  // up to the next month's. Hardcoding 4 orphaned four weeks a year, whose
+  // salary then reached no month's break-even at all.
+  const weeksInSpreadMonthClient = (monthKey: string): number => {
+    const [y, m] = monthKey.split("-").map(Number);
+    const nextKey = `${new Date(Date.UTC(y, m, 1, 12)).getUTCFullYear()}-${String(new Date(Date.UTC(y, m, 1, 12)).getUTCMonth() + 1).padStart(2, "0")}`;
+    return Math.round((week1StartClient(nextKey).getTime() - week1StartClient(monthKey).getTime()) / (7 * 24 * 60 * 60 * 1000));
+  };
+  const weekStartsForMonthClient = (monthKey: string): string[] => {
+    const week1Start = week1StartClient(monthKey);
+    return Array.from({ length: weeksInSpreadMonthClient(monthKey) }, (_, i) => {
       const d = new Date(week1Start); d.setUTCDate(d.getUTCDate() + i * 7);
       return d.toISOString().slice(0, 10);
     });
@@ -58032,9 +58044,15 @@ ${waybillLineItems(w).length > 1
                     const monthTotal = salariedUsers.reduce((s, u) => s + (payStructures.find((p) => p.userId === u.id)?.fixedSalary ?? 0), 0);
                     const liveWeeklyEstimate = Math.round(monthTotal / 4);
                     const liveDailyEstimate = Math.round(liveWeeklyEstimate / 4);
-                    const spreadCount = [1, 2, 3, 4].filter((w) => isWeekFullySpread(salaryPayMonth, w)).length;
-                    const totalRecorded = [1, 2, 3, 4].reduce((sum, w) =>
+                    // 4 or 5 depending on the calendar - see weeksInSpreadMonthClient.
+                    const monthWeeks = Array.from({ length: weeksInSpreadMonthClient(salaryPayMonth) }, (_, i) => i + 1);
+                    const spreadCount = monthWeeks.filter((w) => isWeekFullySpread(salaryPayMonth, w)).length;
+                    const totalRecorded = monthWeeks.reduce((sum, w) =>
                       sum + weekDailyAmounts(salaryPayMonth, w).reduce((s: number, a) => s + (a ?? 0), 0), 0);
+                    // The last week takes whatever the month still owes, so a
+                    // 5-week month totals the real monthly salary rather than
+                    // charging a fifth full week.
+                    const remainingForMonth = Math.max(0, monthTotal - totalRecorded);
                     return (
                       <div className="space-y-3 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
                         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -58052,8 +58070,8 @@ ${waybillLineItems(w).length > 1
                             {salaryMonthOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
                           </select>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                          {[1, 2, 3, 4].map((week) => {
+                        <div className={`grid grid-cols-2 gap-2 ${monthWeeks.length >= 5 ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
+                          {monthWeeks.map((week) => {
                             const dailyAmounts = weekDailyAmounts(salaryPayMonth, week);
                             const daysRecorded = dailyAmounts.filter((a) => a != null).length;
                             const fullySpread = daysRecorded === 4;
@@ -58061,9 +58079,17 @@ ${waybillLineItems(w).length > 1
                             const dayDates = weekdaySpreadDatesClient(salaryPayMonth, week);
                             const dayLabel = (i: number) => new Date(`${dayDates[i]}T12:00:00Z`).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" });
                             const hasStarted = lagosDateKeyNow() >= dayDates[0];
+                            const isLastWeek = week === monthWeeks.length;
+                            // Unspread weeks preview what a click would record.
+                            // The last week previews the month's remainder, so a
+                            // 5-week month never looks like it will charge a
+                            // fifth full week.
+                            const estimateForWeek = isLastWeek
+                              ? Math.round(Math.min(liveWeeklyEstimate, remainingForMonth) / 4)
+                              : liveDailyEstimate;
                             const perDayAmount = daysRecorded > 0
                               ? Math.round((dailyAmounts.filter((a): a is number => a != null)).reduce((s, a) => s + a, 0) / daysRecorded)
-                              : liveDailyEstimate;
+                              : estimateForWeek;
                             if (fullySpread) return (
                               <div key={week} className="flex flex-col items-center gap-1.5 rounded-xl border border-emerald-200 bg-gradient-to-b from-emerald-50 to-emerald-50/70 px-3 py-2.5 shadow-sm">
                                 <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
@@ -58100,6 +58126,19 @@ ${waybillLineItems(w).length > 1
                                 <span className="text-[10px] font-medium text-gray-400">Starts {dayLabel(0)}</span>
                               </div>
                             );
+                            // A 5-week month whose earlier weeks already cover the
+                            // full monthly salary has nothing left for its last
+                            // week - say so rather than offering a click that
+                            // would overstate salary.
+                            if (isLastWeek && remainingForMonth <= 0) return (
+                              <div key={week} className="flex flex-col items-center gap-1.5 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5">
+                                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-200 text-gray-500">
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                </span>
+                                <span className="text-xs font-bold text-gray-600">Week {week}</span>
+                                <span className="text-center text-[10px] font-medium text-gray-400">Month already fully covered</span>
+                              </div>
+                            );
                             return (
                               <button key={week} type="button" onClick={() => spreadSalaryWeek(salaryPayMonth, week)}
                                 className="!min-h-0 flex flex-col items-center gap-1.5 rounded-xl bg-[#1F8FE0] px-3 py-2.5 text-white shadow-sm transition-all hover:bg-blue-700 hover:shadow-md active:scale-[0.98]">
@@ -58112,9 +58151,9 @@ ${waybillLineItems(w).length > 1
                             );
                           })}
                         </div>
-                        {spreadCount === 4 && (
+                        {spreadCount === monthWeeks.length && (
                           <p className="m-0 inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
-                            <CheckCircle2 className="h-3.5 w-3.5" /> All 4 weeks spread for {salaryPayMonthLabel} - {formatMoney(totalRecorded)} total recorded.
+                            <CheckCircle2 className="h-3.5 w-3.5" /> All {monthWeeks.length} weeks spread for {salaryPayMonthLabel} - {formatMoney(totalRecorded)} total recorded.
                           </p>
                         )}
                       </div>
