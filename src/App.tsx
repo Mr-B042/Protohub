@@ -45780,15 +45780,38 @@ ${waybillLineItems(w).length > 1
     // rather than an exact last-contact-attempt date diff). Each candidate
     // carries its own `reason` (why it surfaced) so the card can show it,
     // matching the Customers page's "Customer Status" badge convention.
+    // Postponed is deliberately NOT a recovery candidate: a postponed order is
+    // rescheduled, not lost - the original rep still owns it and it will come
+    // back around on its own date. Recovery works orders that actually died:
+    // Failed, Cancelled, and rejections (which Protohub records as free-text
+    // call outcomes like "Customer rejected the item" rather than a status of
+    // their own), plus orders left open with no closure.
+    const REJECTION_OUTCOME_PATTERN = /reject|refus|denied|not interested|returned/i;
     const candidateReason = (order: TrackedOrder): string | null => {
       const status = order.status ?? "New";
-      if (["Cancelled", "Postponed", "Failed"].includes(status)) return status;
-      if ((order.callOutcome ?? "").trim() === "Product Unavailable") return "Product Unavailable";
+      const outcome = (order.callOutcome ?? "").trim();
+      if (status === "Failed" || status === "Cancelled") {
+        // Surface a rejection as its own reason - it needs a different
+        // conversation from an unreachable customer.
+        if (REJECTION_OUTCOME_PATTERN.test(outcome)) return "Rejected";
+        return status;
+      }
+      if (outcome === "Product Unavailable") return "Product Unavailable";
       if (["New", "Confirmed"].includes(status) && order.createdAt) {
         const createdMs = new Date(order.createdAt).getTime();
         if (Number.isFinite(createdMs) && todayMs - createdMs >= sevenDaysMs) return "7+ days, no closure";
       }
       return null;
+    };
+
+    // What the previous rep actually wrote about why this order died. This is
+    // the whole point of the candidate list - a rep needs the reason before
+    // they call, or they repeat the same conversation that already failed.
+    const candidateCustomerNote = (order: TrackedOrder): string | null => {
+      const outcome = (order.callOutcome ?? "").trim();
+      const latestNote = orderNotesFor(order)[0]?.text?.trim();
+      if (outcome && latestNote && outcome.toLowerCase() !== latestNote.toLowerCase()) return `${outcome} - ${latestNote}`;
+      return outcome || latestNote || null;
     };
     const recoveryCandidates = trackedOrders
       .filter((order) => order.assignedRepId !== recoveryRepViewingId && candidateReason(order))
@@ -46194,8 +46217,8 @@ ${waybillLineItems(w).length > 1
             <div className="text-xl font-black text-red-600 mt-1">{candidateReasonCounts["Cancelled"] ?? 0}</div>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
-            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Postponed</div>
-            <div className="text-xl font-black text-amber-600 mt-1">{candidateReasonCounts["Postponed"] ?? 0}</div>
+            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Rejected</div>
+            <div className="text-xl font-black text-amber-600 mt-1">{candidateReasonCounts["Rejected"] ?? 0}</div>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
             <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Product Unavailable</div>
@@ -46269,6 +46292,12 @@ ${waybillLineItems(w).length > 1
                         </button>
                         <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${tone.class}`}>{reason}</span>
                       </div>
+                      {candidateCustomerNote(order) && (
+                        <div className="rounded-lg border border-amber-100 bg-amber-50/60 px-2.5 py-2">
+                          <p className="m-0 text-[10px] font-black uppercase tracking-wider text-amber-700">Why it was lost</p>
+                          <p className="m-0 mt-0.5 whitespace-pre-wrap text-xs text-gray-700">{candidateCustomerNote(order)}</p>
+                        </div>
+                      )}
                       <div className="flex items-center gap-2">
                         {whatsappUrl && <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-green-50 text-green-600 ring-1 ring-green-100 transition hover:bg-green-100" href={whatsappUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${order.customer}`}><WhatsAppIcon className="h-4 w-4" /></a>}
                         <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-50 text-blue-600 ring-1 ring-blue-100 transition hover:bg-blue-100" href={`tel:${order.phone}`} title={`Call ${order.customer}`}><Phone className="h-4 w-4" /></a>
@@ -46335,6 +46364,11 @@ ${waybillLineItems(w).length > 1
                           </td>
                           <td className="px-4 py-4">
                             <span className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black ${tone.class}`}><span className={`h-2 w-2 rounded-full ${tone.dot}`} /> {reason}</span>
+                            {candidateCustomerNote(order) && (
+                              <p className="m-0 mt-1.5 max-w-[260px] whitespace-pre-wrap text-[11px] leading-snug text-gray-600" title={candidateCustomerNote(order) ?? undefined}>
+                                <span className="font-black text-amber-700">Why: </span>{candidateCustomerNote(order)}
+                              </p>
+                            )}
                           </td>
                           <td className="px-4 py-4">
                             <div className="grid grid-cols-3 gap-3 text-center">
