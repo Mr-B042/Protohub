@@ -76371,7 +76371,12 @@ ${waybillLineItems(w).length > 1
                 );
 
                 return (
-                <div className="space-y-6">
+                // .modal-form is deliberately not used here - its uppercase,
+                // letter-spaced labels are what made this look dated. But it
+                // also supplied the 24px padding, so that is restored
+                // explicitly: without it the content sits flush against the
+                // panel and the modal's overflow-hidden clips it on both sides.
+                <div className="space-y-6 overflow-y-auto p-6">
                   {/* Who, what, and where this order stands - so a rep never
                       logs against the wrong customer. */}
                   <div className="rounded-2xl border border-gray-200 bg-gradient-to-b from-gray-50 to-white p-4 dark:border-slate-700 dark:from-slate-900 dark:to-slate-900">
