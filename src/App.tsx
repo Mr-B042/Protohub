@@ -74030,7 +74030,7 @@ ${waybillLineItems(w).length > 1
         return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section
-            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
+            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" ? "max-w-4xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
             role="dialog" aria-modal="true" aria-labelledby="modal-title"
           >
@@ -76328,8 +76328,8 @@ ${waybillLineItems(w).length > 1
                 // The eight outcomes the recovery flow actually produces. They
                 // write into the same free-text outcome_code the log already
                 // uses, so existing reporting and the follow-up KPI keep
-                // working - "Other" reveals the original free-text box rather
-                // than removing it.
+                // working - "Other" reveals a free-text box rather than
+                // removing it.
                 const OUTCOME_CARDS = [
                   { code: "Interested", hint: "Customer is interested" },
                   { code: "Needs time", hint: "Asked to follow up later" },
@@ -76351,111 +76351,133 @@ ${waybillLineItems(w).length > 1
                 const currentNextAction = !followUpNextActionEnabled
                   ? "closed"
                   : followUpTagForOffer ? "offer" : followUpSendWhatsAppNow ? "whatsapp" : "callback";
+
+                // Styled explicitly rather than through .modal-form, whose
+                // uppercase letter-spaced labels and boxy inputs are what made
+                // this read as dated.
+                const fieldLabel = "mb-1.5 block text-[13px] font-semibold text-gray-700 dark:text-slate-200";
+                const control = "h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-[#1F8FE0] focus:ring-4 focus:ring-[#1F8FE0]/10 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
+                const hint = "mt-1.5 block text-[11px] leading-snug text-gray-400 dark:text-slate-500";
+                const stepTitle = "text-[15px] font-bold text-gray-900 dark:text-slate-100";
+                const stepSub = "mt-0.5 text-xs text-gray-500 dark:text-slate-400";
+                const cardBase = "group relative flex gap-2.5 rounded-xl border p-3 text-left transition-all";
+                const cardOn = "border-[#1F8FE0] bg-[#1F8FE0]/[0.04] shadow-[0_0_0_1px_rgba(31,143,224,0.35)]";
+                const cardOff = "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900";
+
+                const radioDot = (on: boolean) => (
+                  <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition ${on ? "border-[#1F8FE0]" : "border-gray-300 group-hover:border-gray-400"}`}>
+                    {on && <span className="h-2 w-2 rounded-full bg-[#1F8FE0]" />}
+                  </span>
+                );
+
                 return (
-                <div className="modal-form">
-                  {/* Context strip - who, what, and where this order stands, so
-                      the rep never logs against the wrong customer. */}
-                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(selectedOrder.id)}`}>{customerInitial(selectedOrder.customer)}</span>
+                <div className="space-y-6">
+                  {/* Who, what, and where this order stands - so a rep never
+                      logs against the wrong customer. */}
+                  <div className="rounded-2xl border border-gray-200 bg-gradient-to-b from-gray-50 to-white p-4 dark:border-slate-700 dark:from-slate-900 dark:to-slate-900">
+                    <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(selectedOrder.id)}`}>{customerInitial(selectedOrder.customer)}</span>
                         <div className="min-w-0">
-                          <p className="m-0 text-sm font-black text-gray-900">{selectedOrder.id} {selectedOrder.customer}</p>
-                          <p className="m-0 text-xs text-gray-500">{selectedOrder.phone}</p>
+                          <p className="m-0 truncate text-sm font-bold text-gray-900 dark:text-slate-100">
+                            <span className="text-[#1F8FE0]">{selectedOrder.id}</span> {selectedOrder.customer}
+                          </p>
+                          <p className="m-0 text-xs text-gray-500 dark:text-slate-400">{selectedOrder.phone}</p>
                         </div>
                       </div>
+                      {([
+                        ["Product", selectedOrder.productName || "-"],
+                        ["Attempts logged", String(attemptsSoFar)]
+                      ] as const).map(([label, value]) => (
+                        <div key={label} className="min-w-0">
+                          <p className="m-0 text-[10px] font-bold uppercase tracking-wider text-gray-400">{label}</p>
+                          <p className="m-0 truncate text-sm font-semibold text-gray-800 dark:text-slate-200">{value}</p>
+                        </div>
+                      ))}
                       <div className="min-w-0">
-                        <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Product</p>
-                        <p className="m-0 truncate text-xs font-bold text-gray-800">{selectedOrder.productName || "-"}</p>
-                      </div>
-                      <div>
-                        <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Attempts logged</p>
-                        <p className="m-0 text-xs font-bold text-gray-800">{attemptsSoFar}</p>
-                      </div>
-                      <div className="min-w-0">
-                        <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Last follow-up</p>
-                        <p className="m-0 text-xs font-bold text-gray-800">
+                        <p className="m-0 text-[10px] font-bold uppercase tracking-wider text-gray-400">Last follow-up</p>
+                        <p className="m-0 text-sm font-semibold text-gray-800 dark:text-slate-200">
                           {lastAttempt ? formatMoment(lastAttempt.attemptedAt) : <span className="text-rose-600">Never logged</span>}
-                          {nextOverdue && <span className="ml-1.5 font-black text-rose-600">Overdue</span>}
+                          {nextOverdue && <span className="ml-2 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-600">Overdue</span>}
                         </p>
                       </div>
                     </div>
                     {lastAttempt?.outcomeCode && (
-                      <p className="m-0 mt-2 border-t border-gray-200 pt-2 text-xs text-gray-600"><span className="font-black text-gray-500">Last outcome: </span>{lastAttempt.outcomeCode}</p>
+                      <p className="m-0 mt-3 border-t border-gray-200 pt-2.5 text-xs text-gray-600 dark:border-slate-700 dark:text-slate-400">
+                        <span className="font-bold text-gray-500">Last outcome: </span>{lastAttempt.outcomeCode}
+                      </p>
                     )}
                   </div>
 
-                  <div>
-                    <p className="m-0 text-sm font-black text-gray-900">1. Follow-up details</p>
-                    <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      <label>
-                        <span>Date &amp; time *</span>
-                        <div className="flex gap-2">
-                          <input type="date" value={followUpAttemptDate} max={todayKey()} onChange={(e) => setFollowUpAttemptDate(e.target.value)} />
-                          <input type="time" value={followUpAttemptTime} onChange={(e) => setFollowUpAttemptTime(e.target.value)} />
+                  <section>
+                    <h3 className={stepTitle}>1. Follow-up details</h3>
+                    <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="sm:col-span-2 xl:col-span-1">
+                        <label className={fieldLabel} htmlFor="fu-date">Date &amp; time <span className="text-rose-500">*</span></label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input id="fu-date" type="date" className={`${control} min-w-0`} value={followUpAttemptDate} max={todayKey()} onChange={(e) => setFollowUpAttemptDate(e.target.value)} />
+                          <input type="time" className={`${control} min-w-0`} value={followUpAttemptTime} onChange={(e) => setFollowUpAttemptTime(e.target.value)} />
                         </div>
-                        <span className={`mt-1 block text-[11px] font-medium normal-case tracking-normal ${orderFaintTextClass}`}>Log a call you made earlier today; it cannot be back-dated past today.</span>
-                      </label>
-                      <label>
-                        <span>Contact person</span>
-                        <select value={followUpContactPerson} onChange={(e) => setFollowUpContactPerson(e.target.value)}>
+                        <span className={hint}>Log a call you made earlier today. It can&apos;t be back-dated past today.</span>
+                      </div>
+                      <div>
+                        <label className={fieldLabel} htmlFor="fu-person">Contact person</label>
+                        <select id="fu-person" className={control} value={followUpContactPerson} onChange={(e) => setFollowUpContactPerson(e.target.value)}>
                           <option value="Customer">Customer</option>
                           <option value="Spouse / family">Spouse / family</option>
                           <option value="Assistant / staff">Assistant / staff</option>
                           <option value="Someone else">Someone else</option>
                           <option value="Nobody answered">Nobody answered</option>
                         </select>
-                      </label>
-                      <label>
-                        <span>System category</span>
-                        <select value={followUpAttemptType} onChange={(event) => setFollowUpAttemptType(event.target.value as OrderContactAttempt["attemptType"])}>
+                      </div>
+                      <div>
+                        <label className={fieldLabel} htmlFor="fu-category">System category</label>
+                        <select id="fu-category" className={control} value={followUpAttemptType} onChange={(event) => setFollowUpAttemptType(event.target.value as OrderContactAttempt["attemptType"])}>
                           {selectedOrderAttemptCategoryOptions.map((option) => (
                             <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
                         </select>
-                      </label>
+                      </div>
                       <div>
-                        <span className="mb-1.5 block text-sm font-medium text-gray-700">Attempt #</span>
-                        <div className="flex h-[42px] items-center rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-black text-gray-700">
-                          {attemptsSoFar + 1}
-                        </div>
-                        <span className={`mt-1 block text-[11px] font-medium ${orderFaintTextClass}`}>Counted from the log, so it can never disagree with it.</span>
+                        <span className={fieldLabel}>Attempt #</span>
+                        <div className={`${control} flex items-center bg-gray-50 font-bold text-gray-700 dark:bg-slate-800`}>{attemptsSoFar + 1}</div>
+                        <span className={hint}>Counted from the log, so it can never disagree with it.</span>
                       </div>
                     </div>
-                  </div>
 
-                  <div>
-                    <span className="mb-1.5 block text-sm font-medium text-gray-700">Channels tried *</span>
-                    <div className="flex flex-wrap gap-2">
-                      {([
-                        { value: "call", label: "Call" },
-                        { value: "sms", label: "SMS" },
-                        { value: "whatsapp_text", label: "WhatsApp text" },
-                        { value: "whatsapp_beep", label: "WhatsApp Beep" }
-                      ] as const).map((ch) => {
-                        const on = followUpAttemptChannels.includes(ch.value);
-                        return (
-                          <button
-                            key={ch.value}
-                            type="button"
-                            onClick={() => setFollowUpAttemptChannels((prev) => prev.includes(ch.value) ? prev.filter((c) => c !== ch.value) : [...prev, ch.value])}
-                            className={`!min-h-0 inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${on ? "bg-[#1F8FE0] border-[#1F8FE0] text-white" : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"}`}
-                          >
-                            {on && <Check className="w-3.5 h-3.5" />}{ch.label}
-                          </button>
-                        );
-                      })}
+                    <div className="mt-4">
+                      <span className={fieldLabel}>Channels tried <span className="text-rose-500">*</span></span>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          { value: "call", label: "Call" },
+                          { value: "sms", label: "SMS" },
+                          { value: "whatsapp_text", label: "WhatsApp text" },
+                          { value: "whatsapp_beep", label: "WhatsApp Beep" }
+                        ] as const).map((ch) => {
+                          const on = followUpAttemptChannels.includes(ch.value);
+                          return (
+                            <button
+                              key={ch.value}
+                              type="button"
+                              onClick={() => setFollowUpAttemptChannels((prev) => prev.includes(ch.value) ? prev.filter((c) => c !== ch.value) : [...prev, ch.value])}
+                              className={`!min-h-0 inline-flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-[13px] font-semibold transition-all ${on ? "border-[#1F8FE0] bg-[#1F8FE0] text-white shadow-sm" : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"}`}
+                            >
+                              {on && <Check className="h-3.5 w-3.5" />}{ch.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {/* Multi-select on purpose: the daily follow-up KPI checks
+                          an unreachable customer was ALSO texted, and a single
+                          dropdown would stop that rule firing. */}
+                      <span className={hint}>Tick every channel you actually tried. If the customer isn&apos;t picking, log a Call 3&times; in the day and send an SMS.</span>
                     </div>
-                    {/* Kept as multi-select on purpose: the daily follow-up KPI
-                        checks that an unreachable customer was also texted, and
-                        a single-channel dropdown would stop that rule firing. */}
-                    <p className="text-[11px] text-gray-400 mt-1">Tick every channel you actually tried. When the customer isn&apos;t picking, log a Call 3&times; in the day and send an SMS.</p>
-                  </div>
+                  </section>
 
-                  <div>
-                    <p className="m-0 text-sm font-black text-gray-900">2. Call outcome *</p>
-                    <p className={`m-0 mb-2 text-xs ${orderMutedTextClass}`}>What was the result of this contact?</p>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <section>
+                    <h3 className={stepTitle}>2. Call outcome <span className="text-rose-500">*</span></h3>
+                    <p className={stepSub}>What was the result of this contact?</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
                       {OUTCOME_CARDS.map((card) => {
                         const active = card.code === "Other" ? usingOther : followUpAttemptOutcome === card.code;
                         return (
@@ -76463,38 +76485,45 @@ ${waybillLineItems(w).length > 1
                             key={card.code}
                             type="button"
                             onClick={() => setFollowUpOutcomeText(card.code === "Other" ? "" : card.code)}
-                            className={`!min-h-0 rounded-lg border p-2.5 text-left transition-colors ${active ? "border-[#1F8FE0] bg-[#1F8FE0]/5 ring-1 ring-[#1F8FE0]" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+                            className={`!min-h-0 ${cardBase} ${active ? cardOn : cardOff}`}
                           >
-                            <span className={`block text-xs font-black ${active ? "text-[#1F8FE0]" : "text-gray-800"}`}>{card.code}</span>
-                            <span className="mt-0.5 block text-[11px] text-gray-400">{card.hint}</span>
+                            {radioDot(active)}
+                            <span className="min-w-0">
+                              <span className={`block text-[13px] font-bold leading-tight ${active ? "text-[#1F8FE0]" : "text-gray-800 dark:text-slate-200"}`}>{card.code}</span>
+                              <span className="mt-0.5 block text-[11px] leading-tight text-gray-400">{card.hint}</span>
+                            </span>
                           </button>
                         );
                       })}
                     </div>
                     {(usingOther || !followUpAttemptOutcome) && (
-                      <label className="mt-2 block">
-                        <span>Describe the outcome *</span>
-                        <input value={followUpAttemptOutcome} onChange={(event) => setFollowUpOutcomeText(event.target.value)} placeholder="e.g. Wants delivery next week, Asked for discount..." />
-                      </label>
+                      <div className="mt-3">
+                        <label className={fieldLabel} htmlFor="fu-outcome">Describe the outcome <span className="text-rose-500">*</span></label>
+                        <input id="fu-outcome" className={control} value={followUpAttemptOutcome} onChange={(event) => setFollowUpOutcomeText(event.target.value)} placeholder="e.g. Wants delivery next week, asked for a discount..." />
+                      </div>
                     )}
-                  </div>
+                  </section>
 
-                  <div>
-                    <p className="m-0 text-sm font-black text-gray-900">3. Notes</p>
-                    <p className={`m-0 mb-2 text-xs ${orderMutedTextClass}`}>A brief note about the conversation.</p>
-                    <textarea
-                      value={followUpAttemptNote}
-                      maxLength={500}
-                      onChange={(event) => setFollowUpAttemptNote(event.target.value)}
-                      placeholder="What the customer actually said - the next rep reads this before calling."
-                    />
-                    <p className="m-0 mt-1 text-right text-[11px] text-gray-400">{followUpAttemptNote.length} / 500</p>
-                  </div>
+                  <section>
+                    <h3 className={stepTitle}>3. Notes</h3>
+                    <p className={stepSub}>A brief note about the conversation.</p>
+                    <div className="relative mt-3">
+                      <textarea
+                        value={followUpAttemptNote}
+                        maxLength={500}
+                        rows={3}
+                        onChange={(event) => setFollowUpAttemptNote(event.target.value)}
+                        placeholder="What the customer actually said - the next rep reads this before calling."
+                        className="w-full resize-y rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-900 outline-none transition focus:border-[#1F8FE0] focus:ring-4 focus:ring-[#1F8FE0]/10 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                      />
+                      <span className="pointer-events-none absolute bottom-2.5 right-3 text-[11px] text-gray-400">{followUpAttemptNote.length} / 500</span>
+                    </div>
+                  </section>
 
-                  <div>
-                    <p className="m-0 text-sm font-black text-gray-900">4. Next action</p>
-                    <p className={`m-0 mb-2 text-xs ${orderMutedTextClass}`}>What should happen next?</p>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <section>
+                    <h3 className={stepTitle}>4. Next action</h3>
+                    <p className={stepSub}>What should happen next?</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
                       {NEXT_ACTIONS.map((action) => {
                         const active = currentNextAction === action.value;
                         return (
@@ -76513,63 +76542,66 @@ ${waybillLineItems(w).length > 1
                               setFollowUpSendWhatsAppNow(action.value === "whatsapp");
                               setFollowUpTagForOffer(action.value === "offer");
                             }}
-                            className={`!min-h-0 rounded-lg border p-2.5 text-left transition-colors ${active ? "border-[#1F8FE0] bg-[#1F8FE0]/5 ring-1 ring-[#1F8FE0]" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+                            className={`!min-h-0 ${cardBase} ${active ? cardOn : cardOff}`}
                           >
-                            <span className={`block text-xs font-black ${active ? "text-[#1F8FE0]" : "text-gray-800"}`}>{action.label}</span>
-                            <span className="mt-0.5 block text-[11px] text-gray-400">{action.hint}</span>
+                            {radioDot(active)}
+                            <span className="min-w-0">
+                              <span className={`block text-[13px] font-bold leading-tight ${active ? "text-[#1F8FE0]" : "text-gray-800 dark:text-slate-200"}`}>{action.label}</span>
+                              <span className="mt-0.5 block text-[11px] leading-tight text-gray-400">{action.hint}</span>
+                            </span>
                           </button>
                         );
                       })}
                     </div>
-                  </div>
+                  </section>
 
                   {followUpNextActionEnabled && (
-                    <div>
-                      <p className="m-0 text-sm font-black text-gray-900">5. Schedule next follow-up</p>
-                      <p className={`m-0 mb-2 text-xs ${orderMutedTextClass}`}>When should we follow up again? Times are limited to working hours.</p>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <label>
-                          <span>Date</span>
-                          <input type="date" value={followUpNextActionDate} min={todayKey()} onChange={(event) => setFollowUpNextActionDate(event.target.value)} />
-                        </label>
-                        <label>
-                          <span>Time</span>
-                          <input type="time" value={followUpNextActionTime} onChange={(event) => setFollowUpNextActionTime(event.target.value)} />
-                        </label>
+                    <section>
+                      <h3 className={stepTitle}>5. Schedule next follow-up</h3>
+                      <p className={stepSub}>When should we follow up again? Times are limited to working hours.</p>
+                      <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className={fieldLabel} htmlFor="fu-next-date">Date</label>
+                          <input id="fu-next-date" type="date" className={control} value={followUpNextActionDate} min={todayKey()} onChange={(event) => setFollowUpNextActionDate(event.target.value)} />
+                        </div>
+                        <div>
+                          <label className={fieldLabel} htmlFor="fu-next-time">Time</label>
+                          <input id="fu-next-time" type="time" className={control} value={followUpNextActionTime} onChange={(event) => setFollowUpNextActionTime(event.target.value)} />
+                        </div>
                       </div>
-                      <label className="mt-2 flex items-start gap-2">
-                        <input type="checkbox" className="mt-0.5 h-4 w-4 rounded border-gray-300" checked={followUpReminderSet} onChange={(e) => setFollowUpReminderSet(e.target.checked)} />
+                      <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl border border-gray-200 p-3 transition hover:bg-gray-50 dark:border-slate-700 dark:hover:bg-slate-800">
+                        <input type="checkbox" className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#1F8FE0] focus:ring-[#1F8FE0]" checked={followUpReminderSet} onChange={(e) => setFollowUpReminderSet(e.target.checked)} />
                         <span className="min-w-0">
-                          <span className="block text-sm font-semibold text-gray-800">Set reminder</span>
-                          <span className="block text-[11px] text-gray-400">Creates the follow-up task so this order shows up as due.</span>
+                          <span className="block text-[13px] font-semibold text-gray-800 dark:text-slate-200">Set reminder</span>
+                          <span className="block text-[11px] text-gray-400">Creates the follow-up task so this order shows as due.</span>
                         </span>
                       </label>
-                    </div>
+                    </section>
                   )}
 
-                  <div>
-                    <p className="m-0 text-sm font-black text-gray-900">6. Additional options</p>
-                    <div className="mt-2 space-y-2">
-                      <label className="flex items-start gap-2">
-                        <input type="checkbox" className="mt-0.5 h-4 w-4 rounded border-gray-300" checked={followUpSendWhatsAppNow} onChange={(e) => setFollowUpSendWhatsAppNow(e.target.checked)} />
-                        <span className="min-w-0">
-                          <span className="block text-sm font-semibold text-gray-800">Send WhatsApp immediately</span>
-                          <span className="block text-[11px] text-gray-400">Sends through your connected number when you save. Skipped automatically if this customer opted out.</span>
-                        </span>
-                      </label>
-                      <label className="flex items-start gap-2">
-                        <input type="checkbox" className="mt-0.5 h-4 w-4 rounded border-gray-300" checked={followUpTagForOffer} onChange={(e) => setFollowUpTagForOffer(e.target.checked)} />
-                        <span className="min-w-0">
-                          <span className="block text-sm font-semibold text-gray-800">Tag for special offer later</span>
-                          <span className="block text-[11px] text-gray-400">Marks this customer for a discount or bundle when one goes out.</span>
-                        </span>
-                      </label>
+                  <section>
+                    <h3 className={stepTitle}>6. Additional options</h3>
+                    <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                      {([
+                        ["Send WhatsApp immediately", "Sends through your connected number on save. Skipped if this customer opted out.", followUpSendWhatsAppNow, setFollowUpSendWhatsAppNow] as const,
+                        ["Tag for special offer later", "Marks this customer for a discount or bundle when one goes out.", followUpTagForOffer, setFollowUpTagForOffer] as const
+                      ]).map(([label, sub, checked, setter]) => (
+                        <label key={label} className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-gray-200 p-3 transition hover:bg-gray-50 dark:border-slate-700 dark:hover:bg-slate-800">
+                          <input type="checkbox" className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#1F8FE0] focus:ring-[#1F8FE0]" checked={checked} onChange={(e) => setter(e.target.checked)} />
+                          <span className="min-w-0">
+                            <span className="block text-[13px] font-semibold text-gray-800 dark:text-slate-200">{label}</span>
+                            <span className="block text-[11px] leading-snug text-gray-400">{sub}</span>
+                          </span>
+                        </label>
+                      ))}
                     </div>
-                  </div>
+                  </section>
 
-                  <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
-                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => submitFollowUpAttempt()}>Save Follow-up</button>
+                  <div className="flex flex-col-reverse gap-2.5 border-t border-gray-100 pt-4 sm:flex-row sm:justify-end dark:border-slate-800">
+                    <button type="button" className="!min-h-0 inline-flex w-full items-center justify-center rounded-xl border border-gray-200 px-5 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 sm:w-auto dark:border-slate-700 dark:text-slate-200" onClick={closeModal}>Cancel</button>
+                    <button type="button" className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1F8FE0] px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#1560a8] sm:w-auto" onClick={() => submitFollowUpAttempt()}>
+                      <Check className="h-4 w-4" /> Save Follow-up
+                    </button>
                   </div>
                 </div>
                 );
