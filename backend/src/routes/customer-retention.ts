@@ -1296,14 +1296,27 @@ async function computeBonusBreakdown(
   const referralsCollected = rows.filter((r) => r.stage === "review_referral" && r.referral_collected).length;
   const retentionSaleRows = rows.filter((r) => r.stage === "retention_sale" && r.retention_outcome === "accepted" && r.resulting_order_id);
 
+  // The repeat-sale bonus vests on DELIVERY, not on the customer saying yes.
+  // It previously paid the moment an offer was marked accepted with an order
+  // number attached, with no status check at all - so a repeat order that
+  // later Failed or was Cancelled still paid full bonus. At a 70% delivery
+  // rate that is roughly 3 in every 10 accepted repeat sales paid out on a
+  // sale that never completed. Same rule as every other bonus in Protohub:
+  // delivered orders only.
+  //
+  // A pending order is not lost, just not yet earned - it starts counting the
+  // day it delivers.
   let retentionSaleBonus = 0;
   const retentionSalesConverted: Array<{ resultingOrderId: string; amount: number }> = [];
+  let retentionSalesPendingDelivery = 0;
   if (retentionSaleRows.length > 0) {
     const resultingIds = retentionSaleRows.map((r) => r.resulting_order_id as string);
-    const { data: resultOrders } = await supabase.from("orders").select("id, amount").in("id", resultingIds);
+    const { data: resultOrders } = await supabase.from("orders").select("id, amount, status").in("id", resultingIds);
     for (const r of retentionSaleRows) {
       const matched = (resultOrders ?? []).find((o) => o.id === r.resulting_order_id);
-      const amount = Number(matched?.amount ?? 0);
+      if (!matched) continue;
+      if (String(matched.status) !== "Delivered") { retentionSalesPendingDelivery += 1; continue; }
+      const amount = Number(matched.amount ?? 0);
       retentionSalesConverted.push({ resultingOrderId: r.resulting_order_id as string, amount });
       retentionSaleBonus += Math.round(amount * (settings.retentionSaleBonusPct / 100));
     }
@@ -1317,6 +1330,7 @@ async function computeBonusBreakdown(
 
   return {
     satisfactionChecksLogged, writtenReviewsCollected, videoTestimonialsCollected, referralsCollected,
+    retentionSalesPendingDelivery,
     retentionSalesConverted,
     breakdown: { satisfactionBonus, reviewBonus, videoBonus, referralBonus, retentionSaleBonus, total }
   };
