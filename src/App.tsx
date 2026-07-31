@@ -41361,9 +41361,16 @@ ${waybillLineItems(w).length > 1
                 </div>
                 <p className="mt-2 text-xs font-semibold text-gray-500">Target: {formatMoney(summary.bonus.target)}</p>
                 {retentionBonusSummary && (
-                  <p className="mt-4 border-t border-gray-100 pt-3 text-[11px] leading-5 text-gray-500">
-                    {retentionBonusSummary.satisfactionChecksLogged} checks · {retentionBonusSummary.writtenReviewsCollected} reviews · {retentionBonusSummary.videoTestimonialsCollected} videos · {retentionBonusSummary.referralsCollected} referrals · {retentionBonusSummary.retentionSalesConverted?.length ?? 0} repeat sales
-                  </p>
+                  <>
+                    <p className="mt-4 border-t border-gray-100 pt-3 text-[11px] leading-5 text-gray-500">
+                      {retentionBonusSummary.satisfactionChecksLogged} checks · {retentionBonusSummary.writtenReviewsCollected} reviews · {retentionBonusSummary.videoTestimonialsCollected} videos · {retentionBonusSummary.referralsCollected} referrals · {retentionBonusSummary.retentionSalesConverted?.length ?? 0} repeat sales paid
+                    </p>
+                    {(retentionBonusSummary.retentionSalesPendingDelivery ?? 0) > 0 && (
+                      <p className="mt-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] font-semibold text-amber-800">
+                        {retentionBonusSummary.retentionSalesPendingDelivery} repeat sale{(retentionBonusSummary.retentionSalesPendingDelivery ?? 0) === 1 ? "" : "s"} waiting on delivery - the bonus lands when the order is delivered, not when the customer agrees.
+                      </p>
+                    )}
+                  </>
                 )}
                 <button type="button" onClick={() => setRetentionSubPage("Reports")} className="!min-h-0 mt-3 inline-flex items-center gap-1 text-xs font-black text-sky-700 hover:text-sky-900">
                   View calculation <ArrowRight className="h-3.5 w-3.5" />

@@ -890,6 +890,9 @@ export interface RetentionBonusSummary {
   writtenReviewsCollected: number;
   videoTestimonialsCollected: number;
   referralsCollected: number;
+  // Accepted repeat sales whose order has not delivered yet. The bonus vests
+  // on delivery, so these are earned-but-not-yet-payable rather than lost.
+  retentionSalesPendingDelivery?: number;
   retentionSalesConverted: Array<{ resultingOrderId: string; amount: number }>;
   breakdown: {
     satisfactionBonus: number;
