@@ -1261,6 +1261,54 @@ export const customerRetentionApi = {
     patch<{ row: RetentionReferral }>(`/api/customer-retention/referrals/${encodeURIComponent(id)}`, body)
 };
 
+
+// ── Recovery templates: offers, call scripts, broadcast messages ──────────
+// Migration 182. Sending is NOT done here - the app dispatches through the
+// existing WhatsApp custom-send and then calls recordSend, so the audit trail
+// is written by whoever actually sent it.
+export interface RecoveryTemplate {
+  id: string;
+  kind: "offer" | "script" | "message";
+  name: string;
+  body: string;
+  offerType: "discount_pct" | "free_shipping" | "bundle" | "new_arrival" | "other" | null;
+  discountPct: number | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecoveryTemplateUsage {
+  templateId: string;
+  name: string;
+  kind: string;
+  sends: number;
+  conversions: number;
+  conversionPct: number;
+  revenue: number;
+}
+
+export interface RecoveryTemplateSendInput {
+  templateId?: string | null;
+  orderId?: string | null;
+  customerName?: string | null;
+  customerPhone: string;
+  channel?: "whatsapp" | "sms" | "call" | "other";
+}
+
+export const recoveryTemplatesApi = {
+  list: (kind?: RecoveryTemplate["kind"]) =>
+    get<{ rows: RecoveryTemplate[]; pendingMigration?: boolean }>(`/api/recovery-templates${kind ? `?kind=${kind}` : ""}`),
+  create: (body: Omit<RecoveryTemplate, "id" | "createdAt" | "updatedAt" | "active"> & { active?: boolean }) =>
+    post<{ row: RecoveryTemplate }>("/api/recovery-templates", body),
+  update: (id: string, body: Partial<Pick<RecoveryTemplate, "name" | "body" | "offerType" | "discountPct" | "active">>) =>
+    patch<{ row: RecoveryTemplate }>(`/api/recovery-templates/${encodeURIComponent(id)}`, body),
+  deactivate: (id: string) => del<{ ok: boolean }>(`/api/recovery-templates/${encodeURIComponent(id)}`),
+  recordSend: (sends: RecoveryTemplateSendInput[]) =>
+    post<{ recorded: number }>("/api/recovery-templates/record-send", { sends }),
+  usage: () => get<{ rows: RecoveryTemplateUsage[]; pendingMigration?: boolean }>("/api/recovery-templates/usage")
+};
+
 export const customerOptOutApi = {
   optOut: (phone: string, reason?: string) => post<any>("/api/customers/opt-out", { phone, reason }),
   clearOptOut: (phone: string) => del<void>(`/api/customers/opt-out/${encodeURIComponent(phone)}`)
