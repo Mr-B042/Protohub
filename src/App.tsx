@@ -8683,6 +8683,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showCartsDateRange, setShowCartsDateRange] = useState(false);
   const [cartsDateRange, setCartsDateRange] = useState<DateRange>({ start: "", end: "" });
   const [cartsNavStart, setCartsNavStart] = useState(getSundayKey);
+  const [recoveryRepNavStart, setRecoveryRepNavStart] = useState(getSundayKey);
+  const [recoveryRepNavSpan, setRecoveryRepNavSpan] = useState<NavSpan>("1W");
   const [cartsNavSpan, setCartsNavSpan] = useState<NavSpan>("1W");
   const [cartProductIds, setCartProductIds] = useState<Set<string>>(() =>
     readPref<Set<string>>("protohub.carts.productIds", new Set<string>(), (raw) => {
@@ -46192,14 +46194,18 @@ ${waybillLineItems(w).length > 1
                 {recoveryRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
               </select>
             )}
-            <select
-              className="h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
-              value={recoveryRepPeriod}
-              onChange={(event) => handleRecoveryRepPeriodChange(event.target.value as Period)}
-            >
-              {periods.map((item) => <option key={item} value={item}>{item}</option>)}
-              <option value="Custom">Custom</option>
-            </select>
+            {/* Same period strip every other page uses, rather than a bare
+                dropdown - one control, one behaviour across the app. */}
+            <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+              {periods.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${recoveryRepPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                  onClick={() => handleRecoveryRepPeriodChange(item)}
+                >{item}</button>
+              ))}
+            </div>
             <div className="relative">
               <button
                 type="button"
@@ -46221,6 +46227,11 @@ ${waybillLineItems(w).length > 1
             )}
           </div>
         </header>
+
+        {/* Prev/next window navigation - the same band Dashboard, Orders,
+            Carts and Deliveries already use, so stepping through periods
+            behaves identically wherever you are. */}
+        {renderWeekNav(recoveryRepNavStart, setRecoveryRepNavStart, recoveryRepNavSpan, setRecoveryRepNavSpan, setRecoveryRepPeriod, setRecoveryRepDateRange, recoveryRepPeriod, recoveryRepDateRange)}
 
         <div className="inline-flex w-full sm:w-auto items-center rounded-2xl bg-gray-100 p-1">
           {(["Overview", "Customer Retention"] as RecoveryRepDashboardTab[]).map((tab) => (
@@ -46351,7 +46362,9 @@ ${waybillLineItems(w).length > 1
                               <div className={`h-full rounded-full ${hit ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
                             </div>
                             <p className={`m-0 mt-1 text-[11px] font-bold ${hit ? "text-emerald-700" : "text-gray-500"}`}>
-                              {target === 0 ? "No target set" : hit ? "Target reached" : `${Math.max(0, target - done)} more to hit target`}
+                              {target === 0
+                                ? (label.startsWith("Picked today") && rec.isWorkingDayToday === false ? "Sunday - rest day" : "No target set")
+                                : hit ? "Target reached" : `${Math.max(0, target - done)} more to hit target`}
                             </p>
                           </div>
                         );
