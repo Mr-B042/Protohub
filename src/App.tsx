@@ -11582,6 +11582,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const role = auth.getUser()?.role;
     return role === "Owner" || role === "Admin";
   })();
+  // Handing work to a rep is a supervisor action - Managers included, since
+  // distributing the queue is their job.
+  const canAssignCartsToReps = (() => {
+    const role = auth.getUser()?.role;
+    return role === "Owner" || role === "Admin" || role === "Manager";
+  })();
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const selectedSalesRep = users.find((user) => user.id === selectedSalesRepId);
   const resetDateEditor = () => {
@@ -13383,12 +13389,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       </button>
     );
   };
+  // Seeds the rep picker when a cart is opened. `activeSalesRepUsers` is a
+  // .filter() result - a new array identity every render - so having it in the
+  // deps re-ran this on EVERY render and snapped the selection back to the
+  // first rep the moment the user picked anyone else. That is why every
+  // assigned cart in the database went to the same person. Depend on the
+  // first rep's id (a stable string) instead.
+  const defaultCartRepId = activeSalesRepUsers[0]?.id ?? "";
   useEffect(() => {
     if (!selectedCartId) {
       return;
     }
-    setReassignRepId(selectedCart?.assignedRepId ?? activeSalesRepUsers[0]?.id ?? "");
-  }, [selectedCartId, selectedCart?.assignedRepId, activeSalesRepUsers]);
+    setReassignRepId(selectedCart?.assignedRepId ?? defaultCartRepId);
+  }, [selectedCartId, selectedCart?.assignedRepId, defaultCartRepId]);
   useEffect(() => () => {
     Object.values(orderUpsellSaveTimerRef.current).forEach((timerId) => window.clearTimeout(timerId));
   }, []);
@@ -35345,6 +35358,39 @@ ${waybillLineItems(w).length > 1
     showToast(`${cartId} marked ${status}.`);
   };
 
+  // Assigns every selected cart to one rep in a single pass. Converted carts
+  // are skipped - they are already an order and reassigning them would imply
+  // the sale is still open.
+  const bulkAssignCartsToRep = async (repId: string) => {
+    if (!repId || selectedCartIds.size === 0) return;
+    const repName = users.find((u) => u.id === repId)?.name ?? "sales rep";
+    const ids = Array.from(selectedCartIds).filter((id) => {
+      const cart = abandonedCarts.find((c) => c.id === id);
+      return cart && cart.status !== "Converted";
+    });
+    if (ids.length === 0) { showToast("Those carts are already converted."); return; }
+    if (!window.confirm(`Assign ${ids.length} cart${ids.length === 1 ? "" : "s"} to ${repName}? They will appear on that rep's dashboard.`)) return;
+
+    const snapshots = new Map(abandonedCarts.filter((c) => ids.includes(c.id)).map((c) => [c.id, c]));
+    setAbandonedCarts((value) =>
+      value.map((cart) => ids.includes(cart.id)
+        ? { ...cart, assignedRepId: repId, status: "Assigned", lastActivity: new Date().toISOString() }
+        : cart)
+    );
+    setSelectedCartIds(new Set());
+    const results = await Promise.allSettled(
+      ids.map((id) => cartsApi.update(id, { assignedRepId: repId, status: "Assigned" }))
+    );
+    const failedIds: string[] = [];
+    results.forEach((r, i) => { if (r.status === "rejected") failedIds.push(ids[i]); });
+    if (failedIds.length > 0) {
+      setAbandonedCarts((value) => value.map((cart) => failedIds.includes(cart.id) ? (snapshots.get(cart.id) ?? cart) : cart));
+      showToast(`${ids.length - failedIds.length} assigned to ${repName}; ${failedIds.length} failed.`);
+      return;
+    }
+    showToast(`${ids.length} cart${ids.length === 1 ? "" : "s"} assigned to ${repName}.`);
+  };
+
   const bulkUpdateCartStatus = async (status: Exclude<CartStatus, "All statuses" | "Converted">) => {
     if (selectedCartIds.size === 0) return;
     const ids = Array.from(selectedCartIds).filter((id) => {
@@ -53770,6 +53816,25 @@ ${waybillLineItems(w).length > 1
                     {(["Contacted", "No response", "Not interested", "Assigned"] as const).map((s) => (
                       <button key={s} onClick={() => bulkUpdateCartStatus(s)} className="!min-h-0 px-2.5 py-1 text-xs font-semibold border border-blue-200 bg-white text-blue-700 rounded-md hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-colors">{s}</button>
                     ))}
+                    {/* Marking "Assigned" above only sets a status; this hands
+                        the carts to an actual rep so they land on that rep's
+                        own dashboard. */}
+                    {canAssignCartsToReps && activeSalesRepUsers.length > 0 && (
+                      <>
+                        <span className="hidden sm:inline text-blue-300">·</span>
+                        <label className="inline-flex items-center gap-1.5">
+                          <span className="text-blue-700 font-medium">Assign to:</span>
+                          <select
+                            value=""
+                            onChange={(event) => { const id = event.target.value; if (id) void bulkAssignCartsToRep(id); event.target.value = ""; }}
+                            className="!min-h-0 rounded-md border border-blue-200 bg-white px-2 py-1 text-xs font-semibold text-blue-700"
+                          >
+                            <option value="">Choose rep…</option>
+                            {activeSalesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                          </select>
+                        </label>
+                      </>
+                    )}
                     {canDeleteAbandonedCarts && (
                       <>
                         <span className="hidden sm:inline text-blue-300">·</span>
@@ -77360,7 +77425,7 @@ ${waybillLineItems(w).length > 1
 	            })()}
 
 	            {modal === "assignCart" && selectedCart && (
-	              <div className="modal-form">{salesRepUsers.length === 0 ? <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No sales reps available. Add a sales rep first.</p> : <label><span>Sales Rep</span><select value={reassignRepId} onChange={(event) => setReassignRepId(event.target.value)}>{salesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label>}<div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>{salesRepUsers.length > 0 && <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={assignSelectedCart}>Assign Cart</button>}</div></div>
+	              <div className="modal-form">{activeSalesRepUsers.length === 0 ? <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No active sales reps available. Add or reactivate a sales rep first.</p> : <label><span>Sales Rep</span><select value={reassignRepId} onChange={(event) => setReassignRepId(event.target.value)}>{activeSalesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label>}<div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>{activeSalesRepUsers.length > 0 && <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={assignSelectedCart}>Assign Cart</button>}</div></div>
 	            )}
 
 	            {modal === "convertCart" && selectedCart && (
