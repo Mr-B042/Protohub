@@ -22,7 +22,10 @@ const DEFAULT_KPI_SETTINGS = {
   // Migration 183 - the rep-facing pay model.
   bonusPerRecoveredOrder: 1000,
   weeklyRecoveredTarget: 15,
-  monthlyRecoveredTarget: 60
+  monthlyRecoveredTarget: 60,
+  // Migration 185 - minimum orders to pick up and work each day.
+  dailyFollowUpPickTarget: 10,
+  dailyRetentionPickTarget: 10
 };
 
 async function loadKpiSettings(orgId: string) {
@@ -43,7 +46,9 @@ async function loadKpiSettings(orgId: string) {
     surplusBonusPct: Number(data.surplus_bonus_pct ?? DEFAULT_KPI_SETTINGS.surplusBonusPct),
     bonusPerRecoveredOrder: Number(data.bonus_per_recovered_order ?? DEFAULT_KPI_SETTINGS.bonusPerRecoveredOrder),
     weeklyRecoveredTarget: Number(data.weekly_recovered_target ?? DEFAULT_KPI_SETTINGS.weeklyRecoveredTarget),
-    monthlyRecoveredTarget: Number(data.monthly_recovered_target ?? DEFAULT_KPI_SETTINGS.monthlyRecoveredTarget)
+    monthlyRecoveredTarget: Number(data.monthly_recovered_target ?? DEFAULT_KPI_SETTINGS.monthlyRecoveredTarget),
+    dailyFollowUpPickTarget: Number(data.daily_follow_up_pick_target ?? DEFAULT_KPI_SETTINGS.dailyFollowUpPickTarget),
+    dailyRetentionPickTarget: Number(data.daily_retention_pick_target ?? DEFAULT_KPI_SETTINGS.dailyRetentionPickTarget)
   };
 }
 
@@ -269,6 +274,25 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     // dead - so deliveredCount is the recovered count, no separate tracking.
     // Still gated on the same three quality KPIs, so volume cannot be chased
     // by dropping documentation or skipping upsell attempts.
+    // Daily picks (migration 185). Counted as DISTINCT ORDERS THE REP ACTUALLY
+    // WORKED today, not orders merely claimed - a claim with no follow-up is
+    // not work, and counting claims would let the target be hit by clicking
+    // Claim ten times. Follow-up picks come from logged contact attempts,
+    // retention picks from logged retention touchpoints.
+    const todayKey = lagosDateKey();
+    const dayStart = `${todayKey}T00:00:00`;
+    const dayEnd = `${todayKey}T23:59:59.999`;
+    const [followUpTodayResult, retentionTodayResult] = await Promise.all([
+      supabase.from("order_contact_attempts").select("order_id")
+        .eq("org_id", orgId).eq("rep_id", repId)
+        .gte("attempted_at", dayStart).lte("attempted_at", dayEnd),
+      supabase.from("customer_retention_touchpoints").select("order_id")
+        .eq("org_id", orgId).eq("logged_by", repId)
+        .gte("logged_at", dayStart).lte("logged_at", dayEnd)
+    ]);
+    const followUpPicksToday = new Set((followUpTodayResult.data ?? []).map((r: any) => r.order_id)).size;
+    const retentionPicksToday = new Set((retentionTodayResult.data ?? []).map((r: any) => r.order_id)).size;
+
     const recoveredThisMonth = deliveredCount;
     const recoveredThisWeek = weekDelivered.length;
     const recoveryBonusValue = surplusGatesMet
@@ -283,6 +307,10 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     const recovery = {
       recoveredThisMonth,
       recoveredThisWeek,
+      followUpPicksToday,
+      retentionPicksToday,
+      dailyFollowUpTarget: settings.dailyFollowUpPickTarget,
+      dailyRetentionTarget: settings.dailyRetentionPickTarget,
       weeklyTarget: settings.weeklyRecoveredTarget,
       monthlyTarget: settings.monthlyRecoveredTarget,
       bonusPerOrder: settings.bonusPerRecoveredOrder,
@@ -397,6 +425,8 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
     bonus_per_recovered_order: Number(body.bonusPerRecoveredOrder ?? DEFAULT_KPI_SETTINGS.bonusPerRecoveredOrder),
     weekly_recovered_target: Number(body.weeklyRecoveredTarget ?? DEFAULT_KPI_SETTINGS.weeklyRecoveredTarget),
     monthly_recovered_target: Number(body.monthlyRecoveredTarget ?? DEFAULT_KPI_SETTINGS.monthlyRecoveredTarget),
+    daily_follow_up_pick_target: Number(body.dailyFollowUpPickTarget ?? DEFAULT_KPI_SETTINGS.dailyFollowUpPickTarget),
+    daily_retention_pick_target: Number(body.dailyRetentionPickTarget ?? DEFAULT_KPI_SETTINGS.dailyRetentionPickTarget),
     updated_by: req.user!.id,
     updated_at: new Date().toISOString()
   };

@@ -11075,6 +11075,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     documentationRatePct: number;
     repMonthlySalary: number;
     surplusBonusPct: number;
+    bonusPerRecoveredOrder: number;
+    weeklyRecoveredTarget: number;
+    monthlyRecoveredTarget: number;
+    dailyFollowUpPickTarget: number;
+    dailyRetentionPickTarget: number;
   } | null>(null);
   const [recoveryRepSettingsSaving, setRecoveryRepSettingsSaving] = useState(false);
   // Customer Retention tab (post-delivery satisfaction/review/retention
@@ -40037,7 +40042,12 @@ ${waybillLineItems(w).length > 1
           upsellAttemptRatePct: summary.upsellAttemptRate.target,
           documentationRatePct: summary.documentation.target,
           repMonthlySalary: summary.repMonthlySalary,
-          surplusBonusPct: summary.surplusBonus?.pct ?? 20
+          surplusBonusPct: summary.surplusBonus?.pct ?? 20,
+          bonusPerRecoveredOrder: summary.recovery?.bonusPerOrder ?? 1000,
+          weeklyRecoveredTarget: summary.recovery?.weeklyTarget ?? 15,
+          monthlyRecoveredTarget: summary.recovery?.monthlyTarget ?? 60,
+          dailyFollowUpPickTarget: summary.recovery?.dailyFollowUpTarget ?? 10,
+          dailyRetentionPickTarget: summary.recovery?.dailyRetentionTarget ?? 10
         });
       }
     } catch (err: any) {
@@ -46235,7 +46245,12 @@ ${waybillLineItems(w).length > 1
                 ["upsellAttemptRatePct", "Upsell/cross-sell attempt rate (%)"],
                 ["documentationRatePct", "Documentation completeness (%)"],
                 ["repMonthlySalary", "Rep monthly salary (₦)"],
-                ["surplusBonusPct", "Surplus bonus (% of net contribution above the minimum)"]
+                ["surplusBonusPct", "Surplus bonus (% of net contribution above the minimum)"],
+                ["bonusPerRecoveredOrder", "Bonus per recovered order (₦)"],
+                ["weeklyRecoveredTarget", "Recovered orders target (per week)"],
+                ["monthlyRecoveredTarget", "Recovered orders target (per month)"],
+                ["dailyFollowUpPickTarget", "Minimum follow-up orders picked per day"],
+                ["dailyRetentionPickTarget", "Minimum retention customers picked per day"]
               ] as const).map(([key, label]) => (
                 <label key={key} className="space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">{label}</span>
@@ -46297,11 +46312,17 @@ ${waybillLineItems(w).length > 1
                         </p>
                       </div>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                       {([
+                        // Daily picks first - they are the thing a rep can act
+                        // on right now; the week/month totals are the result.
+                        ["Picked today · follow-up", rec.followUpPicksToday ?? 0, rec.dailyFollowUpTarget ?? 0,
+                          (rec.dailyFollowUpTarget ?? 0) > 0 ? Math.min(100, ((rec.followUpPicksToday ?? 0) / rec.dailyFollowUpTarget) * 100) : 0],
+                        ["Picked today · retention", rec.retentionPicksToday ?? 0, rec.dailyRetentionTarget ?? 0,
+                          (rec.dailyRetentionTarget ?? 0) > 0 ? Math.min(100, ((rec.retentionPicksToday ?? 0) / rec.dailyRetentionTarget) * 100) : 0],
                         ["This week", rec.recoveredThisWeek, rec.weeklyTarget, weekPct],
                         ["This month", rec.recoveredThisMonth, rec.monthlyTarget, monthPct]
-                      ] as const).map(([label, done, target, pct]) => {
+                      ] as Array<[string, number, number, number]>).map(([label, done, target, pct]) => {
                         const hit = done >= target;
                         return (
                           <div key={label} className="rounded-xl border border-gray-200 bg-white/80 p-3">
@@ -46313,7 +46334,7 @@ ${waybillLineItems(w).length > 1
                               <div className={`h-full rounded-full ${hit ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
                             </div>
                             <p className={`m-0 mt-1 text-[11px] font-bold ${hit ? "text-emerald-700" : "text-gray-500"}`}>
-                              {hit ? "Target reached" : `${Math.max(0, target - done)} more to hit target`}
+                              {target === 0 ? "No target set" : hit ? "Target reached" : `${Math.max(0, target - done)} more to hit target`}
                             </p>
                           </div>
                         );
