@@ -39907,16 +39907,23 @@ ${waybillLineItems(w).length > 1
         bounds ? { repId: recoveryRepViewingId, dateFrom: bounds.dateFrom, dateTo: bounds.dateTo } : { repId: recoveryRepViewingId }
       );
       setRecoveryRepKpiSummary(summary);
-      setRecoveryRepSettingsDraft({
-        monthlyTargetMin: summary.netContribution.targetMin,
-        monthlyTargetPreferred: summary.netContribution.targetPreferred,
-        weeklyPaceTarget: summary.weeklyPace.target,
-        minDeliveryRatePct: summary.deliveryRate.target,
-        upsellAttemptRatePct: summary.upsellAttemptRate.target,
-        documentationRatePct: summary.documentation.target,
-        repMonthlySalary: summary.repMonthlySalary,
-        surplusBonusPct: summary.surplusBonus?.pct ?? 20
-      });
+      // A Recovery Rep's response deliberately omits company financials, so
+      // these fields are absent for them. The settings draft only ever feeds
+      // the Owner-only KPI Settings panel - reading it unguarded threw
+      // "Cannot read properties of undefined" and surfaced as an error banner
+      // on the rep's own dashboard.
+      if (summary.netContribution && summary.weeklyPace) {
+        setRecoveryRepSettingsDraft({
+          monthlyTargetMin: summary.netContribution.targetMin,
+          monthlyTargetPreferred: summary.netContribution.targetPreferred,
+          weeklyPaceTarget: summary.weeklyPace.target,
+          minDeliveryRatePct: summary.deliveryRate.target,
+          upsellAttemptRatePct: summary.upsellAttemptRate.target,
+          documentationRatePct: summary.documentation.target,
+          repMonthlySalary: summary.repMonthlySalary,
+          surplusBonusPct: summary.surplusBonus?.pct ?? 20
+        });
+      }
     } catch (err: any) {
       setRecoveryRepKpiError(err?.message ?? "Could not load the recovery rep KPI summary.");
     } finally {
