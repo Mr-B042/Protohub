@@ -26784,24 +26784,50 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         title: "Upgrades Outside Any Bonus Rule",
         icon: <AlertTriangle className="w-4 h-4 text-gray-500" />,
         count: upgradeGapRows.length,
-        helper: "Delivered orders with a real quantity upgrade that doesn't match any currently active upgrade bonus rule for that product - these earned ₦0 bonus. Add a matching rule in Sales Bonus admin if this upgrade path should be rewarded.",
+        helper: "Delivered orders with a real quantity upgrade that no active bonus rule covers, so the rep earned ₦0 on the upgrade. Each row says which part missed. This clears on its own once a matching rule exists in Sales Rep Bonuses - or stays as a deliberate record that the upgrade path isn't rewarded.",
         body: upgradeGapRows.length === 0 ? allClear : (
           <div className="mt-3 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead><tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400"><th className="pb-2">Order</th><th className="pb-2">Customer</th><th className="pb-2">Product</th><th className="pb-2">Upgrade</th><th className="pb-2">Delivered</th><th className="pb-2" /></tr></thead>
+              <thead><tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400"><th className="pb-2">Order</th><th className="pb-2">Customer</th><th className="pb-2">Product</th><th className="pb-2">Upgrade</th><th className="pb-2">Why no bonus</th><th className="pb-2">Delivered</th><th className="pb-2" /></tr></thead>
               <tbody>
-                {upgradeGapRows.map((order) => (
-                  <tr key={order.id} className="border-t border-gray-100">
-                    <td className="py-2 font-black text-gray-900">{order.id}</td>
-                    <td className="py-2 text-gray-600">{order.customer}</td>
-                    <td className="py-2 text-gray-600">{order.productName}</td>
-                    <td className="py-2 font-bold text-amber-700">{order.upsellFromQty} → {order.upsellToQty}pcs</td>
-                    <td className="py-2 text-gray-600">{order.deliveredDate ?? "-"}</td>
-                    <td className="py-2 text-right">{previewButton(order.id)}</td>
-                  </tr>
-                ))}
+                {upgradeGapRows.map((order) => {
+                  // Name the actual gap. "Doesn't match any rule" leaves the
+                  // owner to work out WHICH part missed - the product having no
+                  // rules at all is a different decision from a band gap.
+                  const from = order.upsellFromQty;
+                  const productRules = activeUpgradeRules.filter((rule) => orderMatchesRuleScopeClient(order, rule.config ?? {}));
+                  const bands = Array.from(new Set(productRules.map((rule) => {
+                    const cfg = rule.config ?? {};
+                    const f = Math.max(1, Math.round(Number(cfg.fromQty ?? 3)));
+                    const t = Math.max(f + 1, Math.round(Number(cfg.toQtyMin ?? cfg.toQty ?? f + 1)));
+                    return `${f}→${t}+`;
+                  }))).sort();
+                  const reason = productRules.length === 0
+                    ? "No upgrade rule covers this product"
+                    : `Starts at ${from}pcs; rules only cover ${bands.join(", ")}`;
+                  return (
+                    <tr key={order.id} className="border-t border-gray-100">
+                      <td className="py-2 font-black text-gray-900">{order.id}</td>
+                      <td className="py-2 text-gray-600">{order.customer}</td>
+                      <td className="py-2 text-gray-600">{order.productName}</td>
+                      <td className="py-2 font-bold text-amber-700">{order.upsellFromQty} → {order.upsellToQty}pcs</td>
+                      <td className="py-2 text-xs text-gray-500">{reason}</td>
+                      <td className="py-2 text-gray-600">{order.deliveredDate ?? "-"}</td>
+                      <td className="py-2 text-right">{previewButton(order.id)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+            {currentAllowedPages.includes("Sales Rep Bonuses") && (
+              <button
+                type="button"
+                onClick={() => handleNavClick("Sales Rep Bonuses")}
+                className="!min-h-0 mt-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"
+              >
+                <Gift className="h-3.5 w-3.5 text-emerald-600" /> Open Sales Rep Bonuses to add a rule
+              </button>
+            )}
           </div>
         )
       },
@@ -49702,11 +49728,13 @@ ${waybillLineItems(w).length > 1
     const stuckInNew = trackedOrders.filter((order) =>
       (order.status ?? "New") === "New" && order.assignedRepId && businessMinutesElapsed(order.createdAt ?? "", needsAttentionNow) >= 20
     ).length;
-    const thinFailedNotes = trackedOrders.filter((order) => {
-      if (order.status !== "Failed") return false;
-      const text = (order.callOutcome ?? "").trim();
-      return (text ? text.split(/\s+/).filter(Boolean).length : 0) < 3;
-    }).length;
+    // Uses the same helper as the panel itself. This badge previously carried
+    // its own copy of the rule hardcoded to "< 3 words", so when the panel
+    // stopped flagging good short reasons the badge kept counting them - the
+    // card said 46 while the badge said 194. One rule, one place.
+    const thinFailedNotes = trackedOrders.filter((order) =>
+      order.status === "Failed" && !failedNoteIsMeaningful(order.callOutcome ?? "")
+    ).length;
     return reviewHold + skippedDeduction + stockMismatch + unassigned + stuckInNew + thinFailedNotes;
   })();
 
