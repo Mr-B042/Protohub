@@ -29,6 +29,7 @@ import {
   Filter,
   MoreVertical,
   Send,
+  Lightbulb,
   Star,
   HelpCircle,
   Headphones,
@@ -7339,10 +7340,21 @@ const additionalItemNameFromJourneyEvent = (event: CartJourneyEvent) => {
     : "Additional item";
 };
 
-// ── cartJourneyFollowUpHint ────────────────────
-const cartJourneyFollowUpHint = (events: CartJourneyEvent[]) => {
-  if (events.length === 0) return null;
-  if (events.some((event) => event.eventType === "order_submitted")) return null;
+// ── cartJourneyFollowUpHints ────────────────────
+// Returns EVERY applicable hint, most urgent first - not just the first match.
+// This used to early-return on the first signal, so a cart that failed to
+// submit AND had an item removed AND a state picked showed only one line, and
+// the rep called without the rest of the story. Order is priority order, so
+// the top line is still the most urgent thing.
+const cartJourneyFollowUpHints = (events: CartJourneyEvent[]): string[] => {
+  if (events.length === 0) return [];
+  if (events.some((event) => event.eventType === "order_submitted")) return [];
+
+  const hints: string[] = [];
+  const push = (hint: string | null | undefined) => {
+    const text = (hint ?? "").trim();
+    if (text && !hints.includes(text)) hints.push(text);
+  };
 
   const latestSubmitFailure = [...events].reverse().find((event) =>
     event.eventType === "submit_failed" || event.eventType === "submit_rejected_recovery"
@@ -7351,9 +7363,9 @@ const cartJourneyFollowUpHint = (events: CartJourneyEvent[]) => {
     const message = typeof latestSubmitFailure.metadata?.message === "string"
       ? latestSubmitFailure.metadata.message.trim()
       : "";
-    return message
+    push(message
       ? `Order submission failed: ${message}`
-      : "Order submission failed after the customer completed the form. Follow up immediately.";
+      : "Order submission failed after the customer completed the form. Follow up immediately.");
   }
 
   let latestBlockedIndex = -1;
@@ -7366,13 +7378,13 @@ const cartJourneyFollowUpHint = (events: CartJourneyEvent[]) => {
   }
   const latestBlocked = latestBlockedIndex >= 0 ? events[latestBlockedIndex] : null;
   if (latestBlocked && latestBlockedIndex > latestSubmitIndex && isCartJourneyBlockedEvent(latestBlocked.eventType)) {
-    return CART_JOURNEY_BLOCKED_HINTS[latestBlocked.eventType];
+    push(CART_JOURNEY_BLOCKED_HINTS[latestBlocked.eventType]);
   }
 
-  if (latestSubmitIndex > latestBlockedIndex) {
-    return latestBlockedIndex >= 0
+  if (latestSubmitIndex >= 0 && latestSubmitIndex > latestBlockedIndex) {
+    push(latestBlockedIndex >= 0
       ? "Completed the missing field and tried again, but no order was created. Follow up immediately."
-      : "Tried to submit, but no order was created. Follow up immediately.";
+      : "Tried to submit, but no order was created. Follow up immediately.");
   }
 
   const lastEvent = events[events.length - 1];
@@ -7399,46 +7411,48 @@ const cartJourneyFollowUpHint = (events: CartJourneyEvent[]) => {
     addedSelections.set(key, existing);
   }
 
-  const removedItem = [...addedSelections.values()].sort((a, b) => (b.removed - a.removed) || (b.added - a.added))[0];
-  if (removedItem && removedItem.removed > 0 && removedItem.added > 0) {
-    return `Added ${removedItem.name} but removed it before leaving.`;
+  // Every removed item is worth naming - "added it then took it off" is the
+  // single strongest objection signal a rep can open a call with.
+  for (const entry of [...addedSelections.values()].sort((a, b) => (b.removed - a.removed) || (b.added - a.added))) {
+    if (entry.removed > 0 && entry.added > 0) push(`Added ${entry.name} but removed it before leaving.`);
   }
 
-  const repeatedPreview = [...addedSelections.values()].sort((a, b) => b.previews - a.previews)[0];
-  if (repeatedPreview && repeatedPreview.previews > 1 && repeatedPreview.added === 0) {
-    return `Viewed ${repeatedPreview.name} more than once but never added it.`;
+  for (const entry of [...addedSelections.values()].sort((a, b) => b.previews - a.previews)) {
+    if (entry.previews > 1 && entry.added === 0) push(`Viewed ${entry.name} ${entry.previews} times but never added it.`);
   }
 
   if (lastEvent?.eventType === "form_exited" && events.some((event) => event.eventType === "submit_attempted")) {
-    return "Tried to submit before leaving. Follow up quickly.";
+    push("Tried to submit before leaving. Follow up quickly.");
   }
 
-  const selectedAdditionalItems = [...addedSelections.values()].filter((entry) => entry.selected).length;
-  if (lastEvent?.eventType === "form_exited" && selectedAdditionalItems > 0) {
-    return `Left after adding ${selectedAdditionalItems} additional item${selectedAdditionalItems === 1 ? "" : "s"}.`;
-  }
-  if (selectedAdditionalItems > 0) {
-    const itemNames = [...addedSelections.values()]
-      .filter((entry) => entry.selected)
-      .map((entry) => entry.name)
-      .slice(0, 2)
-      .join(", ");
-    return `Added ${itemNames || "an additional item"} but did not submit yet. Ask if they want to keep the extra item or confirm only the main order.`;
+  const stillSelected = [...addedSelections.values()].filter((entry) => entry.selected);
+  if (stillSelected.length > 0) {
+    const itemNames = stillSelected.map((entry) => entry.name).slice(0, 3).join(", ");
+    push(lastEvent?.eventType === "form_exited"
+      ? `Left with ${itemNames} still in the cart. Ask if they want to keep the extra item or confirm only the main order.`
+      : `Added ${itemNames} but did not submit yet. Ask if they want to keep the extra item or confirm only the main order.`);
   }
 
   const latestState = [...events].reverse().find((event) => event.eventType === "state_selected");
   if (latestState) {
     const stateName = typeof latestState.metadata?.state === "string" ? latestState.metadata.state : latestState.state;
-    return stateName ? `Picked ${stateName} but didn’t submit yet.` : "Picked a state but didn’t submit yet.";
+    push(stateName ? `Picked ${stateName} but didn’t submit yet.` : "Picked a state but didn’t submit yet.");
   }
 
   const latestPackage = [...events].reverse().find((event) => event.eventType === "package_selected");
   if (latestPackage) {
-    return "Changed package but didn’t submit yet.";
+    const packageName = typeof latestPackage.metadata?.package === "string" ? latestPackage.metadata.package : null;
+    push(packageName ? `Last looked at ${packageName} but didn’t submit yet.` : "Changed package but didn’t submit yet.");
   }
 
-  return "Opened the form but didn’t finish.";
+  const contactAttempts = events.filter((event) => event.eventType === "contact_attempt_logged").length;
+  if (contactAttempts > 0) push(`${contactAttempts} contact attempt${contactAttempts === 1 ? "" : "s"} already logged on this cart.`);
+
+  // Only fall back when nothing more specific was found.
+  if (hints.length === 0) push("Opened the form but didn’t finish.");
+  return hints;
 };
+
 
 // ── cartJourneyRecoveryScore ────────────────────
 const cartJourneyRecoveryScore = (events: CartJourneyEvent[], infoRatio?: number) => {
@@ -21773,13 +21787,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     () => summarizeCartJourneyAnalytics(repCartJourneyMap),
     [repCartJourneyMap]
   );
-  const repCartHintById = useMemo(
+  // Every applicable hint, not just the most urgent one - a rep calling a
+  // customer needs the whole picture, and the extra lines are exactly the
+  // openers ("you added X then took it off") that recover a cart.
+  const repCartHintsById = useMemo(
     () =>
       Object.fromEntries(
         Object.entries(repCartJourneyMap)
-          .map(([cartId, events]) => [cartId, cartJourneyFollowUpHint(events)] as const)
-          .filter((entry): entry is readonly [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0)
-      ),
+          .map(([cartId, events]) => [cartId, cartJourneyFollowUpHints(events)] as const)
+          .filter((entry) => entry[1].length > 0)
+      ) as Record<string, string[]>,
     [repCartJourneyMap]
   );
   const repCartRecoveryById = useMemo(
@@ -48329,7 +48346,7 @@ ${waybillLineItems(w).length > 1
             ) : (
               <div className="sm:hidden divide-y divide-gray-100">
                 {filteredRepCarts.map((cart) => {
-                  const followUpHint = repCartHintById[cart.id];
+                  const followUpHints = repCartHintsById[cart.id] ?? [];
                   const recovery = repCartRecoveryById[cart.id];
                   return (
                   <article key={cart.id} className="px-4 py-4 space-y-3">
@@ -48365,10 +48382,22 @@ ${waybillLineItems(w).length > 1
                         <p className="mt-1 font-semibold text-gray-800">{formatMoment(cart.lastActivity)}</p>
                       </div>
                     </div>
-                    {followUpHint ? (
-                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700 m-0">Follow-up hint</p>
-                        <p className="text-xs font-medium text-amber-900 mt-1 mb-0">{followUpHint}</p>
+                    {followUpHints.length > 0 ? (
+                      <div className="rounded-xl border-l-4 border-amber-400 border-y border-r border-amber-200 bg-amber-50 px-3 py-2.5 shadow-sm">
+                        <p className="m-0 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.12em] text-amber-800">
+                          <Lightbulb className="h-3.5 w-3.5" /> Smart recovery hint
+                          {followUpHints.length > 1 && (
+                            <span className="ml-auto rounded-full bg-amber-200 px-1.5 text-[10px] font-black text-amber-900">{followUpHints.length}</span>
+                          )}
+                        </p>
+                        <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
+                          {followUpHints.map((hint) => (
+                            <li key={hint} className="flex gap-1.5 text-xs font-medium leading-5 text-amber-900">
+                              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-amber-500" />
+                              <span>{hint}</span>
+                            </li>
+                          ))}
+                        </ul>
                       </div>
                     ) : null}
                     <div className="flex flex-wrap gap-2">
@@ -48416,10 +48445,22 @@ ${waybillLineItems(w).length > 1
                               <span className="text-[11px] text-gray-500">{repCartRecoveryById[cart.id].summary}</span>
                             </div>
                           ) : null}
-                          {repCartHintById[cart.id] ? (
-                            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
-                              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700 m-0">Follow-up hint</p>
-                              <p className="text-[11px] font-medium text-amber-900 mt-1 mb-0 leading-5">{repCartHintById[cart.id]}</p>
+                          {(repCartHintsById[cart.id]?.length ?? 0) > 0 ? (
+                            <div className="mt-2 rounded-xl border-l-4 border-amber-400 border-y border-r border-amber-200 bg-amber-50 px-2.5 py-2 shadow-sm">
+                              <p className="m-0 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-amber-800">
+                                <Lightbulb className="h-3 w-3" /> Smart recovery hint
+                                {(repCartHintsById[cart.id]?.length ?? 0) > 1 && (
+                                  <span className="ml-auto rounded-full bg-amber-200 px-1.5 text-[10px] font-black text-amber-900">{repCartHintsById[cart.id].length}</span>
+                                )}
+                              </p>
+                              <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
+                                {repCartHintsById[cart.id].map((hint) => (
+                                  <li key={hint} className="flex gap-1.5 text-[11px] font-medium leading-5 text-amber-900">
+                                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-amber-500" />
+                                    <span>{hint}</span>
+                                  </li>
+                                ))}
+                              </ul>
                             </div>
                           ) : null}
                         </td>
@@ -77189,7 +77230,7 @@ ${waybillLineItems(w).length > 1
 		              const cartCaptureDataExpanded = expandedCartCaptureDataId === selectedCart.id;
 			              const recoveryInfo = cartCustomerInfoCompletion(selectedCart, { showEmail: showEmailField, showWhatsapp: showWhatsappField });
 			              const recovery = cartJourneyRecoveryScore(selectedCartJourney, recoveryInfo.total ? recoveryInfo.done / recoveryInfo.total : undefined);
-		              const followUpHint = cartJourneyFollowUpHint(selectedCartJourney);
+		              const followUpHints = cartJourneyFollowUpHints(selectedCartJourney);
 		              const linkedOrderAddOnLines = selectedCartAddOnLinesFromOrder(linkedOrder);
 		              const capturedAddOnLines = capturedCartOfferLinesFor(selectedCart);
 		              const journeyAddOnLines = selectedCartAddOnLinesFromJourney(selectedCartJourney);
@@ -77481,10 +77522,22 @@ ${waybillLineItems(w).length > 1
 		                          <span className="text-xs text-gray-500 dark:text-slate-400">{recovery.summary}</span>
 		                        </div>
 		                      </div>
-		                      {followUpHint ? (
-		                        <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-400/45 dark:bg-amber-400/12">
-		                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-200 m-0">Smart recovery hint</p>
-		                          <p className="text-xs font-semibold text-amber-950 dark:text-amber-50 mt-1 mb-0 leading-relaxed">{followUpHint}</p>
+		                      {followUpHints.length > 0 ? (
+		                        <div className="sm:col-span-2 rounded-xl border-l-4 border-amber-400 border-y border-r border-amber-200 bg-amber-50 px-3 py-2.5 dark:border-amber-400/45 dark:bg-amber-400/12">
+		                          <p className="m-0 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.12em] text-amber-800 dark:text-amber-200">
+		                            <Lightbulb className="h-3.5 w-3.5" /> Smart recovery hint
+		                            {followUpHints.length > 1 && (
+		                              <span className="ml-auto rounded-full bg-amber-200 px-1.5 text-[10px] font-black text-amber-900">{followUpHints.length}</span>
+		                            )}
+		                          </p>
+		                          <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
+		                            {followUpHints.map((hint) => (
+		                              <li key={hint} className="flex gap-1.5 text-xs font-semibold leading-relaxed text-amber-950 dark:text-amber-50">
+		                                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-amber-500" />
+		                                <span>{hint}</span>
+		                              </li>
+		                            ))}
+		                          </ul>
 		                        </div>
 		                      ) : null}
 		                    </div>
