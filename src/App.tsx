@@ -46373,9 +46373,16 @@ ${waybillLineItems(w).length > 1
                         </span>
                       ) : (
                         <>
-                          <button type="button" onClick={() => openOrderDetailPopup(order.id)}
+                          {/* Opens the follow-up form directly. Sending the rep
+                              to the order detail first made them hunt for it,
+                              which is why it felt like there was nowhere to log. */}
+                          <button type="button" onClick={() => openFollowUpAttemptModal(order)}
                             className="!min-h-0 inline-flex items-center gap-1.5 rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-[#1560a8]">
                             <ClipboardCheck className="h-3 w-3" /> Log follow-up
+                          </button>
+                          <button type="button" onClick={() => openOrderDetailPopup(order.id)}
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50">
+                            <Eye className="h-3 w-3" /> History
                           </button>
                           <a href={`tel:${order.phone}`} className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50"><Phone className="h-3 w-3" /> Call</a>
                           {buildWhatsAppTargets(order.phone ?? "", `Hello ${order.customer}, this is Protohub following up on your order.`).normalUrl && (
