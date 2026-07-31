@@ -26175,6 +26175,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // not a historical report. Five independent checks, none of which existed
   // anywhere on the dashboard before.
   const FAILED_NOTE_MIN_WORDS = 3;
+  // A failed delivery needs a REASON, not a word count. The old rule flagged
+  // anything under three words, which condemned the clearest notes reps
+  // actually write - "Unresponsive" (41 orders), "Not serious" (85) - so the
+  // alert could never reach zero however well the team documented. A short
+  // note that names a recognised reason is fine; what is not fine is an empty
+  // note or a fragment that explains nothing ("Ready", "wednesday").
+  const RECOGNISED_FAILURE_REASONS = [
+    "unresponsive", "not respond", "no response", "not answer", "no answer", "not pick", "unreachable",
+    "not serious", "not interested", "no longer interested", "changed mind",
+    "reject", "refus", "return", "damag", "wrong item", "wrong number", "wrong address",
+    "out of coverage", "no coverage", "out of stock", "no stock", "unavailable",
+    "too expensive", "no money", "cannot afford", "can't afford", "price",
+    "travel", "relocat", "abroad", "sick", "hospital", "bereave",
+    "duplicate", "cancel", "fake order", "test order", "rider", "courier", "logistics"
+  ];
+  const failedNoteIsMeaningful = (raw: string): boolean => {
+    const text = raw.trim().toLowerCase();
+    if (!text) return false;
+    if (RECOGNISED_FAILURE_REASONS.some((reason) => text.includes(reason))) return true;
+    // Anything else has to actually say something.
+    return text.split(/\s+/).filter(Boolean).length >= FAILED_NOTE_MIN_WORDS;
+  };
   const STUCK_IN_NEW_MINUTES = 20;
   const renderNeedsAttentionPanel = () => {
     // Matches the exact duplicate-hold check in public-orders.ts: last-10-digit
@@ -26257,7 +26279,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
         return { order, text, wordCount };
       })
-      .filter((row) => row.wordCount < FAILED_NOTE_MIN_WORDS);
+      .filter((row) => !failedNoteIsMeaningful(row.text));
 
     // Bright's own framing: this isn't "this area's fee differs from that
     // area's" (that's the Finance page's Delivery Fee Audit - a genuinely
@@ -26715,7 +26737,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         title: "Failed Deliveries Missing a Real Note",
         icon: <AlertTriangle className="w-4 h-4 text-gray-500" />,
         count: failedThinNoteRows.length,
-        helper: "Accepted, Ready, and Rescheduled don't need an explanation - a Failed delivery does.",
+        helper: "A Failed delivery needs a reason. Short is fine when it names one - \"Unresponsive\" counts; \"Ready\" or a blank note does not.",
         body: renderRepOwnedQueue(
           "failed-notes",
           failedThinNoteRows,
