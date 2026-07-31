@@ -46313,31 +46313,86 @@ ${waybillLineItems(w).length > 1
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-200">
             <h2 className="text-base font-bold text-gray-900">My Recovered Orders</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Orders currently assigned to this rep.</p>
+            <p className="text-xs text-gray-500 mt-0.5">Keep logging follow-ups until the customer buys or tells you no.</p>
           </div>
           {myOrders.length === 0 ? (
-            <div className="px-5 py-10 text-sm text-gray-400 text-center">No orders assigned yet.</div>
+            <div className="px-5 py-10 text-sm text-gray-400 text-center">No orders assigned yet. Claim one from Recovery Candidates below.</div>
           ) : (
             <div className="divide-y divide-gray-100">
-              {myOrders.slice(0, 50).map((order) => (
-                <button
-                  key={order.id}
-                  type="button"
-                  className="w-full text-left px-5 py-4 hover:bg-gray-50 transition-colors"
-                  onClick={() => openOrderDetailPopup(order.id)}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <strong className="text-sm text-[#1F8FE0]">{order.id}</strong>{" "}
-                      <span className="text-sm font-semibold text-gray-900">{order.customer}</span>
-                      <p className="mt-0.5 text-xs text-gray-400">{order.phone}</p>
+              {myOrders.slice(0, 50).map((order) => {
+                // A claimed order is worked as a loop: log an attempt, set the
+                // next one, repeat until it converts or the customer closes it
+                // out. Surfacing where each order sits in that loop is what
+                // stops one going quiet for weeks.
+                const status = order.status ?? "New";
+                const isClosed = ["Delivered", "Cancelled", "Failed"].includes(status);
+                const lastAt = order.lastContactAttemptAt ? new Date(order.lastContactAttemptAt) : null;
+                const nextAt = order.nextFollowUpAt ? new Date(order.nextFollowUpAt) : null;
+                const nextOverdue = Boolean(nextAt && nextAt.getTime() < Date.now());
+                const daysSinceLast = lastAt ? Math.floor((Date.now() - lastAt.getTime()) / 86400000) : null;
+                const needsAttention = !isClosed && (nextOverdue || nextAt === null || (daysSinceLast !== null && daysSinceLast >= 3));
+                return (
+                  <div key={order.id} className="px-5 py-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <button type="button" className="!min-h-0 min-w-0 text-left" onClick={() => openOrderDetailPopup(order.id)}>
+                        <strong className="text-sm text-[#1F8FE0]">{order.id}</strong>{" "}
+                        <span className="text-sm font-semibold text-gray-900">{order.customer}</span>
+                        <p className="mt-0.5 text-xs text-gray-400">{order.phone}</p>
+                      </button>
+                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${orderStatusPillClass(status, order.callOutcome)}`}>
+                        {orderStatusLabelFor(order)}
+                      </span>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${orderStatusPillClass(order.status ?? "New", order.callOutcome)}`}>
-                      {orderStatusLabelFor(order)}
-                    </span>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+                      <span className="font-semibold text-gray-500">
+                        Last follow-up:{" "}
+                        {lastAt
+                          ? <span className={`font-black ${daysSinceLast !== null && daysSinceLast >= 3 ? "text-amber-700" : "text-gray-700"}`}>
+                              {lastAt.toLocaleDateString()}{daysSinceLast !== null ? ` (${daysSinceLast}d ago)` : ""}
+                            </span>
+                          : <span className="font-black text-rose-600">never logged</span>}
+                      </span>
+                      <span className="font-semibold text-gray-500">
+                        Next:{" "}
+                        {nextAt
+                          ? <span className={`font-black ${nextOverdue ? "text-rose-600" : "text-gray-700"}`}>
+                              {nextAt.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}{nextOverdue ? " · overdue" : ""}
+                            </span>
+                          : <span className="font-black text-rose-600">not scheduled</span>}
+                      </span>
+                    </div>
+                    {order.lastContactAttemptOutcome && (
+                      <p className="m-0 mt-1 text-[11px] text-gray-600"><span className="font-black text-gray-500">Last outcome: </span>{order.lastContactAttemptOutcome}</p>
+                    )}
+
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {isClosed ? (
+                        <span className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-bold text-gray-500">
+                          <CheckCircle2 className="h-3 w-3" /> Closed - no more follow-ups needed
+                        </span>
+                      ) : (
+                        <>
+                          <button type="button" onClick={() => openOrderDetailPopup(order.id)}
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-[#1560a8]">
+                            <ClipboardCheck className="h-3 w-3" /> Log follow-up
+                          </button>
+                          <a href={`tel:${order.phone}`} className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50"><Phone className="h-3 w-3" /> Call</a>
+                          {buildWhatsAppTargets(order.phone ?? "", `Hello ${order.customer}, this is Protohub following up on your order.`).normalUrl && (
+                            <a href={buildWhatsAppTargets(order.phone ?? "", `Hello ${order.customer}, this is Protohub following up on your order.`).normalUrl ?? undefined} target="_blank" rel="noreferrer"
+                              className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50"><WhatsAppIcon className="h-3 w-3" /> WhatsApp</a>
+                          )}
+                          {needsAttention && (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-black text-amber-700">
+                              <AlertTriangle className="h-3 w-3" /> {lastAt === null ? "Not started" : nextOverdue ? "Follow-up overdue" : "Going quiet"}
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
-                </button>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
