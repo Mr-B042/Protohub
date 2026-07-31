@@ -40170,6 +40170,15 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  // The Overview tab's "How your bonus works" panel quotes the repeat-sale
+  // percentage from these settings, so they must load on either tab - not just
+  // when Customer Retention is open.
+  useEffect(() => {
+    if (activePage !== "Recovery Rep Dashboard") return;
+    void loadRetentionSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage]);
+
   useEffect(() => {
     if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention") return;
     setRetentionWorklist([]);
@@ -46312,6 +46321,90 @@ ${waybillLineItems(w).length > 1
                     </div>
                   </div>
                 </section>
+              );
+            })()}
+
+            {/* Written from LIVE settings, never hardcoded - a pay explainer
+                that drifts from what the system actually pays is worse than
+                none. Change the amount or the targets and this text follows. */}
+            {summary.recovery && (() => {
+              const rec = summary.recovery;
+              const salePct = retentionSettingsDraft?.retentionSaleBonusPct ?? 10;
+              const gates: Array<[string, number, number]> = [
+                ["Delivery rate", summary.deliveryRate.pct, summary.deliveryRate.target],
+                ["Upsell/cross-sell attempts", summary.upsellAttemptRate.pct, summary.upsellAttemptRate.target],
+                ["Documentation", summary.documentation.pct, summary.documentation.target]
+              ];
+              return (
+                <details className="group rounded-2xl border border-gray-200 bg-white p-5 shadow-sm" open={!rec.gatesMet}>
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                    <span>
+                      <span className="block text-base font-black text-gray-900">How your bonus works</span>
+                      <span className="mt-0.5 block text-xs text-gray-500">Exactly how you get paid, using today&apos;s live settings.</span>
+                    </span>
+                    <ChevronDown className="h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-180" />
+                  </summary>
+
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                      <p className="m-0 text-[11px] font-black uppercase tracking-wider text-emerald-700">1. Recovering a dead order</p>
+                      <p className="m-0 mt-1.5 text-sm font-bold text-gray-900">{formatMoney(rec.bonusPerOrder)} for every order you get delivered</p>
+                      <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
+                        Any order assigned to you that reaches <strong>Delivered</strong> counts as recovered. Claim a failed or cancelled order, work it, get it delivered - that&apos;s {formatMoney(rec.bonusPerOrder)}.
+                      </p>
+                      <p className="m-0 mt-2 text-xs font-bold text-gray-700">
+                        Example: {rec.monthlyTarget} recovered this month = {formatMoney(rec.monthlyTarget * rec.bonusPerOrder)}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-4">
+                      <p className="m-0 text-[11px] font-black uppercase tracking-wider text-sky-700">2. A past customer buying again</p>
+                      <p className="m-0 mt-1.5 text-sm font-bold text-gray-900">{salePct}% of the new order&apos;s value</p>
+                      <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
+                        When someone you followed up buys again, you earn {salePct}% of that order. <strong>It pays when the new order is delivered</strong>, not when the customer agrees - so log the order number on the call and it lands on delivery.
+                      </p>
+                      <p className="m-0 mt-2 text-xs font-bold text-gray-700">
+                        Example: a {formatMoney(50000)} repeat order = {formatMoney(Math.round(50000 * (salePct / 100)))}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+                    <p className="m-0 text-[11px] font-black uppercase tracking-wider text-amber-700">The catch - all three must be met</p>
+                    <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
+                      Recovery bonus is held back entirely if any of these is below target. Not reduced - held back. This stops volume being chased by skipping the paperwork.
+                    </p>
+                    <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
+                      {gates.map(([label, value, target]) => {
+                        const met = value >= target;
+                        return (
+                          <li key={label} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              {met ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-500" />}
+                              <span className="truncate font-semibold text-gray-700">{label}</span>
+                            </span>
+                            <span className={`shrink-0 font-black ${met ? "text-emerald-700" : "text-rose-600"}`}>{value}% <span className="font-bold text-gray-400">/ {target}% needed</span></span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl border border-gray-200 p-3">
+                      <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">Your targets</p>
+                      <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
+                        <strong>{rec.weeklyTarget} recovered orders a week</strong> and <strong>{rec.monthlyTarget} a month</strong>. Targets are order counts, not naira - you&apos;re measured on what you control.
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 p-3">
+                      <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">What does NOT pay</p>
+                      <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
+                        Logging a satisfaction check, collecting a review or taking a referral contact earn nothing on their own. The bonus follows real delivered sales.
+                      </p>
+                    </div>
+                  </div>
+                </details>
               );
             })()}
 
