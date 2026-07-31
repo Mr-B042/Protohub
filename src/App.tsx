@@ -46351,8 +46351,11 @@ ${waybillLineItems(w).length > 1
             {summary.recovery && (() => {
               const rec = summary.recovery;
               const salePct = retentionSettingsDraft?.retentionSaleBonusPct ?? 10;
+              // Delivery rate is measured but no longer gates pay - a Recovery
+              // Rep only ever works orders that already failed once, so their
+              // rate is structurally low and gating on it withheld the bonus
+              // for the nature of the work rather than its quality.
               const gates: Array<[string, number, number]> = [
-                ["Delivery rate", summary.deliveryRate.pct, summary.deliveryRate.target],
                 ["Upsell/cross-sell attempts", summary.upsellAttemptRate.pct, summary.upsellAttemptRate.target],
                 ["Documentation", summary.documentation.pct, summary.documentation.target]
               ];
@@ -46391,9 +46394,9 @@ ${waybillLineItems(w).length > 1
                   </div>
 
                   <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/60 p-4">
-                    <p className="m-0 text-[11px] font-black uppercase tracking-wider text-amber-700">The catch - all three must be met</p>
+                    <p className="m-0 text-[11px] font-black uppercase tracking-wider text-amber-700">The catch - both must be met</p>
                     <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
-                      Recovery bonus is held back entirely if any of these is below target. Not reduced - held back. This stops volume being chased by skipping the paperwork.
+                      Recovery bonus is held back entirely if either of these is below target. Not reduced - held back. This stops volume being chased by skipping the paperwork.
                     </p>
                     <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
                       {gates.map(([label, value, target]) => {
@@ -46452,7 +46455,7 @@ ${waybillLineItems(w).length > 1
                       <p className="m-0 mt-0.5 text-xs font-semibold text-gray-600">
                         {summary.surplusBonus.gatesMet
                           ? "All quality KPIs met their minimum targets."
-                          : "Delivery rate, upsell attempt rate and documentation must all meet target first."}
+                          : "Upsell attempt rate and documentation must both meet target first."}
                       </p>
                       <p className="m-0 mt-1 text-[11px] font-medium text-gray-400">Withheld if any KPI falls below target.</p>
                     </div>
@@ -46472,16 +46475,19 @@ ${waybillLineItems(w).length > 1
                 decide whether a rep's bonus pays out. */}
             {!summary.netContribution && (
               <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                {/* Tracked, not gating. met:null keeps it neutral - a Recovery
+                    Rep's rate is structurally low because every order they
+                    touch already failed once, so a red "below target" would be
+                    punishing them for the nature of the work. */}
                 {kpiCard({
                   label: "Delivery Rate",
                   value: `${summary.deliveryRate.pct}%`,
-                  targetLabel: `Min ${summary.deliveryRate.target}% · ${summary.deliveryRate.deliveredCount} / ${summary.deliveryRate.closedCount} closed`,
-                  met: summary.deliveryRate.pct >= summary.deliveryRate.target,
-                  progressPct: summary.deliveryRate.target > 0 ? (summary.deliveryRate.pct / summary.deliveryRate.target) * 100 : null,
-                  primaryNote: summary.deliveryRate.pct >= summary.deliveryRate.target ? "✓ Target Met" : "Below target",
-                  deltaNote: `${summary.deliveryRate.pct - summary.deliveryRate.target >= 0 ? "+" : ""}${Math.round((summary.deliveryRate.pct - summary.deliveryRate.target) * 10) / 10}pp`,
-                  barClass: summary.deliveryRate.pct >= summary.deliveryRate.target ? "bg-amber-500" : "bg-rose-500",
-                  tooltip: "Delivered divided by every order that reached a final outcome this period."
+                  targetLabel: `${summary.deliveryRate.deliveredCount} delivered of ${summary.deliveryRate.closedCount} closed`,
+                  met: null,
+                  progressPct: null,
+                  primaryNote: "Tracked, not a bonus condition",
+                  deltaNote: null,
+                  tooltip: "How many of your closed orders were delivered. Recovery orders already failed once, so this sits below a Sales Rep's rate - it is measured to show progress, and does not affect your bonus."
                 })}
                 {kpiCard({
                   label: "Upsell / Cross-sell Attempt Rate",
@@ -46557,7 +46563,11 @@ ${waybillLineItems(w).length > 1
                       primaryNote: dr.pct >= dr.target ? "✓ Target Met" : "Below target",
                       deltaNote: pp(dr.pct, dr.target),
                       barClass: dr.pct >= dr.target ? "bg-amber-500" : "bg-rose-500",
-                      tooltip: "Delivered divided by every order that reached a FINAL outcome this period (delivered + cancelled + failed). Orders still being worked are excluded."
+                      // Supervisors keep the target comparison - it is still a
+                      // real management signal - but it no longer gates pay,
+                      // so the tooltip says so rather than implying a payout
+                      // consequence that no longer exists.
+                      tooltip: "Delivered divided by every order that reached a FINAL outcome this period (delivered + cancelled + failed). Shown against target as a management signal - it does NOT gate the rep's bonus, since recovery orders have already failed once."
                     })}
                     {kpiCard({
                       label: "Upsell / Cross-sell Attempt Rate",
