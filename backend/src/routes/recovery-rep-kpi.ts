@@ -18,7 +18,11 @@ const DEFAULT_KPI_SETTINGS = {
   upsellAttemptRatePct: 85,
   documentationRatePct: 95,
   repMonthlySalary: 70000,
-  surplusBonusPct: 20
+  surplusBonusPct: 20,
+  // Migration 183 - the rep-facing pay model.
+  bonusPerRecoveredOrder: 1000,
+  weeklyRecoveredTarget: 15,
+  monthlyRecoveredTarget: 60
 };
 
 async function loadKpiSettings(orgId: string) {
@@ -36,7 +40,10 @@ async function loadKpiSettings(orgId: string) {
     upsellAttemptRatePct: Number(data.upsell_attempt_rate_pct ?? DEFAULT_KPI_SETTINGS.upsellAttemptRatePct),
     documentationRatePct: Number(data.documentation_rate_pct ?? DEFAULT_KPI_SETTINGS.documentationRatePct),
     repMonthlySalary: Number(data.rep_monthly_salary ?? DEFAULT_KPI_SETTINGS.repMonthlySalary),
-    surplusBonusPct: Number(data.surplus_bonus_pct ?? DEFAULT_KPI_SETTINGS.surplusBonusPct)
+    surplusBonusPct: Number(data.surplus_bonus_pct ?? DEFAULT_KPI_SETTINGS.surplusBonusPct),
+    bonusPerRecoveredOrder: Number(data.bonus_per_recovered_order ?? DEFAULT_KPI_SETTINGS.bonusPerRecoveredOrder),
+    weeklyRecoveredTarget: Number(data.weekly_recovered_target ?? DEFAULT_KPI_SETTINGS.weeklyRecoveredTarget),
+    monthlyRecoveredTarget: Number(data.monthly_recovered_target ?? DEFAULT_KPI_SETTINGS.monthlyRecoveredTarget)
   };
 }
 
@@ -256,7 +263,66 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     const netContributionSurplus = Math.max(0, netContribution - settings.monthlyTargetMin);
     const surplusBonusValue = surplusGatesMet ? Math.round(netContributionSurplus * (settings.surplusBonusPct / 100)) : 0;
 
+    // The rep-facing pay model (migration 183): a flat amount per RECOVERED
+    // order, against weekly and monthly volume targets. A delivered order in
+    // this rep's queue IS a recovery - every order they hold arrived already
+    // dead - so deliveredCount is the recovered count, no separate tracking.
+    // Still gated on the same three quality KPIs, so volume cannot be chased
+    // by dropping documentation or skipping upsell attempts.
+    const recoveredThisMonth = deliveredCount;
+    const recoveredThisWeek = weekDelivered.length;
+    const recoveryBonusValue = surplusGatesMet
+      ? Math.round(recoveredThisMonth * settings.bonusPerRecoveredOrder)
+      : 0;
+    const failedGates = [
+      deliveryRatePct >= settings.minDeliveryRatePct ? null : "delivery rate",
+      upsellAttemptRatePct >= settings.upsellAttemptRatePct ? null : "upsell attempt rate",
+      documentation.ratePct >= settings.documentationRatePct ? null : "documentation"
+    ].filter(Boolean) as string[];
+
+    const recovery = {
+      recoveredThisMonth,
+      recoveredThisWeek,
+      weeklyTarget: settings.weeklyRecoveredTarget,
+      monthlyTarget: settings.monthlyRecoveredTarget,
+      bonusPerOrder: settings.bonusPerRecoveredOrder,
+      bonusValue: recoveryBonusValue,
+      // What they WOULD earn if the gates were met - so a rep can see exactly
+      // what the quality gates are costing them right now.
+      bonusAtRisk: surplusGatesMet ? 0 : Math.round(recoveredThisMonth * settings.bonusPerRecoveredOrder),
+      gatesMet: surplusGatesMet,
+      failedGates,
+      note: surplusGatesMet
+        ? `${settings.bonusPerRecoveredOrder.toLocaleString()} per recovered order.`
+        : `Held back until ${failedGates.join(", ")} meet target.`
+    };
+
+    // A Recovery Rep never receives company revenue, cost, margin or salary -
+    // stripped SERVER-SIDE, so it is not merely hidden in the UI. Supervisors
+    // get the full picture.
+    const isSupervisorView = scopeRole !== "Recovery Rep";
+    if (!isSupervisorView) {
+      res.json({
+        month: monthKey,
+        repId,
+        viewerScope: "rep",
+        recovery,
+        deliveryRate: { pct: deliveryRatePct, target: settings.minDeliveryRatePct, deliveredCount, closedCount },
+        upsellAttemptRate: { pct: upsellAttemptRatePct, target: settings.upsellAttemptRatePct, eligibleCount: eligibleTotal, loggedCount: loggedTotal },
+        documentation: {
+          pct: documentation.ratePct,
+          target: settings.documentationRatePct,
+          scoredCount: documentation.scoredCount,
+          passingCount: documentation.passingCount,
+          criteria: documentation.criteria
+        }
+      });
+      return;
+    }
+
     res.json({
+      viewerScope: "supervisor",
+      recovery,
       month: monthKey,
       repId,
       netContribution: {
@@ -328,6 +394,9 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
     documentation_rate_pct: Number(body.documentationRatePct ?? DEFAULT_KPI_SETTINGS.documentationRatePct),
     rep_monthly_salary: Number(body.repMonthlySalary ?? DEFAULT_KPI_SETTINGS.repMonthlySalary),
     surplus_bonus_pct: Number(body.surplusBonusPct ?? DEFAULT_KPI_SETTINGS.surplusBonusPct),
+    bonus_per_recovered_order: Number(body.bonusPerRecoveredOrder ?? DEFAULT_KPI_SETTINGS.bonusPerRecoveredOrder),
+    weekly_recovered_target: Number(body.weeklyRecoveredTarget ?? DEFAULT_KPI_SETTINGS.weeklyRecoveredTarget),
+    monthly_recovered_target: Number(body.monthlyRecoveredTarget ?? DEFAULT_KPI_SETTINGS.monthlyRecoveredTarget),
     updated_by: req.user!.id,
     updated_at: new Date().toISOString()
   };
