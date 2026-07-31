@@ -28,6 +28,7 @@ import {
   ExternalLink,
   Filter,
   MoreVertical,
+  Send,
   Star,
   HelpCircle,
   Headphones,
@@ -121,10 +122,10 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, customerOptOutApi, customerRetentionApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11166,6 +11167,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [retentionWinbackStatusFilter, setRetentionWinbackStatusFilter] = useState("all");
   const [retentionWinbackRepFilter, setRetentionWinbackRepFilter] = useState("all");
   const [retentionWinbackPage, setRetentionWinbackPage] = useState(1);
+  // Recovery templates: offers, call scripts, broadcast messages (migration 182).
+  const [recoveryTemplates, setRecoveryTemplates] = useState<RecoveryTemplate[]>([]);
+  const [recoveryTemplatesPending, setRecoveryTemplatesPending] = useState(false);
+  const [recoveryTemplateUsage, setRecoveryTemplateUsage] = useState<RecoveryTemplateUsage[]>([]);
+  const [templateBrowserKind, setTemplateBrowserKind] = useState<null | RecoveryTemplate["kind"]>(null);
+  const [templateEditing, setTemplateEditing] = useState<null | Partial<RecoveryTemplate>>(null);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [broadcastTemplateId, setBroadcastTemplateId] = useState("");
+  const [broadcastAudience, setBroadcastAudience] = useState<"candidates" | "my_orders">("candidates");
+  const [broadcastSending, setBroadcastSending] = useState(false);
+  const [broadcastProgress, setBroadcastProgress] = useState<{ done: number; total: number; failed: number } | null>(null);
+  // Opt-outs are fetched fresh when the broadcast opens. If the list cannot be
+  // loaded, sending is BLOCKED rather than risked - messaging someone who
+  // opted out is exactly what got this org's number restricted before.
+  const [broadcastOptOuts, setBroadcastOptOuts] = useState<Set<string>>(new Set());
+  const [broadcastOptOutsError, setBroadcastOptOutsError] = useState(false);
   const [retentionReviewTab, setRetentionReviewTab] = useState<"all" | "pending" | "published" | "not_approved" | "rejected">("all");
   const [retentionReviewRatingFilter, setRetentionReviewRatingFilter] = useState("all");
   const [retentionReviewSourceFilter, setRetentionReviewSourceFilter] = useState("all");
@@ -40097,6 +40115,32 @@ ${waybillLineItems(w).length > 1
       .catch(() => setRetentionManualTasksPending(true));
   }, []);
 
+  // Templates back the Recovery Rep Overview quick actions and the Win-back
+  // page's offer performance panel.
+  const reloadRecoveryTemplates = useCallback(() => {
+    recoveryTemplatesApi.list()
+      .then((r) => { setRecoveryTemplates(r.rows ?? []); setRecoveryTemplatesPending(Boolean(r.pendingMigration)); })
+      .catch(() => setRecoveryTemplatesPending(true));
+    recoveryTemplatesApi.usage()
+      .then((r) => setRecoveryTemplateUsage(r.rows ?? []))
+      .catch(() => setRecoveryTemplateUsage([]));
+  }, []);
+
+  useEffect(() => {
+    if (activePage !== "Recovery Rep Dashboard") return;
+    reloadRecoveryTemplates();
+  }, [activePage, reloadRecoveryTemplates]);
+
+  useEffect(() => {
+    if (!broadcastOpen) return;
+    setBroadcastOptOutsError(false);
+    whatsappSettingsApi.optOuts()
+      .then((rows: any[]) => {
+        setBroadcastOptOuts(new Set((rows ?? []).map((r: any) => String(r.phone ?? r.phone_number ?? "").replace(/\D/g, "")).filter(Boolean)));
+      })
+      .catch(() => { setBroadcastOptOuts(new Set()); setBroadcastOptOutsError(true); });
+  }, [broadcastOpen]);
+
   useEffect(() => {
     if (activePage !== "Recovery Rep Dashboard" || recoveryRepDashboardTab !== "Customer Retention" || retentionSubPage !== "Tasks") return;
     reloadRetentionManualTasks();
@@ -45862,6 +45906,7 @@ ${waybillLineItems(w).length > 1
     };
 
     return (
+      <>
       <div className="space-y-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -46461,12 +46506,32 @@ ${waybillLineItems(w).length > 1
                 </span>
               </button>
             </div>
-            {/* Offer Templates, Recovery Scripts and Broadcast Message from the
-                reference design have no backing feature in Protohub - saying so
-                beats four buttons that do nothing. */}
-            <p className="mt-3 border-t border-gray-100 pt-2 text-[11px] text-gray-400">
-              Offer Templates, Recovery Scripts and Broadcast Message aren&apos;t built yet - they need a template/script store this app doesn&apos;t have.
-            </p>
+            <div className="mt-2 grid grid-cols-1 gap-2 border-t border-gray-100 pt-2 sm:grid-cols-2 xl:grid-cols-1">
+              <button type="button" onClick={() => setTemplateBrowserKind("offer")}
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><Gift className="h-4 w-4" /></span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-black text-gray-800">Offer Templates</span>
+                  <span className="block text-[11px] text-gray-400">{recoveryTemplates.filter((t) => t.kind === "offer" && t.active).length} approved offer(s)</span>
+                </span>
+              </button>
+              <button type="button" onClick={() => setTemplateBrowserKind("script")}
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600"><MessageCircle className="h-4 w-4" /></span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-black text-gray-800">Recovery Scripts</span>
+                  <span className="block text-[11px] text-gray-400">{recoveryTemplates.filter((t) => t.kind === "script" && t.active).length} approved script(s)</span>
+                </span>
+              </button>
+              <button type="button" onClick={() => { setBroadcastTemplateId(""); setBroadcastProgress(null); setBroadcastOpen(true); }}
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600"><Send className="h-4 w-4" /></span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-black text-gray-800">Broadcast Message</span>
+                  <span className="block text-[11px] text-gray-400">Send to a candidate list</span>
+                </span>
+              </button>
+            </div>
           </div>
         </section>
 
@@ -46477,6 +46542,246 @@ ${waybillLineItems(w).length > 1
         </>
         )}
       </div>
+      {templateBrowserKind && (() => {
+        const kind = templateBrowserKind;
+        const title = kind === "offer" ? "Offer Templates" : kind === "script" ? "Recovery Scripts" : "Message Templates";
+        const blurb = kind === "offer" ? "Approved offers to send a customer." : kind === "script" ? "Approved wording to follow on a call." : "Reusable messages.";
+        const rows = recoveryTemplates.filter((t) => t.kind === kind && t.active);
+        const canManage = isOwnerOrAdmin || currentRole === "Manager";
+        return (
+          <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setTemplateBrowserKind(null)}>
+            <section className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white px-5 py-4">
+                <div>
+                  <h3 className="text-base font-black text-gray-900">{title}</h3>
+                  <p className="mt-0.5 text-xs text-gray-500">{blurb}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {canManage && (
+                    <button type="button" onClick={() => setTemplateEditing({ kind, name: "", body: "", offerType: kind === "offer" ? "discount_pct" : null, discountPct: null })}
+                      className="!min-h-0 inline-flex h-8 items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 text-xs font-black text-white hover:bg-emerald-700"><Plus className="h-3.5 w-3.5" /> New</button>
+                  )}
+                  <button type="button" onClick={() => setTemplateBrowserKind(null)} className="!min-h-0 rounded-md p-1.5 text-gray-400 hover:bg-gray-100"><X className="h-4 w-4" /></button>
+                </div>
+              </div>
+              <div className="p-5">
+                {recoveryTemplatesPending ? (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">Templates are not activated on this environment yet.</p>
+                ) : rows.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-gray-400">
+                    No {kind === "script" ? "scripts" : kind === "offer" ? "offers" : "messages"} saved yet.{canManage ? " Use New to add one." : " Ask an Owner or Manager to add one."}
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {rows.map((t) => (
+                      <li key={t.id} className="rounded-xl border border-gray-200 p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="m-0 text-sm font-black text-gray-900">{t.name}</p>
+                            {t.kind === "offer" && (
+                              <span className="mt-0.5 inline-flex items-center whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-1.5 text-[10px] font-bold text-emerald-700">
+                                {t.offerType === "discount_pct" ? `${t.discountPct ?? 0}% discount` : (t.offerType ?? "offer").replace(/_/g, " ")}
+                              </span>
+                            )}
+                          </div>
+                          {canManage && (
+                            <div className="flex shrink-0 gap-1">
+                              <button type="button" onClick={() => setTemplateEditing(t)} className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50">Edit</button>
+                              <button type="button" onClick={async () => {
+                                if (!window.confirm(`Deactivate "${t.name}"? Past sends keep showing what was actually sent.`)) return;
+                                try { await recoveryTemplatesApi.deactivate(t.id); showToast("Template deactivated."); reloadRecoveryTemplates(); }
+                                catch (err: any) { showToast(err?.message ?? "Could not deactivate."); }
+                              }} className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50">Remove</button>
+                            </div>
+                          )}
+                        </div>
+                        <p className="mt-2 whitespace-pre-wrap rounded-lg bg-gray-50 p-2 text-xs text-gray-700">{t.body}</p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <button type="button" onClick={() => { void navigator.clipboard?.writeText(t.body); showToast("Copied to clipboard."); }}
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50"><Copy className="h-3 w-3" /> Copy</button>
+                          {kind !== "script" && (
+                            <button type="button" onClick={() => { setBroadcastTemplateId(t.id); setTemplateBrowserKind(null); setBroadcastOpen(true); }}
+                              className="!min-h-0 inline-flex items-center gap-1.5 rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-[#1560a8]"><Send className="h-3 w-3" /> Send to a list</button>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+
+      {templateEditing && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setTemplateEditing(null)}>
+          <section className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-gray-100 px-5 py-4">
+              <h3 className="text-base font-black text-gray-900">{templateEditing.id ? "Edit" : "New"} {templateEditing.kind === "offer" ? "offer" : templateEditing.kind === "script" ? "script" : "message"}</h3>
+            </div>
+            <div className="space-y-3 p-5">
+              <label className="block space-y-1">
+                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Name *</span>
+                <input value={templateEditing.name ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, name: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+              </label>
+              {templateEditing.kind === "offer" && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block space-y-1">
+                    <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Offer type</span>
+                    <select value={templateEditing.offerType ?? "discount_pct"} onChange={(e) => setTemplateEditing((f) => ({ ...f, offerType: e.target.value as RecoveryTemplate["offerType"] }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                      <option value="discount_pct">Discount %</option>
+                      <option value="free_shipping">Free shipping</option>
+                      <option value="bundle">Bundle deal</option>
+                      <option value="new_arrival">New arrival</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </label>
+                  {(templateEditing.offerType ?? "discount_pct") === "discount_pct" && (
+                    <label className="block space-y-1">
+                      <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Discount %</span>
+                      <input type="number" min={0} max={100} value={templateEditing.discountPct ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, discountPct: e.target.value === "" ? null : Number(e.target.value) }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                    </label>
+                  )}
+                </div>
+              )}
+              <label className="block space-y-1">
+                <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">{templateEditing.kind === "script" ? "Script" : "Message"} *</span>
+                <textarea rows={6} value={templateEditing.body ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, body: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder={templateEditing.kind === "script" ? "What the rep should say..." : "Hello {name}, ..."} />
+                <span className="block text-[11px] text-gray-400">Type <code className="rounded bg-gray-100 px-1">{"{name}"}</code> to insert the customer&apos;s name when sending.</span>
+              </label>
+              <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
+                <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={() => setTemplateEditing(null)}>Cancel</button>
+                <button type="button" disabled={templateSaving} className="!min-h-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
+                  onClick={async () => {
+                    const t = templateEditing;
+                    if (!t.name?.trim() || !t.body?.trim()) { showToast("Name and body are both required."); return; }
+                    setTemplateSaving(true);
+                    try {
+                      if (t.id) {
+                        await recoveryTemplatesApi.update(t.id, { name: t.name, body: t.body, offerType: t.offerType ?? null, discountPct: t.discountPct ?? null });
+                      } else {
+                        await recoveryTemplatesApi.create({ kind: t.kind as RecoveryTemplate["kind"], name: t.name, body: t.body, offerType: t.offerType ?? null, discountPct: t.discountPct ?? null });
+                      }
+                      showToast("Template saved.");
+                      setTemplateEditing(null);
+                      reloadRecoveryTemplates();
+                    } catch (err: any) { showToast(err?.message ?? "Could not save the template."); }
+                    finally { setTemplateSaving(false); }
+                  }}>{templateSaving ? "Saving..." : "Save"}</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {broadcastOpen && (() => {
+        // Guardrails matter here: this org already had a WhatsApp number
+        // restricted for sending too much. So: opted-out customers are removed,
+        // duplicates collapsed, the batch is capped, sends go one at a time
+        // with a pause, and the exact count is confirmed before anything goes.
+        const BROADCAST_CAP = 50;
+        const SEND_GAP_MS = 1200;
+        const template = recoveryTemplates.find((t) => t.id === broadcastTemplateId) ?? null;
+        const pool = broadcastAudience === "candidates"
+          ? recoveryCandidates.map((o) => ({ id: o.id, name: o.customer, phone: o.phone ?? "" }))
+          : myOrders.map((o) => ({ id: o.id, name: o.customer, phone: o.phone ?? "" }));
+        const seen = new Set<string>();
+        const recipients = pool.filter((r) => {
+          const key = normalizePhone(r.phone);
+          if (key.length < 7 || seen.has(key)) return false;
+          if (broadcastOptOuts.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        const willSend = recipients.slice(0, BROADCAST_CAP);
+        const skippedOptOut = pool.length - recipients.length;
+        return (
+          <div className="fixed inset-0 z-[60] flex items-end justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => !broadcastSending && setBroadcastOpen(false)}>
+            <section className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="border-b border-gray-100 px-5 py-4">
+                <h3 className="text-base font-black text-gray-900">Broadcast Message</h3>
+                <p className="mt-0.5 text-xs text-gray-500">Sends one WhatsApp per customer through your connected number.</p>
+              </div>
+              <div className="space-y-3 p-5">
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Message template *</span>
+                  <select value={broadcastTemplateId} onChange={(e) => setBroadcastTemplateId(e.target.value)} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                    <option value="">Choose a template…</option>
+                    {recoveryTemplates.filter((t) => t.active && t.kind !== "script").map((t) => <option key={t.id} value={t.id}>{t.kind === "offer" ? "Offer · " : ""}{t.name}</option>)}
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Send to</span>
+                  <select value={broadcastAudience} onChange={(e) => setBroadcastAudience(e.target.value as typeof broadcastAudience)} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                    <option value="candidates">Recovery candidates ({recoveryCandidates.length})</option>
+                    <option value="my_orders">My assigned orders ({myOrders.length})</option>
+                  </select>
+                </label>
+                {template && (
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Preview</p>
+                    <p className="mt-1 whitespace-pre-wrap text-xs text-gray-700">{template.body.replace(/\{name\}/g, willSend[0]?.name ?? "there")}</p>
+                  </div>
+                )}
+                {broadcastOptOutsError && (
+                  <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-800">
+                    Could not load the opt-out list, so sending is blocked - messaging someone who opted out is what gets a number restricted. Retry from the WhatsApp page, then reopen this.
+                  </p>
+                )}
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold text-amber-800">
+                  <p className="m-0">Will send to <span className="font-black">{willSend.length}</span> customer{willSend.length === 1 ? "" : "s"}, one at a time.</p>
+                  {skippedOptOut > 0 && <p className="m-0 mt-1">{skippedOptOut} skipped (opted out or duplicate/invalid number).</p>}
+                  {recipients.length > BROADCAST_CAP && <p className="m-0 mt-1">Capped at {BROADCAST_CAP} per broadcast to protect your number from being restricted.</p>}
+                </div>
+                {broadcastProgress && (
+                  <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs font-bold text-sky-800">
+                    Sent {broadcastProgress.done} of {broadcastProgress.total}{broadcastProgress.failed > 0 ? ` · ${broadcastProgress.failed} failed` : ""}
+                  </div>
+                )}
+                <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
+                  <button type="button" disabled={broadcastSending} className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700 disabled:opacity-60" onClick={() => setBroadcastOpen(false)}>Close</button>
+                  <button type="button" disabled={broadcastSending || !template || willSend.length === 0 || broadcastOptOutsError}
+                    className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white disabled:opacity-60"
+                    onClick={async () => {
+                      if (!template) return;
+                      if (!window.confirm(`Send "${template.name}" to ${willSend.length} customer${willSend.length === 1 ? "" : "s"} on WhatsApp? This cannot be undone.`)) return;
+                      setBroadcastSending(true);
+                      setBroadcastProgress({ done: 0, total: willSend.length, failed: 0 });
+                      const delivered: Array<{ templateId: string; orderId: string | null; customerName: string; customerPhone: string; channel: "whatsapp" }> = [];
+                      let done = 0; let failed = 0;
+                      for (const r of willSend) {
+                        try {
+                          await whatsappSettingsApi.customSend({
+                            phone: r.phone,
+                            body: template.body.replace(/\{name\}/g, r.name || "there"),
+                            recipientName: r.name,
+                            orderId: r.id
+                          });
+                          delivered.push({ templateId: template.id, orderId: r.id, customerName: r.name, customerPhone: r.phone, channel: "whatsapp" });
+                        } catch {
+                          failed += 1;
+                        }
+                        done += 1;
+                        setBroadcastProgress({ done, total: willSend.length, failed });
+                        // Pace the sends - bursts are what get a number flagged.
+                        if (done < willSend.length) await new Promise((resolve) => setTimeout(resolve, SEND_GAP_MS));
+                      }
+                      // Write the audit trail once, only for messages that
+                      // actually went out.
+                      if (delivered.length > 0) {
+                        try { await recoveryTemplatesApi.recordSend(delivered); reloadRecoveryTemplates(); } catch { /* trail is best-effort; the sends already happened */ }
+                      }
+                      setBroadcastSending(false);
+                      showToast(`Broadcast finished: ${delivered.length} sent${failed > 0 ? `, ${failed} failed` : ""}.`);
+                    }}>{broadcastSending ? "Sending…" : `Send to ${willSend.length}`}</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+      </>
     );
   };
 
