@@ -293,7 +293,8 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
         pct: documentation.ratePct,
         target: settings.documentationRatePct,
         scoredCount: documentation.scoredCount,
-        passingCount: documentation.passingCount
+        passingCount: documentation.passingCount,
+        criteria: documentation.criteria
       },
       repMonthlySalary: settings.repMonthlySalary,
       companyLevelContribution: {

@@ -45762,6 +45762,25 @@ ${waybillLineItems(w).length > 1
         cancelled: matches.filter((o) => o.status === "Cancelled" || o.status === "Failed").length
       };
     };
+    // Claim = reassign this order to the rep being viewed, using the existing
+    // orders PATCH (which already validates the rep belongs to this org).
+    // Optimistic, with a rollback if the write fails, so the candidate list
+    // never shows a claim that did not actually stick.
+    const claimRecoveryCandidate = (order: TrackedOrder) => {
+      const targetRepId = recoveryRepViewingId;
+      const targetName = viewingUser?.name ?? "this rep";
+      if (!targetRepId) { showToast("Pick a Recovery Rep first."); return; }
+      if (!window.confirm(`Assign order ${order.id} (${order.customer}) to ${targetName}?`)) return;
+      const previous = order;
+      setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? { ...item, assignedRepId: targetRepId } : item));
+      ordersApi.update(order.id, { assignedRepId: targetRepId })
+        .then(() => showToast(`${order.id} claimed for ${targetName}.`))
+        .catch((err: any) => {
+          setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? previous : item));
+          showToast(err?.message ?? "Could not claim that order.");
+        });
+    };
+
     const addRecoveryCandidateNote = (order: TrackedOrder) => {
       const noteText = window.prompt(`Add a note for ${order.customer} (order ${order.id}):`);
       if (!noteText || !noteText.trim()) return;
@@ -45800,13 +45819,47 @@ ${waybillLineItems(w).length > 1
       return order.customer.toLowerCase().includes(q) || (order.phone ?? "").includes(q) || order.id.includes(q);
     });
 
-    const kpiCard = (label: string, value: string, targetLabel: string, met: boolean | null) => (
-      <div className={`rounded-xl border p-4 ${met === null ? "border-gray-200 bg-gray-50" : met ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
-        <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">{label}</p>
-        <strong className="mt-1 block text-xl font-black text-gray-900">{value}</strong>
-        <p className="m-0 mt-1 text-xs text-gray-500">{targetLabel}</p>
-      </div>
-    );
+    // Each KPI card carries its value, how it compares to target, and a bar so
+    // "am I clear or short" reads at a glance. `progressPct` is capped at 100
+    // for the BAR only - the headline percentage still shows real
+    // over-performance (145% of target) rather than pretending it stopped at
+    // full.
+    const kpiCard = (opts: {
+      label: string;
+      value: string;
+      targetLabel: string;
+      met: boolean | null;
+      progressPct?: number | null;
+      primaryNote?: string | null;
+      deltaNote?: string | null;
+      barClass?: string;
+      tooltip?: string;
+    }) => {
+      const { label, value, targetLabel, met, progressPct = null, primaryNote = null, deltaNote = null, barClass = "bg-emerald-500", tooltip } = opts;
+      return (
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-2">
+            <p className={`m-0 text-[10px] font-black uppercase leading-tight tracking-[0.12em] ${met === null ? "text-gray-500" : met ? "text-emerald-700" : "text-rose-700"}`}>{label}</p>
+            {tooltip && <span title={tooltip} className="shrink-0 cursor-help text-gray-300 hover:text-gray-500"><Info className="h-3.5 w-3.5" /></span>}
+          </div>
+          <strong className="mt-1.5 block text-2xl font-black text-gray-900">{value}</strong>
+          <p className="m-0 mt-1 text-[11px] font-medium text-gray-500">{targetLabel}</p>
+          {progressPct !== null && (
+            <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+              <div className={`h-full rounded-full ${barClass}`} style={{ width: `${Math.min(100, Math.max(2, progressPct))}%` }} />
+            </div>
+          )}
+          {(primaryNote || deltaNote) && (
+            <div className="mt-2 flex items-end justify-between gap-2">
+              {primaryNote && (
+                <span className={`text-xs font-black ${met === null ? "text-gray-700" : met ? "text-emerald-700" : "text-rose-700"}`}>{primaryNote}</span>
+              )}
+              {deltaNote && <span className="text-right text-[11px] font-bold text-gray-400">{deltaNote}</span>}
+            </div>
+          )}
+        </div>
+      );
+    };
 
     return (
       <div className="space-y-6">
@@ -45929,60 +45982,128 @@ ${waybillLineItems(w).length > 1
           <>
             {summary.surplusBonus && (
               <section className={`overflow-hidden rounded-2xl border-2 p-5 shadow-sm ${summary.surplusBonus.gatesMet ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white" : "border-amber-300 bg-gradient-to-br from-amber-50 to-white"}`}>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)] lg:items-center">
                   <div>
                     <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Your recovery bonus this month</p>
                     <strong className={`mt-1 block text-3xl font-black ${summary.surplusBonus.gatesMet ? "text-emerald-700" : "text-amber-700"}`}>
                       {formatMoney(summary.surplusBonus.value)}
                     </strong>
-                    <p className="mt-1 text-sm font-semibold text-gray-600">{summary.surplusBonus.note}</p>
+                    <p className="mt-1 text-xs font-semibold text-gray-500">
+                      Surplus above {formatMoney(summary.netContribution.targetMin)}: <span className="font-black text-gray-900">{formatMoney(summary.surplusBonus.surplusBase)}</span> × {summary.surplusBonus.pct}%
+                    </p>
                   </div>
-                  <div className="rounded-xl border border-gray-200 bg-white/70 px-4 py-3 text-xs font-semibold text-gray-500">
-                    <p className="m-0">Surplus above {formatMoney(summary.netContribution.targetMin)}: <span className="font-black text-gray-900">{formatMoney(summary.surplusBonus.surplusBase)}</span></p>
-                    <p className="m-0 mt-1">Every extra ₦ you recover this month earns you {summary.surplusBonus.pct}% more - the floor is just the starting line.</p>
+                  <div className="flex items-start gap-2">
+                    <span className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${summary.surplusBonus.gatesMet ? "bg-emerald-500" : "bg-amber-500"} text-white`}>
+                      {summary.surplusBonus.gatesMet ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+                    </span>
+                    <div className="min-w-0">
+                      <p className={`m-0 text-sm font-black ${summary.surplusBonus.gatesMet ? "text-emerald-800" : "text-amber-800"}`}>
+                        {summary.surplusBonus.gatesMet ? "Bonus Earned!" : "Bonus Withheld"}
+                      </p>
+                      <p className="m-0 mt-0.5 text-xs font-semibold text-gray-600">
+                        {summary.surplusBonus.gatesMet
+                          ? "All quality KPIs met their minimum targets."
+                          : "Delivery rate, upsell attempt rate and documentation must all meet target first."}
+                      </p>
+                      <p className="m-0 mt-1 text-[11px] font-medium text-gray-400">Withheld if any KPI falls below target.</p>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-gray-200 bg-white/70 px-4 py-3">
+                    <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">How your bonus is calculated</p>
+                    <ul className="m-0 mt-1.5 list-none space-y-1 p-0 text-[11px] font-medium text-gray-600">
+                      <li>Monthly Net Contribution must be above {formatMoney(summary.netContribution.targetMin)}.</li>
+                      <li>You earn {summary.surplusBonus.pct}% of the surplus above that floor.</li>
+                      <li>Floor already covers your salary ({formatMoney(summary.repMonthlySalary)}) + your share of staff cost.</li>
+                    </ul>
                   </div>
                 </div>
               </section>
             )}
-            <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {kpiCard(
-                "Monthly net contribution",
-                formatMoney(summary.netContribution.value),
-                `Min ${formatMoney(summary.netContribution.targetMin)} · Preferred ${formatMoney(summary.netContribution.targetPreferred)}`,
-                summary.netContribution.value >= summary.netContribution.targetMin
-              )}
-              {kpiCard(
-                "Weekly pace",
-                formatMoney(summary.weeklyPace.value),
-                `Target ${formatMoney(summary.weeklyPace.target)}/week`,
-                summary.weeklyPace.value >= summary.weeklyPace.target
-              )}
-              {kpiCard(
-                "Delivery rate",
-                `${summary.deliveryRate.pct}%`,
-                `Min ${summary.deliveryRate.target}% · ${summary.deliveryRate.deliveredCount} of ${summary.deliveryRate.closedCount} closed`,
-                summary.deliveryRate.pct >= summary.deliveryRate.target
-              )}
-              {kpiCard(
-                "Upsell/cross-sell attempt rate",
-                `${summary.upsellAttemptRate.pct}%`,
-                `Min ${summary.upsellAttemptRate.target}% · ${summary.upsellAttemptRate.loggedCount} of ${summary.upsellAttemptRate.eligibleCount} logged`,
-                summary.upsellAttemptRate.pct >= summary.upsellAttemptRate.target
-              )}
-              {kpiCard(
-                "Documentation completeness",
-                `${summary.documentation.pct}%`,
-                `Min ${summary.documentation.target}% · ${summary.documentation.passingCount} of ${summary.documentation.scoredCount} fully logged`,
-                summary.documentation.pct >= summary.documentation.target
-              )}
-              {kpiCard(
-                "Rep monthly salary",
-                formatMoney(summary.repMonthlySalary),
-                `Company-level contribution after salary: ${formatMoney(summary.companyLevelContribution.value)}`,
-                null
-              )}
+            <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              {(() => {
+                const nc = summary.netContribution;
+                const pace = summary.weeklyPace;
+                const dr = summary.deliveryRate;
+                const ua = summary.upsellAttemptRate;
+                const doc = summary.documentation;
+                const pctOfTarget = (v: number, t: number) => t > 0 ? Math.round((v / t) * 100) : null;
+                // Percentage-point gap, the honest unit for comparing two
+                // percentages - a rate 6.4pp over target is not "6.4% more".
+                const pp = (v: number, t: number) => `${v - t >= 0 ? "+" : ""}${Math.round((v - t) * 10) / 10}pp ${v >= t ? "above" : "below"} target`;
+                const money = (v: number, t: number) => `${formatMoney(Math.abs(v - t))} ${v >= t ? "above" : "below"} ${v >= t ? "target" : "target"}`;
+                return (
+                  <>
+                    {kpiCard({
+                      label: "Monthly Net Contribution",
+                      value: formatMoney(nc.value),
+                      targetLabel: `Target: Min ${formatMoney(nc.targetMin)} · Preferred ${formatMoney(nc.targetPreferred)}`,
+                      met: nc.value >= nc.targetMin,
+                      progressPct: pctOfTarget(nc.value, nc.targetMin),
+                      primaryNote: `${pctOfTarget(nc.value, nc.targetMin) ?? 0}% of minimum target`,
+                      deltaNote: `${formatMoney(Math.abs(nc.value - nc.targetMin))} ${nc.value >= nc.targetMin ? "above floor" : "below floor"}`,
+                      barClass: nc.value >= nc.targetMin ? "bg-emerald-500" : "bg-rose-500",
+                      tooltip: "Revenue minus product cost, logistics and commission on orders delivered in this period."
+                    })}
+                    {kpiCard({
+                      label: "Weekly Pace",
+                      value: formatMoney(pace.value),
+                      targetLabel: `Target: ${formatMoney(pace.target)} / week`,
+                      met: pace.value >= pace.target,
+                      progressPct: pctOfTarget(pace.value, pace.target),
+                      primaryNote: `${pctOfTarget(pace.value, pace.target) ?? 0}% of weekly target`,
+                      deltaNote: money(pace.value, pace.target),
+                      barClass: pace.value >= pace.target ? "bg-sky-500" : "bg-rose-500",
+                      tooltip: `Net contribution for the CURRENT week (from ${pace.weekStart}) - always live, it does not follow the period filter above.`
+                    })}
+                    {kpiCard({
+                      label: "Delivery Rate",
+                      value: `${dr.pct}%`,
+                      targetLabel: `Min ${dr.target}% · ${dr.deliveredCount} / ${dr.closedCount} closed`,
+                      met: dr.pct >= dr.target,
+                      progressPct: pctOfTarget(dr.pct, dr.target),
+                      primaryNote: dr.pct >= dr.target ? "✓ Target Met" : "Below target",
+                      deltaNote: pp(dr.pct, dr.target),
+                      barClass: dr.pct >= dr.target ? "bg-amber-500" : "bg-rose-500",
+                      tooltip: "Delivered divided by every order that reached a FINAL outcome this period (delivered + cancelled + failed). Orders still being worked are excluded."
+                    })}
+                    {kpiCard({
+                      label: "Upsell / Cross-sell Attempt Rate",
+                      value: `${ua.pct}%`,
+                      targetLabel: `Min ${ua.target}% · ${ua.loggedCount} / ${ua.eligibleCount} eligible`,
+                      met: ua.pct >= ua.target,
+                      progressPct: pctOfTarget(ua.pct, ua.target),
+                      primaryNote: ua.pct >= ua.target ? "✓ Target Met" : "Below target",
+                      deltaNote: pp(ua.pct, ua.target),
+                      barClass: ua.pct >= ua.target ? "bg-violet-500" : "bg-rose-500",
+                      tooltip: "Measures ATTEMPTS, not successes - pitching and being declined still counts. Reuses the Sales Expansion Log compliance already tracked per week."
+                    })}
+                    {kpiCard({
+                      label: "Documentation Completeness",
+                      value: `${doc.pct}%`,
+                      targetLabel: `Min ${doc.target}% · ${doc.passingCount} / ${doc.scoredCount} scored`,
+                      met: doc.pct >= doc.target,
+                      progressPct: pctOfTarget(doc.pct, doc.target),
+                      primaryNote: doc.pct >= doc.target ? "✓ Target Met" : "Below target",
+                      deltaNote: pp(doc.pct, doc.target),
+                      barClass: doc.pct >= doc.target ? "bg-emerald-500" : "bg-rose-500",
+                      tooltip: "An order passes only with all three: a logged contact attempt, a call outcome, and a scheduled follow-up or terminal status."
+                    })}
+                    {kpiCard({
+                      label: "Rep Monthly Salary",
+                      value: formatMoney(summary.repMonthlySalary),
+                      targetLabel: "Company-level contribution after salary:",
+                      met: null,
+                      primaryNote: formatMoney(summary.companyLevelContribution.value),
+                      tooltip: "For company reporting only - this is not the rep-facing metric, so the rep is measured on what they control."
+                    })}
+                  </>
+                );
+              })()}
             </section>
-            <p className="text-xs text-gray-400 italic">{summary.netContribution.untrackedCostNote}</p>
+            <p className="flex items-start gap-1.5 text-xs italic text-gray-400">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{summary.netContribution.untrackedCostNote} These are NOT deducted from Net Contribution, so the figure above is optimistic by whatever they really cost.</span>
+            </p>
           </>
         )}
 
@@ -46121,6 +46242,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
+                        <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-md bg-[#1F8FE0] px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-[#1560a8]" onClick={() => claimRecoveryCandidate(order)}>Claim</button>
                         <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => addRecoveryCandidateNote(order)}>Add Note</button>
                       </div>
                     </article>
@@ -46178,6 +46300,7 @@ ${waybillLineItems(w).length > 1
                           </td>
                           <td className="px-4 py-4">
                             <div className="flex items-center gap-1.5">
+                              <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#1560a8]" onClick={() => claimRecoveryCandidate(order)}>Claim</button>
                               <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
                               <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => addRecoveryCandidateNote(order)}>Add Note</button>
                             </div>
@@ -46192,26 +46315,165 @@ ${waybillLineItems(w).length > 1
           )}
         </section>
 
-        <section className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <h2 className="text-base font-bold text-gray-900 m-0">Documentation &amp; Consent</h2>
-          <p className="text-xs text-gray-500 mt-1 mb-3">
-            {summary ? `${summary.documentation.passingCount} of ${summary.documentation.scoredCount} assigned orders this month have a logged contact attempt, an outcome, and either a follow-up date or a closed status.` : "Load a rep's KPI summary to see documentation completeness."}
-          </p>
-          <button
-            type="button"
-            className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800 hover:bg-amber-100"
-            onClick={() => {
-              const phone = window.prompt("Customer phone number to mark as \"stop contact\":");
-              if (!phone) return;
-              const reason = window.prompt("Reason (optional):") ?? undefined;
-              void customerOptOutApi.optOut(phone, reason).then(() => {
-                showToast(`${phone} marked - removed from active follow-up.`);
-              }).catch((err: any) => showToast(err?.message ?? "Could not save the opt-out."));
-            }}
-          >
-            Mark customer: stop contact
-          </button>
+        <section className="grid gap-4 xl:grid-cols-3">
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h2 className="m-0 text-base font-bold text-gray-900">Documentation &amp; Consent</h2>
+            <p className="mb-3 mt-1 text-xs text-gray-500">Data quality decides bonus eligibility.</p>
+            {summary ? (() => {
+              const doc = summary.documentation;
+              const crit = doc.criteria;
+              const failed = doc.scoredCount - doc.passingCount;
+              const pctOf = (n: number) => doc.scoredCount > 0 ? `${Math.round((n / doc.scoredCount) * 1000) / 10}%` : "—";
+              // Each criterion is listed separately so a rep can see WHICH part
+              // of the trail they drop, not just that an order failed.
+              const rows: Array<[string, number]> = crit ? [
+                ["Contact attempt logged", crit.contactAttempt],
+                ["Call outcome recorded", crit.callOutcome],
+                ["Follow-up scheduled / Terminal status", crit.followUpOrTerminal]
+              ] : [];
+              return (
+                <>
+                  <div className="flex flex-wrap items-end gap-4 border-b border-gray-100 pb-3">
+                    <div>
+                      <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Total orders scored</p>
+                      <strong className="block text-2xl font-black text-gray-900">{doc.scoredCount}</strong>
+                    </div>
+                    <div>
+                      <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Passed (all 3)</p>
+                      <strong className="block text-2xl font-black text-emerald-700">{doc.passingCount}</strong>
+                    </div>
+                    <div>
+                      <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Failed</p>
+                      <strong className={`block text-2xl font-black ${failed > 0 ? "text-rose-600" : "text-gray-400"}`}>{failed}</strong>
+                    </div>
+                  </div>
+                  <ul className="m-0 mt-3 list-none space-y-2 p-0">
+                    {rows.map(([label, count]) => {
+                      const ok = doc.scoredCount > 0 && count === doc.scoredCount;
+                      return (
+                        <li key={label} className="flex items-center justify-between gap-2">
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            {ok
+                              ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                              : <X className="h-3.5 w-3.5 shrink-0 text-rose-500" />}
+                            <span className="truncate text-xs font-semibold text-gray-700">{label}</span>
+                          </span>
+                          <span className="shrink-0 text-xs font-black text-gray-800">{count} <span className="font-bold text-gray-400">({pctOf(count)})</span></span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {!crit && <p className="mt-2 text-[11px] italic text-gray-400">Per-criterion breakdown needs a backend refresh.</p>}
+                </>
+              );
+            })() : (
+              <p className="text-xs text-gray-400">Load a rep&apos;s KPI summary to see documentation completeness.</p>
+            )}
+            <button
+              type="button"
+              className="!min-h-0 mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-100"
+              onClick={() => {
+                const phone = window.prompt("Customer phone number to mark as \"stop contact\":");
+                if (!phone) return;
+                const reason = window.prompt("Reason (optional):") ?? undefined;
+                void customerOptOutApi.optOut(phone, reason).then(() => {
+                  showToast(`${phone} marked - removed from active follow-up.`);
+                }).catch((err: any) => showToast(err?.message ?? "Could not save the opt-out."));
+              }}
+            >
+              Mark customer: stop contact
+            </button>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h2 className="m-0 text-base font-bold text-gray-900">Bonus Coach</h2>
+            <p className="mb-3 mt-1 text-xs text-gray-500">Your progress vs. targets.</p>
+            {summary ? (
+              <ul className="m-0 list-none space-y-2.5 p-0">
+                {([
+                  ["Monthly Net Contribution", summary.netContribution.value, summary.netContribution.targetMin, "money"],
+                  ["Weekly Pace", summary.weeklyPace.value, summary.weeklyPace.target, "money"],
+                  ["Delivery Rate", summary.deliveryRate.pct, summary.deliveryRate.target, "pct"],
+                  ["Upsell Attempt Rate", summary.upsellAttemptRate.pct, summary.upsellAttemptRate.target, "pct"],
+                  ["Documentation Completeness", summary.documentation.pct, summary.documentation.target, "pct"]
+                ] as Array<[string, number, number, "money" | "pct"]>).map(([label, value, target, kind]) => {
+                  const met = value >= target;
+                  const pct = target > 0 ? Math.min(100, Math.max(2, (value / target) * 100)) : 0;
+                  const fmt = (n: number) => kind === "money" ? formatMoney(n) : `${n}%`;
+                  return (
+                    <li key={label}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate text-xs font-semibold text-gray-700">{label}</span>
+                        <span className={`shrink-0 text-[11px] font-black ${met ? "text-emerald-700" : "text-rose-600"}`}>{met ? "On Track" : "Behind"}</span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-gray-100">
+                          <span className={`block h-full rounded-full ${met ? "bg-emerald-500" : "bg-rose-400"}`} style={{ width: `${pct}%` }} />
+                        </span>
+                        <span className="shrink-0 text-[10px] font-bold text-gray-500">{fmt(value)} <span className="text-gray-300">/ {fmt(target)}</span></span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : <p className="text-xs text-gray-400">No KPI summary loaded.</p>}
+            {summary && !summary.surplusBonus?.gatesMet && (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] font-semibold text-amber-800">
+                Every metric above must be On Track before the surplus bonus pays out.
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h2 className="m-0 text-base font-bold text-gray-900">Quick Actions</h2>
+            <p className="mb-3 mt-1 text-xs text-gray-500">Jump straight into the work.</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
+              <button type="button" onClick={() => setRecoveryRepDashboardTab("Customer Retention")}
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600"><Phone className="h-4 w-4" /></span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-black text-gray-800">Call Queue</span>
+                  <span className="block text-[11px] text-gray-400">{recoveryCandidates.length} candidate{recoveryCandidates.length === 1 ? "" : "s"} to work</span>
+                </span>
+              </button>
+              <button type="button" onClick={() => handleNavClick("WhatsApp")}
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><WhatsAppIcon className="h-4 w-4" /></span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-black text-gray-800">WhatsApp Queue</span>
+                  <span className="block text-[11px] text-gray-400">{myOrders.length} assigned order{myOrders.length === 1 ? "" : "s"}</span>
+                </span>
+              </button>
+              <button type="button" onClick={() => { setRecoveryRepDashboardTab("Customer Retention"); setRetentionSubPage("Tasks"); }}
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600"><CalendarDays className="h-4 w-4" /></span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-black text-gray-800">Reschedule Follow-up</span>
+                  <span className="block text-[11px] text-gray-400">Pick next follow-up time</span>
+                </span>
+              </button>
+              <button type="button" onClick={() => handleNavClick("Follow-up Queue")}
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600"><ClipboardCheck className="h-4 w-4" /></span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-black text-gray-800">Follow-up Queue</span>
+                  <span className="block text-[11px] text-gray-400">Open the shared queue</span>
+                </span>
+              </button>
+            </div>
+            {/* Offer Templates, Recovery Scripts and Broadcast Message from the
+                reference design have no backing feature in Protohub - saying so
+                beats four buttons that do nothing. */}
+            <p className="mt-3 border-t border-gray-100 pt-2 text-[11px] text-gray-400">
+              Offer Templates, Recovery Scripts and Broadcast Message aren&apos;t built yet - they need a template/script store this app doesn&apos;t have.
+            </p>
+          </div>
         </section>
+
+        <p className="flex items-center gap-1.5 text-[11px] text-gray-400">
+          <Info className="h-3.5 w-3.5 shrink-0" />
+          All metrics are based on orders that reached a final outcome within the selected period.
+        </p>
         </>
         )}
       </div>
