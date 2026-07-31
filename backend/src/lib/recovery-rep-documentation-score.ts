@@ -19,6 +19,14 @@ export type DocumentationScoreResult = {
   scoredCount: number;
   passingCount: number;
   ratePct: number;
+  // Per-criterion counts, so the dashboard can show WHICH part of the trail
+  // reps are dropping rather than only that an order failed overall. An order
+  // passes only when all three are true, so these are always >= passingCount.
+  criteria: {
+    contactAttempt: number;
+    callOutcome: number;
+    followUpOrTerminal: number;
+  };
 };
 
 // hasContactAttempt: pass a Set of order ids known to have >=1 logged
@@ -29,18 +37,25 @@ export const scoreOrderDocumentation = (
   orderIdsWithContactAttempt: Set<string>
 ): DocumentationScoreResult => {
   let passingCount = 0;
+  let contactAttempt = 0;
+  let callOutcome = 0;
+  let followUpOrTerminal = 0;
   for (const order of orders) {
     const hasAttempt = orderIdsWithContactAttempt.has(order.id);
     const hasOutcome = Boolean((order.call_outcome ?? "").trim());
     const hasFollowUpOrTerminal =
       Boolean(order.next_follow_up_at || order.scheduled_at || order.scheduled_date)
       || TERMINAL_STATUSES.has(order.status ?? "");
+    if (hasAttempt) contactAttempt += 1;
+    if (hasOutcome) callOutcome += 1;
+    if (hasFollowUpOrTerminal) followUpOrTerminal += 1;
     if (hasAttempt && hasOutcome && hasFollowUpOrTerminal) passingCount += 1;
   }
   const scoredCount = orders.length;
   return {
     scoredCount,
     passingCount,
-    ratePct: scoredCount > 0 ? Math.round((passingCount / scoredCount) * 1000) / 10 : 100
+    ratePct: scoredCount > 0 ? Math.round((passingCount / scoredCount) * 1000) / 10 : 100,
+    criteria: { contactAttempt, callOutcome, followUpOrTerminal }
   };
 };
