@@ -260,10 +260,16 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     // everything past it is genuine upside for the company; sharing a cut
     // of that with the rep gives them a direct, personal reason to keep
     // pushing past the minimum instead of stopping once they clear it.
-    // Gated on the other 3 quality KPIs so the surplus can't be chased by
-    // neglecting delivery rate, upsell attempts, or documentation.
-    const surplusGatesMet = deliveryRatePct >= settings.minDeliveryRatePct
-      && upsellAttemptRatePct >= settings.upsellAttemptRatePct
+    // Gated on the quality KPIs the rep actually controls, so the bonus can't
+    // be chased by neglecting upsell attempts or documentation.
+    //
+    // Delivery rate is deliberately NOT a gate for a Recovery Rep. Bright's
+    // reasoning: no new leads reach them - every order they touch already
+    // died once, so their delivery rate is structurally far below a Sales
+    // Rep's on fresh demand. Gating pay on it withheld the bonus for the
+    // nature of the work rather than the quality of it. Still measured and
+    // shown, just not a condition of getting paid.
+    const surplusGatesMet = upsellAttemptRatePct >= settings.upsellAttemptRatePct
       && documentation.ratePct >= settings.documentationRatePct;
     const netContributionSurplus = Math.max(0, netContribution - settings.monthlyTargetMin);
     const surplusBonusValue = surplusGatesMet ? Math.round(netContributionSurplus * (settings.surplusBonusPct / 100)) : 0;
@@ -299,7 +305,6 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
       ? Math.round(recoveredThisMonth * settings.bonusPerRecoveredOrder)
       : 0;
     const failedGates = [
-      deliveryRatePct >= settings.minDeliveryRatePct ? null : "delivery rate",
       upsellAttemptRatePct >= settings.upsellAttemptRatePct ? null : "upsell attempt rate",
       documentation.ratePct >= settings.documentationRatePct ? null : "documentation"
     ].filter(Boolean) as string[];
@@ -402,7 +407,7 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
         gatesMet: surplusGatesMet,
         note: surplusGatesMet
           ? `${settings.surplusBonusPct}% of net contribution above the ${settings.monthlyTargetMin.toLocaleString()} floor.`
-          : "Withheld - delivery rate, upsell attempt rate, and documentation must all meet their targets first."
+          : "Withheld - upsell attempt rate and documentation must both meet their targets first."
       }
     });
   } catch (error: any) {
