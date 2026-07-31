@@ -40533,6 +40533,15 @@ ${waybillLineItems(w).length > 1
           });
         } else if (retentionOutcomeNextAction === "offer_another_product") {
           if (!retentionOutcome) { showToast("Choose an outcome for the offer."); setRetentionOutcomeSaving(false); return; }
+          // The retention bonus is a share of the order this sale produced, so
+          // an accepted offer with no order number pays the rep nothing. Caught
+          // here as well as server-side so the rep is told before they lose
+          // the rest of the form.
+          if (retentionOutcome === "accepted" && !retentionResultingOrderId.trim()) {
+            showToast("Enter the new order number - the repeat-sale bonus is a share of that order and can't be paid without it.");
+            setRetentionOutcomeSaving(false);
+            return;
+          }
           await customerRetentionApi.logTouchpoint({
             orderId: row.orderId, stage: "retention_sale",
             offeredProductId: retentionOfferedProductId || undefined,
