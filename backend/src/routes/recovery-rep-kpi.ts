@@ -5,6 +5,7 @@ import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import { buildProductBonusConfigMap, computeOrderBonus, type PayrollOrder, type ProductRecord } from "../lib/payroll-calculator.js";
 import { salesExpansionComplianceForRepWeek } from "../lib/sales-expansion.js";
 import { sundayWeekStartForDateKey, addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
+import { isWorkingDay } from "../lib/follow-up-kpi.js";
 import { scoreOrderDocumentation, type DocumentationScoreOrder } from "../lib/recovery-rep-documentation-score.js";
 
 const router = Router();
@@ -298,6 +299,12 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     ]);
     const followUpPicksToday = new Set((followUpTodayResult.data ?? []).map((r: any) => r.order_id)).size;
     const retentionPicksToday = new Set((retentionTodayResult.data ?? []).map((r: any) => r.order_id)).size;
+    // Sundays are a rest day for this business - the follow-up KPI already
+    // skips them (isWorkingDay in follow-up-kpi.ts). Reusing that same rule
+    // rather than writing a second one, so there is one definition of "a day
+    // we work". On a Sunday the daily target is 0: anything logged still
+    // counts and shows, it simply is not owed.
+    const isWorkingToday = isWorkingDay(todayKey);
 
     const recoveredThisMonth = deliveredCount;
     const recoveredThisWeek = weekDelivered.length;
@@ -314,8 +321,9 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
       recoveredThisWeek,
       followUpPicksToday,
       retentionPicksToday,
-      dailyFollowUpTarget: settings.dailyFollowUpPickTarget,
-      dailyRetentionTarget: settings.dailyRetentionPickTarget,
+      dailyFollowUpTarget: isWorkingToday ? settings.dailyFollowUpPickTarget : 0,
+      dailyRetentionTarget: isWorkingToday ? settings.dailyRetentionPickTarget : 0,
+      isWorkingDayToday: isWorkingToday,
       weeklyTarget: settings.weeklyRecoveredTarget,
       monthlyTarget: settings.monthlyRecoveredTarget,
       bonusPerOrder: settings.bonusPerRecoveredOrder,
