@@ -136,6 +136,11 @@ type RecordAttemptInput = {
   nextActionType?: FollowUpTaskType | null;
   nextActionAt?: string | null;
   nextActionNote?: string | null;
+  // Migration 184
+  attemptedAt?: string | null;
+  contactPerson?: string | null;
+  reminderSet?: boolean;
+  taggedForOffer?: boolean;
 };
 
 type RecordProgressNoteInput = {
@@ -472,6 +477,19 @@ export const syncOrderFollowUpTask = async (input: SyncOrderFollowUpInput) => {
   return null;
 };
 
+// Keeps a logged attempt inside today: no earlier than midnight, no later
+// than now. The daily follow-up KPI counts attempts per day, so an
+// out-of-range timestamp would silently move a miss into another day.
+const clampAttemptedAt = (raw: string | null | undefined): string => {
+  const now = Date.now();
+  if (!raw) return new Date(now).toISOString();
+  const parsed = new Date(raw).getTime();
+  if (!Number.isFinite(parsed)) return new Date(now).toISOString();
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  return new Date(Math.min(now, Math.max(startOfToday.getTime(), parsed))).toISOString();
+};
+
 export const recordContactAttemptAndNextAction = async (input: RecordAttemptInput) => {
   const { data: order, error: orderError } = await supabase
     .from("orders")
@@ -544,7 +562,11 @@ export const recordContactAttemptAndNextAction = async (input: RecordAttemptInpu
       rep_id: input.repId ?? order.assigned_rep_id ?? null,
       team_id: ownership.teamId,
       manager_id: ownership.managerId,
-      attempted_at: new Date().toISOString(),
+      // A rep may log a call they made earlier today, but the timestamp is
+      // clamped to [start of today, now] so the follow-up log can never be
+      // back-dated into a closed period or post-dated into the future - both
+      // would corrupt the daily follow-up KPI this table feeds.
+      attempted_at: clampAttemptedAt(input.attemptedAt),
       channel: input.channel,
       channels: input.channels ?? [],
       attempt_type: input.attemptType,
@@ -556,7 +578,10 @@ export const recordContactAttemptAndNextAction = async (input: RecordAttemptInpu
       next_action_type: input.nextActionType ?? null,
       next_action_at: input.nextActionAt ?? null,
       promise_window: promiseWindow,
-      is_serious_signal: PROGRESS_OUTCOMES.has(outcome.outcomeCode) ? true : null
+      is_serious_signal: PROGRESS_OUTCOMES.has(outcome.outcomeCode) ? true : null,
+      contact_person: input.contactPerson ?? null,
+      reminder_set: input.reminderSet ?? false,
+      tagged_for_offer: input.taggedForOffer ?? false
     })
     .select()
     .single();
