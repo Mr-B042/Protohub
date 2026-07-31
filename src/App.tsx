@@ -26174,6 +26174,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Fulfillment section's "awaiting dispatch"/"pending remittance" lists),
   // not a historical report. Five independent checks, none of which existed
   // anywhere on the dashboard before.
+  // Fresh-start baseline (Bright's call): Needs Attention counts only issues
+  // dated on or after this date. A fixed date, not a rolling "today" - a
+  // rolling window would empty the panel every morning and hide yesterday's
+  // unresolved work. Nothing is deleted; older orders remain in Orders and in
+  // every report, they simply stop driving this ops panel.
+  const NEEDS_ATTENTION_BASELINE = "2026-07-31";
+  const needsAttentionInScope = (...dates: Array<string | null | undefined>) => {
+    const key = dates.map((d) => (d ? String(d).slice(0, 10) : "")).find(Boolean);
+    // No usable date means we cannot prove it is old - keep it visible rather
+    // than silently dropping a real problem.
+    if (!key) return true;
+    return key >= NEEDS_ATTENTION_BASELINE;
+  };
   const FAILED_NOTE_MIN_WORDS = 3;
   // A failed delivery needs a REASON, not a word count. The old rule flagged
   // anything under three words, which condemned the clearest notes reps
@@ -26207,7 +26220,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // stuck, etc.) before deciding to Release or Reject the new one.
     const phoneLast10 = (phone?: string | null) => (phone ?? "").replace(/\D/g, "").slice(-10);
     const reviewHoldRows = trackedOrders
-      .filter((order) => order.reviewHold)
+      .filter((order) => order.reviewHold && needsAttentionInScope(order.createdAt))
       .map((order) => {
         const targetPhone = phoneLast10(order.phone);
         const heldCreatedMs = new Date(order.createdAt ?? "").getTime();
@@ -26225,7 +26238,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         return { order, priorOrder };
       });
 
-    const skippedDeductionRows = trackedOrders.filter((order) => order.status === "Delivered" && !order.stockDeducted);
+    const skippedDeductionRows = trackedOrders.filter((order) => order.status === "Delivered" && !order.stockDeducted && needsAttentionInScope(order.deliveredDate, order.createdAt));
     const stockRetryRows: Array<{ order: TrackedOrder; reason: string; detail: string }> = [
       ...skippedDeductionRows.map((order) => ({
         order,
@@ -26255,7 +26268,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .sort((a, b) => b.minutes - a.minutes);
 
     const stuckInNewRows = trackedOrders
-      .filter((order) => (order.status ?? "New") === "New" && order.assignedRepId)
+      .filter((order) => (order.status ?? "New") === "New" && order.assignedRepId && needsAttentionInScope(order.createdAt))
       .map((order) => ({
         order,
         minutes: businessMinutesElapsed(order.createdAt ?? "", needsAttentionNow),
@@ -26279,7 +26292,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
         return { order, text, wordCount };
       })
-      .filter((row) => !failedNoteIsMeaningful(row.text));
+      .filter((row) => !failedNoteIsMeaningful(row.text))
+      .filter((row) => needsAttentionInScope(row.order.deliveredDate, row.order.createdAt));
 
     // Bright's own framing: this isn't "this area's fee differs from that
     // area's" (that's the Finance page's Delivery Fee Audit - a genuinely
@@ -26352,6 +26366,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       .flatMap((program) => (program.rules ?? []).filter((rule) => rule.status === "active" && rule.type === "upgrade_count"));
     const upgradeGapRows = trackedOrders.filter((order) => {
       if (order.reviewHold || (order.status ?? "New") !== "Delivered") return false;
+      if (!needsAttentionInScope(order.deliveredDate, order.createdAt)) return false;
       const deliveredKey = orderDeliveredKey(order);
       if (deliveredKey && deliveredKey < SALES_BONUS_LAUNCH_WEEK_START) return false;
       const from = order.upsellFromQty;
@@ -26879,6 +26894,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <span className="text-xs font-semibold text-amber-700 uppercase tracking-widest">Live - not filtered by period</span>
           </div>
           <h1 className="text-2xl font-bold text-gray-900">Needs Attention</h1>
+          <p className="m-0 mt-1 text-xs font-semibold text-gray-500">
+            Fresh start: counting issues from {new Date(`${NEEDS_ATTENTION_BASELINE}T12:00:00Z`).toLocaleDateString([], { dateStyle: "medium" })} onward. Anything older still lives in Orders - it just no longer drives this panel.
+          </p>
           <p className="text-sm text-gray-500">
             {totalFlagged === 0
               ? "Nothing needs a look right now - every category below is clear."
@@ -49718,22 +49736,28 @@ ${waybillLineItems(w).length > 1
   // upgrade-gap check) - it only needs to answer "is anything flagged right
   // now", the full panel remains the source of truth for the exact breakdown.
   const needsAttentionBadgeCount = (() => {
-    const reviewHold = trackedOrders.filter((order) => order.reviewHold).length;
-    const skippedDeduction = trackedOrders.filter((order) => order.status === "Delivered" && !order.stockDeducted).length;
-    const stockMismatch = new Set(stockMismatchRows.map((row) => row.orderId)).size;
+    // Same fresh-start baseline as the panel. Both must apply it or the badge
+    // and the cards disagree - which is exactly the bug that had the badge
+    // showing 194 against a card showing 46.
+    const inScope = needsAttentionInScope;
+    const reviewHold = trackedOrders.filter((order) => order.reviewHold && inScope(order.createdAt)).length;
+    const skippedDeduction = trackedOrders.filter((order) => order.status === "Delivered" && !order.stockDeducted && inScope(order.deliveredDate, order.createdAt)).length;
+    const stockMismatch = new Set(stockMismatchRows.filter((row) => inScope(row.deliveredDate)).map((row) => row.orderId)).size;
     const unassigned = trackedOrders.filter((order) => {
       const status = (order.status ?? "New") as Exclude<OrderStatus, "All Orders">;
-      return !CLOSED_ORDER_STATUSES.has(status) && !order.reviewHold && !order.assignedRepId;
+      return !CLOSED_ORDER_STATUSES.has(status) && !order.reviewHold && !order.assignedRepId && inScope(order.createdAt);
     }).length;
     const stuckInNew = trackedOrders.filter((order) =>
-      (order.status ?? "New") === "New" && order.assignedRepId && businessMinutesElapsed(order.createdAt ?? "", needsAttentionNow) >= 20
+      (order.status ?? "New") === "New" && order.assignedRepId && inScope(order.createdAt) && businessMinutesElapsed(order.createdAt ?? "", needsAttentionNow) >= 20
     ).length;
     // Uses the same helper as the panel itself. This badge previously carried
     // its own copy of the rule hardcoded to "< 3 words", so when the panel
     // stopped flagging good short reasons the badge kept counting them - the
     // card said 46 while the badge said 194. One rule, one place.
     const thinFailedNotes = trackedOrders.filter((order) =>
-      order.status === "Failed" && !failedNoteIsMeaningful(order.callOutcome ?? "")
+      order.status === "Failed"
+      && !failedNoteIsMeaningful(order.callOutcome ?? "")
+      && inScope(order.deliveredDate, order.createdAt)
     ).length;
     return reviewHold + skippedDeduction + stockMismatch + unassigned + stuckInNew + thinFailedNotes;
   })();
