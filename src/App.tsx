@@ -8462,6 +8462,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [recoveryRepDashboardTab, setRecoveryRepDashboardTab] = useState<RecoveryRepDashboardTab>("Overview");
   const [recoveryCandidateSearch, setRecoveryCandidateSearch] = useState("");
   const [recoveryCandidateReasonFilter, setRecoveryCandidateReasonFilter] = useState("All");
+  const [recoveryCandidatePage, setRecoveryCandidatePage] = useState(1);
+  // Claim uses a real in-app modal, not window.confirm - a native browser
+  // dialog is jarring in a styled app and gives no room for context.
+  const [claimCandidateOrder, setClaimCandidateOrder] = useState<TrackedOrder | null>(null);
+  const [claimSaving, setClaimSaving] = useState(false);
   const [managerBonusWeekStart, setManagerBonusWeekStart] = useState<string>(getSundayKey);
   const [managerBonusSummary, setManagerBonusSummary] = useState<ManagerBonusSummary | null>(null);
   const [managerBonusLoading, setManagerBonusLoading] = useState(false);
@@ -45807,15 +45812,23 @@ ${waybillLineItems(w).length > 1
     // What the previous rep actually wrote about why this order died. This is
     // the whole point of the candidate list - a rep needs the reason before
     // they call, or they repeat the same conversation that already failed.
-    const candidateCustomerNote = (order: TrackedOrder): string | null => {
+    // call_outcome is often an append-only log the previous rep kept
+    // ("25/07: ... 27/07: ..."), so dumping it whole makes every row enormous.
+    // Show the MOST RECENT entry - that is the current reason - and say how
+    // many earlier ones exist; the full history is in the order detail.
+    const candidateCustomerNote = (order: TrackedOrder): { latest: string; earlierCount: number } | null => {
       const outcome = (order.callOutcome ?? "").trim();
-      const latestNote = orderNotesFor(order)[0]?.text?.trim();
-      if (outcome && latestNote && outcome.toLowerCase() !== latestNote.toLowerCase()) return `${outcome} - ${latestNote}`;
-      return outcome || latestNote || null;
+      const latestNote = orderNotesFor(order)[0]?.text?.trim() ?? "";
+      const lines = outcome.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      const source = lines.length > 0 ? lines : (latestNote ? [latestNote] : []);
+      if (source.length === 0) return null;
+      return { latest: source[source.length - 1], earlierCount: Math.max(0, source.length - 1) };
     };
+    // No arbitrary cap: the count must be the REAL number of recoverable
+    // orders, otherwise "Total Candidates" silently under-reports the backlog.
+    // The list itself is paginated instead.
     const recoveryCandidates = trackedOrders
-      .filter((order) => order.assignedRepId !== recoveryRepViewingId && candidateReason(order))
-      .slice(0, 100);
+      .filter((order) => order.assignedRepId !== recoveryRepViewingId && candidateReason(order));
     // Cheap per-phone order-history summary (total / delivered / cancelled),
     // same "orders / delivered / cancelled" shape as the Customers page's
     // "Order History" column, computed only for the candidates on screen.
@@ -45834,18 +45847,26 @@ ${waybillLineItems(w).length > 1
     // Optimistic, with a rollback if the write fails, so the candidate list
     // never shows a claim that did not actually stick.
     const claimRecoveryCandidate = (order: TrackedOrder) => {
+      if (!recoveryRepViewingId) { showToast("Pick a Recovery Rep first."); return; }
+      setClaimCandidateOrder(order);
+    };
+
+    const confirmClaimCandidate = async () => {
+      const order = claimCandidateOrder;
       const targetRepId = recoveryRepViewingId;
+      if (!order || !targetRepId) return;
       const targetName = viewingUser?.name ?? "this rep";
-      if (!targetRepId) { showToast("Pick a Recovery Rep first."); return; }
-      if (!window.confirm(`Assign order ${order.id} (${order.customer}) to ${targetName}?`)) return;
       const previous = order;
+      setClaimSaving(true);
       setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? { ...item, assignedRepId: targetRepId } : item));
-      ordersApi.update(order.id, { assignedRepId: targetRepId })
-        .then(() => showToast(`${order.id} claimed for ${targetName}.`))
-        .catch((err: any) => {
-          setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? previous : item));
-          showToast(err?.message ?? "Could not claim that order.");
-        });
+      try {
+        await ordersApi.update(order.id, { assignedRepId: targetRepId });
+        showToast(`${order.id} claimed for ${targetName}.`);
+        setClaimCandidateOrder(null);
+      } catch (err: any) {
+        setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? previous : item));
+        showToast(err?.message ?? "Could not claim that order.");
+      } finally { setClaimSaving(false); }
     };
 
     const addRecoveryCandidateNote = (order: TrackedOrder) => {
@@ -45885,6 +45906,15 @@ ${waybillLineItems(w).length > 1
       const q = recoveryCandidateSearch.trim().toLowerCase();
       return order.customer.toLowerCase().includes(q) || (order.phone ?? "").includes(q) || order.id.includes(q);
     });
+    const CANDIDATE_PAGE_SIZE = 20;
+    const candidateTotalPages = Math.max(1, Math.ceil(filteredRecoveryCandidates.length / CANDIDATE_PAGE_SIZE));
+    const candidatePage = Math.min(recoveryCandidatePage, candidateTotalPages);
+    const pagedRecoveryCandidates = filteredRecoveryCandidates.slice((candidatePage - 1) * CANDIDATE_PAGE_SIZE, candidatePage * CANDIDATE_PAGE_SIZE);
+    const candidatePageNumbers: Array<number | "gap"> = [];
+    for (let p = 1; p <= candidateTotalPages; p += 1) {
+      if (p <= 2 || p > candidateTotalPages - 1 || Math.abs(p - candidatePage) <= 1) candidatePageNumbers.push(p);
+      else if (candidatePageNumbers[candidatePageNumbers.length - 1] !== "gap") candidatePageNumbers.push("gap");
+    }
 
     // Each KPI card carries its value, how it compares to target, and a bar so
     // "am I clear or short" reads at a glance. `progressPct` is capped at 100
@@ -46048,6 +46078,64 @@ ${waybillLineItems(w).length > 1
           </div>
         ) : (
           <>
+            {/* Recovery bonus: paid per recovered order against weekly and
+                monthly volume targets. This is the ONLY money figure a rep
+                sees - company revenue, cost and margin are stripped by the
+                API for them, not merely hidden here. */}
+            {summary.recovery && (() => {
+              const rec = summary.recovery;
+              const weekPct = rec.weeklyTarget > 0 ? Math.min(100, (rec.recoveredThisWeek / rec.weeklyTarget) * 100) : 0;
+              const monthPct = rec.monthlyTarget > 0 ? Math.min(100, (rec.recoveredThisMonth / rec.monthlyTarget) * 100) : 0;
+              return (
+                <section className={`overflow-hidden rounded-2xl border-2 p-5 shadow-sm ${rec.gatesMet ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white" : "border-amber-300 bg-gradient-to-br from-amber-50 to-white"}`}>
+                  <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Your recovery bonus this month</p>
+                      <strong className={`mt-1 block text-3xl font-black ${rec.gatesMet ? "text-emerald-700" : "text-amber-700"}`}>
+                        {formatMoney(rec.bonusValue)}
+                      </strong>
+                      <p className="mt-1 text-xs font-semibold text-gray-600">
+                        {rec.recoveredThisMonth} recovered × {formatMoney(rec.bonusPerOrder)} each
+                      </p>
+                      <div className="mt-2 flex items-start gap-2">
+                        <span className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${rec.gatesMet ? "bg-emerald-500" : "bg-amber-500"} text-white`}>
+                          {rec.gatesMet ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+                        </span>
+                        <p className={`m-0 text-xs font-bold ${rec.gatesMet ? "text-emerald-800" : "text-amber-800"}`}>
+                          {rec.gatesMet ? "All quality targets met - bonus is earned." : rec.note}
+                          {!rec.gatesMet && rec.bonusAtRisk > 0 && (
+                            <span className="mt-0.5 block font-black">{formatMoney(rec.bonusAtRisk)} is waiting on it.</span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {([
+                        ["This week", rec.recoveredThisWeek, rec.weeklyTarget, weekPct],
+                        ["This month", rec.recoveredThisMonth, rec.monthlyTarget, monthPct]
+                      ] as const).map(([label, done, target, pct]) => {
+                        const hit = done >= target;
+                        return (
+                          <div key={label} className="rounded-xl border border-gray-200 bg-white/80 p-3">
+                            <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-500">{label}</p>
+                            <p className="m-0 mt-0.5 text-2xl font-black text-gray-900">
+                              {done}<span className="text-base font-bold text-gray-400"> / {target}</span>
+                            </p>
+                            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                              <div className={`h-full rounded-full ${hit ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
+                            </div>
+                            <p className={`m-0 mt-1 text-[11px] font-bold ${hit ? "text-emerald-700" : "text-gray-500"}`}>
+                              {hit ? "Target reached" : `${Math.max(0, target - done)} more to hit target`}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </section>
+              );
+            })()}
+
             {summary.surplusBonus && (
               <section className={`overflow-hidden rounded-2xl border-2 p-5 shadow-sm ${summary.surplusBonus.gatesMet ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white" : "border-amber-300 bg-gradient-to-br from-amber-50 to-white"}`}>
                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)] lg:items-center">
@@ -46087,6 +46175,50 @@ ${waybillLineItems(w).length > 1
                 </div>
               </section>
             )}
+            {/* Quality gates - shown to EVERYONE, because these are what
+                decide whether a rep's bonus pays out. */}
+            {!summary.netContribution && (
+              <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                {kpiCard({
+                  label: "Delivery Rate",
+                  value: `${summary.deliveryRate.pct}%`,
+                  targetLabel: `Min ${summary.deliveryRate.target}% · ${summary.deliveryRate.deliveredCount} / ${summary.deliveryRate.closedCount} closed`,
+                  met: summary.deliveryRate.pct >= summary.deliveryRate.target,
+                  progressPct: summary.deliveryRate.target > 0 ? (summary.deliveryRate.pct / summary.deliveryRate.target) * 100 : null,
+                  primaryNote: summary.deliveryRate.pct >= summary.deliveryRate.target ? "✓ Target Met" : "Below target",
+                  deltaNote: `${summary.deliveryRate.pct - summary.deliveryRate.target >= 0 ? "+" : ""}${Math.round((summary.deliveryRate.pct - summary.deliveryRate.target) * 10) / 10}pp`,
+                  barClass: summary.deliveryRate.pct >= summary.deliveryRate.target ? "bg-amber-500" : "bg-rose-500",
+                  tooltip: "Delivered divided by every order that reached a final outcome this period."
+                })}
+                {kpiCard({
+                  label: "Upsell / Cross-sell Attempt Rate",
+                  value: `${summary.upsellAttemptRate.pct}%`,
+                  targetLabel: `Min ${summary.upsellAttemptRate.target}% · ${summary.upsellAttemptRate.loggedCount} / ${summary.upsellAttemptRate.eligibleCount} eligible`,
+                  met: summary.upsellAttemptRate.pct >= summary.upsellAttemptRate.target,
+                  progressPct: summary.upsellAttemptRate.target > 0 ? (summary.upsellAttemptRate.pct / summary.upsellAttemptRate.target) * 100 : null,
+                  primaryNote: summary.upsellAttemptRate.pct >= summary.upsellAttemptRate.target ? "✓ Target Met" : "Below target",
+                  deltaNote: `${summary.upsellAttemptRate.pct - summary.upsellAttemptRate.target >= 0 ? "+" : ""}${Math.round((summary.upsellAttemptRate.pct - summary.upsellAttemptRate.target) * 10) / 10}pp`,
+                  barClass: summary.upsellAttemptRate.pct >= summary.upsellAttemptRate.target ? "bg-violet-500" : "bg-rose-500",
+                  tooltip: "Measures attempts, not successes - pitching and being declined still counts."
+                })}
+                {kpiCard({
+                  label: "Documentation Completeness",
+                  value: `${summary.documentation.pct}%`,
+                  targetLabel: `Min ${summary.documentation.target}% · ${summary.documentation.passingCount} / ${summary.documentation.scoredCount} scored`,
+                  met: summary.documentation.pct >= summary.documentation.target,
+                  progressPct: summary.documentation.target > 0 ? (summary.documentation.pct / summary.documentation.target) * 100 : null,
+                  primaryNote: summary.documentation.pct >= summary.documentation.target ? "✓ Target Met" : "Below target",
+                  deltaNote: `${summary.documentation.pct - summary.documentation.target >= 0 ? "+" : ""}${Math.round((summary.documentation.pct - summary.documentation.target) * 10) / 10}pp`,
+                  barClass: summary.documentation.pct >= summary.documentation.target ? "bg-emerald-500" : "bg-rose-500",
+                  tooltip: "An order passes only with all three: a logged contact attempt, a call outcome, and a follow-up or terminal status."
+                })}
+              </section>
+            )}
+
+            {/* Company financials - supervisors only. The API omits these
+                entirely for a Recovery Rep, so this block simply has no data
+                to render for them. */}
+            {summary.netContribution && (
             <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               {(() => {
                 const nc = summary.netContribution;
@@ -46168,10 +46300,13 @@ ${waybillLineItems(w).length > 1
                 );
               })()}
             </section>
-            <p className="flex items-start gap-1.5 text-xs italic text-gray-400">
-              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>{summary.netContribution.untrackedCostNote} These are NOT deducted from Net Contribution, so the figure above is optimistic by whatever they really cost.</span>
-            </p>
+            )}
+            {summary.netContribution && (
+              <p className="flex items-start gap-1.5 text-xs italic text-gray-400">
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{summary.netContribution.untrackedCostNote} These are NOT deducted from Net Contribution, so the figure above is optimistic by whatever they really cost.</span>
+              </p>
+            )}
           </>
         )}
 
@@ -46234,7 +46369,7 @@ ${waybillLineItems(w).length > 1
           <div className="px-5 py-4 border-b border-gray-200">
             <h2 className="text-base font-bold text-gray-900">Recovery Candidates</h2>
             <p className="text-xs text-gray-500 mt-0.5">
-              Cancelled, Postponed, or Failed orders; orders open 7+ days with no closure; and orders logged "Product Unavailable" - not yet assigned to this rep.
+              Failed, Cancelled and rejected orders; orders open 7+ days with no closure; and orders logged "Product Unavailable" - not yet assigned to this rep. Postponed orders are excluded: they are rescheduled, not lost.
               Reassign a candidate using its order's existing "Reassign Sales Rep" action.
             </p>
           </div>
@@ -46264,7 +46399,7 @@ ${waybillLineItems(w).length > 1
                 Reset
               </button>
             )}
-            <span className="text-xs text-gray-400 sm:ml-2">{filteredRecoveryCandidates.length} of {recoveryCandidates.length}</span>
+            <span className="text-xs text-gray-400 sm:ml-2">Showing {filteredRecoveryCandidates.length === 0 ? 0 : (candidatePage - 1) * CANDIDATE_PAGE_SIZE + 1}-{Math.min(candidatePage * CANDIDATE_PAGE_SIZE, filteredRecoveryCandidates.length)} of {filteredRecoveryCandidates.length}{filteredRecoveryCandidates.length !== recoveryCandidates.length ? ` (filtered from ${recoveryCandidates.length})` : ""}</span>
           </div>
           {filteredRecoveryCandidates.length === 0 ? (
             <div className="px-5 py-10 text-sm text-gray-400 text-center">
@@ -46274,7 +46409,7 @@ ${waybillLineItems(w).length > 1
             <>
               {/* Mobile: stacked cards, easiest to scan/tap one-handed. */}
               <div className="sm:hidden divide-y divide-gray-100">
-                {filteredRecoveryCandidates.map((order) => {
+                {pagedRecoveryCandidates.map((order) => {
                   const reason = candidateReason(order);
                   const tone = candidateStatusTone(reason);
                   const history = orderHistoryForPhone(order.phone ?? "");
@@ -46292,12 +46427,21 @@ ${waybillLineItems(w).length > 1
                         </button>
                         <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${tone.class}`}>{reason}</span>
                       </div>
-                      {candidateCustomerNote(order) && (
-                        <div className="rounded-lg border border-amber-100 bg-amber-50/60 px-2.5 py-2">
-                          <p className="m-0 text-[10px] font-black uppercase tracking-wider text-amber-700">Why it was lost</p>
-                          <p className="m-0 mt-0.5 whitespace-pre-wrap text-xs text-gray-700">{candidateCustomerNote(order)}</p>
-                        </div>
-                      )}
+                      {(() => {
+                        const why = candidateCustomerNote(order);
+                        if (!why) return null;
+                        return (
+                          <div className="rounded-lg border border-amber-100 bg-amber-50/60 px-2.5 py-2">
+                            <p className="m-0 text-[10px] font-black uppercase tracking-wider text-amber-700">Why it was lost</p>
+                            <p className="m-0 mt-0.5 text-xs text-gray-700">{why.latest}</p>
+                            {why.earlierCount > 0 && (
+                              <button type="button" onClick={() => openOrderDetailPopup(order.id)} className="!min-h-0 mt-1 text-[10px] font-bold text-amber-700 underline">
+                                +{why.earlierCount} earlier note{why.earlierCount === 1 ? "" : "s"}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
                       <div className="flex items-center gap-2">
                         {whatsappUrl && <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-green-50 text-green-600 ring-1 ring-green-100 transition hover:bg-green-100" href={whatsappUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${order.customer}`}><WhatsAppIcon className="h-4 w-4" /></a>}
                         <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-50 text-blue-600 ring-1 ring-blue-100 transition hover:bg-blue-100" href={`tel:${order.phone}`} title={`Call ${order.customer}`}><Phone className="h-4 w-4" /></a>
@@ -46335,7 +46479,7 @@ ${waybillLineItems(w).length > 1
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {filteredRecoveryCandidates.map((order) => {
+                    {pagedRecoveryCandidates.map((order) => {
                       const reason = candidateReason(order);
                       const tone = candidateStatusTone(reason);
                       const history = orderHistoryForPhone(order.phone ?? "");
@@ -46364,11 +46508,21 @@ ${waybillLineItems(w).length > 1
                           </td>
                           <td className="px-4 py-4">
                             <span className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black ${tone.class}`}><span className={`h-2 w-2 rounded-full ${tone.dot}`} /> {reason}</span>
-                            {candidateCustomerNote(order) && (
-                              <p className="m-0 mt-1.5 max-w-[260px] whitespace-pre-wrap text-[11px] leading-snug text-gray-600" title={candidateCustomerNote(order) ?? undefined}>
-                                <span className="font-black text-amber-700">Why: </span>{candidateCustomerNote(order)}
-                              </p>
-                            )}
+                            {(() => {
+                              const why = candidateCustomerNote(order);
+                              if (!why) return null;
+                              return (
+                                <p className="m-0 mt-1.5 max-w-[260px] text-[11px] leading-snug text-gray-600" title={why.latest}>
+                                  <span className="font-black text-amber-700">Why: </span>
+                                  <span className="line-clamp-2">{why.latest}</span>
+                                  {why.earlierCount > 0 && (
+                                    <button type="button" onClick={() => openOrderDetailPopup(order.id)} className="!min-h-0 mt-0.5 block text-[10px] font-bold text-amber-700 underline">
+                                      +{why.earlierCount} earlier note{why.earlierCount === 1 ? "" : "s"}
+                                    </button>
+                                  )}
+                                </p>
+                              );
+                            })()}
                           </td>
                           <td className="px-4 py-4">
                             <div className="grid grid-cols-3 gap-3 text-center">
@@ -46390,6 +46544,20 @@ ${waybillLineItems(w).length > 1
                   </tbody>
                 </table>
               </div>
+              {candidateTotalPages > 1 && (
+                <div className="flex flex-col items-center justify-between gap-2 border-t border-gray-200 px-4 py-3 sm:flex-row">
+                  <span className="text-xs font-semibold text-gray-500">
+                    Page {candidatePage} of {candidateTotalPages} · {CANDIDATE_PAGE_SIZE} per page
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button type="button" disabled={candidatePage === 1} onClick={() => setRecoveryCandidatePage(candidatePage - 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-3.5 w-3.5" /></button>
+                    {candidatePageNumbers.map((p, i) => p === "gap"
+                      ? <span key={`cg${i}`} className="px-1 text-xs text-gray-400">…</span>
+                      : <button key={p} type="button" onClick={() => setRecoveryCandidatePage(p)} className={`!min-h-0 inline-flex h-7 min-w-[28px] items-center justify-center rounded-md border px-1.5 text-xs font-bold ${p === candidatePage ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{p}</button>)}
+                    <button type="button" disabled={candidatePage === candidateTotalPages} onClick={() => setRecoveryCandidatePage(candidatePage + 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-3.5 w-3.5" /></button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </section>
@@ -46470,15 +46638,23 @@ ${waybillLineItems(w).length > 1
             {summary ? (
               <ul className="m-0 list-none space-y-2.5 p-0">
                 {([
-                  ["Monthly Net Contribution", summary.netContribution.value, summary.netContribution.targetMin, "money"],
-                  ["Weekly Pace", summary.weeklyPace.value, summary.weeklyPace.target, "money"],
+                  // A rep sees their own volume targets; company contribution
+                  // and pace are supervisor-only, matching what the API sends.
+                  ...(summary.recovery ? [
+                    ["Recovered this week", summary.recovery.recoveredThisWeek, summary.recovery.weeklyTarget, "count"],
+                    ["Recovered this month", summary.recovery.recoveredThisMonth, summary.recovery.monthlyTarget, "count"]
+                  ] as Array<[string, number, number, "count"]> : []),
+                  ...(summary.netContribution ? [
+                    ["Monthly Net Contribution", summary.netContribution.value, summary.netContribution.targetMin, "money"],
+                    ["Weekly Pace", summary.weeklyPace.value, summary.weeklyPace.target, "money"]
+                  ] as Array<[string, number, number, "money"]> : []),
                   ["Delivery Rate", summary.deliveryRate.pct, summary.deliveryRate.target, "pct"],
                   ["Upsell Attempt Rate", summary.upsellAttemptRate.pct, summary.upsellAttemptRate.target, "pct"],
                   ["Documentation Completeness", summary.documentation.pct, summary.documentation.target, "pct"]
-                ] as Array<[string, number, number, "money" | "pct"]>).map(([label, value, target, kind]) => {
+                ] as Array<[string, number, number, "money" | "pct" | "count"]>).map(([label, value, target, kind]) => {
                   const met = value >= target;
                   const pct = target > 0 ? Math.min(100, Math.max(2, (value / target) * 100)) : 0;
-                  const fmt = (n: number) => kind === "money" ? formatMoney(n) : `${n}%`;
+                  const fmt = (n: number) => kind === "money" ? formatMoney(n) : kind === "count" ? String(n) : `${n}%`;
                   return (
                     <li key={label}>
                       <div className="flex items-center justify-between gap-2">
@@ -46496,7 +46672,7 @@ ${waybillLineItems(w).length > 1
                 })}
               </ul>
             ) : <p className="text-xs text-gray-400">No KPI summary loaded.</p>}
-            {summary && !summary.surplusBonus?.gatesMet && (
+            {summary && summary.recovery && !summary.recovery.gatesMet && (
               <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] font-semibold text-amber-800">
                 Every metric above must be On Track before the surplus bonus pays out.
               </p>
@@ -46576,6 +46752,43 @@ ${waybillLineItems(w).length > 1
         </>
         )}
       </div>
+      {claimCandidateOrder && (() => {
+        const order = claimCandidateOrder;
+        const why = candidateCustomerNote(order);
+        const history = orderHistoryForPhone(order.phone ?? "");
+        return (
+          <div className="fixed inset-0 z-[60] flex items-end justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => !claimSaving && setClaimCandidateOrder(null)}>
+            <section className="w-full rounded-t-2xl bg-white shadow-2xl sm:max-w-md sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="border-b border-gray-100 px-5 py-4">
+                <h3 className="m-0 text-base font-black text-gray-900">Claim this order</h3>
+                <p className="m-0 mt-0.5 text-xs text-gray-500">It moves into {viewingUser?.name ?? "this rep"}&apos;s queue and out of the candidate list.</p>
+              </div>
+              <div className="space-y-3 p-5">
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                  <p className="m-0 text-sm font-black text-gray-900">{order.customer}</p>
+                  <p className="m-0 text-xs text-gray-500">{order.phone} · Order {order.id}</p>
+                  <p className="m-0 mt-1 text-xs text-gray-600">{customerOrderLabel(order.productName, order.packageName)} · {formatProductMoney(order.amount, order.currency)}</p>
+                  <p className="m-0 mt-1 text-[11px] font-semibold text-gray-400">{history.orders} order(s) · {history.delivered} delivered · {history.cancelled} cancelled</p>
+                </div>
+                {why && (
+                  <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
+                    <p className="m-0 text-[10px] font-black uppercase tracking-wider text-amber-700">Why it was lost</p>
+                    <p className="m-0 mt-0.5 text-xs text-gray-700">{why.latest}</p>
+                    {why.earlierCount > 0 && <p className="m-0 mt-1 text-[10px] font-semibold text-amber-700">+{why.earlierCount} earlier note{why.earlierCount === 1 ? "" : "s"} in the order detail</p>}
+                  </div>
+                )}
+                <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
+                  <button type="button" disabled={claimSaving} className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700 disabled:opacity-60" onClick={() => setClaimCandidateOrder(null)}>Cancel</button>
+                  <button type="button" disabled={claimSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white disabled:opacity-60" onClick={confirmClaimCandidate}>
+                    {claimSaving ? "Claiming…" : "Claim order"}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+
       {templateBrowserKind && (() => {
         const kind = templateBrowserKind;
         const title = kind === "offer" ? "Offer Templates" : kind === "script" ? "Recovery Scripts" : "Message Templates";
