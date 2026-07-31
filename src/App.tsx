@@ -8463,6 +8463,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [recoveryCandidateSearch, setRecoveryCandidateSearch] = useState("");
   const [recoveryCandidateReasonFilter, setRecoveryCandidateReasonFilter] = useState("All");
   const [recoveryCandidatePage, setRecoveryCandidatePage] = useState(1);
+  // Which candidates have their "why it was lost" note expanded. Clamped by
+  // default so rows stay scannable, but a rep must be able to read the whole
+  // reason - a truncated one ("...but she isn't") is worse than none.
+  const [expandedCandidateNotes, setExpandedCandidateNotes] = useState<string[]>([]);
   // Claim uses a real in-app modal, not window.confirm - a native browser
   // dialog is jarring in a styled app and gives no room for context.
   const [claimCandidateOrder, setClaimCandidateOrder] = useState<TrackedOrder | null>(null);
@@ -46620,16 +46624,33 @@ ${waybillLineItems(w).length > 1
                             {(() => {
                               const why = candidateCustomerNote(order);
                               if (!why) return null;
+                              const expanded = expandedCandidateNotes.includes(order.id);
+                              // Only offer the toggle when the text is actually
+                              // long enough to clip, so short reasons don't get
+                              // a pointless "Show more".
+                              const mayClip = why.latest.length > 90;
                               return (
-                                <p className="m-0 mt-1.5 max-w-[260px] text-[11px] leading-snug text-gray-600" title={why.latest}>
-                                  <span className="font-black text-amber-700">Why: </span>
-                                  <span className="line-clamp-2">{why.latest}</span>
-                                  {why.earlierCount > 0 && (
-                                    <button type="button" onClick={() => openOrderDetailPopup(order.id)} className="!min-h-0 mt-0.5 block text-[10px] font-bold text-amber-700 underline">
-                                      +{why.earlierCount} earlier note{why.earlierCount === 1 ? "" : "s"}
-                                    </button>
+                                <div className="mt-1.5 max-w-[260px]">
+                                  <p className="m-0 text-[11px] leading-snug text-gray-600">
+                                    <span className="font-black text-amber-700">Why: </span>
+                                    <span className={expanded || !mayClip ? "" : "line-clamp-2"}>{why.latest}</span>
+                                  </p>
+                                  {(mayClip || why.earlierCount > 0) && (
+                                    <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                                      {mayClip && (
+                                        <button type="button" onClick={() => setExpandedCandidateNotes((prev) => prev.includes(order.id) ? prev.filter((id) => id !== order.id) : [...prev, order.id])}
+                                          className="!min-h-0 text-[10px] font-bold text-amber-700 underline">
+                                          {expanded ? "Show less" : "Show full reason"}
+                                        </button>
+                                      )}
+                                      {why.earlierCount > 0 && (
+                                        <button type="button" onClick={() => openOrderDetailPopup(order.id)} className="!min-h-0 text-[10px] font-bold text-amber-700 underline">
+                                          +{why.earlierCount} earlier note{why.earlierCount === 1 ? "" : "s"}
+                                        </button>
+                                      )}
+                                    </div>
                                   )}
-                                </p>
+                                </div>
                               );
                             })()}
                           </td>
