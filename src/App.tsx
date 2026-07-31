@@ -11033,6 +11033,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [followUpAttemptChannels, setFollowUpAttemptChannels] = useState<string[]>(["call"]);
   const [followUpAttemptType, setFollowUpAttemptType] = useState<OrderContactAttempt["attemptType"]>("scheduled_callback");
   const [followUpAttemptOutcome, setFollowUpAttemptOutcome] = useState("");
+  // Redesigned Log Follow-up form (migration 184).
+  const [followUpAttemptDate, setFollowUpAttemptDate] = useState("");
+  const [followUpAttemptTime, setFollowUpAttemptTime] = useState("");
+  const [followUpContactPerson, setFollowUpContactPerson] = useState("Customer");
+  const [followUpReminderSet, setFollowUpReminderSet] = useState(true);
+  const [followUpSendWhatsAppNow, setFollowUpSendWhatsAppNow] = useState(false);
+  const [followUpTagForOffer, setFollowUpTagForOffer] = useState(false);
   const [followUpAttemptRecoveryBucket, setFollowUpAttemptRecoveryBucket] = useState<FollowUpRecoveryBucket | "">("");
   const [followUpAttemptNote, setFollowUpAttemptNote] = useState("");
   const [followUpAttemptTaskId, setFollowUpAttemptTaskId] = useState("");
@@ -32609,6 +32616,12 @@ ${waybillLineItems(w).length > 1
     setFollowUpAttemptChannels(["call"]);
     setFollowUpAttemptType(followUpAttemptTypeForTask(task?.taskType ?? null));
     setFollowUpAttemptOutcome("");
+    setFollowUpAttemptDate(todayKey());
+    setFollowUpAttemptTime(new Date().toTimeString().slice(0, 5));
+    setFollowUpContactPerson("Customer");
+    setFollowUpReminderSet(true);
+    setFollowUpSendWhatsAppNow(false);
+    setFollowUpTagForOffer(false);
     setFollowUpAttemptRecoveryBucket("");
     setFollowUpAttemptNote("");
     setFollowUpAttemptTaskId(task?.id ?? "");
@@ -32835,6 +32848,9 @@ ${waybillLineItems(w).length > 1
           : followUpAttemptChannels.some((c) => c.startsWith("whatsapp"))
             ? "whatsapp"
             : "manual") as OrderContactAttempt["channel"];
+      const attemptedMoment = followUpAttemptDate && followUpAttemptTime
+        ? combinePlannedMoment(followUpAttemptDate, followUpAttemptTime)
+        : { iso: undefined };
       const attempt = normalizeContactAttempt(await ordersApi.logContactAttempt(selectedOrder.id, {
         taskId: followUpAttemptTaskId || null,
         channel: primaryChannel,
@@ -32843,10 +32859,34 @@ ${waybillLineItems(w).length > 1
         outcomeCode: followUpAttemptOutcome.trim(),
         recoveryBucket: followUpAttemptRecoveryBucket || null,
         outcomeNote: followUpAttemptNote.trim() || null,
-        nextActionType: followUpNextActionEnabled ? followUpNextActionType : null,
+        // Only creates the follow-up task when the rep asked for a reminder;
+        // "schedule but don't remind me" would otherwise silently make the
+        // order look due to everyone else.
+        nextActionType: followUpNextActionEnabled && followUpReminderSet ? followUpNextActionType : null,
         nextActionAt: followUpNextActionEnabled ? nextActionMoment.iso ?? null : null,
-        nextActionNote: followUpNextActionEnabled ? (followUpNextActionNote.trim() || followUpAttemptNote.trim() || followUpAttemptOutcome.trim()) : null
+        nextActionNote: followUpNextActionEnabled ? (followUpNextActionNote.trim() || followUpAttemptNote.trim() || followUpAttemptOutcome.trim()) : null,
+        attemptedAt: attemptedMoment.iso ?? null,
+        contactPerson: followUpContactPerson || null,
+        reminderSet: followUpNextActionEnabled && followUpReminderSet,
+        taggedForOffer: followUpTagForOffer
       }));
+
+      // Optional immediate WhatsApp. Fired AFTER the attempt is safely
+      // recorded, and never allowed to fail the save - the log is the thing
+      // that must not be lost.
+      if (followUpSendWhatsAppNow && selectedOrder.phone) {
+        try {
+          await whatsappSettingsApi.customSend({
+            phone: selectedOrder.phone,
+            body: `Hello ${selectedOrder.customer}, this is Protohub following up on your order ${selectedOrder.id}.`,
+            recipientName: selectedOrder.customer,
+            orderId: selectedOrder.id
+          });
+          showToast("Follow-up saved and WhatsApp sent.");
+        } catch (err: any) {
+          showToast(`Follow-up saved, but the WhatsApp did not send: ${err?.message ?? "please retry from the order."}`);
+        }
+      }
 
       const refreshedOrder = await ordersApi.list({ search: selectedOrder.id, limit: "1" });
       const matched = (refreshedOrder.data as any[]).find((item) => item.id === selectedOrder.id);
@@ -76273,25 +76313,112 @@ ${waybillLineItems(w).length > 1
                 </div>
               )}
 
-              {modal === "logFollowUpAttempt" && selectedOrder && (
+              {modal === "logFollowUpAttempt" && selectedOrder && (() => {
+                const attemptsSoFar = (orderContactAttemptsByOrder[selectedOrder.id] ?? []).length;
+                const lastAttempt = selectedOrderLatestAttempt;
+                const nextDueAt = selectedOrderActiveFollowUpTask?.dueAt ?? selectedOrder.nextFollowUpAt ?? null;
+                const nextOverdue = Boolean(nextDueAt && new Date(nextDueAt).getTime() < Date.now());
+                // The eight outcomes the recovery flow actually produces. They
+                // write into the same free-text outcome_code the log already
+                // uses, so existing reporting and the follow-up KPI keep
+                // working - "Other" reveals the original free-text box rather
+                // than removing it.
+                const OUTCOME_CARDS = [
+                  { code: "Interested", hint: "Customer is interested" },
+                  { code: "Needs time", hint: "Asked to follow up later" },
+                  { code: "Price objection", hint: "Too expensive" },
+                  { code: "Not reachable", hint: "Couldn't get through" },
+                  { code: "Busy / Will call back", hint: "Customer was busy" },
+                  { code: "Wrong number", hint: "Invalid number" },
+                  { code: "Not interested", hint: "Doesn't want product" },
+                  { code: "Other", hint: "Specify other reason" }
+                ] as const;
+                const presetCodes = OUTCOME_CARDS.map((c) => c.code).filter((c) => c !== "Other");
+                const usingOther = Boolean(followUpAttemptOutcome) && !presetCodes.includes(followUpAttemptOutcome as typeof presetCodes[number]);
+                const NEXT_ACTIONS = [
+                  { value: "callback", label: "Follow up again", hint: "Schedule another follow-up" },
+                  { value: "whatsapp", label: "Send WhatsApp", hint: "Message the customer" },
+                  { value: "offer", label: "Send offer / discount", hint: "Send special offer" },
+                  { value: "closed", label: "Mark as closed", hint: "No more follow-up" }
+                ] as const;
+                const currentNextAction = !followUpNextActionEnabled
+                  ? "closed"
+                  : followUpTagForOffer ? "offer" : followUpSendWhatsAppNow ? "whatsapp" : "callback";
+                return (
                 <div className="modal-form">
-                  <div className={`${orderPanelInfoClass} rounded-xl p-4 space-y-2`}>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className={`text-sm font-semibold m-0 ${orderTitleTextClass}`}>Active Reminder</p>
-                        <p className={`text-xs m-0 mt-1 ${orderMutedTextClass}`}>{selectedOrderActiveFollowUpTask ? `${humanizeFollowUpTaskType(selectedOrderActiveFollowUpTask.taskType)} · ${formatMoment(selectedOrderActiveFollowUpTask.dueAt)}` : "No active task on this order - log the follow-up anyway and create the next action if needed."}</p>
+                  {/* Context strip - who, what, and where this order stands, so
+                      the rep never logs against the wrong customer. */}
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(selectedOrder.id)}`}>{customerInitial(selectedOrder.customer)}</span>
+                        <div className="min-w-0">
+                          <p className="m-0 text-sm font-black text-gray-900">{selectedOrder.id} {selectedOrder.customer}</p>
+                          <p className="m-0 text-xs text-gray-500">{selectedOrder.phone}</p>
+                        </div>
                       </div>
-                      <span className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold ${buyerHealthToneClass(selectedOrder.buyerHealth)}`}>
-                        {buyerHealthLabel(selectedOrder.buyerHealth)}
-                      </span>
+                      <div className="min-w-0">
+                        <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Product</p>
+                        <p className="m-0 truncate text-xs font-bold text-gray-800">{selectedOrder.productName || "-"}</p>
+                      </div>
+                      <div>
+                        <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Attempts logged</p>
+                        <p className="m-0 text-xs font-bold text-gray-800">{attemptsSoFar}</p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Last follow-up</p>
+                        <p className="m-0 text-xs font-bold text-gray-800">
+                          {lastAttempt ? formatMoment(lastAttempt.attemptedAt) : <span className="text-rose-600">Never logged</span>}
+                          {nextOverdue && <span className="ml-1.5 font-black text-rose-600">Overdue</span>}
+                        </p>
+                      </div>
                     </div>
-                    {selectedOrderLatestAttempt && (
-                      <p className={`text-xs m-0 ${orderFaintTextClass}`}>Latest logged outcome: {selectedOrderLatestAttempt.outcomeCode} · {formatMoment(selectedOrderLatestAttempt.attemptedAt)}</p>
+                    {lastAttempt?.outcomeCode && (
+                      <p className="m-0 mt-2 border-t border-gray-200 pt-2 text-xs text-gray-600"><span className="font-black text-gray-500">Last outcome: </span>{lastAttempt.outcomeCode}</p>
                     )}
                   </div>
 
                   <div>
-                    <span className="text-sm font-medium text-gray-700 block mb-1.5">Channels tried</span>
+                    <p className="m-0 text-sm font-black text-gray-900">1. Follow-up details</p>
+                    <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <label>
+                        <span>Date &amp; time *</span>
+                        <div className="flex gap-2">
+                          <input type="date" value={followUpAttemptDate} max={todayKey()} onChange={(e) => setFollowUpAttemptDate(e.target.value)} />
+                          <input type="time" value={followUpAttemptTime} onChange={(e) => setFollowUpAttemptTime(e.target.value)} />
+                        </div>
+                        <span className={`mt-1 block text-[11px] font-medium normal-case tracking-normal ${orderFaintTextClass}`}>Log a call you made earlier today; it cannot be back-dated past today.</span>
+                      </label>
+                      <label>
+                        <span>Contact person</span>
+                        <select value={followUpContactPerson} onChange={(e) => setFollowUpContactPerson(e.target.value)}>
+                          <option value="Customer">Customer</option>
+                          <option value="Spouse / family">Spouse / family</option>
+                          <option value="Assistant / staff">Assistant / staff</option>
+                          <option value="Someone else">Someone else</option>
+                          <option value="Nobody answered">Nobody answered</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>System category</span>
+                        <select value={followUpAttemptType} onChange={(event) => setFollowUpAttemptType(event.target.value as OrderContactAttempt["attemptType"])}>
+                          {selectedOrderAttemptCategoryOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <div>
+                        <span className="mb-1.5 block text-sm font-medium text-gray-700">Attempt #</span>
+                        <div className="flex h-[42px] items-center rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-black text-gray-700">
+                          {attemptsSoFar + 1}
+                        </div>
+                        <span className={`mt-1 block text-[11px] font-medium ${orderFaintTextClass}`}>Counted from the log, so it can never disagree with it.</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="mb-1.5 block text-sm font-medium text-gray-700">Channels tried *</span>
                     <div className="flex flex-wrap gap-2">
                       {([
                         { value: "call", label: "Call" },
@@ -76312,152 +76439,134 @@ ${waybillLineItems(w).length > 1
                         );
                       })}
                     </div>
-                    <p className="text-[11px] text-gray-400 mt-1">Tick every channel you actually tried this round. When the customer isn&apos;t picking, log a Call 3× in the day.</p>
+                    {/* Kept as multi-select on purpose: the daily follow-up KPI
+                        checks that an unreachable customer was also texted, and
+                        a single-channel dropdown would stop that rule firing. */}
+                    <p className="text-[11px] text-gray-400 mt-1">Tick every channel you actually tried. When the customer isn&apos;t picking, log a Call 3&times; in the day and send an SMS.</p>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <label>
-                      <span>System category</span>
-                      <select value={followUpAttemptType} onChange={(event) => setFollowUpAttemptType(event.target.value as OrderContactAttempt["attemptType"])}>
-                        {selectedOrderAttemptCategoryOptions.map((option) => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                      <span className={`mt-1 block text-[11px] font-medium normal-case tracking-normal ${orderFaintTextClass}`}>
-                        Auto-suggested from the active reminder; use Attempt Type below for what the customer actually said.
-                      </span>
-                    </label>
-                  </div>
-
-                  <label>
-                    <span>Attempt Type *</span>
-                    <input value={followUpAttemptOutcome} onChange={(event) => setFollowUpOutcomeText(event.target.value)} placeholder="e.g. No Answer, Not Picking, Call Tomorrow, Wants Discount..." />
-                  </label>
-
-                  <div className={`${orderPanelMutedClass} rounded-xl p-4 space-y-4`}>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className={`m-0 text-sm font-bold ${orderTitleTextClass}`}>Repeated customer patterns</p>
-                        <p className={`m-0 mt-1 text-xs ${orderMutedTextClass}`}>Tap the closest pattern so reports group the same customer response together.</p>
-                      </div>
-                      {followUpAttemptRecoveryBucket && (
-                        <span className="inline-flex rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200">
-                          Structured
-                        </span>
-                      )}
+                  <div>
+                    <p className="m-0 text-sm font-black text-gray-900">2. Call outcome *</p>
+                    <p className={`m-0 mb-2 text-xs ${orderMutedTextClass}`}>What was the result of this contact?</p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      {OUTCOME_CARDS.map((card) => {
+                        const active = card.code === "Other" ? usingOther : followUpAttemptOutcome === card.code;
+                        return (
+                          <button
+                            key={card.code}
+                            type="button"
+                            onClick={() => setFollowUpOutcomeText(card.code === "Other" ? "" : card.code)}
+                            className={`!min-h-0 rounded-lg border p-2.5 text-left transition-colors ${active ? "border-[#1F8FE0] bg-[#1F8FE0]/5 ring-1 ring-[#1F8FE0]" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+                          >
+                            <span className={`block text-xs font-black ${active ? "text-[#1F8FE0]" : "text-gray-800"}`}>{card.code}</span>
+                            <span className="mt-0.5 block text-[11px] text-gray-400">{card.hint}</span>
+                          </button>
+                        );
+                      })}
                     </div>
-
-                    {selectedOrderRecentOutcomeLabels.length > 0 && (
-                      <div className="space-y-2">
-                        <p className={`m-0 text-[10px] font-black uppercase tracking-[0.16em] ${orderFaintTextClass}`}>Recent on this order</p>
-                        <div className="flex flex-wrap gap-2">
-                          {selectedOrderRecentOutcomeLabels.map((label) => (
-                            <button
-                              key={label}
-                              type="button"
-                              onClick={() => {
-                                const pattern = followUpAttemptPatternByLabel.get(label.trim().toLowerCase());
-                                if (pattern) applyFollowUpAttemptPattern(pattern);
-                                else setFollowUpOutcomeText(label);
-                              }}
-                              className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
-                                followUpAttemptOutcome.trim().toLowerCase() === label.trim().toLowerCase()
-                                  ? "border-slate-700 bg-slate-900 text-white dark:border-slate-200 dark:bg-slate-100 dark:text-slate-950"
-                                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-400 dark:border-slate-700 dark:bg-[#101a24] dark:text-slate-200 dark:hover:bg-slate-800"
-                              }`}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                    {(usingOther || !followUpAttemptOutcome) && (
+                      <label className="mt-2 block">
+                        <span>Describe the outcome *</span>
+                        <input value={followUpAttemptOutcome} onChange={(event) => setFollowUpOutcomeText(event.target.value)} placeholder="e.g. Wants delivery next week, Asked for discount..." />
+                      </label>
                     )}
-
-                    <div className="space-y-3">
-                      {followUpAttemptPatternGroups.map((group) => (
-                        <div key={group.title} className="space-y-2">
-                          <div className="flex flex-wrap items-baseline gap-2">
-                            <p className={`m-0 text-[11px] font-black uppercase tracking-[0.16em] ${orderFaintTextClass}`}>{group.title}</p>
-                            <span className={`text-[11px] ${orderMutedTextClass}`}>{group.helper}</span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {group.patterns.map((pattern) => {
-                              const active = followUpAttemptOutcome.trim().toLowerCase() === pattern.label.toLowerCase();
-                              return (
-                                <button
-                                  key={`${group.title}-${pattern.label}`}
-                                  type="button"
-                                  onClick={() => applyFollowUpAttemptPattern(pattern)}
-                                  title={pattern.helper}
-                                  className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-black transition-all hover:-translate-y-0.5 ${followUpPatternChipClass(pattern.group, active)}`}
-                                >
-                                  {pattern.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
                   </div>
 
-                  <label>
-                    <span>What happened?</span>
+                  <div>
+                    <p className="m-0 text-sm font-black text-gray-900">3. Notes</p>
+                    <p className={`m-0 mb-2 text-xs ${orderMutedTextClass}`}>A brief note about the conversation.</p>
                     <textarea
                       value={followUpAttemptNote}
+                      maxLength={500}
                       onChange={(event) => setFollowUpAttemptNote(event.target.value)}
-                      placeholder="Record what the customer said or what happened on this attempt."
+                      placeholder="What the customer actually said - the next rep reads this before calling."
                     />
-                  </label>
-
-                  <div className={`${orderPanelMutedClass} rounded-xl p-4 space-y-3`}>
-                    <label className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={followUpNextActionEnabled}
-                        onChange={(event) => setFollowUpNextActionEnabled(event.target.checked)}
-                      />
-                      <span className={`text-sm font-semibold ${orderTitleTextClass}`}>Set the next follow-up action now</span>
-                    </label>
-                    {followUpNextActionEnabled && (
-                      <>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                          <label>
-                            <span>Next Action</span>
-                            <select value={followUpNextActionType} onChange={(event) => setFollowUpNextActionType(event.target.value as FollowUpTask["taskType"])}>
-                              <option value="callback">Callback</option>
-                              <option value="payment_check">Payment Check</option>
-                              <option value="delivery_confirmation">Delivery Confirmation</option>
-                              <option value="waybill_follow_up">Waybill Follow-up</option>
-                            </select>
-                          </label>
-                          <label>
-                            <span>Date</span>
-                            <input type="date" value={followUpNextActionDate} onChange={(event) => setFollowUpNextActionDate(event.target.value)} />
-                          </label>
-                          <label>
-                            <span>Time</span>
-                            <input type="time" value={followUpNextActionTime} onChange={(event) => setFollowUpNextActionTime(event.target.value)} />
-                          </label>
-                        </div>
-                        <label>
-                          <span>Next Action Note</span>
-                          <textarea
-                            value={followUpNextActionNote}
-                            onChange={(event) => setFollowUpNextActionNote(event.target.value)}
-                            placeholder="What exactly should happen on the next callback?"
-                          />
-                        </label>
-                      </>
-                    )}
+                    <p className="m-0 mt-1 text-right text-[11px] text-gray-400">{followUpAttemptNote.length} / 500</p>
                   </div>
 
-                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+                  <div>
+                    <p className="m-0 text-sm font-black text-gray-900">4. Next action</p>
+                    <p className={`m-0 mb-2 text-xs ${orderMutedTextClass}`}>What should happen next?</p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      {NEXT_ACTIONS.map((action) => {
+                        const active = currentNextAction === action.value;
+                        return (
+                          <button
+                            key={action.value}
+                            type="button"
+                            onClick={() => {
+                              if (action.value === "closed") {
+                                setFollowUpNextActionEnabled(false);
+                                setFollowUpSendWhatsAppNow(false);
+                                setFollowUpTagForOffer(false);
+                                return;
+                              }
+                              setFollowUpNextActionEnabled(true);
+                              setFollowUpNextActionType("callback");
+                              setFollowUpSendWhatsAppNow(action.value === "whatsapp");
+                              setFollowUpTagForOffer(action.value === "offer");
+                            }}
+                            className={`!min-h-0 rounded-lg border p-2.5 text-left transition-colors ${active ? "border-[#1F8FE0] bg-[#1F8FE0]/5 ring-1 ring-[#1F8FE0]" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+                          >
+                            <span className={`block text-xs font-black ${active ? "text-[#1F8FE0]" : "text-gray-800"}`}>{action.label}</span>
+                            <span className="mt-0.5 block text-[11px] text-gray-400">{action.hint}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {followUpNextActionEnabled && (
+                    <div>
+                      <p className="m-0 text-sm font-black text-gray-900">5. Schedule next follow-up</p>
+                      <p className={`m-0 mb-2 text-xs ${orderMutedTextClass}`}>When should we follow up again? Times are limited to working hours.</p>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label>
+                          <span>Date</span>
+                          <input type="date" value={followUpNextActionDate} min={todayKey()} onChange={(event) => setFollowUpNextActionDate(event.target.value)} />
+                        </label>
+                        <label>
+                          <span>Time</span>
+                          <input type="time" value={followUpNextActionTime} onChange={(event) => setFollowUpNextActionTime(event.target.value)} />
+                        </label>
+                      </div>
+                      <label className="mt-2 flex items-start gap-2">
+                        <input type="checkbox" className="mt-0.5 h-4 w-4 rounded border-gray-300" checked={followUpReminderSet} onChange={(e) => setFollowUpReminderSet(e.target.checked)} />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-gray-800">Set reminder</span>
+                          <span className="block text-[11px] text-gray-400">Creates the follow-up task so this order shows up as due.</span>
+                        </span>
+                      </label>
+                    </div>
+                  )}
+
+                  <div>
+                    <p className="m-0 text-sm font-black text-gray-900">6. Additional options</p>
+                    <div className="mt-2 space-y-2">
+                      <label className="flex items-start gap-2">
+                        <input type="checkbox" className="mt-0.5 h-4 w-4 rounded border-gray-300" checked={followUpSendWhatsAppNow} onChange={(e) => setFollowUpSendWhatsAppNow(e.target.checked)} />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-gray-800">Send WhatsApp immediately</span>
+                          <span className="block text-[11px] text-gray-400">Sends through your connected number when you save. Skipped automatically if this customer opted out.</span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2">
+                        <input type="checkbox" className="mt-0.5 h-4 w-4 rounded border-gray-300" checked={followUpTagForOffer} onChange={(e) => setFollowUpTagForOffer(e.target.checked)} />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-gray-800">Tag for special offer later</span>
+                          <span className="block text-[11px] text-gray-400">Marks this customer for a discount or bundle when one goes out.</span>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => submitFollowUpAttempt()}>Save Attempt</button>
+                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={() => submitFollowUpAttempt()}>Save Follow-up</button>
                   </div>
                 </div>
-              )}
+                );
+              })()}
 
 	            {modal === "editOrderCustomer" && selectedOrder && (
 	              <div className="modal-form">

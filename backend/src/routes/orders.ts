@@ -3050,7 +3050,14 @@ const ContactAttemptSchema = z.object({
   outcomeNote: z.string().trim().max(1000).optional().nullable(),
   nextActionType: z.enum(["callback", "payment_check", "delivery_confirmation", "waybill_follow_up"]).optional().nullable(),
   nextActionAt: z.string().min(1).max(80).optional().nullable(),
-  nextActionNote: z.string().trim().max(1000).optional().nullable()
+  nextActionNote: z.string().trim().max(1000).optional().nullable(),
+  // Migration 184. attemptedAt lets a rep log a call they made earlier today
+  // rather than forcing "now"; it is clamped server-side so the log cannot be
+  // back-dated into a previous period or post-dated into the future.
+  attemptedAt: z.string().min(1).max(80).optional().nullable(),
+  contactPerson: z.string().trim().max(120).optional().nullable(),
+  reminderSet: z.boolean().optional(),
+  taggedForOffer: z.boolean().optional()
 });
 
 router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
@@ -3089,7 +3096,11 @@ router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "S
       taskId: parsed.data.taskId ?? null,
       nextActionType: parsed.data.nextActionType ?? null,
       nextActionAt: parsed.data.nextActionAt ?? null,
-      nextActionNote: parsed.data.nextActionNote ?? null
+      nextActionNote: parsed.data.nextActionNote ?? null,
+      attemptedAt: parsed.data.attemptedAt ?? null,
+      contactPerson: parsed.data.contactPerson ?? null,
+      reminderSet: parsed.data.reminderSet ?? false,
+      taggedForOffer: parsed.data.taggedForOffer ?? false
     });
     if (order.source_cart_id) {
       void queueCartJourneyEvent({
