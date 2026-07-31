@@ -135,11 +135,22 @@ const unitCostFor = (pricingMap: PricingMap, productId?: string | null, currency
 const cogsForOrder = (order: any, pricingMap: PricingMap) =>
   orderInventoryLinesFromRow(order).reduce((sum, line) => sum + line.quantity * unitCostFor(pricingMap, line.productId, order.currency), 0);
 
+// Bright's rule: pay for SALES, not activity. Logging a satisfaction check,
+// collecting a review or taking a referral contact are all things a rep should
+// be doing anyway - paying per action means paying out whether or not a naira
+// ever comes back. So every activity bonus defaults to 0 and only the
+// retention SALE pays, as a share of the order it actually produced.
+//
+// These stay configurable rather than deleted: an Owner can switch any of them
+// back on from Retention Settings if a specific push is worth paying for (a
+// video-testimonial drive, say). Default off means nobody starts paying by
+// accident - which nearly happened here, since this org has no settings row at
+// all and was running entirely on these defaults.
 const DEFAULT_BONUS_SETTINGS = {
-  satisfactionCheckBonus: 200,
-  writtenReviewBonus: 500,
-  videoTestimonialBonus: 1500,
-  referralBonus: 1000,
+  satisfactionCheckBonus: 0,
+  writtenReviewBonus: 0,
+  videoTestimonialBonus: 0,
+  referralBonus: 0,
   retentionSaleBonusPct: 10,
   customerDiscountPct: 10,
   highValueOrderThreshold: 50000,
@@ -1116,7 +1127,20 @@ const TouchpointSchema = z.discriminatedUnion("stage", [
     resultingOrderId: z.string().optional(),
     ...OutcomeFields
   })
-]);
+]).superRefine((value, ctx) => {
+  // An accepted repeat sale MUST name the order it produced. The retention
+  // bonus pays a percentage of that order's value, so without the link the
+  // rep silently earns nothing for a sale they actually closed - which is
+  // exactly what had happened: every accepted offer in production had no
+  // resulting order, so the retention-sale bonus never once paid out.
+  if (value.stage === "retention_sale" && value.retentionOutcome === "accepted" && !value.resultingOrderId?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["resultingOrderId"],
+      message: "Enter the new order this sale created - the retention bonus is a share of that order and cannot be paid without it."
+    });
+  }
+});
 
 router.post("/touchpoints", requireRole(...RETENTION_ROLES), async (req, res) => {
   const parsed = TouchpointSchema.safeParse(req.body);
