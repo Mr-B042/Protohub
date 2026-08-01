@@ -195,7 +195,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -11150,6 +11150,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaSaving, setPdaSaving] = useState(false);
   const [pdaDetail, setPdaDetail] = useState<PdaAgentDetail | null>(null);
   const [pdaPortalTab, setPdaPortalTab] = useState<PdaPortalTab>("Home");
+  const [pdaStockAgentId, setPdaStockAgentId] = useState("");
+  const [pdaStock, setPdaStock] = useState<{ stock: any[]; ledger: any[]; transfers: any[] } | null>(null);
+  const [pdaSendStockDraft, setPdaSendStockDraft] = useState({ productId: "", quantity: "", waybillReference: "" });
   const [pdaMySummary, setPdaMySummary] = useState<PdaMySummary | null>(null);
   const [pdaMyOrders, setPdaMyOrders] = useState<PdaAssignment[]>([]);
   const [pdaActiveAssignment, setPdaActiveAssignment] = useState<PdaAssignment | null>(null);
@@ -40502,6 +40505,39 @@ ${waybillLineItems(w).length > 1
     finally { setPdaSaving(false); }
   };
 
+  /** Product name for a stock row, falling back to the id when unknown. */
+  const productNameById = (productId: string) =>
+    products.find((p) => p.id === productId)?.name ?? productId;
+
+  const openPdaStock = async (agentId: string) => {
+    setPdaStockAgentId(agentId);
+    try {
+      setPdaStock(await personalDeliveryAgentsApi.agentStock(agentId));
+    } catch (err: any) { showToast(err?.message ?? "Could not load that stock."); }
+  };
+
+  const pdaSendStock = async () => {
+    if (!pdaStockAgentId) return;
+    const quantity = Number(pdaSendStockDraft.quantity);
+    if (!pdaSendStockDraft.productId || !Number.isFinite(quantity) || quantity < 1) {
+      showToast("Pick a product and a quantity of at least 1.");
+      return;
+    }
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.sendStock(pdaStockAgentId, {
+        productId: pdaSendStockDraft.productId,
+        productName: productNameById(pdaSendStockDraft.productId),
+        quantity,
+        waybillReference: pdaSendStockDraft.waybillReference.trim() || undefined
+      });
+      setModal(null);
+      showToast("Sent. It stays in transit until the agent confirms what arrived.");
+      await Promise.all([openPdaStock(pdaStockAgentId), loadPersonalDeliveryAgents()]);
+    } catch (err: any) { showToast(err?.message ?? "Could not send that stock."); }
+    finally { setPdaSaving(false); }
+  };
+
   const openPdaApplication = async (agentId: string) => {
     try {
       setPdaDetail(await personalDeliveryAgentsApi.detail(agentId));
@@ -46709,6 +46745,140 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // Inventory. Agents cannot edit their own quantities anywhere in this UI -
+  // they confirm what arrived and report discrepancies; a manager approves.
+  const renderPdaInventory = () => {
+    const agentsWithStock = pdaAgents.filter((agent) => PDA_OPERATIONAL_STATUSES.includes(agent.accountStatus));
+    const selected = pdaStockAgentId ? pdaAgents.find((a) => a.id === pdaStockAgentId) : null;
+
+    return (
+      <div className="space-y-4">
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+          <h2 className="m-0 text-sm font-bold text-gray-900">Stock held by agents</h2>
+          <p className="m-0 mt-0.5 text-xs text-gray-500">
+            Stock is sent out and the agent confirms what actually arrived — only what they confirm enters their balance. Every movement is on the ledger, and agents can never edit their own numbers.
+          </p>
+          {agentsWithStock.length === 0 ? (
+            <p className="m-0 mt-4 rounded-lg border border-dashed border-gray-300 px-4 py-6 text-center text-xs text-gray-400">
+              No approved agents yet. Stock can only be sent to an agent who has passed KYC.
+            </p>
+          ) : (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {agentsWithStock.map((agent) => (
+                <button key={agent.id} type="button" onClick={() => void openPdaStock(agent.id)}
+                  className={`!min-h-0 rounded-lg border px-3 py-2 text-xs font-bold ${pdaStockAgentId === agent.id ? "border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]" : "border-gray-200 text-gray-700 hover:bg-gray-50"}`}>
+                  {agent.fullName}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {selected && pdaStock && (
+          <>
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-200">
+                <div>
+                  <h3 className="m-0 text-sm font-bold text-gray-900">{selected.fullName}</h3>
+                  <p className="m-0 text-[11px] text-gray-500">
+                    {selected.maxStockUnits ? `Limit ${selected.maxStockUnits} units · ` : ""}{selected.trustLevel}
+                  </p>
+                </div>
+                <button type="button" onClick={() => { setPdaSendStockDraft({ productId: "", quantity: "", waybillReference: "" }); setModal("pdaSendStock"); }}
+                  className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1560a8]">
+                  Send stock
+                </button>
+              </div>
+              {pdaStock.stock.length === 0 ? (
+                <p className="m-0 px-5 py-8 text-center text-xs text-gray-400">This agent holds no stock yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                        <th className="px-5 py-2">Product</th>
+                        <th className="px-3 py-2">Available</th>
+                        <th className="px-3 py-2">Reserved</th>
+                        <th className="px-3 py-2">Out</th>
+                        <th className="px-3 py-2">Damaged</th>
+                        <th className="px-3 py-2">Missing</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pdaStock.stock.map((row: any) => (
+                        <tr key={row.id} className="border-t border-gray-100">
+                          <td className="px-5 py-2 font-semibold text-gray-900">{productNameById(row.product_id)}</td>
+                          <td className="px-3 py-2 font-black text-gray-900">{row.available}</td>
+                          <td className="px-3 py-2 text-gray-600">{row.reserved}</td>
+                          <td className="px-3 py-2 text-gray-600">{row.out_for_delivery}</td>
+                          <td className={`px-3 py-2 ${row.damaged > 0 ? "font-bold text-red-600" : "text-gray-400"}`}>{row.damaged}</td>
+                          <td className={`px-3 py-2 ${row.missing > 0 ? "font-bold text-red-600" : "text-gray-400"}`}>{row.missing}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            {pdaStock.transfers.length > 0 && (
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-200">
+                  <h3 className="m-0 text-sm font-bold text-gray-900">Transfers</h3>
+                  <p className="m-0 text-[11px] text-gray-500">What was sent, and what the agent confirmed arrived.</p>
+                </div>
+                <div className="divide-y divide-gray-100">
+                  {pdaStock.transfers.map((row: any) => (
+                    <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 text-xs">
+                      <div>
+                        <span className="font-bold text-gray-900">{productNameById(row.product_id)}</span>
+                        <span className="ml-2 text-gray-500">
+                          sent {row.quantity_sent}
+                          {row.quantity_received !== null && row.quantity_received !== undefined ? ` · confirmed ${row.quantity_received}` : ""}
+                        </span>
+                      </div>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
+                        row.status === "Received" ? "bg-emerald-50 text-emerald-700"
+                        : row.status === "In Transit" ? "bg-sky-50 text-sky-700"
+                        : "bg-amber-50 text-amber-700"}`}>{row.status}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-200">
+                <h3 className="m-0 text-sm font-bold text-gray-900">Stock ledger</h3>
+                <p className="m-0 text-[11px] text-gray-500">Every movement, newest first. This is how a balance is explained.</p>
+              </div>
+              {pdaStock.ledger.length === 0 ? (
+                <p className="m-0 px-5 py-8 text-center text-xs text-gray-400">Nothing recorded yet.</p>
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {pdaStock.ledger.map((row: any) => (
+                    <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 text-xs">
+                      <div className="min-w-0">
+                        <span className="font-bold text-gray-900">{row.movement}</span>
+                        <span className="ml-2 text-gray-500">{productNameById(row.product_id)} × {row.quantity}</span>
+                        {row.order_id && <span className="ml-2 text-gray-400">order {row.order_id}</span>}
+                        {row.note && <p className="m-0 text-[11px] text-gray-500">{row.note}</p>}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="font-black text-gray-900">{row.balance_after} left</div>
+                        <div className="text-[10px] text-gray-400">{new Date(row.created_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </>
+        )}
+      </div>
+    );
+  };
+
   // Applications & KYC. Review is item-by-item on purpose: the Approve button
   // stays disabled until every mandatory requirement passes, and the server
   // enforces the same rule so a disabled button is never the only guard.
@@ -47008,7 +47178,9 @@ ${waybillLineItems(w).length > 1
       { label: "Available Now", value: String(totals?.availableNow ?? 0), hint: "Approved and online", tone: "text-emerald-600" },
       { label: "On Probation", value: String(totals?.onProbation ?? 0), hint: "Reduced stock and COD limits" },
       { label: "Restricted", value: String(totals?.restricted ?? 0), hint: "Blocked from new assignments", tone: "text-red-600" },
-      { label: "KYC Items Outstanding", value: String(totals?.kycItemsOutstanding ?? 0), hint: `${totals?.guarantorsOutstanding ?? 0} guarantors unverified`, tone: "text-amber-600" }
+      { label: "KYC Items Outstanding", value: String(totals?.kycItemsOutstanding ?? 0), hint: `${totals?.guarantorsOutstanding ?? 0} guarantors unverified`, tone: "text-amber-600" },
+      { label: "Units With Agents", value: String(totals?.inventoryHeld ?? 0), hint: `${totals?.inventoryAvailable ?? 0} available · ${totals?.stockInTransit ?? 0} in transit` },
+      { label: "Stock Unaccounted", value: String(totals?.inventoryUnaccounted ?? 0), hint: `${totals?.openStockReports ?? 0} report${(totals?.openStockReports ?? 0) === 1 ? "" : "s"} awaiting review`, tone: (totals?.inventoryUnaccounted ?? 0) > 0 ? "text-red-600" : undefined }
     ];
 
     return (
@@ -47044,10 +47216,10 @@ ${waybillLineItems(w).length > 1
             <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
               <h2 className="text-sm font-bold text-gray-900">Not measurable yet</h2>
               <p className="mt-1 text-xs text-gray-500">
-                Orders assigned, dispatches in progress, COD outstanding and inventory held by agents are shown as soon as Orders &amp; Dispatch, COD &amp; Reconciliation and Inventory are built. They are left blank rather than shown as ₦0 - a zero here would look like nothing is outstanding.
+                Orders assigned, dispatches in progress and COD outstanding are shown as soon as Orders &amp; Dispatch and COD &amp; Reconciliation are built. They are left blank rather than shown as ₦0 - a zero here would look like nothing is outstanding.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
-                {["Orders Assigned Today", "Dispatches In Progress", "Delivered Today", "COD Outstanding", "Inventory Held", "Overdue Remittances"].map((label) => (
+                {["Orders Assigned Today", "Dispatches In Progress", "Delivered Today", "COD Outstanding", "Overdue Remittances"].map((label) => (
                   <span key={label} className="rounded-lg border border-dashed border-gray-300 px-2.5 py-1 text-[11px] font-semibold text-gray-400">{label}</span>
                 ))}
               </div>
@@ -47118,6 +47290,8 @@ ${waybillLineItems(w).length > 1
           </>
         ) : pdaSubPage === "Applications & KYC" ? (
           renderPdaApplicationsAndKyc()
+        ) : pdaSubPage === "Inventory" ? (
+          renderPdaInventory()
         ) : (
           <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-12 text-center">
             <h2 className="text-base font-bold text-gray-900">{pdaSubPage}</h2>
@@ -75702,6 +75876,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "pdaDelivered" && "Confirm delivery"}
                 {modal === "pdaFailed" && "What happened?"}
                 {modal === "pdaReschedule" && "Reschedule"}
+                {modal === "pdaSendStock" && "Send stock to agent"}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -81208,6 +81383,38 @@ ${waybillLineItems(w).length > 1
                 </div>
               );
             })()}
+
+	            {modal === "pdaSendStock" && (
+	              <div className="space-y-4">
+	                <p className="m-0 text-xs text-gray-500">
+	                  This does not add to their balance yet. It stays in transit until the agent confirms what actually arrived — only the confirmed quantity becomes their stock.
+	                </p>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Product *</span>
+	                  <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaSendStockDraft.productId}
+	                    onChange={(e) => setPdaSendStockDraft((v) => ({ ...v, productId: e.target.value }))}>
+	                    <option value="">Choose a product…</option>
+	                    {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+	                  </select>
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Quantity *</span>
+	                  <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaSendStockDraft.quantity}
+	                    onChange={(e) => setPdaSendStockDraft((v) => ({ ...v, quantity: e.target.value }))} />
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Waybill reference</span>
+	                  <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaSendStockDraft.waybillReference}
+	                    onChange={(e) => setPdaSendStockDraft((v) => ({ ...v, waybillReference: e.target.value }))} />
+	                </label>
+	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
+	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={pdaSendStock}>
+	                    {pdaSaving ? "Sending…" : "Send stock"}
+	                  </button>
+	                </div>
+	              </div>
+	            )}
 
 	            {modal === "pdaContact" && (
 	              <div className="space-y-3">

@@ -601,6 +601,12 @@ export type PersonalDeliveryAgentOverview = {
     kycExpiringSoon: number;
     kycItemsOutstanding: number;
     guarantorsOutstanding: number;
+    inventoryHeld: number;
+    inventoryAvailable: number;
+    inventoryOutForDelivery: number;
+    inventoryUnaccounted: number;
+    stockInTransit: number;
+    openStockReports: number;
   } | null;
   byStatus?: Record<string, number>;
   // Capabilities that do not exist yet, named so the UI can say so rather than
@@ -706,6 +712,16 @@ export const personalDeliveryAgentsApi = {
     post<{ row: PdaAssignment; stockReleased: boolean }>(`/api/personal-delivery-agents/my/orders/${assignmentId}/reschedule`, body),
   setAvailability: (availability: string) =>
     post<{ availability: string }>("/api/personal-delivery-agents/my/availability", { availability }),
+  // Inventory
+  sendStock: (id: string, body: unknown) => post<{ row: any }>(`/api/personal-delivery-agents/${id}/stock/send`, body),
+  agentStock: (id: string) => get<{ stock: any[]; ledger: any[]; transfers: any[] }>(`/api/personal-delivery-agents/${id}/stock`),
+  myStock: () => get<{ stock: any[]; incoming: any[]; ledger: any[] }>("/api/personal-delivery-agents/my/stock"),
+  confirmTransfer: (transferId: string, body: unknown) =>
+    post<{ received: number; short: boolean }>(`/api/personal-delivery-agents/my/transfers/${transferId}/confirm`, body),
+  reportDiscrepancy: (body: unknown) =>
+    post<{ row: any; note: string }>("/api/personal-delivery-agents/my/stock/discrepancy", body),
+  reviewDiscrepancy: (discrepancyId: string, body: unknown) =>
+    post<{ row: any }>(`/api/personal-delivery-agents/stock/discrepancies/${discrepancyId}/review`, body),
   list: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
     return get<{ rows: PersonalDeliveryAgentRow[]; pendingMigration?: boolean }>(`/api/personal-delivery-agents${qs}`);
