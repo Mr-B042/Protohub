@@ -725,6 +725,40 @@ export type PdaCandidateView = {
   candidates: Array<{ agentId: string; fullName: string; eligible: boolean; reasons: string[]; score: number }>;
 };
 
+export type PdaFeeRule = {
+  id: string; scope: string; matchValue?: string | null;
+  distanceMinKm?: number | null; distanceMaxKm?: number | null;
+  fee: number; sameDaySurcharge: number; active: boolean; note?: string | null;
+};
+
+export type PdaIncident = {
+  id: string; agent_id: string; order_id?: string | null; incident_type: string;
+  severity: string; description: string; amount_at_risk: number; status: string;
+  resolution?: string | null; final_decision?: string | null;
+  reported_by_name?: string | null; created_at: string; resolved_at?: string | null;
+};
+
+export type PdaReportRow = {
+  agentId: string; fullName: string; agentCode: string; accountStatus: string;
+  trustLevel: string; state?: string | null;
+  ordersOffered: number; ordersAccepted: number; ordersDeclined: number;
+  /** null means no data yet - never conflate that with 0%. */
+  acceptanceRatePct: number | null;
+  delivered: number; failed: number; deliveryRatePct: number | null; rescheduled: number;
+  cashOutstanding: number; earningsAvailable: number; earningsPaid: number;
+  openIncidents: number; amountAtRisk: number;
+  unitsHeld: number; unitsUnaccounted: number;
+};
+
+export type PdaSettings = {
+  probationDays: number;
+  probationMaxStock: number; probationMaxCod: number; probationMaxActiveOrders: number;
+  verifiedMaxStock: number; verifiedMaxCod: number; verifiedMaxActiveOrders: number;
+  trustedMaxStock: number; trustedMaxCod: number; trustedMaxActiveOrders: number;
+  staleOrderHours: number; remittanceGraceDays: number;
+  workingHoursStart: string; workingHoursEnd: string; kycValidMonths: number;
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   reviewKycItem: (itemId: string, body: unknown) =>
@@ -789,6 +823,28 @@ export const personalDeliveryAgentsApi = {
   },
   candidates: (orderId: string) =>
     get<PdaCandidateView>(`/api/personal-delivery-agents/assignments/candidates?orderId=${encodeURIComponent(orderId)}`),
+  // Fees & Earnings
+  feeRules: () => get<{ rows: PdaFeeRule[] }>("/api/personal-delivery-agents/fees/rules"),
+  createFeeRule: (body: unknown) => post<{ row: PdaFeeRule }>("/api/personal-delivery-agents/fees/rules", body),
+  deleteFeeRule: (ruleId: string) => del<{ ok: boolean }>(`/api/personal-delivery-agents/fees/rules/${ruleId}`),
+  negotiations: () => get<{ rows: any[] }>("/api/personal-delivery-agents/fees/negotiations"),
+  decideNegotiation: (id: string, body: unknown) =>
+    post<{ ok: boolean }>(`/api/personal-delivery-agents/fees/negotiations/${id}/decide`, body),
+  proposeFee: (assignmentId: string, body: unknown) =>
+    post<{ row: any }>(`/api/personal-delivery-agents/my/orders/${assignmentId}/propose-fee`, body),
+  // Incidents
+  incidents: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return get<{ rows: PdaIncident[] }>(`/api/personal-delivery-agents/incidents${qs}`);
+  },
+  createIncident: (body: unknown) =>
+    post<{ row: PdaIncident; agentSuspended: boolean }>("/api/personal-delivery-agents/incidents", body),
+  updateIncident: (id: string, body: unknown) =>
+    patch<{ row: PdaIncident }>(`/api/personal-delivery-agents/incidents/${id}`, body),
+  // Reports & settings
+  reports: () => get<{ rows: PdaReportRow[] }>("/api/personal-delivery-agents/reports"),
+  settings: () => get<{ settings: PdaSettings }>("/api/personal-delivery-agents/settings"),
+  saveSettings: (body: unknown) => put<{ settings: PdaSettings }>("/api/personal-delivery-agents/settings", body),
   list: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
     return get<{ rows: PersonalDeliveryAgentRow[]; pendingMigration?: boolean }>(`/api/personal-delivery-agents${qs}`);

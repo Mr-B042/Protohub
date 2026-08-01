@@ -26,6 +26,7 @@ import {
   outstandingForAssignment, allocateRemittance, codAssignmentBlockers
 } from "../lib/pda-cod.js";
 import { rankCandidates } from "../lib/pda-assignment-match.js";
+import { resolveStandardFee } from "../lib/pda-fees.js";
 import { recordStockLossExpense } from "../lib/stock-loss-expense.js";
 
 const router = Router();
@@ -1928,6 +1929,398 @@ router.get("/assignments", requireRole(...READ_ROLES), async (req, res) => {
     res.json({ rows, scope: isManagement ? "management" : "rep" });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load dispatch." });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────
+// Fees & Earnings, Incidents, Reports, Settings (migration 193)
+// ─────────────────────────────────────────────────────────
+
+const FEE_RULES = "pda_fee_rules";
+const NEGOTIATIONS = "pda_fee_negotiations";
+const INCIDENTS = "pda_incidents";
+const SETTINGS = "pda_settings";
+
+const DEFAULT_SETTINGS = {
+  probationDays: 30,
+  probationMaxStock: 20, probationMaxCod: 100000, probationMaxActiveOrders: 3,
+  verifiedMaxStock: 60, verifiedMaxCod: 300000, verifiedMaxActiveOrders: 8,
+  trustedMaxStock: 150, trustedMaxCod: 750000, trustedMaxActiveOrders: 15,
+  staleOrderHours: 24, remittanceGraceDays: 3,
+  workingHoursStart: "08:30", workingHoursEnd: "17:30", kycValidMonths: 12
+};
+
+const mapSettings = (row: any) => !row ? DEFAULT_SETTINGS : ({
+  probationDays: Number(row.probation_days ?? DEFAULT_SETTINGS.probationDays),
+  probationMaxStock: Number(row.probation_max_stock ?? DEFAULT_SETTINGS.probationMaxStock),
+  probationMaxCod: Number(row.probation_max_cod ?? DEFAULT_SETTINGS.probationMaxCod),
+  probationMaxActiveOrders: Number(row.probation_max_active_orders ?? DEFAULT_SETTINGS.probationMaxActiveOrders),
+  verifiedMaxStock: Number(row.verified_max_stock ?? DEFAULT_SETTINGS.verifiedMaxStock),
+  verifiedMaxCod: Number(row.verified_max_cod ?? DEFAULT_SETTINGS.verifiedMaxCod),
+  verifiedMaxActiveOrders: Number(row.verified_max_active_orders ?? DEFAULT_SETTINGS.verifiedMaxActiveOrders),
+  trustedMaxStock: Number(row.trusted_max_stock ?? DEFAULT_SETTINGS.trustedMaxStock),
+  trustedMaxCod: Number(row.trusted_max_cod ?? DEFAULT_SETTINGS.trustedMaxCod),
+  trustedMaxActiveOrders: Number(row.trusted_max_active_orders ?? DEFAULT_SETTINGS.trustedMaxActiveOrders),
+  staleOrderHours: Number(row.stale_order_hours ?? DEFAULT_SETTINGS.staleOrderHours),
+  remittanceGraceDays: Number(row.remittance_grace_days ?? DEFAULT_SETTINGS.remittanceGraceDays),
+  workingHoursStart: String(row.working_hours_start ?? DEFAULT_SETTINGS.workingHoursStart).slice(0, 5),
+  workingHoursEnd: String(row.working_hours_end ?? DEFAULT_SETTINGS.workingHoursEnd).slice(0, 5),
+  kycValidMonths: Number(row.kyc_valid_months ?? DEFAULT_SETTINGS.kycValidMonths)
+});
+
+const mapFeeRule = (row: any) => ({
+  id: row.id, scope: row.scope, matchValue: row.match_value ?? null,
+  distanceMinKm: row.distance_min_km === null || row.distance_min_km === undefined ? null : Number(row.distance_min_km),
+  distanceMaxKm: row.distance_max_km === null || row.distance_max_km === undefined ? null : Number(row.distance_max_km),
+  fee: Number(row.fee ?? 0),
+  sameDaySurcharge: Number(row.same_day_surcharge ?? 0),
+  active: row.active, note: row.note ?? null
+});
+
+// ── Settings ──────────────────────────────────────────────
+router.get("/settings", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const { data } = await supabase.from(SETTINGS).select("*").eq("org_id", orgIdOf(req)).maybeSingle();
+  res.json({ settings: mapSettings(data) });
+});
+
+const SettingsSchema = z.object({
+  probationDays: z.number().int().min(0).max(365),
+  probationMaxStock: z.number().int().min(0), probationMaxCod: z.number().min(0), probationMaxActiveOrders: z.number().int().min(0),
+  verifiedMaxStock: z.number().int().min(0), verifiedMaxCod: z.number().min(0), verifiedMaxActiveOrders: z.number().int().min(0),
+  trustedMaxStock: z.number().int().min(0), trustedMaxCod: z.number().min(0), trustedMaxActiveOrders: z.number().int().min(0),
+  staleOrderHours: z.number().int().min(1).max(720),
+  remittanceGraceDays: z.number().int().min(0).max(90),
+  workingHoursStart: z.string().regex(/^\d{2}:\d{2}$/),
+  workingHoursEnd: z.string().regex(/^\d{2}:\d{2}$/),
+  kycValidMonths: z.number().int().min(1).max(120)
+}).superRefine((value, ctx) => {
+  // Limits that get tighter as trust grows would be nonsense, and would let a
+  // demotion silently INCREASE someone's exposure.
+  if (value.verifiedMaxCod < value.probationMaxCod || value.trustedMaxCod < value.verifiedMaxCod) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["trustedMaxCod"], message: "Cash limits must not shrink as trust increases." });
+  }
+  if (value.verifiedMaxStock < value.probationMaxStock || value.trustedMaxStock < value.verifiedMaxStock) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["trustedMaxStock"], message: "Stock limits must not shrink as trust increases." });
+  }
+});
+
+router.put("/settings", requireRole("Owner", "Admin"), async (req, res) => {
+  const parsed = SettingsSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const d = parsed.data;
+  const { error } = await supabase.from(SETTINGS).upsert({
+    org_id: orgIdOf(req),
+    probation_days: d.probationDays,
+    probation_max_stock: d.probationMaxStock, probation_max_cod: d.probationMaxCod, probation_max_active_orders: d.probationMaxActiveOrders,
+    verified_max_stock: d.verifiedMaxStock, verified_max_cod: d.verifiedMaxCod, verified_max_active_orders: d.verifiedMaxActiveOrders,
+    trusted_max_stock: d.trustedMaxStock, trusted_max_cod: d.trustedMaxCod, trusted_max_active_orders: d.trustedMaxActiveOrders,
+    stale_order_hours: d.staleOrderHours, remittance_grace_days: d.remittanceGraceDays,
+    working_hours_start: d.workingHoursStart, working_hours_end: d.workingHoursEnd,
+    kyc_valid_months: d.kycValidMonths,
+    updated_at: new Date().toISOString(), updated_by: req.user!.id
+  }, { onConflict: "org_id" });
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ settings: d });
+});
+
+// ── Fee rules ─────────────────────────────────────────────
+router.get("/fees/rules", requireRole(...READ_ROLES), async (req, res) => {
+  const { data, error } = await supabase.from(FEE_RULES).select("*")
+    .eq("org_id", orgIdOf(req)).order("scope").order("fee");
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ rows: (data ?? []).map(mapFeeRule) });
+});
+
+const FeeRuleSchema = z.object({
+  scope: z.enum(["default", "state", "city", "zone", "distance", "product"]),
+  matchValue: z.string().trim().max(160).optional(),
+  distanceMinKm: z.number().min(0).optional(),
+  distanceMaxKm: z.number().min(0).optional(),
+  fee: z.number().min(0),
+  sameDaySurcharge: z.number().min(0).optional(),
+  note: z.string().trim().max(300).optional()
+}).superRefine((value, ctx) => {
+  if (value.scope !== "default" && value.scope !== "distance" && !value.matchValue?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["matchValue"], message: `A ${value.scope} rule needs a ${value.scope} to match.` });
+  }
+  if (value.scope === "distance") {
+    if (value.distanceMinKm === undefined || value.distanceMaxKm === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["distanceMaxKm"], message: "A distance band needs both a from and a to." });
+    } else if (value.distanceMaxKm <= value.distanceMinKm) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["distanceMaxKm"], message: "The upper bound must be above the lower one." });
+    }
+  }
+});
+
+router.post("/fees/rules", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = FeeRuleSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const { data, error } = await supabase.from(FEE_RULES).insert({
+    org_id: orgIdOf(req), scope: parsed.data.scope,
+    match_value: parsed.data.matchValue ?? null,
+    distance_min_km: parsed.data.distanceMinKm ?? null,
+    distance_max_km: parsed.data.distanceMaxKm ?? null,
+    fee: parsed.data.fee,
+    same_day_surcharge: parsed.data.sameDaySurcharge ?? 0,
+    note: parsed.data.note ?? null,
+    created_by: req.user!.id
+  }).select("*").single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.status(201).json({ row: mapFeeRule(data) });
+});
+
+router.delete("/fees/rules/:ruleId", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  // Deactivated rather than deleted: an order priced by this rule should still
+  // be explainable months later.
+  const { error } = await supabase.from(FEE_RULES)
+    .update({ active: false, updated_at: new Date().toISOString() })
+    .eq("org_id", orgIdOf(req)).eq("id", paramOf(req.params.ruleId));
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ ok: true, deactivated: true });
+});
+
+// ── GET /fees/quote?orderId= ──────────────────────────────
+// What the standard rate says this delivery is worth, and which rule decided.
+router.get("/fees/quote", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const orderId = typeof req.query.orderId === "string" ? req.query.orderId : "";
+    const { data: order } = await supabase.from("orders")
+      .select("id, state, city, product_id").eq("org_id", orgId).eq("id", orderId).maybeSingle();
+    if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+    const { data: rules } = await supabase.from(FEE_RULES).select("*").eq("org_id", orgId).eq("active", true);
+    const quote = resolveStandardFee((rules ?? []).map(mapFeeRule) as any, {
+      state: order.state, city: (order as any).city ?? null, productId: order.product_id,
+      sameDay: String(req.query.sameDay) === "true"
+    });
+    res.json({ quote });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not price that delivery." });
+  }
+});
+
+// ── Negotiated rates ──────────────────────────────────────
+router.get("/fees/negotiations", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const { data, error } = await supabase.from(NEGOTIATIONS).select("*")
+    .eq("org_id", orgIdOf(req)).order("created_at", { ascending: false }).limit(100);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ rows: data ?? [] });
+});
+
+// The agent asks for a different rate on an awkward order.
+router.post("/my/orders/:assignmentId/propose-fee", requireRole(AGENT_ROLE), async (req, res) => {
+  const proposedFee = Number(req.body?.proposedFee);
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+  if (!Number.isFinite(proposedFee) || proposedFee < 0) { res.status(400).json({ error: "Enter the fee you need." }); return; }
+  if (!reason) { res.status(400).json({ error: "Say why the standard fee does not work." }); return; }
+  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  if ("error" in found) { res.status(404).json({ error: found.error }); return; }
+  // Once the trip has begun the cost is already sunk, so the fee is settled.
+  if (found.assignment.dispatch_started_at) {
+    res.status(409).json({ error: "You have already started this delivery, so the fee is fixed." });
+    return;
+  }
+  const { data, error } = await supabase.from(NEGOTIATIONS).insert({
+    org_id: orgIdOf(req), assignment_id: found.assignment.id, agent_id: found.agent.id,
+    standard_fee: found.assignment.delivery_fee, proposed_fee: proposedFee,
+    proposed_reason: reason, status: "Pending"
+  }).select("*").single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  await supabase.from(ASSIGNMENTS)
+    .update({ fee_status: "Pending Approval", updated_at: new Date().toISOString() })
+    .eq("id", found.assignment.id);
+  res.status(201).json({ row: data });
+});
+
+const NegotiationDecisionSchema = z.object({
+  decision: z.enum(["Approved", "Rejected", "Countered"]),
+  counterFee: z.number().min(0).optional(),
+  note: z.string().trim().max(500).optional()
+}).superRefine((value, ctx) => {
+  if (value.decision === "Countered" && value.counterFee === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["counterFee"], message: "A counter needs a figure." });
+  }
+  if (value.decision === "Rejected" && !value.note?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["note"], message: "Say why it was rejected." });
+  }
+});
+
+router.post("/fees/negotiations/:negotiationId/decide", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = NegotiationDecisionSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const orgId = orgIdOf(req);
+  const negotiationId = paramOf(req.params.negotiationId);
+  const { data: negotiation } = await supabase.from(NEGOTIATIONS)
+    .select("*").eq("org_id", orgId).eq("id", negotiationId).maybeSingle();
+  if (!negotiation) { res.status(404).json({ error: "Request not found." }); return; }
+
+  const { error } = await supabase.from(NEGOTIATIONS).update({
+    status: parsed.data.decision,
+    counter_fee: parsed.data.counterFee ?? null,
+    decision_note: parsed.data.note ?? null,
+    decided_by: req.user!.id, decided_by_name: req.user!.name,
+    decided_at: new Date().toISOString()
+  }).eq("id", negotiationId);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+
+  // Approving locks the agreed figure to the order. Rejecting leaves the
+  // original standard fee locked, so nothing is ever left unpriced.
+  if (parsed.data.decision === "Approved") {
+    await supabase.from(ASSIGNMENTS).update({
+      delivery_fee: negotiation.proposed_fee,
+      fee_status: "Locked", fee_locked_at: new Date().toISOString(),
+      fee_proposed_by: "Agent", updated_at: new Date().toISOString()
+    }).eq("id", negotiation.assignment_id);
+  } else if (parsed.data.decision === "Rejected") {
+    await supabase.from(ASSIGNMENTS).update({
+      fee_status: "Locked", fee_locked_at: new Date().toISOString(), updated_at: new Date().toISOString()
+    }).eq("id", negotiation.assignment_id);
+  }
+  res.json({ ok: true });
+});
+
+// ── Incidents ─────────────────────────────────────────────
+router.get("/incidents", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const status = typeof req.query.status === "string" ? req.query.status : null;
+  let query = supabase.from(INCIDENTS).select("*").eq("org_id", orgIdOf(req))
+    .order("created_at", { ascending: false }).limit(200);
+  if (status && status !== "All") query = query.eq("status", status);
+  const { data, error } = await query;
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ rows: data ?? [] });
+});
+
+const IncidentSchema = z.object({
+  agentId: z.string().uuid(),
+  orderId: z.string().trim().max(60).optional(),
+  incidentType: z.enum([
+    "Missing inventory", "Damaged product", "Missing COD", "Customer complaint",
+    "Agent misconduct", "Delivery accident", "Theft", "Wrong product delivered",
+    "False delivery claim", "Unsafe delivery location", "Other"
+  ]),
+  severity: z.enum(["Low", "Medium", "High", "Critical"]),
+  description: z.string().trim().min(5, "Describe what happened.").max(2000),
+  amountAtRisk: z.number().min(0).optional()
+});
+
+router.post("/incidents", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = IncidentSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const { data, error } = await supabase.from(INCIDENTS).insert({
+    org_id: orgIdOf(req), agent_id: parsed.data.agentId,
+    order_id: parsed.data.orderId ?? null,
+    incident_type: parsed.data.incidentType, severity: parsed.data.severity,
+    description: parsed.data.description,
+    amount_at_risk: parsed.data.amountAtRisk ?? 0,
+    status: "Open",
+    reported_by: req.user!.id, reported_by_name: req.user!.name
+  }).select("*").single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+
+  // A serious open incident should stop new work reaching that agent while it
+  // is investigated - that is the entire point of raising one.
+  if (parsed.data.severity === "Critical" || parsed.data.severity === "High") {
+    await supabase.from(AGENTS).update({
+      account_status: "Temporarily Suspended",
+      availability: "Offline",
+      restriction_reason: `${parsed.data.severity} incident: ${parsed.data.incidentType}`,
+      updated_at: new Date().toISOString()
+    }).eq("org_id", orgIdOf(req)).eq("id", parsed.data.agentId)
+      .in("account_status", OPERATIONAL_STATUSES);
+  }
+  res.status(201).json({ row: data, agentSuspended: ["Critical", "High"].includes(parsed.data.severity) });
+});
+
+const IncidentUpdateSchema = z.object({
+  status: z.enum(["Open", "Under Investigation", "Awaiting Agent Response", "Resolved", "Closed - No Action", "Escalated"]),
+  resolution: z.string().trim().max(2000).optional(),
+  finalDecision: z.string().trim().max(500).optional(),
+  amountAtRisk: z.number().min(0).optional()
+}).superRefine((value, ctx) => {
+  if ((value.status === "Resolved" || value.status === "Closed - No Action") && !value.resolution?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["resolution"], message: "Record what was actually decided." });
+  }
+});
+
+router.patch("/incidents/:incidentId", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = IncidentUpdateSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const patch: Record<string, unknown> = {
+    status: parsed.data.status, updated_at: new Date().toISOString()
+  };
+  if (parsed.data.resolution !== undefined) patch.resolution = parsed.data.resolution;
+  if (parsed.data.finalDecision !== undefined) patch.final_decision = parsed.data.finalDecision;
+  if (parsed.data.amountAtRisk !== undefined) patch.amount_at_risk = parsed.data.amountAtRisk;
+  if (parsed.data.status === "Resolved" || parsed.data.status === "Closed - No Action") {
+    patch.resolved_at = new Date().toISOString();
+  }
+  const { data, error } = await supabase.from(INCIDENTS).update(patch)
+    .eq("org_id", orgIdOf(req)).eq("id", paramOf(req.params.incidentId)).select("*").single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ row: data });
+});
+
+// ── Reports ───────────────────────────────────────────────
+// Per-agent performance. Every figure is counted from real rows; an agent with
+// no deliveries yet gets nulls rather than a 0% delivery rate, which would read
+// as failure rather than "no data".
+router.get("/reports", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const [{ data: agents }, { data: assignments }, { data: incidents }, { data: stock }] = await Promise.all([
+      supabase.from(AGENTS).select("id, full_name, agent_code, account_status, trust_level, state").eq("org_id", orgId),
+      supabase.from(ASSIGNMENTS).select("*").eq("org_id", orgId),
+      supabase.from(INCIDENTS).select("agent_id, status, amount_at_risk").eq("org_id", orgId),
+      supabase.from("pda_agent_stock").select("agent_id, available, reserved, out_for_delivery, damaged, missing, awaiting_investigation").eq("org_id", orgId)
+    ]);
+
+    const rows = (agents ?? []).map((agent: any) => {
+      const mine = (assignments ?? []).filter((row: any) => row.agent_id === agent.id);
+      const closed = mine.filter((row: any) => ["Delivered", "Failed", "Rejected"].includes(row.delivery_status));
+      const delivered = mine.filter((row: any) => row.delivery_status === "Delivered");
+      const offered = mine.length;
+      const accepted = mine.filter((row: any) => row.assignment_status === "Accepted").length;
+      const declined = mine.filter((row: any) => row.assignment_status === "Declined").length;
+
+      const position = cashPositionFor(
+        mine.map((row: any) => ({
+          deliveryStatus: row.delivery_status, amountCollected: row.amount_collected,
+          amountRemitted: row.amount_remitted, deliveryFee: row.delivery_fee
+        })),
+        mine.map((row: any) => row.earning_status)
+      );
+      const agentIncidents = (incidents ?? []).filter((row: any) => row.agent_id === agent.id);
+      const agentStock = (stock ?? []).filter((row: any) => row.agent_id === agent.id);
+
+      return {
+        agentId: agent.id, fullName: agent.full_name, agentCode: agent.agent_code,
+        accountStatus: agent.account_status, trustLevel: agent.trust_level, state: agent.state,
+        ordersOffered: offered, ordersAccepted: accepted, ordersDeclined: declined,
+        // Null, not 0 - "no data" and "never delivers" are different facts.
+        acceptanceRatePct: offered > 0 ? Math.round((accepted / offered) * 1000) / 10 : null,
+        delivered: delivered.length,
+        failed: closed.length - delivered.length,
+        deliveryRatePct: closed.length > 0 ? Math.round((delivered.length / closed.length) * 1000) / 10 : null,
+        rescheduled: mine.filter((row: any) => row.delivery_status === "Rescheduled").length,
+        cashOutstanding: position.outstanding,
+        earningsAvailable: position.availableEarnings,
+        earningsPaid: mine.filter((row: any) => row.earning_status === "Paid")
+          .reduce((sum: number, row: any) => sum + Number(row.delivery_fee ?? 0), 0),
+        openIncidents: agentIncidents.filter((row: any) => !["Resolved", "Closed - No Action"].includes(row.status)).length,
+        amountAtRisk: agentIncidents
+          .filter((row: any) => !["Resolved", "Closed - No Action"].includes(row.status))
+          .reduce((sum: number, row: any) => sum + Number(row.amount_at_risk ?? 0), 0),
+        unitsHeld: agentStock.reduce((sum: number, row: any) =>
+          sum + Number(row.available ?? 0) + Number(row.reserved ?? 0) + Number(row.out_for_delivery ?? 0), 0),
+        unitsUnaccounted: agentStock.reduce((sum: number, row: any) =>
+          sum + Number(row.damaged ?? 0) + Number(row.missing ?? 0) + Number(row.awaiting_investigation ?? 0), 0)
+      };
+    });
+
+    res.json({ rows });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not build the report." });
   }
 });
 
