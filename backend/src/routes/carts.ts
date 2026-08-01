@@ -1588,6 +1588,22 @@ router.patch("/:id",
       }
       updates.assigned_rep_id = repId;
     }
+
+    // Keep status and assignee honest about each other. A cart reading
+    // "Assigned" with nobody assigned is worse than an unassigned one: it looks
+    // handled, so nobody picks it up. Production had exactly one of these.
+    const resultingRepId = repId !== undefined ? repId : existing.assigned_rep_id;
+    const resultingStatus = (updates.status as string | undefined) ?? existing.status;
+    if (resultingStatus === "Assigned" && !resultingRepId) {
+      if (repId !== undefined && !repId) {
+        // Unassigning: send it back to the pool rather than refusing.
+        updates.status = "Open abandoned";
+      } else {
+        res.status(400).json({ error: "Choose a sales rep before marking a cart assigned." });
+        return;
+      }
+    }
+
     updates.last_activity = new Date().toISOString();
 
     const { data, error } = await supabase
