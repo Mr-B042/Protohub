@@ -882,10 +882,49 @@ export type PdaDispatchSummary = {
   agentsOnline: number;
 };
 
+export type PdaInventoryAgentRow = {
+  agentId: string; fullName: string; phone: string; location: string; accountStatus: string;
+  productsHeld: number; totalUnits: number; available: number; reserved: number;
+  outForDelivery: number; damagedMissing: number; stockValue: number;
+  openIssues: number;
+  /** null = never reconciled. A movement is not a count. */
+  lastCountAt: string | null;
+};
+
+export type PdaInventoryOverview = {
+  counts: {
+    agentsHoldingStock: number; totalUnits: number; available: number; reserved: number;
+    outForDelivery: number; damagedMissing: number; inTransit: number;
+    inTransitDeltaPct: number | null; totalValue: number; openDiscrepancies: number;
+  };
+  agents: PdaInventoryAgentRow[];
+  lowStock: Array<{ productId: string; available: number; floor: number }>;
+  recentActivity: Array<{ id: string; movement: string; quantity: number; productId: string; productName?: string | null; agentName: string; at: string }>;
+};
+
+export type PdaLedgerRow = {
+  id: string; at: string; movement: string; productId: string; productName?: string | null;
+  agentId: string; agentName: string; location: string;
+  quantity: number; balanceAfter: number;
+  orderId?: string | null; transferId?: string | null; note?: string | null; recordedByName: string;
+};
+
+export type PdaStockLedgerView = {
+  rows: PdaLedgerRow[];
+  counts: {
+    total: number; received: number; issued: number; reserved: number; delivered: number;
+    returned: number; adjusted: number;
+    totalDeltaPct: number | null; receivedDeltaPct: number | null; issuedDeltaPct: number | null;
+    reservedDeltaPct: number | null; deliveredDeltaPct: number | null; returnedDeltaPct: number | null;
+  };
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),
   activeAgents: () => get<PdaActiveAgentsView>("/api/personal-delivery-agents/active-agents"),
+  inventoryOverview: () => get<PdaInventoryOverview>("/api/personal-delivery-agents/inventory-overview"),
+  stockLedger: () => get<PdaStockLedgerView>("/api/personal-delivery-agents/stock-ledger"),
   dispatchSummary: () => get<PdaDispatchSummary>("/api/personal-delivery-agents/dispatch-summary"),
   applicationReview: (id: string) => get<PdaReviewView>(`/api/personal-delivery-agents/applications/${id}/review`),
   guarantorQueue: () => get<{ rows: PdaGuarantorQueueRow[]; counts: { total: number; outstanding: number } }>("/api/personal-delivery-agents/guarantors/queue"),
