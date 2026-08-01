@@ -127,7 +127,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11190,6 +11190,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaReview, setPdaReview] = useState<PdaReviewView | null>(null);
   const [pdaReviewSearch, setPdaReviewSearch] = useState("");
   const [pdaReviewSort, setPdaReviewSort] = useState("Newest First");
+  // Pending Approval sorts oldest-first by default: an application that has
+  // been ready longest is the one someone is waiting on.
+  const [pdaPendingSort, setPdaPendingSort] = useState("Oldest First");
   const [pdaGuarantorQueue, setPdaGuarantorQueue] = useState<{ rows: PdaGuarantorQueueRow[]; counts: { total: number; outstanding: number } } | null>(null);
   const [pdaGuarantorDetail, setPdaGuarantorDetail] = useState<PdaGuarantorDetail | null>(null);
   const [pdaGuarantorSearch, setPdaGuarantorSearch] = useState("");
@@ -47945,6 +47948,470 @@ ${waybillLineItems(w).length > 1
     </section>
   );
 
+  // The queue panel and right rail are identical on all four worked screens,
+  // so they are built once here rather than copied per tab.
+  const pdaApplicationQueue = (title: string, sortLabel: string, sortValue: string, onSort: (v: string) => void) => {
+    const queue = (pdaApplications?.rows ?? []).filter((row) => {
+      if (!pdaReviewSearch.trim()) return true;
+      const q = pdaReviewSearch.trim().toLowerCase();
+      return row.fullName.toLowerCase().includes(q) || row.applicationId.toLowerCase().includes(q) || (row.phone ?? "").includes(q);
+    });
+    const sorted = [...queue].sort((a, b) => sortValue === "Newest First"
+      ? new Date(b.submittedOn).getTime() - new Date(a.submittedOn).getTime()
+      : new Date(a.submittedOn).getTime() - new Date(b.submittedOn).getTime());
+    const chip = (status: string) =>
+      status === "Ready for Approval" || status === "Approved" ? "bg-emerald-50 text-emerald-700"
+      : status === "KYC Incomplete" || status === "Rejected" ? "bg-rose-50 text-rose-700"
+      : status === "Draft" ? "bg-gray-100 text-gray-600"
+      : "bg-amber-50 text-amber-700";
+
+    return (
+      <section className="self-start rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between gap-2 px-4 py-3">
+          <h3 className="m-0 text-sm font-bold text-gray-900">{title}</h3>
+          <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">{sorted.length}</span>
+        </div>
+        <div className="space-y-2 px-4 pb-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm"
+              placeholder="Search by name, phone or ID..." value={pdaReviewSearch}
+              onChange={(e) => setPdaReviewSearch(e.target.value)} />
+          </div>
+          <label className="flex items-center gap-2 text-xs text-gray-500">
+            {sortLabel}
+            <select className="flex-1 rounded-lg border border-gray-200 px-2 py-1.5 text-xs font-semibold text-gray-700"
+              value={sortValue} onChange={(e) => onSort(e.target.value)}>
+              <option>Newest First</option>
+              <option>Oldest First</option>
+            </select>
+          </label>
+        </div>
+        <div className="max-h-[560px] divide-y divide-gray-100 overflow-y-auto border-t border-gray-100">
+          {sorted.length === 0 ? (
+            <p className="m-0 px-4 py-10 text-center text-xs text-gray-400">Nothing in this queue.</p>
+          ) : sorted.map((row) => (
+            <button key={row.id} type="button" onClick={() => void openPdaReview(row.id)}
+              className={`!min-h-0 w-full px-4 py-3 text-left transition-colors ${pdaReview?.agent.id === row.id ? "bg-blue-50 ring-1 ring-inset ring-[#1F8FE0]" : "hover:bg-gray-50"}`}>
+              <div className="flex items-start gap-3">
+                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-black ${customerAvatarTone(row.id)}`}>
+                  {customerInitial(row.fullName)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-bold text-gray-900">{row.fullName}</div>
+                  <div className="text-[11px] text-gray-400">{row.applicationId}</div>
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-gray-400">
+                      {new Date(row.submittedOn).toLocaleDateString([], { dateStyle: "medium" })}
+                    </span>
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${chip(row.status)}`}>{row.status}</span>
+                  </div>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+    );
+  };
+
+  const pdaApplicantHeaderCard = (view: PdaReviewView, right: ReactNode) => (
+    <section className="grid gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm lg:grid-cols-[minmax(0,1fr),240px]">
+      <div className="flex items-start gap-4">
+        <span className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-xl font-black ${customerAvatarTone(view.agent.id)}`}>
+          {customerInitial(view.agent.fullName)}
+        </span>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="m-0 text-lg font-bold text-gray-900">{view.agent.fullName}</h3>
+            <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700">{view.agent.accountStatus}</span>
+          </div>
+          <p className="m-0 text-[11px] text-gray-400">
+            {view.agent.applicationId} · Submitted on {new Date(view.summary.submittedOn).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+          </p>
+          <div className="mt-2 space-y-0.5 text-[12px] text-gray-600">
+            <div className="flex items-center gap-2"><Phone className="h-3.5 w-3.5 text-gray-400" /> {view.agent.phone}</div>
+            {view.agent.email && <div className="flex items-center gap-2"><Mail className="h-3.5 w-3.5 text-gray-400" /> {view.agent.email}</div>}
+            {(view.agent.city || view.agent.state) && (
+              <div className="flex items-center gap-2"><MapPin className="h-3.5 w-3.5 text-gray-400" /> {[view.agent.city, view.agent.state].filter(Boolean).join(", ")}</div>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="lg:border-l lg:border-gray-100 lg:pl-5">{right}</div>
+    </section>
+  );
+
+  const pdaRightRail = (view: PdaReviewView, notesTitle: string, extraAction?: ReactNode) => (
+    <div className="space-y-4 2xl:col-start-3">
+      <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="m-0 text-sm font-bold text-gray-900">Application Summary</h3>
+        <dl className="m-0 mt-3 space-y-2 text-[12px]">
+          {[
+            ["Status", view.agent.accountStatus],
+            ["KYC Status", view.blockers.length === 0 ? "Completed" : "In Progress"],
+            ["Submitted On", new Date(view.summary.submittedOn).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })],
+            ["Last Updated", new Date(view.summary.lastUpdated).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })],
+            ["Source", view.summary.source]
+          ].map(([label, value]) => (
+            <div key={label} className="flex items-start justify-between gap-3">
+              <dt className="m-0 text-gray-500">{label}:</dt>
+              <dd className="m-0 text-right font-semibold text-gray-800">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="m-0 text-sm font-bold text-gray-900">Quick Actions</h3>
+        <div className="mt-3 space-y-2">
+          <button type="button" disabled={view.blockers.length > 0 || pdaSaving} onClick={() => void pdaApprove(view.agent.id)}
+            className="!min-h-0 flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40">
+            <CheckCircle2 className="h-4 w-4" /> Approve Agent
+          </button>
+          <button type="button" onClick={() => void pdaSetApplicationStatus(view.agent.id, "Rejected")}
+            className="!min-h-0 flex w-full items-center justify-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] font-bold text-rose-700 hover:bg-rose-100">
+            <AlertTriangle className="h-4 w-4" /> Reject Application
+          </button>
+          {extraAction ?? (
+            <button type="button" onClick={() => void pdaSetApplicationStatus(view.agent.id, "KYC Incomplete")}
+              className="!min-h-0 flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-[12px] font-bold text-gray-700 hover:bg-gray-50">
+              <RefreshCw className="h-4 w-4" /> Request Update
+            </button>
+          )}
+        </div>
+      </section>
+
+      {pdaNotesCard(notesTitle, view.notes, () => void pdaAddNote({ agentId: view.agent.id }))}
+
+      <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h3 className="m-0 mb-3 text-sm font-bold text-gray-900">Activity History</h3>
+        {pdaActivityList(view.activity)}
+      </section>
+    </div>
+  );
+
+  // Document Review: every uploaded file in one list, whichever table it is in.
+  const renderPdaDocumentReview = () => {
+    const view = pdaReview;
+    const docs = view?.documentsView ?? [];
+    const verified = docs.filter((doc) => doc.status === "Approved" || doc.status === "Verified").length;
+    const pct = docs.length > 0 ? Math.round((verified / docs.length) * 100) : 0;
+
+    const docChip = (status: string) =>
+      status === "Approved" || status === "Verified" ? "bg-emerald-50 text-emerald-700"
+      : status === "Rejected" ? "bg-rose-50 text-rose-700"
+      : status === "Replacement Requested" ? "bg-amber-50 text-amber-700"
+      : status === "Not Uploaded" ? "bg-gray-100 text-gray-500"
+      : "bg-amber-50 text-amber-700";
+
+    // Size is shown because a 12 KB "utility bill" is obviously not one, and
+    // that is worth seeing before opening it.
+    const sizeLabel = (bytes?: number | null) =>
+      bytes === null || bytes === undefined ? "" : bytes > 1024 * 1024
+        ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+    const reviewDoc = async (doc: PdaDocumentViewRow, status: string) => {
+      let rejectionReason: string | undefined;
+      if (status === "Rejected" || status === "Replacement Requested") {
+        const reason = window.prompt("What is wrong with this document?");
+        if (!reason || !reason.trim()) return;
+        rejectionReason = reason.trim();
+      }
+      try {
+        if (doc.kind === "kyc") {
+          await personalDeliveryAgentsApi.reviewKycItem(doc.id, { status: status === "Verified" ? "Approved" : status, rejectionReason });
+        } else {
+          await personalDeliveryAgentsApi.reviewDocument(doc.id, { status: status === "Verified" ? "Approved" : status, rejectionReason });
+        }
+        await Promise.all([openPdaReview(view!.agent.id), loadPdaApplications()]);
+      } catch (err: any) { showToast(err?.message ?? "Could not update that document."); }
+    };
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-xl font-bold text-gray-900">Document Review</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Review and verify all documents uploaded by the applicant.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => view && pdaCsvDownload(`documents-${view.agent.applicationId}`,
+              ["Document", "File", "Size", "Status", "Reviewed by", "Reviewed on"],
+              docs.map((doc) => [doc.label, doc.fileName ?? "", sizeLabel(doc.fileSizeBytes), doc.status, doc.reviewedByName ?? "", doc.reviewedAt ?? ""]))}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+              <Download className="h-4 w-4" /> Download Document Report
+            </button>
+            <button type="button" disabled={!view || view.blockers.length > 0 || pdaSaving}
+              onClick={() => view && void pdaApprove(view.agent.id)}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg bg-[#1F8FE0] px-3.5 py-2 text-sm font-semibold text-white hover:bg-[#1560a8] disabled:cursor-not-allowed disabled:opacity-40">
+              <CheckCircle2 className="h-4 w-4" /> Approve Agent
+            </button>
+          </div>
+        </div>
+
+        {pdaAppTabBar()}
+
+        <div className="grid gap-4 xl:grid-cols-[300px,minmax(0,1fr)] 2xl:grid-cols-[300px,minmax(0,1fr),280px]">
+          {pdaApplicationQueue("Document Queue", "Sort by:", pdaReviewSort, setPdaReviewSort)}
+
+          {!view ? (
+            <section className="rounded-xl border border-gray-200 bg-white px-5 py-16 text-center shadow-sm">
+              <p className="m-0 text-sm text-gray-500">Pick an application to review its documents.</p>
+            </section>
+          ) : (
+            <div className="min-w-0 space-y-4">
+              {pdaApplicantHeaderCard(view, (
+                <>
+                  <div className="text-[12px] font-semibold text-gray-500">Document Completion</div>
+                  <div className="mt-1 text-3xl font-black text-[#1F8FE0]">{pct}%</div>
+                  <div className="mt-2 h-2 w-full rounded-full bg-gray-100">
+                    <div className="h-2 rounded-full bg-[#1F8FE0]" style={{ width: `${pct}%` }} />
+                  </div>
+                  <div className="mt-1 text-[11px] text-gray-400">{verified} of {docs.length} documents verified</div>
+                </>
+              ))}
+
+              <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div className="px-5 py-4">
+                  <h3 className="m-0 text-sm font-bold text-gray-900">Uploaded Documents</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-y border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                        <th className="px-5 py-2.5">Document</th>
+                        <th className="px-3 py-2.5">File</th>
+                        <th className="px-3 py-2.5">Status</th>
+                        <th className="px-3 py-2.5">Reviewed By</th>
+                        <th className="px-3 py-2.5 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {docs.map((doc, index) => (
+                        <tr key={doc.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                          <td className="px-5 py-3">
+                            <div className="flex items-start gap-2.5">
+                              <FileText className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />
+                              <div>
+                                <div className="text-[13px] font-bold text-gray-900">{index + 1}. {doc.label}</div>
+                                <div className="text-[11px] text-gray-500">{doc.subtitle}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            {doc.path ? (
+                              <>
+                                <button type="button" onClick={() => void pdaOpenSignedFile(doc.path)}
+                                  className="!min-h-0 text-[12px] font-semibold text-[#1F8FE0] hover:underline">
+                                  {doc.fileName ?? "View file"}
+                                </button>
+                                <div className="text-[11px] text-gray-400">{sizeLabel(doc.fileSizeBytes)}</div>
+                              </>
+                            ) : <span className="text-[12px] text-gray-400">—</span>}
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${docChip(doc.status)}`}>
+                              {doc.status === "Approved" ? "Verified" : doc.status}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3">
+                            {doc.reviewedByName ? (
+                              <>
+                                <div className="text-[12px] text-gray-700">{doc.reviewedByName}</div>
+                                <div className="text-[11px] text-gray-400">
+                                  {doc.reviewedAt ? new Date(doc.reviewedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : ""}
+                                </div>
+                              </>
+                            ) : <span className="text-[12px] text-gray-400">—</span>}
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {doc.path ? (
+                                <>
+                                  <button type="button" title="Open" onClick={() => void pdaOpenSignedFile(doc.path)}
+                                    className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                                    <Eye className="h-3.5 w-3.5" />
+                                  </button>
+                                  {doc.status !== "Approved" && (
+                                    <>
+                                      <button type="button" onClick={() => void reviewDoc(doc, "Approved")}
+                                        className="!min-h-0 rounded-lg border border-emerald-200 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50">Verify</button>
+                                      <button type="button" onClick={() => void reviewDoc(doc, "Replacement Requested")}
+                                        className="!min-h-0 rounded-lg border border-amber-200 px-2.5 py-1.5 text-[11px] font-bold text-amber-700 hover:bg-amber-50">Reject</button>
+                                    </>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-[11px] text-gray-400">Awaiting upload</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <p className="m-0 flex items-center gap-2 text-xs font-semibold text-amber-800">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span><strong>Please review all documents carefully</strong> before approving. Check each one is clear, valid and actually belongs to this applicant.</span>
+                </p>
+              </div>
+            </div>
+          )}
+
+          {view && pdaRightRail(view, "Document Notes")}
+        </div>
+      </div>
+    );
+  };
+
+  // Pending Approval: only applications where every check has passed.
+  const renderPdaPendingApproval = () => {
+    const view = pdaReview;
+    const summary = view?.verificationSummary ?? [];
+    const verified = summary.filter((row) => row.status === "Verified").length;
+    const pct = summary.length > 0 ? Math.round((verified / summary.length) * 100) : 0;
+    const RING = 2 * Math.PI * 42;
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-xl font-bold text-gray-900">Pending Approval</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Review and take final action on fully verified applications.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => view && pdaCsvDownload(`pending-${view.agent.applicationId}`,
+              ["Category", "Detail", "Status", "Reviewed by", "Reviewed on"],
+              summary.map((row) => [row.category, row.detail, row.status, row.reviewedByName ?? "", row.reviewedAt ?? ""]))}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+              <Download className="h-4 w-4" /> Download Pending Report
+            </button>
+            <button type="button" disabled={!view || view.blockers.length > 0 || pdaSaving}
+              onClick={() => view && void pdaApprove(view.agent.id)}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg bg-[#1F8FE0] px-3.5 py-2 text-sm font-semibold text-white hover:bg-[#1560a8] disabled:cursor-not-allowed disabled:opacity-40">
+              <CheckCircle2 className="h-4 w-4" /> Approve Agent
+            </button>
+          </div>
+        </div>
+
+        {pdaAppTabBar()}
+
+        <div className="grid gap-4 xl:grid-cols-[300px,minmax(0,1fr)] 2xl:grid-cols-[300px,minmax(0,1fr),280px]">
+          {pdaApplicationQueue("Pending Approval Queue", "Sort by:", pdaPendingSort, setPdaPendingSort)}
+
+          {!view ? (
+            <section className="rounded-xl border border-gray-200 bg-white px-5 py-16 text-center shadow-sm">
+              <p className="m-0 text-sm text-gray-500">Pick an application to take the final decision.</p>
+            </section>
+          ) : (
+            <div className="min-w-0 space-y-4">
+              {pdaApplicantHeaderCard(view, (
+                <div className="flex flex-col items-center">
+                  <div className="text-[12px] font-semibold text-gray-500">Overall Verification</div>
+                  <div className="relative mt-2 h-[92px] w-[92px]">
+                    <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+                      <circle cx="50" cy="50" r="42" fill="none" stroke="#F3F4F6" strokeWidth="9" />
+                      <circle cx="50" cy="50" r="42" fill="none"
+                        stroke={pct === 100 ? "#059669" : "#F59E0B"} strokeWidth="9" strokeLinecap="round"
+                        strokeDasharray={`${(pct / 100) * RING} ${RING}`} />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className={`text-lg font-black ${pct === 100 ? "text-emerald-600" : "text-amber-600"}`}>{pct}%</span>
+                    </div>
+                  </div>
+                  <div className="mt-1 text-center text-[11px] text-gray-400">
+                    {pct === 100 ? "All checks completed" : `${verified} of ${summary.length} categories verified`}
+                  </div>
+                </div>
+              ))}
+
+              {view.blockers.length === 0 ? (
+                <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <p className="m-0 text-xs font-semibold text-emerald-800">
+                    All verification steps are complete. You can now approve or reject this application.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <p className="m-0 flex items-center gap-2 text-sm font-black text-amber-800">
+                    <AlertTriangle className="h-4 w-4" /> Not ready for approval
+                  </p>
+                  <p className="m-0 mt-0.5 text-xs text-amber-800">{view.blockers.join(" · ")}</p>
+                </div>
+              )}
+
+              <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div className="px-5 py-4">
+                  <h3 className="m-0 text-sm font-bold text-gray-900">Verification Summary</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-y border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                        <th className="px-5 py-2.5">Category</th>
+                        <th className="px-3 py-2.5">Status</th>
+                        <th className="px-3 py-2.5">Reviewed By</th>
+                        <th className="px-3 py-2.5">Reviewed On</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.map((row) => (
+                        <tr key={row.category} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                          <td className="px-5 py-3">
+                            <div className="flex items-start gap-2.5">
+                              <FileText className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />
+                              <div>
+                                <div className="text-[13px] font-bold text-gray-900">{row.category}</div>
+                                <div className="text-[11px] text-gray-500">{row.detail}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${
+                              row.status === "Verified" ? "bg-emerald-50 text-emerald-700"
+                              : row.status === "Rejected" ? "bg-rose-50 text-rose-700"
+                              : row.status === "Not started" ? "bg-gray-100 text-gray-500"
+                              : "bg-amber-50 text-amber-700"}`}>{row.status}</span>
+                          </td>
+                          <td className="px-3 py-3 text-[12px] text-gray-700">{row.reviewedByName ?? "—"}</td>
+                          <td className="px-3 py-3 text-[12px] text-gray-600">
+                            {row.reviewedAt ? new Date(row.reviewedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              {view.blockers.length === 0 && (
+                <div className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+                  <Info className="h-4 w-4 shrink-0 text-[#1F8FE0]" />
+                  <p className="m-0 text-xs font-semibold text-blue-900">
+                    This application is complete and ready for final approval. Approving starts a 30-day probation with reduced stock and cash limits.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {view && pdaRightRail(view, "Approval Notes", (
+            <button type="button" onClick={() => void pdaSetApplicationStatus(view.agent.id, "Management Review")}
+              className="!min-h-0 flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-[12px] font-bold text-gray-700 hover:bg-gray-50">
+              <Info className="h-4 w-4" /> Request More Information
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   // KYC Review: the whole application on one screen, worked item by item.
   const renderPdaKycReview = () => {
     const view = pdaReview;
@@ -48670,6 +49137,8 @@ ${waybillLineItems(w).length > 1
     // list below, which keeps one table rather than three near-copies.
     if (pdaAppTab === "KYC Review") return renderPdaKycReview();
     if (pdaAppTab === "Guarantor Verification") return renderPdaGuarantorVerification();
+    if (pdaAppTab === "Document Review") return renderPdaDocumentReview();
+    if (pdaAppTab === "Pending Approval") return renderPdaPendingApproval();
 
     if (detail) {
       return (

@@ -543,7 +543,9 @@ const mapKycItem = (row: any) => ({
   filePath: row.file_url ?? null,
   reviewedAt: row.reviewed_at ?? null,
   reviewNote: row.review_note ?? null,
-  rejectionReason: row.rejection_reason ?? null
+  rejectionReason: row.rejection_reason ?? null,
+  fileName: row.file_name ?? null,
+  fileSizeBytes: row.file_size_bytes === null || row.file_size_bytes === undefined ? null : Number(row.file_size_bytes)
 });
 
 const mapGuarantor = (row: any) => ({
@@ -575,7 +577,9 @@ const mapDocument = (row: any) => ({
   uploadedAt: row.uploaded_at ?? null,
   status: row.status,
   approvedAt: row.approved_at ?? null,
-  rejectionReason: row.rejection_reason ?? null
+  rejectionReason: row.rejection_reason ?? null,
+  fileName: row.file_name ?? null,
+  fileSizeBytes: row.file_size_bytes === null || row.file_size_bytes === undefined ? null : Number(row.file_size_bytes)
 });
 
 // ── GET /api/personal-delivery-agents/applications ────────
@@ -768,6 +772,33 @@ router.get("/applications/:id/review", requireRole(...MANAGEMENT_ROLES), async (
       activity.push({ label: `Waiting: ${blockers[0]}`, at: new Date().toISOString(), tone: "pending" });
     }
 
+    // Collapses several checklist items into one decision category. A category
+    // is only Verified when EVERY item behind it is - otherwise a half-checked
+    // group would read as done.
+    const categoryState = (keys: string[]) => {
+      const items = kycItems.filter((i: any) => keys.includes(i.item_key));
+      if (items.length === 0) return { status: "Not started", reviewedByName: null, reviewedAt: null };
+      const allApproved = items.every((i: any) => i.status === "Approved");
+      const anyRejected = items.some((i: any) => i.status === "Rejected");
+      const reviewed = items.map((i: any) => i.reviewed_at).filter(Boolean).sort().pop() ?? null;
+      const reviewer = items.find((i: any) => i.reviewed_by)?.reviewed_by;
+      return {
+        status: allApproved ? "Verified" : anyRejected ? "Rejected" : "Pending",
+        reviewedByName: reviewer ? names.get(String(reviewer)) ?? null : null,
+        reviewedAt: reviewed
+      };
+    };
+    const guarantorState = (slot: number) => {
+      const g = guarantors.find((row: any) => row.slot === slot);
+      if (!g) return { status: "Not started", reviewedByName: null, reviewedAt: null };
+      return {
+        status: g.verification_status === "Approved" ? "Verified"
+          : g.verification_status === "Rejected" ? "Rejected" : "Pending",
+        reviewedByName: g.verified_by ? names.get(String(g.verified_by)) ?? null : null,
+        reviewedAt: g.verified_at ?? null
+      };
+    };
+
     const mandatory = kycItems.filter((i: any) => i.mandatory);
     const approved = mandatory.filter((i: any) => i.status === "Approved").length;
 
@@ -792,6 +823,57 @@ router.get("/applications/:id/review", requireRole(...MANAGEMENT_ROLES), async (
         id: row.id, body: row.body, authorName: row.author_name ?? null, createdAt: row.created_at
       })),
       activity,
+      // Document Review shows KYC items that carry a file AND the agreements as
+      // one list, because a reviewer opening documents does not care which
+      // table a file happens to live in.
+      documentsView: [
+        ...kycItems
+          .filter((i: any) => ["government_id", "proof_of_address", "selfie_with_id", "live_verification_video", "bank_account"].includes(i.item_key))
+          .map((i: any) => ({
+            key: i.item_key, kind: "kyc" as const, id: i.id,
+            label: i.label, subtitle: i.review_note ?? (i.mandatory ? "Required" : "Optional"),
+            fileName: i.file_name ?? null, fileSizeBytes: i.file_size_bytes === null || i.file_size_bytes === undefined ? null : Number(i.file_size_bytes),
+            path: i.file_url ?? null,
+            status: i.file_url ? i.status : "Not Uploaded",
+            reviewedByName: names.get(String(i.reviewed_by)) ?? null,
+            reviewedAt: i.reviewed_at ?? null
+          })),
+        ...documents.map((d: any) => ({
+          key: d.document_key, kind: "agreement" as const, id: d.id,
+          label: d.label, subtitle: `Signed document · ${d.version}`,
+          fileName: d.file_name ?? null, fileSizeBytes: d.file_size_bytes === null || d.file_size_bytes === undefined ? null : Number(d.file_size_bytes),
+          path: d.signed_file_url ?? null,
+          status: d.signed_file_url ? d.status : "Not Uploaded",
+          reviewedByName: names.get(String(d.approved_by)) ?? null,
+          reviewedAt: d.approved_at ?? null
+        }))
+      ],
+      // Pending Approval groups the same checks into the categories a decision
+      // is actually made on, rather than fourteen separate lines.
+      verificationSummary: [
+        { category: "Personal Information", detail: "Full name, DOB, address, contact", ...categoryState(["personal_information"]) },
+        { category: "Government ID", detail: "Identity document", ...categoryState(["government_id", "selfie_with_id"]) },
+        { category: "Proof of Address", detail: "Residential address", ...categoryState(["proof_of_address"]) },
+        { category: "Live Verification Video", detail: "Identity & liveness check", ...categoryState(["live_verification_video"]) },
+        { category: "Bank Account Details", detail: agent.bank_name ?? "Bank account", ...categoryState(["bank_account"]) },
+        {
+          category: "Guarantor 1",
+          detail: guarantors.find((g: any) => g.slot === 1)?.full_name ?? "Not added",
+          ...guarantorState(1)
+        },
+        {
+          category: "Guarantor 2",
+          detail: guarantors.find((g: any) => g.slot === 2)?.full_name ?? "Not added",
+          ...guarantorState(2)
+        },
+        {
+          category: "Signed Agreements",
+          detail: `${documents.filter((d: any) => d.status === "Approved").length} of ${documents.length} signed`,
+          status: documents.length > 0 && documents.every((d: any) => d.status === "Approved") ? "Verified" : "Pending",
+          reviewedByName: null,
+          reviewedAt: documents.map((d: any) => d.approved_at).filter(Boolean).sort().pop() ?? null
+        }
+      ],
       blockers,
       summary: {
         submittedOn: agent.created_at,
@@ -999,7 +1081,9 @@ const KycReviewSchema = z.object({
   status: z.enum(["Pending", "Submitted", "Approved", "Rejected", "Replacement Requested", "Not Applicable"]),
   reviewNote: z.string().trim().max(1000).optional(),
   rejectionReason: z.string().trim().max(500).optional(),
-  filePath: z.string().trim().max(500).optional()
+  filePath: z.string().trim().max(500).optional(),
+  fileName: z.string().trim().max(300).optional(),
+  fileSizeBytes: z.number().int().min(0).optional()
 }).superRefine((value, ctx) => {
   // A rejection with no reason gives the applicant nothing to fix and leaves
   // no record of why a reviewer said no.
@@ -1021,6 +1105,8 @@ router.patch("/kyc-items/:itemId", requireRole(...MANAGEMENT_ROLES), async (req,
     if (parsed.data.reviewNote !== undefined) patch.review_note = parsed.data.reviewNote;
     if (parsed.data.rejectionReason !== undefined) patch.rejection_reason = parsed.data.rejectionReason;
     if (parsed.data.filePath !== undefined) patch.file_url = parsed.data.filePath;
+    if (parsed.data.fileName !== undefined) patch.file_name = parsed.data.fileName;
+    if (parsed.data.fileSizeBytes !== undefined) patch.file_size_bytes = parsed.data.fileSizeBytes;
 
     const { data, error } = await supabase.from(KYC).update(patch)
       .eq("org_id", req.user!.orgId).eq("id", req.params.itemId).select("*").single();
@@ -1165,6 +1251,8 @@ router.post("/:id/documents/seed", requireRole(...MANAGEMENT_ROLES), async (req,
 const DocumentReviewSchema = z.object({
   status: z.enum(["Not Uploaded", "Uploaded", "Approved", "Rejected", "Replacement Requested"]),
   signedFilePath: z.string().trim().max(500).optional(),
+  fileName: z.string().trim().max(300).optional(),
+  fileSizeBytes: z.number().int().min(0).optional(),
   rejectionReason: z.string().trim().max(500).optional()
 }).superRefine((value, ctx) => {
   if ((value.status === "Rejected" || value.status === "Replacement Requested") && !value.rejectionReason?.trim()) {
@@ -1181,6 +1269,8 @@ router.patch("/documents/:documentId", requireRole(...MANAGEMENT_ROLES), async (
       patch.signed_file_url = parsed.data.signedFilePath;
       patch.uploaded_at = new Date().toISOString();
     }
+    if (parsed.data.fileName !== undefined) patch.file_name = parsed.data.fileName;
+    if (parsed.data.fileSizeBytes !== undefined) patch.file_size_bytes = parsed.data.fileSizeBytes;
     if (parsed.data.rejectionReason !== undefined) patch.rejection_reason = parsed.data.rejectionReason;
     if (parsed.data.status === "Approved") {
       patch.approved_by = req.user!.id;
