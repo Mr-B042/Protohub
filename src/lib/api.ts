@@ -984,12 +984,32 @@ export type PdaCodDiscrepancyView = {
   };
 };
 
+export type PdaIncidentRow = {
+  id: string; code: string; agentId: string; agentName: string; agentCode: string;
+  orderId?: string | null; incidentType: string; severity: string; status: string;
+  description: string; amountAtRisk: number; reportedByName?: string | null;
+  resolution?: string | null; createdAt: string; resolvedAt?: string | null;
+};
+
+export type PdaIncidentsOverview = {
+  rows: PdaIncidentRow[];
+  counts: {
+    total: number; open: number; inProgress: number; resolved: number; closed: number;
+    totalDeltaPct: number | null; openDeltaPct: number | null; inProgressDeltaPct: number | null;
+    resolvedDeltaPct: number | null; closedDeltaPct: number | null;
+  };
+  byType: Array<{ label: string; count: number }>;
+  byPriority: Array<{ label: string; count: number }>;
+  recentActivity: Array<{ code: string; label: string; agentName: string; at: string; resolved: boolean }>;
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),
   activeAgents: () => get<PdaActiveAgentsView>("/api/personal-delivery-agents/active-agents"),
   inventoryOverview: () => get<PdaInventoryOverview>("/api/personal-delivery-agents/inventory-overview"),
   codOverview: () => get<PdaCodOverview>("/api/personal-delivery-agents/cod-overview"),
+  incidentsOverview: () => get<PdaIncidentsOverview>("/api/personal-delivery-agents/incidents-overview"),
   agentRemittance: (agentId: string) => get<PdaAgentRemittance>(`/api/personal-delivery-agents/cod/agent/${agentId}/remittance`),
   codPayments: () => get<PdaPaymentsView>("/api/personal-delivery-agents/cod/payments"),
   setPaymentStatus: (paymentId: string, body: unknown) =>
