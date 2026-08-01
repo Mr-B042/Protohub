@@ -20,6 +20,8 @@ import {
   dispatchBlockers, deliveryProofBlockers, rescheduleKeepsStockReserved,
   failureReasonBlockers, CUSTOMER_READY
 } from "../lib/pda-delivery-flow.js";
+import { applyStockMovement } from "../lib/pda-stock.js";
+import { recordStockLossExpense } from "../lib/stock-loss-expense.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -178,6 +180,25 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
     }
 
     const todayKey = new Date().toISOString().slice(0, 10);
+
+    // Inventory held is real now that stock exists (migration 191), so it is a
+    // counted figure rather than one of the "not measurable yet" placeholders.
+    const [{ data: stockRows }, { count: inTransitCount }, { count: openDiscrepancies }] = await Promise.all([
+      supabase.from("pda_agent_stock")
+        .select("available, reserved, out_for_delivery, damaged, missing, awaiting_investigation")
+        .eq("org_id", req.user!.orgId),
+      supabase.from("pda_stock_transfers").select("id", { count: "exact", head: true })
+        .eq("org_id", req.user!.orgId).eq("status", "In Transit"),
+      supabase.from("pda_stock_discrepancies").select("id", { count: "exact", head: true })
+        .eq("org_id", req.user!.orgId).in("status", ["Reported", "Under Investigation"])
+    ]);
+    const inventory = (stockRows ?? []).reduce((acc: any, row: any) => ({
+      available: acc.available + Number(row.available ?? 0),
+      reserved: acc.reserved + Number(row.reserved ?? 0),
+      outForDelivery: acc.outForDelivery + Number(row.out_for_delivery ?? 0),
+      unaccounted: acc.unaccounted + Number(row.damaged ?? 0) + Number(row.missing ?? 0)
+        + Number(row.awaiting_investigation ?? 0)
+    }), { available: 0, reserved: 0, outForDelivery: 0, unaccounted: 0 });
     res.json({
       totals: {
         totalAgents: agents.length,
@@ -197,7 +218,13 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
           return days <= 30;
         }),
         kycItemsOutstanding,
-        guarantorsOutstanding
+        guarantorsOutstanding,
+        inventoryHeld: inventory.available + inventory.reserved + inventory.outForDelivery + inventory.unaccounted,
+        inventoryAvailable: inventory.available,
+        inventoryOutForDelivery: inventory.outForDelivery,
+        inventoryUnaccounted: inventory.unaccounted,
+        stockInTransit: inTransitCount ?? 0,
+        openStockReports: openDiscrepancies ?? 0
       },
       byStatus,
       // Named explicitly so the UI can say "not built yet" instead of showing
@@ -207,7 +234,6 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
         dispatchesInProgress: "Orders & Dispatch is not built yet",
         deliveredToday: "Orders & Dispatch is not built yet",
         codOutstanding: "COD & Reconciliation is not built yet",
-        inventoryHeld: "Agent inventory is not built yet",
         overdueRemittances: "COD & Reconciliation is not built yet"
       }
     });
@@ -908,6 +934,33 @@ router.get("/my/orders", requireRole(AGENT_ROLE), async (req, res) => {
   }
 });
 
+/**
+ * Moves the stock behind an assignment, resolving the product from the order.
+ *
+ * Deliberately best-effort: a stock hiccup must not stop an agent recording
+ * what actually happened on a delivery. The ledger is the record of truth, so a
+ * failure here surfaces as a missing ledger row rather than a lost outcome.
+ */
+async function moveAssignmentStock(
+  req: any, assignment: any, movement: "Out for delivery" | "Delivered to customer" | "Returned to available"
+) {
+  try {
+    const orgId = orgIdOf(req);
+    const { data: order } = await supabase.from("orders")
+      .select("product_id, product_name, quantity").eq("org_id", orgId).eq("id", assignment.order_id).maybeSingle();
+    if (!order?.product_id) return;
+    await applyStockMovement({
+      orgId, agentId: assignment.agent_id,
+      productId: order.product_id, productName: order.product_name,
+      movement, quantity: Math.max(1, Number(order.quantity ?? 1)),
+      orderId: assignment.order_id,
+      userId: req.user?.id ?? null, userName: req.user?.name ?? null
+    });
+  } catch {
+    // Swallowed on purpose - see the note above.
+  }
+}
+
 /** Loads an assignment and proves it belongs to the signed-in agent. */
 async function loadOwnAssignment(orgId: string, userId: string, assignmentId: string) {
   const agent = await agentForUser(orgId, userId);
@@ -997,6 +1050,7 @@ router.post("/my/orders/:assignmentId/dispatch", requireRole(AGENT_ROLE), async 
     updated_at: new Date().toISOString()
   }).eq("id", req.params.assignmentId).select("*").single();
   if (error) { res.status(500).json({ error: error.message }); return; }
+  await moveAssignmentStock(req, found.assignment, "Out for delivery");
   res.json({ row: mapAssignment(data) });
 });
 
@@ -1018,8 +1072,16 @@ router.post("/my/orders/:assignmentId/delivered", requireRole(AGENT_ROLE), async
   const blockers = deliveryProofBlockers(parsed.data);
   if (blockers.length > 0) { res.status(409).json({ error: "This delivery needs proof before it can be closed.", blockers }); return; }
 
+  // Settle the stock ONCE. Re-saving a delivered order must not deduct twice -
+  // the same non-idempotency that once over-deducted 275 units across 42 orders
+  // on the main order flow.
+  if (!found.assignment.stock_settled) {
+    await moveAssignmentStock(req, found.assignment, "Delivered to customer");
+  }
+
   const { data, error } = await supabase.from(ASSIGNMENTS).update({
     delivery_status: "Delivered",
+    stock_settled: true,
     delivered_at: new Date().toISOString(),
     amount_collected: parsed.data.amountCollected,
     payment_method: parsed.data.paymentMethod,
@@ -1049,8 +1111,15 @@ router.post("/my/orders/:assignmentId/failed", requireRole(AGENT_ROLE), async (r
   const blockers = failureReasonBlockers(parsed.data.failureReason, parsed.data.failureNote);
   if (blockers.length > 0) { res.status(409).json({ error: blockers[0], blockers }); return; }
 
+  // The unit is back in the agent's hands, so it must stop being held for this
+  // order - otherwise their available stock silently shrinks with every failure.
+  if (!found.assignment.stock_settled) {
+    await moveAssignmentStock(req, found.assignment, "Returned to available");
+  }
+
   const { data, error } = await supabase.from(ASSIGNMENTS).update({
     delivery_status: parsed.data.outcome,
+    stock_settled: true,
     failure_reason: parsed.data.failureReason,
     failure_note: parsed.data.failureNote ?? null,
     // The unit is back with the agent, so it must stop being held for this order.
@@ -1112,6 +1181,276 @@ router.post("/my/availability", requireRole(AGENT_ROLE), async (req, res) => {
     .eq("org_id", req.user!.orgId).eq("id", agent.id);
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ availability });
+});
+
+
+// ─────────────────────────────────────────────────────────
+// Inventory (migration 191)
+// ─────────────────────────────────────────────────────────
+
+const TRANSFERS = "pda_stock_transfers";
+const STOCK = "pda_agent_stock";
+const LEDGER = "pda_stock_ledger";
+const DISCREPANCIES = "pda_stock_discrepancies";
+
+// ── POST /:id/stock/send ──────────────────────────────────
+// Company → agent. Nothing lands in the agent's balance yet: it is in transit
+// until they confirm what actually arrived.
+const SendStockSchema = z.object({
+  productId: z.string().trim().min(1),
+  productName: z.string().trim().max(200).optional(),
+  quantity: z.number().int().min(1),
+  waybillReference: z.string().trim().max(120).optional(),
+  notes: z.string().trim().max(500).optional()
+});
+
+router.post("/:id/stock/send", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = SendStockSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const orgId = orgIdOf(req);
+    const agentId = paramOf(req.params.id);
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, account_status, max_stock_units").eq("org_id", orgId).eq("id", agentId).single();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+
+    // Stock is the thing most worth protecting: an unapproved agent must never
+    // receive any.
+    if (!OPERATIONAL_STATUSES.includes(String(agent.account_status))) {
+      res.status(409).json({ error: `${agent.account_status} agents cannot hold stock. Approve the application first.` });
+      return;
+    }
+
+    // Probation exists to cap how much of our stock sits with someone new.
+    if (agent.max_stock_units) {
+      const { data: held } = await supabase.from(STOCK)
+        .select("available, reserved, out_for_delivery, damaged, missing, awaiting_investigation")
+        .eq("agent_id", agentId);
+      const heldTotal = (held ?? []).reduce((sum: number, row: any) =>
+        sum + Number(row.available ?? 0) + Number(row.reserved ?? 0) + Number(row.out_for_delivery ?? 0)
+        + Number(row.damaged ?? 0) + Number(row.missing ?? 0) + Number(row.awaiting_investigation ?? 0), 0);
+      const { data: inTransit } = await supabase.from(TRANSFERS)
+        .select("quantity_sent").eq("agent_id", agentId).eq("status", "In Transit");
+      const transitTotal = (inTransit ?? []).reduce((sum: number, row: any) => sum + Number(row.quantity_sent ?? 0), 0);
+      if (heldTotal + transitTotal + parsed.data.quantity > agent.max_stock_units) {
+        res.status(409).json({
+          error: `That would put ${heldTotal + transitTotal + parsed.data.quantity} units with this agent, above their ${agent.max_stock_units}-unit limit.`
+        });
+        return;
+      }
+    }
+
+    const { data, error } = await supabase.from(TRANSFERS).insert({
+      org_id: orgId, agent_id: agentId,
+      product_id: parsed.data.productId,
+      product_name: parsed.data.productName ?? null,
+      quantity_sent: parsed.data.quantity,
+      waybill_reference: parsed.data.waybillReference ?? null,
+      notes: parsed.data.notes ?? null,
+      status: "In Transit",
+      sent_by: req.user!.id
+    }).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(201).json({ row: data });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not send that stock." });
+  }
+});
+
+// ── POST /my/transfers/:transferId/confirm ────────────────
+// The agent says what actually arrived. A shortfall is recorded as a fact, not
+// silently corrected - only what they confirm enters their balance.
+const ConfirmTransferSchema = z.object({
+  quantityReceived: z.number().int().min(0),
+  conditionNote: z.string().trim().max(500).optional(),
+  proofFilePath: z.string().trim().max(500).optional()
+});
+
+router.post("/my/transfers/:transferId/confirm", requireRole(AGENT_ROLE), async (req, res) => {
+  const parsed = ConfirmTransferSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const orgId = orgIdOf(req);
+    const agent = await agentForUser(orgId, req.user!.id);
+    if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
+
+    const transferId = paramOf(req.params.transferId);
+    const { data: transfer } = await supabase.from(TRANSFERS)
+      .select("*").eq("org_id", orgId).eq("id", transferId).eq("agent_id", agent.id).maybeSingle();
+    if (!transfer) { res.status(404).json({ error: "That delivery of stock is not yours." }); return; }
+    if (transfer.status !== "In Transit") {
+      res.status(409).json({ error: "You have already confirmed this one." });
+      return;
+    }
+    if (parsed.data.quantityReceived > transfer.quantity_sent) {
+      res.status(400).json({ error: `Only ${transfer.quantity_sent} were sent. Report a discrepancy if you received more.` });
+      return;
+    }
+
+    const short = parsed.data.quantityReceived < transfer.quantity_sent;
+    await supabase.from(TRANSFERS).update({
+      quantity_received: parsed.data.quantityReceived,
+      condition_note: parsed.data.conditionNote ?? null,
+      proof_file_path: parsed.data.proofFilePath ?? null,
+      status: short ? "Received Short" : "Received",
+      confirmed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }).eq("id", transferId);
+
+    if (parsed.data.quantityReceived > 0) {
+      const result = await applyStockMovement({
+        orgId, agentId: agent.id,
+        productId: transfer.product_id, productName: transfer.product_name,
+        movement: "Received from company",
+        quantity: parsed.data.quantityReceived,
+        transferId,
+        note: short ? `${transfer.quantity_sent} sent, ${parsed.data.quantityReceived} confirmed` : null,
+        userId: req.user!.id, userName: req.user!.name
+      });
+      if (result.error) { res.status(409).json({ error: result.error }); return; }
+    }
+
+    res.json({ received: parsed.data.quantityReceived, short });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not confirm that stock." });
+  }
+});
+
+// ── GET /:id/stock ────────────────────────────────────────
+router.get("/:id/stock", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const agentId = paramOf(req.params.id);
+    const [stockRes, ledgerRes, transferRes] = await Promise.all([
+      supabase.from(STOCK).select("*").eq("agent_id", agentId),
+      supabase.from(LEDGER).select("*").eq("agent_id", agentId).order("created_at", { ascending: false }).limit(100),
+      supabase.from(TRANSFERS).select("*").eq("agent_id", agentId).order("sent_at", { ascending: false }).limit(50)
+    ]);
+    res.json({
+      stock: stockRes.data ?? [],
+      ledger: ledgerRes.data ?? [],
+      transfers: transferRes.data ?? [],
+      orgId
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load that stock." });
+  }
+});
+
+// ── GET /my/stock ─────────────────────────────────────────
+router.get("/my/stock", requireRole(AGENT_ROLE), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const agent = await agentForUser(orgId, req.user!.id);
+    if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
+    const [stockRes, transferRes, ledgerRes] = await Promise.all([
+      supabase.from(STOCK).select("*").eq("agent_id", agent.id),
+      supabase.from(TRANSFERS).select("*").eq("agent_id", agent.id).eq("status", "In Transit").order("sent_at", { ascending: false }),
+      supabase.from(LEDGER).select("*").eq("agent_id", agent.id).order("created_at", { ascending: false }).limit(50)
+    ]);
+    res.json({
+      stock: stockRes.data ?? [],
+      incoming: transferRes.data ?? [],
+      ledger: ledgerRes.data ?? []
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load your stock." });
+  }
+});
+
+// ── POST /my/stock/discrepancy ────────────────────────────
+// The agent's only lever over their own numbers. Reporting moves NOTHING; a
+// manager must approve before any quantity changes.
+const DiscrepancySchema = z.object({
+  productId: z.string().trim().min(1),
+  reportedQuantity: z.number().int().min(0),
+  reason: z.enum(["Damaged", "Missing", "Never arrived", "Miscounted", "Stolen", "Other"]),
+  agentNote: z.string().trim().max(1000).optional()
+});
+
+router.post("/my/stock/discrepancy", requireRole(AGENT_ROLE), async (req, res) => {
+  const parsed = DiscrepancySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const orgId = orgIdOf(req);
+    const agent = await agentForUser(orgId, req.user!.id);
+    if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
+
+    const { data: stockRow } = await supabase.from(STOCK)
+      .select("available").eq("agent_id", agent.id).eq("product_id", parsed.data.productId).maybeSingle();
+
+    const { data, error } = await supabase.from(DISCREPANCIES).insert({
+      org_id: orgId, agent_id: agent.id,
+      product_id: parsed.data.productId,
+      reported_quantity: parsed.data.reportedQuantity,
+      system_quantity: Number(stockRow?.available ?? 0),
+      reason: parsed.data.reason,
+      agent_note: parsed.data.agentNote ?? null,
+      status: "Reported"
+    }).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(201).json({ row: data, note: "Reported. Your stock has not changed - the office will review it." });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not report that." });
+  }
+});
+
+// ── POST /stock/discrepancies/:discrepancyId/review ───────
+// Approving is what finally moves the units, and it books the loss as a cost.
+const ReviewDiscrepancySchema = z.object({
+  decision: z.enum(["Approved", "Rejected", "Under Investigation"]),
+  reviewNote: z.string().trim().max(1000).optional()
+}).superRefine((value, ctx) => {
+  if (value.decision === "Rejected" && !value.reviewNote?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reviewNote"], message: "Say why it was rejected." });
+  }
+});
+
+router.post("/stock/discrepancies/:discrepancyId/review", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = ReviewDiscrepancySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const orgId = orgIdOf(req);
+    const discrepancyId = paramOf(req.params.discrepancyId);
+    const { data: row } = await supabase.from(DISCREPANCIES)
+      .select("*").eq("org_id", orgId).eq("id", discrepancyId).maybeSingle();
+    if (!row) { res.status(404).json({ error: "Report not found." }); return; }
+    if (row.status === "Approved") { res.status(409).json({ error: "That report has already been approved." }); return; }
+
+    if (parsed.data.decision === "Approved") {
+      const shortfall = Number(row.system_quantity ?? 0) - Number(row.reported_quantity ?? 0);
+      if (shortfall > 0) {
+        const movement = row.reason === "Damaged" ? "Written off damaged" : "Written off missing";
+        const result = await applyStockMovement({
+          orgId, agentId: row.agent_id, productId: row.product_id,
+          movement, quantity: shortfall,
+          note: `Discrepancy approved: ${row.reason}${parsed.data.reviewNote ? ` - ${parsed.data.reviewNote}` : ""}`,
+          userId: req.user!.id, userName: req.user!.name
+        });
+        if (result.error) { res.status(409).json({ error: result.error }); return; }
+
+        // Writing the units off is only half of it - the loss has to become a
+        // cost, or shrinkage still never reaches the P&L.
+        await recordStockLossExpense({
+          orgId, reference: discrepancyId,
+          productId: row.product_id, productName: row.product_id,
+          units: shortfall, reason: String(row.reason),
+          context: "Personal delivery agent stock report"
+        });
+      }
+    }
+
+    const { data, error } = await supabase.from(DISCREPANCIES).update({
+      status: parsed.data.decision,
+      review_note: parsed.data.reviewNote ?? null,
+      reviewed_by: req.user!.id,
+      reviewed_at: new Date().toISOString()
+    }).eq("id", discrepancyId).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ row: data });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not review that report." });
+  }
 });
 
 export default router;
