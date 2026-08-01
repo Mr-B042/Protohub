@@ -678,6 +678,252 @@ router.get("/applications", requireRole(...MANAGEMENT_ROLES), async (req, res) =
   }
 });
 
+// ─────────────────────────────────────────────────────────
+// KYC Review + Guarantor Verification (migration 194)
+// ─────────────────────────────────────────────────────────
+
+const NOTES = "pda_notes";
+
+/** Resolves reviewer ids to names once, so a timeline can say who did what. */
+async function nameLookup(orgId: string, ids: Array<string | null | undefined>) {
+  const unique = [...new Set(ids.filter(Boolean).map(String))];
+  if (unique.length === 0) return new Map<string, string>();
+  const { data } = await supabase.from("users").select("id, name").eq("org_id", orgId).in("id", unique);
+  return new Map((data ?? []).map((row: any) => [String(row.id), String(row.name ?? "")]));
+}
+
+const mapGuarantorFull = (row: any) => ({
+  ...mapGuarantor(row),
+  email: row.email ?? null,
+  workplace: row.workplace ?? null,
+  yearsKnown: row.years_known ?? null,
+  referenceStatement: row.reference_statement ?? null,
+  preferredContactTime: row.preferred_contact_time ?? null,
+  callAttempts: Number(row.call_attempts ?? 0),
+  lastAttemptAt: row.last_attempt_at ?? null,
+  assignedToName: row.assigned_to_name ?? null
+});
+
+// ── GET /applications/:id/review ──────────────────────────
+// Everything the KYC Review screen shows for one application.
+router.get("/applications/:id/review", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const agentId = paramOf(req.params.id);
+    const { data: agent } = await supabase.from(AGENTS).select("*").eq("org_id", orgId).eq("id", agentId).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Application not found." }); return; }
+
+    const [kycRes, guarantorRes, docRes, notesRes] = await Promise.all([
+      supabase.from(KYC).select("*").eq("agent_id", agentId).order("created_at"),
+      supabase.from(GUARANTORS).select("*").eq("agent_id", agentId).order("slot"),
+      supabase.from(DOCS).select("*").eq("agent_id", agentId).order("created_at"),
+      supabase.from(NOTES).select("*").eq("agent_id", agentId).is("guarantor_id", null).order("created_at", { ascending: false })
+    ]);
+    const kycItems = kycRes.data ?? [];
+    const guarantors = guarantorRes.data ?? [];
+    const documents = docRes.data ?? [];
+
+    const names = await nameLookup(orgId, [
+      ...kycItems.map((i: any) => i.reviewed_by),
+      ...guarantors.map((g: any) => g.verified_by),
+      ...documents.map((d: any) => d.approved_by),
+      agent.approved_by
+    ]);
+
+    // The timeline is DERIVED from the timestamps already on these rows rather
+    // than kept as a separate event log. One source of truth means the history
+    // can never drift from the state it claims to describe.
+    const activity: Array<{ label: string; at: string; by?: string | null; tone: "done" | "pending" }> = [
+      { label: "Application submitted", at: agent.created_at, tone: "done" }
+    ];
+    for (const item of kycItems) {
+      if (item.reviewed_at && item.status === "Approved") {
+        activity.push({ label: `${item.label} approved`, at: item.reviewed_at, by: names.get(String(item.reviewed_by)) ?? null, tone: "done" });
+      } else if (item.reviewed_at && (item.status === "Rejected" || item.status === "Replacement Requested")) {
+        activity.push({ label: `${item.label} sent back`, at: item.reviewed_at, by: names.get(String(item.reviewed_by)) ?? null, tone: "done" });
+      }
+    }
+    for (const g of guarantors) {
+      if (g.verified_at) {
+        activity.push({
+          label: `Guarantor ${g.slot} ${g.verification_status === "Approved" ? "verified" : g.verification_status.toLowerCase()}`,
+          at: g.verified_at, by: names.get(String(g.verified_by)) ?? null, tone: "done"
+        });
+      }
+    }
+    for (const doc of documents) {
+      if (doc.approved_at) {
+        activity.push({ label: `${doc.label} approved`, at: doc.approved_at, by: names.get(String(doc.approved_by)) ?? null, tone: "done" });
+      }
+    }
+    if (agent.approved_at) {
+      activity.push({ label: "Agent approved", at: agent.approved_at, by: names.get(String(agent.approved_by)) ?? null, tone: "done" });
+    }
+    activity.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
+    const blockers = approvalBlockers(kycItems as any, guarantors as any, documents as any);
+    // The current hold-up, shown as the open end of the timeline so the screen
+    // always says what it is waiting for rather than just what has happened.
+    if (blockers.length > 0) {
+      activity.push({ label: `Waiting: ${blockers[0]}`, at: new Date().toISOString(), tone: "pending" });
+    }
+
+    const mandatory = kycItems.filter((i: any) => i.mandatory);
+    const approved = mandatory.filter((i: any) => i.status === "Approved").length;
+
+    const lastTouched = [
+      ...kycItems.map((i: any) => i.updated_at),
+      ...guarantors.map((g: any) => g.updated_at),
+      ...documents.map((d: any) => d.updated_at),
+      agent.updated_at
+    ].filter(Boolean).sort().pop();
+
+    res.json({
+      agent: {
+        ...mapAgent(agent),
+        verificationPhrase: agent.verification_phrase ?? null,
+        applicationId: `PDA-APP-${String(agent.agent_code ?? "").replace(/^PDA-/, "")}`
+      },
+      progress: { approved, total: mandatory.length, pct: mandatory.length > 0 ? Math.round((approved / mandatory.length) * 100) : 0 },
+      kycItems: kycItems.map(mapKycItem),
+      guarantors: guarantors.map(mapGuarantorFull),
+      documents: documents.map(mapDocument),
+      notes: (notesRes.data ?? []).map((row: any) => ({
+        id: row.id, body: row.body, authorName: row.author_name ?? null, createdAt: row.created_at
+      })),
+      activity,
+      blockers,
+      summary: {
+        submittedOn: agent.created_at,
+        lastUpdated: lastTouched ?? agent.updated_at,
+        source: "Internal entry"
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load that review." });
+  }
+});
+
+// ── GET /guarantors/queue ─────────────────────────────────
+// Every guarantor across every application, so verification can be worked as
+// its own queue rather than hunted for application by application.
+router.get("/guarantors/queue", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const { data: guarantors } = await supabase.from(GUARANTORS)
+      .select("*").eq("org_id", orgId).order("created_at", { ascending: false });
+    const agentIds = [...new Set((guarantors ?? []).map((g: any) => g.agent_id))];
+    const { data: agents } = agentIds.length
+      ? await supabase.from(AGENTS).select("id, full_name, agent_code, account_status").eq("org_id", orgId).in("id", agentIds)
+      : { data: [] as any[] };
+    const agentById = new Map((agents ?? []).map((a: any) => [a.id, a]));
+
+    const rows = (guarantors ?? []).map((g: any) => ({
+      ...mapGuarantorFull(g),
+      agentId: g.agent_id,
+      applicantName: agentById.get(g.agent_id)?.full_name ?? null,
+      applicationId: `PDA-APP-${String(agentById.get(g.agent_id)?.agent_code ?? "").replace(/^PDA-/, "")}`
+    }));
+    res.json({
+      rows,
+      counts: {
+        total: rows.length,
+        outstanding: rows.filter((r) => !["Approved", "Rejected"].includes(r.verificationStatus)).length
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the guarantor queue." });
+  }
+});
+
+// ── GET /guarantors/:guarantorId/detail ───────────────────
+router.get("/guarantors/:guarantorId/detail", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const guarantorId = paramOf(req.params.guarantorId);
+    const { data: guarantor } = await supabase.from(GUARANTORS)
+      .select("*").eq("org_id", orgId).eq("id", guarantorId).maybeSingle();
+    if (!guarantor) { res.status(404).json({ error: "Guarantor not found." }); return; }
+
+    const [{ data: agent }, notesRes] = await Promise.all([
+      supabase.from(AGENTS).select("id, full_name, agent_code, phone, account_status")
+        .eq("org_id", orgId).eq("id", guarantor.agent_id).maybeSingle(),
+      supabase.from(NOTES).select("*").eq("guarantor_id", guarantorId).order("created_at", { ascending: false })
+    ]);
+
+    const names = await nameLookup(orgId, [guarantor.verified_by]);
+    const activity: Array<{ label: string; at: string; by?: string | null; tone: "done" | "pending" }> = [
+      { label: "Guarantor information submitted", at: guarantor.created_at, tone: "done" }
+    ];
+    if (guarantor.call_scheduled_at) activity.push({ label: "Call scheduled", at: guarantor.call_scheduled_at, tone: "done" });
+    if (guarantor.last_attempt_at) {
+      activity.push({
+        label: `Call attempt ${guarantor.call_attempts}`, at: guarantor.last_attempt_at, tone: "done"
+      });
+    }
+    if (guarantor.verified_at) {
+      activity.push({ label: `Marked ${guarantor.verification_status.toLowerCase()}`, at: guarantor.verified_at, by: names.get(String(guarantor.verified_by)) ?? null, tone: "done" });
+    } else {
+      activity.push({ label: "Awaiting call", at: new Date().toISOString(), tone: "pending" });
+    }
+
+    res.json({
+      guarantor: mapGuarantorFull(guarantor),
+      applicant: agent ? {
+        id: agent.id, fullName: agent.full_name, phone: agent.phone,
+        applicationId: `PDA-APP-${String(agent.agent_code ?? "").replace(/^PDA-/, "")}`
+      } : null,
+      notes: (notesRes.data ?? []).map((row: any) => ({
+        id: row.id, body: row.body, authorName: row.author_name ?? null, createdAt: row.created_at
+      })),
+      activity
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load that guarantor." });
+  }
+});
+
+// ── POST /guarantors/:guarantorId/call-attempt ────────────
+// Records that we actually tried. "Unable to verify" after zero attempts is a
+// very different fact from after five, so the count is kept honestly.
+router.post("/guarantors/:guarantorId/call-attempt", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const guarantorId = paramOf(req.params.guarantorId);
+    const { data: current } = await supabase.from(GUARANTORS)
+      .select("call_attempts").eq("org_id", orgId).eq("id", guarantorId).maybeSingle();
+    if (!current) { res.status(404).json({ error: "Guarantor not found." }); return; }
+    const reached = Boolean(req.body?.reached);
+    const { data, error } = await supabase.from(GUARANTORS).update({
+      call_attempts: Number(current.call_attempts ?? 0) + 1,
+      last_attempt_at: new Date().toISOString(),
+      verification_status: reached ? "Reached" : "Call Scheduled",
+      assigned_to: req.user!.id,
+      assigned_to_name: req.user!.name,
+      updated_at: new Date().toISOString()
+    }).eq("id", guarantorId).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ row: mapGuarantorFull(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not record that attempt." });
+  }
+});
+
+// ── Notes ─────────────────────────────────────────────────
+router.post("/notes", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
+  const agentId = typeof req.body?.agentId === "string" ? req.body.agentId : null;
+  const guarantorId = typeof req.body?.guarantorId === "string" ? req.body.guarantorId : null;
+  if (!body) { res.status(400).json({ error: "Write the note first." }); return; }
+  if (!agentId && !guarantorId) { res.status(400).json({ error: "A note must be about an application or a guarantor." }); return; }
+  const { data, error } = await supabase.from(NOTES).insert({
+    org_id: orgIdOf(req), agent_id: agentId, guarantor_id: guarantorId,
+    body, author_id: req.user!.id, author_name: req.user!.name
+  }).select("*").single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.status(201).json({ row: { id: data.id, body: data.body, authorName: data.author_name, createdAt: data.created_at } });
+});
+
 // ── GET /api/personal-delivery-agents/:id ─────────────────
 // Management only: this returns KYC documents, guarantors and bank details.
 router.get("/:id", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
