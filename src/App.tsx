@@ -128,7 +128,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, CartFollowUpRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -197,7 +197,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -7924,6 +7924,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // "Unassigned" is its own option: the carts nobody owns are the ones that go
   // cold, and they are invisible in a plain per-rep list.
   const [cartRepFilter, setCartRepFilter] = useState<string>("All reps");
+  const [cartsPageTab, setCartsPageTab] = useState<"Carts" | "Follow-ups">("Carts");
+  const [cartFollowUps, setCartFollowUps] = useState<CartFollowUpRow[]>([]);
+  const [cartFollowUpRep, setCartFollowUpRep] = useState<string>("All reps");
+  const [cartFollowUpFilter, setCartFollowUpFilter] = useState<string>("All");
+  const [cartAttemptCart, setCartAttemptCart] = useState<{ id: string; customer: string } | null>(null);
+  const [cartAttemptDraft, setCartAttemptDraft] = useState({
+    channel: "Call", outcomeCode: "Interested", customOutcome: "", outcomeNote: "",
+    customerReached: false, nextActionAt: ""
+  });
   const [cartEmbedFilter, setCartEmbedFilter] = useState<string>("All forms");
   const [scheduleRange, setScheduleRange] = useState<ScheduleRange>(() =>
     readPref<ScheduleRange>("protohub.schedule.range", "Today", (raw) => raw as ScheduleRange)
@@ -35776,6 +35785,56 @@ ${waybillLineItems(w).length > 1
     }).catch((err: any) => showToast(`Failed to save waybill: ${err.message}`));
   };
 
+  const loadCartFollowUps = async () => {
+    if (!(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager")) return;
+    try {
+      const result = await cartsApi.followUpOverview();
+      setCartFollowUps(result?.rows ?? []);
+    } catch (err: any) { showToast(err?.message ?? "Could not load cart follow-ups."); }
+  };
+
+  const openCartFollowUpModal = (cartId: string, customer: string) => {
+    setCartAttemptCart({ id: cartId, customer });
+    setCartAttemptDraft({
+      channel: "Call", outcomeCode: "Interested", customOutcome: "", outcomeNote: "",
+      customerReached: false, nextActionAt: ""
+    });
+    setModal("cartFollowUp");
+  };
+
+  const saveCartFollowUp = async () => {
+    if (!cartAttemptCart) return;
+    if (cartAttemptDraft.outcomeCode === "Other" && !cartAttemptDraft.customOutcome.trim()) {
+      showToast("Describe the outcome.");
+      return;
+    }
+    try {
+      const result = await cartsApi.logContactAttempt(cartAttemptCart.id, {
+        channel: cartAttemptDraft.channel,
+        outcomeCode: cartAttemptDraft.outcomeCode,
+        customOutcome: cartAttemptDraft.customOutcome.trim() || undefined,
+        outcomeNote: cartAttemptDraft.outcomeNote.trim() || undefined,
+        customerReached: cartAttemptDraft.customerReached,
+        nextActionAt: cartAttemptDraft.nextActionAt || undefined
+      });
+      setModal(null);
+      setCartAttemptCart(null);
+      // Say when the cart's status moved, so nobody is surprised later.
+      showToast(result.statusMovedTo
+        ? `Logged. The cart is now "${result.statusMovedTo}".`
+        : "Follow-up logged.");
+      // Patch the one cart rather than refetching the whole list - the server
+      // has already applied the same status move.
+      if (result.statusMovedTo) {
+        const movedTo = result.statusMovedTo as AbandonedCartRecord["status"];
+        setAbandonedCarts((value) => value.map((cart) => cart.id === cartAttemptCart.id
+          ? { ...cart, status: movedTo, lastActivity: new Date().toISOString() }
+          : cart));
+      }
+      await loadCartFollowUps();
+    } catch (err: any) { showToast(err?.message ?? "Could not log that follow-up."); }
+  };
+
   const openCartModal = (cart: AbandonedCartRecord, nextModal: ModalType) => {
     setSelectedCartId(cart.id);
     setReassignRepId(cart.assignedRepId ?? activeSalesRepUsers[0]?.id ?? "");
@@ -40485,6 +40544,12 @@ ${waybillLineItems(w).length > 1
     void loadPdaPortal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage]);
+
+  useEffect(() => {
+    if (activePage !== "Abandoned Carts") return;
+    void loadCartFollowUps();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, currentRole]);
 
   useEffect(() => {
     if (activePage !== "Personal Delivery Agents") return;
@@ -52989,6 +53054,167 @@ ${waybillLineItems(w).length > 1
   // A Personal Delivery Agent holds Protohub stock AND collects customer cash,
   // which is why this module is separate from `agents` (registered logistics
   // companies): different risk, permissions, verification and cash duties.
+  // Supervisor view of assigned-cart follow-up: who owns each cart, what the
+  // last call said, and how long it has been quiet. Answers "is this rep
+  // actually working their own carts" without opening them one by one.
+  const renderCartFollowUpTab = () => {
+    const rows = cartFollowUps.filter((row) => {
+      if (cartFollowUpRep !== "All reps" && row.repId !== cartFollowUpRep) return false;
+      if (cartFollowUpFilter === "Never contacted") return row.attempts === 0;
+      if (cartFollowUpFilter === "Going quiet") {
+        const last = row.lastAttemptAt ? new Date(row.lastAttemptAt).getTime() : 0;
+        return row.attempts > 0 && !row.convertedOrderId && (!last || Date.now() - last > 3 * 86400000);
+      }
+      if (cartFollowUpFilter === "Converted") return Boolean(row.convertedOrderId);
+      if (cartFollowUpFilter === "Still open") return !row.convertedOrderId;
+      return true;
+    });
+
+    const neverContacted = cartFollowUps.filter((row) => row.attempts === 0).length;
+    const quiet = cartFollowUps.filter((row) => {
+      const last = row.lastAttemptAt ? new Date(row.lastAttemptAt).getTime() : 0;
+      return row.attempts > 0 && !row.convertedOrderId && (!last || Date.now() - last > 3 * 86400000);
+    }).length;
+    const converted = cartFollowUps.filter((row) => Boolean(row.convertedOrderId)).length;
+
+    const daysSince = (value?: string | null) =>
+      value ? Math.floor((Date.now() - new Date(value).getTime()) / 86400000) : null;
+
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            { label: "Assigned carts", value: cartFollowUps.length, tone: "text-gray-900" },
+            { label: "Never contacted", value: neverContacted, tone: neverContacted > 0 ? "text-rose-600" : "text-gray-900" },
+            { label: "No update in 3 days", value: quiet, tone: quiet > 0 ? "text-amber-600" : "text-gray-900" },
+            { label: "Converted to an order", value: converted, tone: "text-emerald-600" }
+          ].map((tile) => (
+            <div key={tile.label} className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{tile.label}</div>
+              <div className={`mt-1 text-xl font-black ${tile.tone}`}>{tile.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <select className="h-9 rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-700"
+            value={cartFollowUpRep} onChange={(e) => setCartFollowUpRep(e.target.value)}>
+            <option value="All reps">All reps</option>
+            {activeSalesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+          </select>
+          <select className="h-9 rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-700"
+            value={cartFollowUpFilter} onChange={(e) => setCartFollowUpFilter(e.target.value)}>
+            {["All", "Never contacted", "Going quiet", "Still open", "Converted"].map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+          <button type="button" onClick={() => void loadCartFollowUps()}
+            className="!min-h-0 inline-flex h-9 items-center gap-2 rounded-md border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </button>
+        </div>
+
+        <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                  <th className="px-5 py-3">Customer</th>
+                  <th className="px-3 py-3">Assigned to</th>
+                  <th className="px-3 py-3">Attempts</th>
+                  <th className="px-3 py-3">Last outcome</th>
+                  <th className="px-3 py-3">Last update</th>
+                  <th className="px-3 py-3">Next action</th>
+                  <th className="px-3 py-3">Result</th>
+                  <th className="px-3 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-5 py-12 text-center">
+                      <p className="m-0 text-sm font-semibold text-gray-500">
+                        {cartFollowUps.length === 0 ? "No carts are assigned to a rep yet." : "Nothing matches those filters."}
+                      </p>
+                      {cartFollowUps.length === 0 && (
+                        <p className="m-0 mt-1 text-xs text-gray-400">
+                          Assign a cart to a rep and their follow-up calls will appear here.
+                        </p>
+                      )}
+                    </td>
+                  </tr>
+                ) : rows.map((row) => {
+                  const days = daysSince(row.lastAttemptAt);
+                  const overdue = row.nextActionAt ? new Date(row.nextActionAt).getTime() < Date.now() : false;
+                  return (
+                    <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                      <td className="px-5 py-3">
+                        <div className="font-bold text-gray-900">{row.customer}</div>
+                        <div className="text-[11px] text-gray-400">{row.phone} · {formatMoney(row.amount)}</div>
+                      </td>
+                      <td className="px-3 py-3 text-[12px] font-semibold text-gray-700">{row.repName}</td>
+                      <td className="px-3 py-3">
+                        {/* Zero attempts is the signal that matters most: the cart
+                            looks owned but nobody has actually called. */}
+                        <span className={`font-black ${row.attempts === 0 ? "text-rose-600" : "text-gray-900"}`}>{row.attempts}</span>
+                      </td>
+                      <td className="px-3 py-3 max-w-[220px]">
+                        {row.lastOutcome ? (
+                          <>
+                            <div className="text-[12px] font-semibold text-gray-800">{row.lastOutcome}</div>
+                            {row.lastOutcomeNote && <div className="text-[11px] text-gray-500">{row.lastOutcomeNote}</div>}
+                          </>
+                        ) : <span className="text-[12px] text-rose-600">Never contacted</span>}
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap text-[12px]">
+                        {row.lastAttemptAt ? (
+                          <>
+                            <div className="text-gray-700">{new Date(row.lastAttemptAt).toLocaleDateString([], { dateStyle: "medium" })}</div>
+                            <div className={`text-[11px] ${days !== null && days >= 3 ? "font-bold text-amber-600" : "text-gray-400"}`}>
+                              {days === 0 ? "today" : `${days}d ago`}
+                            </div>
+                          </>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap text-[12px]">
+                        {row.nextActionAt ? (
+                          <span className={overdue ? "font-bold text-rose-600" : "text-gray-700"}>
+                            {new Date(row.nextActionAt).toLocaleDateString([], { dateStyle: "medium" })}{overdue ? " · overdue" : ""}
+                          </span>
+                        ) : <span className="text-gray-300">not set</span>}
+                      </td>
+                      <td className="px-3 py-3">
+                        {row.convertedOrderId ? (
+                          <span className="inline-flex rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">
+                            Order {row.convertedOrderId}{row.convertedOrderStatus ? ` · ${row.convertedOrderStatus}` : ""}
+                          </span>
+                        ) : (
+                          <span className="inline-flex rounded-md bg-gray-100 px-2 py-1 text-[11px] font-bold text-gray-600">{row.status}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button type="button" onClick={() => openCartFollowUpModal(row.id, row.customer)}
+                            className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50">
+                            Log follow-up
+                          </button>
+                          <button type="button" onClick={() => { setSelectedCartId(row.id); setModal("cartDetails"); }}
+                            className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                            <Eye className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    );
+  };
+
   const renderPersonalDeliveryAgents = () => {
     const isManagement = ["Owner", "Admin", "Manager"].includes(currentRole);
     const totals = pdaOverview?.totals ?? null;
@@ -61039,6 +61265,29 @@ ${waybillLineItems(w).length > 1
               </header>
 
               <DataErrorBanner />
+
+              {/* Supervisors get a second view of the same carts, focused on
+                  whether the assigned rep is actually working them. */}
+              {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") && (
+                <div className="-mx-1 mb-4 overflow-x-auto border-b border-gray-200">
+                  <div className="flex min-w-max gap-1 px-1">
+                    {(["Carts", "Follow-ups"] as const).map((tab) => (
+                      <button key={tab} type="button" onClick={() => setCartsPageTab(tab)}
+                        className={`!min-h-0 inline-flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors ${
+                          cartsPageTab === tab ? "border-[#1F8FE0] text-[#1F8FE0]" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
+                        {tab === "Carts" ? "All carts" : "Assigned follow-ups"}
+                        {tab === "Follow-ups" && cartFollowUps.filter((row) => row.attempts === 0).length > 0 && (
+                          <span className="rounded-full bg-rose-100 px-1.5 text-[10px] font-black text-rose-700">
+                            {cartFollowUps.filter((row) => row.attempts === 0).length}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {cartsPageTab === "Follow-ups" ? renderCartFollowUpTab() : (<>
               {dataLoading && <TableSkeleton cols={7} rows={5} />}
               <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <div className="flex flex-col gap-2 mb-4">
@@ -62036,6 +62285,7 @@ ${waybillLineItems(w).length > 1
                 </div>
               </section>
               </div>
+              </>)}
             </>
           ) : activePage === "Scheduled Deliveries" ? (
             <div className="space-y-6">
@@ -82050,6 +82300,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "updateStock" && "Update Stock"}
                 {modal === "addSalesRep" && "Add New Sales Representative"}
                 {modal === "addAgent" && "Add New Agent"}
+                {modal === "cartFollowUp" && `Log follow-up${cartAttemptCart ? ` — ${cartAttemptCart.customer}` : ""}`}
                 {modal === "addPersonalDeliveryAgent" && "Start Agent Application"}
                 {modal === "pdaGuarantor" && `Guarantor ${pdaGuarantorDraft?.slot ?? ""}`}
                 {modal === "pdaContact" && "Update the customer"}
@@ -88066,6 +88317,65 @@ ${waybillLineItems(w).length > 1
 	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={closeModal}>Cancel</button>
 	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white hover:bg-[#1560a8] disabled:opacity-60"
 	                    onClick={savePdaGuarantor}>{pdaSaving ? "Saving…" : "Save guarantor"}</button>
+	                </div>
+	              </div>
+	            )}
+
+	            {modal === "cartFollowUp" && cartAttemptCart && (
+	              <div className="space-y-4">
+	                <p className="m-0 text-xs text-gray-500">
+	                  Record what actually happened on this call. The cart's status follows the outcome, so the next person can see where it stands without reading every note.
+	                </p>
+	                <div className="grid gap-3 sm:grid-cols-2">
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">How did you reach them?</span>
+	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.channel}
+	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, channel: e.target.value }))}>
+	                      {["Call", "WhatsApp", "SMS", "Email", "Other"].map((c) => <option key={c} value={c}>{c}</option>)}
+	                    </select>
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Outcome *</span>
+	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.outcomeCode}
+	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, outcomeCode: e.target.value }))}>
+	                      {["Interested", "Wants to order now", "Asked to call back", "Price concern",
+	                        "Unresponsive", "Number not reachable", "Wrong number", "Not interested", "Other"].map((o) => (
+	                        <option key={o} value={o}>{o}</option>
+	                      ))}
+	                    </select>
+	                  </label>
+	                  {cartAttemptDraft.outcomeCode === "Other" && (
+	                    <label className="flex flex-col gap-1 sm:col-span-2">
+	                      <span className="text-xs font-bold text-gray-600">Describe the outcome *</span>
+	                      <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.customOutcome}
+	                        onChange={(e) => setCartAttemptDraft((v) => ({ ...v, customOutcome: e.target.value }))}
+	                        placeholder="In your own words" />
+	                    </label>
+	                  )}
+	                  <label className="flex flex-col gap-1 sm:col-span-2">
+	                    <span className="text-xs font-bold text-gray-600">What did the customer say?</span>
+	                    <textarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.outcomeNote}
+	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, outcomeNote: e.target.value }))} />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Call them again on</span>
+	                    <input type="date" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.nextActionAt}
+	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, nextActionAt: e.target.value }))} />
+	                  </label>
+	                  <label className="flex items-center gap-2 self-end text-xs font-semibold text-gray-700">
+	                    <input type="checkbox" checked={cartAttemptDraft.customerReached}
+	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, customerReached: e.target.checked }))} />
+	                    I actually spoke to them
+	                  </label>
+	                </div>
+	                <p className="m-0 rounded-lg bg-blue-50/70 px-3 py-2 text-[11px] text-gray-600">
+	                  When they are ready to buy, use <strong>Convert to order</strong> on the cart — that creates the real order and links it back here, so the recovery is credited.
+	                </p>
+	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
+	                  <button className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white" onClick={saveCartFollowUp}>
+	                    Save follow-up
+	                  </button>
 	                </div>
 	              </div>
 	            )}

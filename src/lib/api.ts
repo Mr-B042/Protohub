@@ -2215,7 +2215,25 @@ export const emailReportsApi = {
 };
 
 // ── Abandoned Carts ──────────────────────────────────────
+export type CartAttemptRow = {
+  id: string; cart_id: string; rep_name?: string | null; attempted_at: string;
+  channel: string; outcome_code: string; custom_outcome?: string | null;
+  outcome_note?: string | null; customer_reached: boolean; next_action_at?: string | null;
+};
+
+export type CartFollowUpRow = {
+  id: string; customer: string; phone: string; productName?: string | null; amount: number;
+  status: string; repId: string; repName: string; createdAt: string; lastActivity: string;
+  attempts: number; lastOutcome?: string | null; lastOutcomeNote?: string | null;
+  lastAttemptAt?: string | null; lastAttemptBy?: string | null; nextActionAt?: string | null;
+  convertedOrderId?: string | null; convertedOrderStatus?: string | null;
+};
+
 export const cartsApi = {
+  contactAttempts: (cartId: string) => get<{ rows: CartAttemptRow[] }>(`/api/carts/${cartId}/contact-attempts`),
+  logContactAttempt: (cartId: string, body: unknown) =>
+    post<{ row: CartAttemptRow; statusMovedTo: string | null }>(`/api/carts/${cartId}/contact-attempts`, body),
+  followUpOverview: () => get<{ rows: CartFollowUpRow[] }>("/api/carts/follow-up-overview"),
   list: () => get<any[]>("/api/carts"),
   create: (body: unknown) => post<any>("/api/carts", body),
   // Public capture endpoint - no auth required, derives org from product_id.
