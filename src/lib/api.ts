@@ -942,12 +942,62 @@ export type PdaCodOverview = {
   recentActivity: Array<{ label: string; at: string; kind: string }>;
 };
 
+export type PdaAgentRemittance = {
+  agent: { id: string; agentCode: string; fullName: string; phone: string; location: string;
+    bankName?: string | null; bankAccountNumber?: string | null; bankAccountName?: string | null };
+  stats: {
+    ordersDelivered: number; codCollected: number; refunds: number | null;
+    expectedRemittance: number; amountRemitted: number; outstanding: number;
+    graceEndsAt: string | null; daysLeft: number | null; graceDays: number;
+  };
+  orders: Array<{
+    assignmentId: string; orderId: string; customer?: string | null; phone?: string | null;
+    deliveredAt?: string | null; codCollected: number; refund: number | null;
+    amountDue: number; amountRemitted: number; remittanceStatus: string; paymentStatus: string;
+  }>;
+};
+
+export type PdaPaymentsView = {
+  rows: Array<{
+    id: string; paymentCode: string; agentId: string; agentName: string; agentCode: string;
+    amount: number; method: string; reference?: string | null; receivedAt: string;
+    recordedByName: string; status: string; verifiedByName?: string | null;
+  }>;
+  summary: {
+    totalRemitted: number; pending: number; rejected: number;
+    topAgents: Array<{ agentId: string; fullName: string; amount: number }>;
+  };
+};
+
+export type PdaCodDiscrepancyView = {
+  rows: Array<{
+    id: string; code: string; agentId: string; agentName: string; agentCode: string;
+    orderId?: string | null; customerName?: string | null; discrepancyType: string;
+    expected: number; actual: number; variance: number; status: string;
+    note?: string | null; resolutionNote?: string | null; createdAt: string;
+  }>;
+  stats: {
+    cases: number; totalAmount: number; pending: number; resolved: number;
+    overpayment: number; underpayment: number;
+    byType: Array<{ type: string; amount: number }>;
+    topAgents: Array<{ agentId: string; fullName: string; amount: number }>;
+  };
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),
   activeAgents: () => get<PdaActiveAgentsView>("/api/personal-delivery-agents/active-agents"),
   inventoryOverview: () => get<PdaInventoryOverview>("/api/personal-delivery-agents/inventory-overview"),
   codOverview: () => get<PdaCodOverview>("/api/personal-delivery-agents/cod-overview"),
+  agentRemittance: (agentId: string) => get<PdaAgentRemittance>(`/api/personal-delivery-agents/cod/agent/${agentId}/remittance`),
+  codPayments: () => get<PdaPaymentsView>("/api/personal-delivery-agents/cod/payments"),
+  setPaymentStatus: (paymentId: string, body: unknown) =>
+    post<{ row: any; reversed: boolean }>(`/api/personal-delivery-agents/cod/payments/${paymentId}/status`, body),
+  codDiscrepancies: () => get<PdaCodDiscrepancyView>("/api/personal-delivery-agents/cod/discrepancies"),
+  createCodDiscrepancy: (body: unknown) => post<{ row: any }>("/api/personal-delivery-agents/cod/discrepancies", body),
+  resolveCodDiscrepancy: (id: string, body: unknown) =>
+    post<{ row: any }>(`/api/personal-delivery-agents/cod/discrepancies/${id}/resolve`, body),
   stockLedger: () => get<PdaStockLedgerView>("/api/personal-delivery-agents/stock-ledger"),
   dispatchSummary: () => get<PdaDispatchSummary>("/api/personal-delivery-agents/dispatch-summary"),
   applicationReview: (id: string) => get<PdaReviewView>(`/api/personal-delivery-agents/applications/${id}/review`),

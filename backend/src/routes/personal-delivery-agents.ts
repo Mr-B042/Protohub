@@ -3423,4 +3423,314 @@ router.get("/reports", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   }
 });
 
+const COD_DISCREPANCIES = "pda_cod_discrepancies";
+
+// ── GET /cod/agent/:agentId/remittance ────────────────────
+// One agent's full cash statement: what they owe, order by order.
+router.get("/cod/agent/:agentId/remittance", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const agentId = paramOf(req.params.agentId);
+    const [{ data: agent }, { data: assignments }, { data: settingsRow }] = await Promise.all([
+      supabase.from(AGENTS).select("*").eq("org_id", orgId).eq("id", agentId).maybeSingle(),
+      supabase.from(ASSIGNMENTS).select("*").eq("org_id", orgId).eq("agent_id", agentId).eq("delivery_status", "Delivered"),
+      supabase.from(SETTINGS).select("remittance_grace_days").eq("org_id", orgId).maybeSingle()
+    ]);
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+
+    const rows = (assignments ?? []) as any[];
+    const orderIds = [...new Set(rows.map((r) => r.order_id))];
+    const { data: orders } = orderIds.length
+      ? await supabase.from("orders").select("id, customer, phone, amount").eq("org_id", orgId).in("id", orderIds)
+      : { data: [] as any[] };
+    const orderById = new Map((orders ?? []).map((o: any) => [o.id, o]));
+
+    const graceDays = Number(settingsRow?.remittance_grace_days ?? 3);
+    const collected = rows.reduce((sum, r) => sum + Number(r.amount_collected ?? 0), 0);
+    const remitted = rows.reduce((sum, r) => sum + Number(r.amount_remitted ?? 0), 0);
+    const outstanding = rows.reduce((sum, r) =>
+      sum + Math.max(0, Number(r.amount_collected ?? 0) - Number(r.amount_remitted ?? 0)), 0);
+
+    // The grace clock runs from the OLDEST unpaid delivery, not the newest -
+    // otherwise a fresh delivery would keep resetting an old debt's deadline.
+    const oldestUnpaid = rows
+      .filter((r) => Number(r.amount_collected ?? 0) > Number(r.amount_remitted ?? 0))
+      .map((r) => r.delivered_at).filter(Boolean).sort()[0] ?? null;
+    const graceEndsAt = oldestUnpaid
+      ? new Date(new Date(oldestUnpaid).getTime() + graceDays * 86400000).toISOString()
+      : null;
+    const daysLeft = graceEndsAt
+      ? Math.ceil((new Date(graceEndsAt).getTime() - Date.now()) / 86400000) : null;
+
+    res.json({
+      agent: {
+        id: agent.id, agentCode: agent.agent_code, fullName: agent.full_name,
+        phone: agent.phone, location: [agent.city, agent.state].filter(Boolean).join(", "),
+        bankName: agent.bank_name ?? null, bankAccountNumber: agent.bank_account_number ?? null,
+        bankAccountName: agent.bank_account_name ?? null
+      },
+      stats: {
+        ordersDelivered: rows.length,
+        codCollected: collected,
+        // Refunds are not recorded anywhere in Protohub - null, never 0.
+        refunds: null as number | null,
+        expectedRemittance: collected,
+        amountRemitted: remitted,
+        outstanding,
+        graceEndsAt, daysLeft, graceDays
+      },
+      orders: rows
+        .sort((a, b) => String(b.delivered_at ?? "").localeCompare(String(a.delivered_at ?? "")))
+        .map((r) => {
+          const order = orderById.get(r.order_id);
+          const due = Number(r.amount_collected ?? 0);
+          const paid = Number(r.amount_remitted ?? 0);
+          return {
+            assignmentId: r.id,
+            orderId: r.order_id,
+            customer: order?.customer ?? null,
+            phone: order?.phone ?? null,
+            deliveredAt: r.delivered_at,
+            codCollected: due,
+            refund: null as number | null,
+            amountDue: due,
+            amountRemitted: paid,
+            remittanceStatus: paid <= 0 ? "Pending" : paid >= due ? "Remitted" : "Partial",
+            paymentStatus: paid <= 0 ? "Unpaid" : paid >= due ? "Paid" : "Partially Paid"
+          };
+        })
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load that statement." });
+  }
+});
+
+// ── GET /cod/payments ─────────────────────────────────────
+router.get("/cod/payments", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const [{ data: payments }, { data: agentRows }] = await Promise.all([
+      supabase.from(REMITTANCES).select("*").eq("org_id", orgId).order("received_at", { ascending: false }).limit(300),
+      supabase.from(AGENTS).select("id, agent_code, full_name").eq("org_id", orgId)
+    ]);
+    const agentById = new Map((agentRows ?? []).map((a: any) => [a.id, a]));
+    const rows = (payments ?? []) as any[];
+    const sumWhere = (status: string) => rows.filter((r) => r.status === status)
+      .reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
+
+    const byAgent = new Map<string, number>();
+    for (const row of rows) {
+      // A rejected payment is not money, so it never counts toward a total.
+      if (row.status === "Rejected") continue;
+      byAgent.set(row.agent_id, (byAgent.get(row.agent_id) ?? 0) + Number(row.amount ?? 0));
+    }
+
+    res.json({
+      rows: rows.map((row: any, index: number) => {
+        const agent = agentById.get(row.agent_id);
+        return {
+          id: row.id,
+          paymentCode: row.payment_code
+            ?? `PAY-${String(row.received_at ?? "").slice(2, 10).replace(/-/g, "")}-${String(rows.length - index).padStart(3, "0")}`,
+          agentId: row.agent_id,
+          agentName: agent?.full_name ?? "Unknown agent",
+          agentCode: agent?.agent_code ?? "",
+          amount: Number(row.amount ?? 0),
+          method: row.method,
+          reference: row.reference ?? null,
+          receivedAt: row.received_at,
+          recordedByName: row.received_by_name ?? "office",
+          status: row.status ?? "Verified",
+          verifiedByName: row.verified_by_name ?? null
+        };
+      }),
+      summary: {
+        totalRemitted: sumWhere("Verified"),
+        pending: sumWhere("Pending Verification"),
+        rejected: sumWhere("Rejected"),
+        topAgents: [...byAgent.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
+          .map(([agentId, amount]) => ({
+            agentId, amount, fullName: agentById.get(agentId)?.full_name ?? "Unknown agent"
+          }))
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load payment history." });
+  }
+});
+
+// ── POST /cod/payments/:paymentId/status ──────────────────
+const PaymentStatusSchema = z.object({
+  status: z.enum(["Verified", "Pending Verification", "Rejected"]),
+  note: z.string().trim().max(500).optional()
+}).superRefine((value, ctx) => {
+  if (value.status === "Rejected" && !value.note?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["note"], message: "Say why the payment was rejected." });
+  }
+});
+
+router.post("/cod/payments/:paymentId/status", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = PaymentStatusSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const orgId = orgIdOf(req);
+    const paymentId = paramOf(req.params.paymentId);
+    const { data: payment } = await supabase.from(REMITTANCES)
+      .select("*").eq("org_id", orgId).eq("id", paymentId).maybeSingle();
+    if (!payment) { res.status(404).json({ error: "Payment not found." }); return; }
+
+    // Rejecting a payment must UNDO what it settled - otherwise a bounced
+    // transfer keeps an agent's debt looking cleared.
+    if (parsed.data.status === "Rejected" && payment.status !== "Rejected") {
+      const { data: allocations } = await supabase.from(ALLOCATIONS)
+        .select("assignment_id, amount").eq("remittance_id", paymentId);
+      for (const allocation of (allocations ?? []) as any[]) {
+        const { data: assignment } = await supabase.from(ASSIGNMENTS)
+          .select("amount_remitted").eq("id", allocation.assignment_id).maybeSingle();
+        const next = Math.max(0, Number(assignment?.amount_remitted ?? 0) - Number(allocation.amount ?? 0));
+        await supabase.from(ASSIGNMENTS)
+          .update({ amount_remitted: next, updated_at: new Date().toISOString() })
+          .eq("id", allocation.assignment_id);
+        await refreshAssignmentCash(String(allocation.assignment_id));
+      }
+    }
+
+    const { data, error } = await supabase.from(REMITTANCES).update({
+      status: parsed.data.status,
+      note: parsed.data.note ?? payment.note,
+      verified_by: req.user!.id, verified_by_name: req.user!.name,
+      verified_at: new Date().toISOString()
+    }).eq("id", paymentId).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ row: data, reversed: parsed.data.status === "Rejected" });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update that payment." });
+  }
+});
+
+// ── GET /cod/discrepancies ────────────────────────────────
+router.get("/cod/discrepancies", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const [{ data: discrepancies }, { data: agentRows }] = await Promise.all([
+      supabase.from(COD_DISCREPANCIES).select("*").eq("org_id", orgId).order("created_at", { ascending: false }).limit(300),
+      supabase.from(AGENTS).select("id, agent_code, full_name").eq("org_id", orgId)
+    ]);
+    const agentById = new Map((agentRows ?? []).map((a: any) => [a.id, a]));
+    const rows = (discrepancies ?? []) as any[];
+    const open = rows.filter((r) => !["Resolved", "Written Off", "Rejected"].includes(r.status));
+
+    const byAgent = new Map<string, number>();
+    for (const row of open) {
+      byAgent.set(row.agent_id, (byAgent.get(row.agent_id) ?? 0) + Math.abs(Number(row.variance ?? 0)));
+    }
+
+    res.json({
+      rows: rows.map((row: any, index: number) => ({
+        id: row.id,
+        code: row.discrepancy_code ?? `DISC-${String(row.created_at ?? "").slice(2, 10).replace(/-/g, "")}-${String(rows.length - index).padStart(3, "0")}`,
+        agentId: row.agent_id,
+        agentName: agentById.get(row.agent_id)?.full_name ?? "Unknown agent",
+        agentCode: agentById.get(row.agent_id)?.agent_code ?? "",
+        orderId: row.order_id ?? null,
+        customerName: row.customer_name ?? null,
+        discrepancyType: row.discrepancy_type,
+        expected: Number(row.expected_amount ?? 0),
+        actual: Number(row.actual_amount ?? 0),
+        variance: Number(row.variance ?? 0),
+        status: row.status,
+        note: row.note ?? null,
+        resolutionNote: row.resolution_note ?? null,
+        createdAt: row.created_at
+      })),
+      stats: {
+        cases: rows.length,
+        totalAmount: rows.reduce((sum, r) => sum + Math.abs(Number(r.variance ?? 0)), 0),
+        pending: open.length,
+        resolved: rows.filter((r) => r.status === "Resolved").length,
+        overpayment: rows.filter((r) => r.discrepancy_type === "Overpayment").length,
+        underpayment: rows.filter((r) => r.discrepancy_type === "Underpayment").length,
+        byType: ["Underpayment", "Refund Not Deducted", "Overpayment", "Missing Payment", "Wrong Amount Collected", "Other"]
+          .map((type) => ({
+            type,
+            amount: rows.filter((r) => r.discrepancy_type === type)
+              .reduce((sum, r) => sum + Math.abs(Number(r.variance ?? 0)), 0)
+          })).filter((entry) => entry.amount > 0),
+        topAgents: [...byAgent.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
+          .map(([agentId, amount]) => ({
+            agentId, amount, fullName: agentById.get(agentId)?.full_name ?? "Unknown agent"
+          }))
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load discrepancies." });
+  }
+});
+
+const CodDiscrepancySchema = z.object({
+  agentId: z.string().uuid(),
+  orderId: z.string().trim().max(60).optional(),
+  customerName: z.string().trim().max(160).optional(),
+  discrepancyType: z.enum(["Underpayment", "Overpayment", "Refund Not Deducted", "Missing Payment", "Wrong Amount Collected", "Other"]),
+  expected: z.number().min(0),
+  actual: z.number().min(0),
+  note: z.string().trim().max(1000).optional()
+});
+
+router.post("/cod/discrepancies", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = CodDiscrepancySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const { data, error } = await supabase.from(COD_DISCREPANCIES).insert({
+      org_id: orgIdOf(req), agent_id: parsed.data.agentId,
+      order_id: parsed.data.orderId ?? null,
+      customer_name: parsed.data.customerName ?? null,
+      discrepancy_type: parsed.data.discrepancyType,
+      expected_amount: parsed.data.expected,
+      actual_amount: parsed.data.actual,
+      // Signed: negative is short, positive is over. The sign is the whole
+      // meaning of the case.
+      variance: parsed.data.actual - parsed.data.expected,
+      note: parsed.data.note ?? null,
+      status: "Pending",
+      reported_by: req.user!.id, reported_by_name: req.user!.name
+    }).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(201).json({ row: data });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not log that discrepancy." });
+  }
+});
+
+const ResolveDiscrepancySchema = z.object({
+  status: z.enum(["Pending", "Under Review", "Resolved", "Written Off", "Rejected"]),
+  resolutionNote: z.string().trim().max(1000).optional()
+}).superRefine((value, ctx) => {
+  if (["Resolved", "Written Off", "Rejected"].includes(value.status) && !value.resolutionNote?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["resolutionNote"], message: "Record what was decided." });
+  }
+});
+
+router.post("/cod/discrepancies/:discrepancyId/resolve", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = ResolveDiscrepancySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const patch: Record<string, unknown> = {
+      status: parsed.data.status,
+      resolution_note: parsed.data.resolutionNote ?? null
+    };
+    if (["Resolved", "Written Off", "Rejected"].includes(parsed.data.status)) {
+      patch.resolved_by = req.user!.id;
+      patch.resolved_by_name = req.user!.name;
+      patch.resolved_at = new Date().toISOString();
+    }
+    const { data, error } = await supabase.from(COD_DISCREPANCIES).update(patch)
+      .eq("org_id", orgIdOf(req)).eq("id", paramOf(req.params.discrepancyId)).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ row: data });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update that discrepancy." });
+  }
+});
+
 export default router;

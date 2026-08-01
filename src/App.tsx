@@ -128,7 +128,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -197,7 +197,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -11194,6 +11194,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaCodSearch, setPdaCodSearch] = useState("");
   const [pdaCodStatus, setPdaCodStatus] = useState("All");
   const [pdaCodPage, setPdaCodPage] = useState(1);
+  const [pdaAgentRemittance, setPdaAgentRemittance] = useState<PdaAgentRemittance | null>(null);
+  const [pdaRemitSearch, setPdaRemitSearch] = useState("");
+  const [pdaRemitPage, setPdaRemitPage] = useState(1);
+  const [pdaPayments, setPdaPayments] = useState<PdaPaymentsView | null>(null);
+  const [pdaPaymentSearch, setPdaPaymentSearch] = useState("");
+  const [pdaPaymentStatus, setPdaPaymentStatus] = useState("All");
+  const [pdaPaymentPage, setPdaPaymentPage] = useState(1);
+  const [pdaCodDiscrepancies, setPdaCodDiscrepancies] = useState<PdaCodDiscrepancyView | null>(null);
+  const [pdaDiscType, setPdaDiscType] = useState("All");
+  const [pdaDiscStatus, setPdaDiscStatus] = useState("All");
+  const [pdaDiscDraft, setPdaDiscDraft] = useState({ agentId: "", orderId: "", customerName: "", discrepancyType: "Underpayment", expected: "", actual: "", note: "" });
   const [pdaFeeRules, setPdaFeeRules] = useState<PdaFeeRule[]>([]);
   const [pdaNegotiations, setPdaNegotiations] = useState<any[]>([]);
   const [pdaFeeDraft, setPdaFeeDraft] = useState({ scope: "state", matchValue: "", fee: "", sameDaySurcharge: "", distanceMinKm: "", distanceMaxKm: "" });
@@ -40446,7 +40457,11 @@ ${waybillLineItems(w).length > 1
     }
     if (pdaSubPage === "Active Agents") void loadPdaActiveAgents();
     if (pdaSubPage === "Inventory") void loadPdaInventory();
-    if (pdaSubPage === "COD & Reconciliation") void loadPdaCodOverview();
+    if (pdaSubPage === "COD & Reconciliation") {
+      void loadPdaCodOverview();
+      void loadPdaPayments();
+      void loadPdaCodDiscrepancies();
+    }
     if (pdaSubPage === "Orders & Dispatch") {
       void loadPdaActiveAgents();
       void loadPdaDispatchSummary();
@@ -40753,6 +40768,74 @@ ${waybillLineItems(w).length > 1
       // never accidentally increase someone's exposure.
       showToast(err?.message ?? "Could not save those settings.");
     } finally { setPdaSaving(false); }
+  };
+
+  const loadPdaAgentRemittance = async (agentId: string) => {
+    if (!agentId) { setPdaAgentRemittance(null); return; }
+    try {
+      setPdaAgentRemittance(await personalDeliveryAgentsApi.agentRemittance(agentId));
+    } catch (err: any) { showToast(err?.message ?? "Could not load that statement."); }
+  };
+
+  const loadPdaPayments = async () => {
+    try {
+      setPdaPayments(await personalDeliveryAgentsApi.codPayments());
+    } catch (err: any) { showToast(err?.message ?? "Could not load payment history."); }
+  };
+
+  const pdaSetPaymentStatus = async (paymentId: string, status: string) => {
+    let note: string | undefined;
+    if (status === "Rejected") {
+      const reason = window.prompt("Why is this payment being rejected? Rejecting it puts the debt back on the agent.");
+      if (!reason || !reason.trim()) return;
+      note = reason.trim();
+    }
+    try {
+      const result = await personalDeliveryAgentsApi.setPaymentStatus(paymentId, { status, note });
+      // Rejecting reverses what the payment settled, so say so plainly.
+      showToast(result.reversed
+        ? "Payment rejected. The orders it cleared are outstanding again."
+        : "Payment verified.");
+      await Promise.all([loadPdaPayments(), loadPdaCodOverview()]);
+      if (pdaCodAgentId) await loadPdaAgentRemittance(pdaCodAgentId);
+    } catch (err: any) { showToast(err?.message ?? "Could not update that payment."); }
+  };
+
+  const loadPdaCodDiscrepancies = async () => {
+    try {
+      setPdaCodDiscrepancies(await personalDeliveryAgentsApi.codDiscrepancies());
+    } catch (err: any) { showToast(err?.message ?? "Could not load discrepancies."); }
+  };
+
+  const pdaCreateCodDiscrepancy = async () => {
+    if (!pdaDiscDraft.agentId) { showToast("Pick the agent."); return; }
+    const expected = Number(pdaDiscDraft.expected);
+    const actual = Number(pdaDiscDraft.actual);
+    if (!Number.isFinite(expected) || !Number.isFinite(actual)) { showToast("Enter both the expected and actual amounts."); return; }
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.createCodDiscrepancy({
+        agentId: pdaDiscDraft.agentId,
+        orderId: pdaDiscDraft.orderId.trim() || undefined,
+        customerName: pdaDiscDraft.customerName.trim() || undefined,
+        discrepancyType: pdaDiscDraft.discrepancyType,
+        expected, actual,
+        note: pdaDiscDraft.note.trim() || undefined
+      });
+      setModal(null);
+      showToast("Discrepancy logged.");
+      await Promise.all([loadPdaCodDiscrepancies(), loadPdaCodOverview()]);
+    } catch (err: any) { showToast(err?.message ?? "Could not log that discrepancy."); }
+    finally { setPdaSaving(false); }
+  };
+
+  const pdaResolveDiscrepancy = async (id: string, status: string) => {
+    const note = window.prompt("What was decided? This goes on the record.");
+    if (!note || !note.trim()) return;
+    try {
+      await personalDeliveryAgentsApi.resolveCodDiscrepancy(id, { status, resolutionNote: note.trim() });
+      await Promise.all([loadPdaCodDiscrepancies(), loadPdaCodOverview()]);
+    } catch (err: any) { showToast(err?.message ?? "Could not update that discrepancy."); }
   };
 
   const loadPdaCodOverview = async () => {
@@ -48247,6 +48330,616 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // Agent Remittance: one agent's cash statement, order by order.
+  const renderPdaAgentRemittanceTab = () => {
+    const view = pdaAgentRemittance;
+    const stats = view?.stats ?? null;
+
+    const chip = (status: string) =>
+      status === "Remitted" || status === "Paid" ? "bg-emerald-50 text-emerald-700"
+      : status === "Partial" || status === "Partially Paid" ? "bg-amber-50 text-amber-700"
+      : "bg-rose-50 text-rose-700";
+
+    const orders = (view?.orders ?? []).filter((row) => {
+      if (!pdaRemitSearch.trim()) return true;
+      const q = pdaRemitSearch.trim().toLowerCase();
+      return row.orderId.toLowerCase().includes(q)
+        || (row.customer ?? "").toLowerCase().includes(q)
+        || (row.phone ?? "").includes(q);
+    });
+    const PAGE = 8;
+    const pages = Math.max(1, Math.ceil(orders.length / PAGE));
+    const page = Math.min(pdaRemitPage, pages);
+    const pageRows = orders.slice((page - 1) * PAGE, page * PAGE);
+
+    const donut = [
+      { label: "Remitted", value: stats?.amountRemitted ?? 0, colour: "#10B981" },
+      { label: "Outstanding", value: Math.max(0, stats?.outstanding ?? 0), colour: "#F59E0B" }
+    ];
+    const donutTotal = Math.max(1, donut.reduce((sum, s) => sum + s.value, 0));
+    const CIRC = 2 * Math.PI * 42;
+    let offset = 0;
+
+    return (
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr),300px]">
+        <div className="min-w-0 space-y-4">
+          <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-bold text-gray-600">Select Agent</span>
+              <select className="max-w-sm rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-800"
+                value={pdaCodAgentId} onChange={(e) => { setPdaCodAgentId(e.target.value); setPdaRemitPage(1); void loadPdaAgentRemittance(e.target.value); }}>
+                <option value="">Choose an agent…</option>
+                {(pdaCodOverview?.agents ?? []).map((agent) => (
+                  <option key={agent.agentId} value={agent.agentId}>{agent.fullName} · {agent.agentCode}</option>
+                ))}
+              </select>
+            </label>
+
+            {view && (
+              <div className="mt-4 grid grid-cols-2 gap-4 border-t border-gray-100 pt-4 sm:grid-cols-4 xl:grid-cols-7">
+                {[
+                  { label: "Orders Delivered", value: String(stats?.ordersDelivered ?? 0) },
+                  { label: "COD Collected", value: formatMoney(stats?.codCollected ?? 0) },
+                  // Refunds are not recorded in Protohub, so this is a dash.
+                  { label: "Refunds / Deductions", value: "—", muted: true, title: "Refunds are not recorded in Protohub." },
+                  { label: "Expected Remittance", value: formatMoney(stats?.expectedRemittance ?? 0) },
+                  { label: "Amount Remitted", value: formatMoney(stats?.amountRemitted ?? 0), tone: "text-emerald-600" },
+                  { label: "Outstanding Balance", value: formatMoney(stats?.outstanding ?? 0), tone: (stats?.outstanding ?? 0) > 0 ? "text-amber-600" : "text-emerald-600" },
+                  {
+                    label: "Grace Period Ends",
+                    value: stats?.graceEndsAt ? new Date(stats.graceEndsAt).toLocaleDateString([], { dateStyle: "medium" }) : "—",
+                    sub: stats?.daysLeft === null || stats?.daysLeft === undefined ? "nothing outstanding"
+                      : stats.daysLeft < 0 ? `${Math.abs(stats.daysLeft)} days overdue`
+                      : `${stats.daysLeft} day${stats.daysLeft === 1 ? "" : "s"} left`,
+                    tone: (stats?.daysLeft ?? 1) < 0 ? "text-rose-600" : undefined
+                  }
+                ].map((cell) => (
+                  <div key={cell.label} title={(cell as any).title}>
+                    <div className="text-[11px] font-semibold text-gray-400">{cell.label}</div>
+                    <div className={`text-[15px] font-black ${(cell as any).muted ? "text-gray-300" : cell.tone ?? "text-gray-900"}`}>{cell.value}</div>
+                    {(cell as any).sub && <div className={`text-[10px] ${cell.tone ?? "text-gray-400"}`}>{(cell as any).sub}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {view && (
+            <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+                <h3 className="m-0 text-base font-bold text-gray-900">Orders Requiring Remittance ({orders.length})</h3>
+                <div className="relative min-w-[220px]">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <input className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm"
+                    placeholder="Search by order ID, customer or phone..." value={pdaRemitSearch}
+                    onChange={(e) => { setPdaRemitSearch(e.target.value); setPdaRemitPage(1); }} />
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-y border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                      <th className="px-5 py-2.5">Order ID</th>
+                      <th className="px-3 py-2.5">Customer</th>
+                      <th className="px-3 py-2.5">Delivered Date</th>
+                      <th className="px-3 py-2.5">COD Collected</th>
+                      <th className="px-3 py-2.5" title="Refunds are not recorded in Protohub.">Refund</th>
+                      <th className="px-3 py-2.5">Amount Due</th>
+                      <th className="px-3 py-2.5">Remittance</th>
+                      <th className="px-3 py-2.5">Payment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageRows.length === 0 ? (
+                      <tr><td colSpan={8} className="px-5 py-12 text-center text-sm text-gray-400">
+                        {orders.length === 0 ? "This agent has no delivered orders yet." : "Nothing matches that search."}
+                      </td></tr>
+                    ) : pageRows.map((row) => (
+                      <tr key={row.assignmentId} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                        <td className="px-5 py-3 font-semibold text-[#1F8FE0]">#{row.orderId}</td>
+                        <td className="px-3 py-3">
+                          <div className="text-[12px] font-semibold text-gray-800">{row.customer ?? "—"}</div>
+                          <div className="text-[11px] text-gray-400">{row.phone ?? ""}</div>
+                        </td>
+                        <td className="px-3 py-3 whitespace-nowrap text-[12px] text-gray-600">
+                          {row.deliveredAt ? new Date(row.deliveredAt).toLocaleDateString([], { dateStyle: "medium" }) : "—"}
+                        </td>
+                        <td className="px-3 py-3 font-bold text-gray-900">{formatMoney(row.codCollected)}</td>
+                        <td className="px-3 py-3 text-gray-300">—</td>
+                        <td className="px-3 py-3 font-bold text-gray-900">{formatMoney(row.amountDue)}</td>
+                        <td className="px-3 py-3">
+                          <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${chip(row.remittanceStatus)}`}>{row.remittanceStatus}</span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${chip(row.paymentStatus)}`}>{row.paymentStatus}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {orders.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-5 py-3">
+                  <span className="text-xs text-gray-500">
+                    Showing {(page - 1) * PAGE + 1} to {Math.min(page * PAGE, orders.length)} of {orders.length} orders
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button type="button" disabled={page <= 1} onClick={() => setPdaRemitPage(page - 1)}
+                      className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <span className="px-2 text-xs font-bold text-gray-600">{page} / {pages}</span>
+                    <button type="button" disabled={page >= pages} onClick={() => setPdaRemitPage(page + 1)}
+                      className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+        </div>
+
+        {view && (
+          <div className="space-y-4">
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Remittance Summary</h3>
+              <div className="mt-4 flex items-center gap-4">
+                <div className="relative h-[104px] w-[104px] shrink-0">
+                  <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+                    <circle cx="50" cy="50" r="42" fill="none" stroke="#F3F4F6" strokeWidth="12" />
+                    {donut.map((slice) => {
+                      if (slice.value <= 0) return null;
+                      const length = (slice.value / donutTotal) * CIRC;
+                      const start = offset;
+                      offset += length;
+                      return (
+                        <circle key={slice.label} cx="50" cy="50" r="42" fill="none" stroke={slice.colour}
+                          strokeWidth="12" strokeDasharray={`${length} ${CIRC - length}`} strokeDashoffset={-start} />
+                      );
+                    })}
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-sm font-black leading-none text-gray-900">{formatMoney(stats?.outstanding ?? 0)}</span>
+                    <span className="text-[9px] text-gray-400">Outstanding</span>
+                  </div>
+                </div>
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  {donut.map((slice) => (
+                    <div key={slice.label} className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="flex items-center gap-1.5 text-gray-600">
+                        <span className="h-2 w-2 rounded-full" style={{ background: slice.colour }} />{slice.label}
+                      </span>
+                      <span className="font-semibold text-gray-700">{formatMoney(slice.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Agent Details</h3>
+              <dl className="m-0 mt-3 space-y-2 text-[12px]">
+                {[
+                  ["Agent Name", view.agent.fullName],
+                  ["Agent ID", view.agent.agentCode],
+                  ["Phone", view.agent.phone],
+                  ["Location", view.agent.location || "—"],
+                  ["Grace Period", `${stats?.graceDays ?? 3} days`],
+                  ["Bank", view.agent.bankName ? `${view.agent.bankName} · ${view.agent.bankAccountNumber ?? ""}` : "Not recorded"]
+                ].map(([label, value]) => (
+                  <div key={label} className="flex items-start justify-between gap-3">
+                    <dt className="m-0 text-gray-500">{label}</dt>
+                    <dd className="m-0 text-right font-semibold text-gray-800">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Payment History: every payment received, and whether it actually cleared.
+  const renderPdaPaymentHistoryTab = () => {
+    const view = pdaPayments;
+    const rows = (view?.rows ?? []).filter((row) => {
+      if (pdaPaymentStatus !== "All" && row.status !== pdaPaymentStatus) return false;
+      if (!pdaPaymentSearch.trim()) return true;
+      const q = pdaPaymentSearch.trim().toLowerCase();
+      return row.agentName.toLowerCase().includes(q)
+        || row.paymentCode.toLowerCase().includes(q)
+        || (row.reference ?? "").toLowerCase().includes(q);
+    });
+    const PAGE = 8;
+    const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+    const page = Math.min(pdaPaymentPage, pages);
+    const pageRows = rows.slice((page - 1) * PAGE, page * PAGE);
+
+    const statusChip = (status: string) =>
+      status === "Verified" ? "bg-emerald-50 text-emerald-700"
+      : status === "Rejected" ? "bg-rose-50 text-rose-700"
+      : "bg-amber-50 text-amber-700";
+
+    const donut = [
+      { label: "Verified", value: view?.summary.totalRemitted ?? 0, colour: "#10B981" },
+      { label: "Pending", value: view?.summary.pending ?? 0, colour: "#F59E0B" },
+      { label: "Rejected", value: view?.summary.rejected ?? 0, colour: "#EF4444" }
+    ];
+    const donutTotal = Math.max(1, donut.reduce((sum, s) => sum + s.value, 0));
+    const CIRC = 2 * Math.PI * 42;
+    let offset = 0;
+
+    return (
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr),300px]">
+        <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <div>
+              <h3 className="m-0 text-base font-bold text-gray-900">Payment History</h3>
+              <p className="m-0 mt-0.5 text-xs text-gray-500">All remittance payments recorded from agents.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <select className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700"
+                value={pdaPaymentStatus} onChange={(e) => { setPdaPaymentStatus(e.target.value); setPdaPaymentPage(1); }}>
+                <option value="All">All statuses</option>
+                {["Verified", "Pending Verification", "Rejected"].map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <button type="button" onClick={() => pdaCsvDownload("cod-payments",
+                ["Payment", "Agent", "Date", "Amount", "Method", "Reference", "Recorded by", "Status"],
+                (view?.rows ?? []).map((row) => [
+                  row.paymentCode, row.agentName, row.receivedAt, String(row.amount),
+                  row.method, row.reference ?? "", row.recordedByName, row.status
+                ]))}
+                className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50">
+                <Download className="h-3.5 w-3.5" /> Export History
+              </button>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-y border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                  <th className="px-5 py-2.5">Payment ID</th>
+                  <th className="px-3 py-2.5">Agent</th>
+                  <th className="px-3 py-2.5">Payment Date</th>
+                  <th className="px-3 py-2.5">Amount</th>
+                  <th className="px-3 py-2.5">Method</th>
+                  <th className="px-3 py-2.5">Reference</th>
+                  <th className="px-3 py-2.5">Recorded By</th>
+                  <th className="px-3 py-2.5">Status</th>
+                  <th className="px-3 py-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.length === 0 ? (
+                  <tr><td colSpan={9} className="px-5 py-12 text-center text-sm text-gray-400">
+                    {(view?.rows ?? []).length === 0 ? "No payments recorded yet." : "Nothing matches those filters."}
+                  </td></tr>
+                ) : pageRows.map((row) => (
+                  <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                    <td className="px-5 py-3 font-semibold text-[#1F8FE0]">{row.paymentCode}</td>
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2.5">
+                        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-black ${customerAvatarTone(row.agentId)}`}>
+                          {customerInitial(row.agentName)}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-[12px] font-bold text-gray-900">{row.agentName}</div>
+                          <div className="text-[10px] text-gray-400">{row.agentCode}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-[12px] text-gray-700">{new Date(row.receivedAt).toLocaleDateString([], { dateStyle: "medium" })}</div>
+                      <div className="text-[10px] text-gray-400">{new Date(row.receivedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                    </td>
+                    <td className="px-3 py-3 font-black text-gray-900">{formatMoney(row.amount)}</td>
+                    <td className="px-3 py-3 text-[12px] text-gray-700">{row.method}</td>
+                    <td className="px-3 py-3 text-[12px] text-gray-600">{row.reference ?? "—"}</td>
+                    <td className="px-3 py-3 text-[12px] text-gray-600">{row.recordedByName}</td>
+                    <td className="px-3 py-3">
+                      <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${statusChip(row.status)}`}>{row.status}</span>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {row.status !== "Verified" && (
+                          <button type="button" onClick={() => void pdaSetPaymentStatus(row.id, "Verified")}
+                            className="!min-h-0 rounded-lg border border-emerald-200 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50">Verify</button>
+                        )}
+                        {row.status !== "Rejected" && (
+                          <button type="button" onClick={() => void pdaSetPaymentStatus(row.id, "Rejected")}
+                            className="!min-h-0 rounded-lg border border-rose-200 px-2.5 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-50">Reject</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {rows.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-5 py-3">
+              <span className="text-xs text-gray-500">
+                Showing {(page - 1) * PAGE + 1} to {Math.min(page * PAGE, rows.length)} of {rows.length} payments
+              </span>
+              <div className="flex items-center gap-1">
+                <button type="button" disabled={page <= 1} onClick={() => setPdaPaymentPage(page - 1)}
+                  className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <span className="px-2 text-xs font-bold text-gray-600">{page} / {pages}</span>
+                <button type="button" disabled={page >= pages} onClick={() => setPdaPaymentPage(page + 1)}
+                  className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <div className="space-y-4">
+          <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Payment Summary</h3>
+            <div className="mt-4 flex items-center gap-4">
+              <div className="relative h-[104px] w-[104px] shrink-0">
+                <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+                  <circle cx="50" cy="50" r="42" fill="none" stroke="#F3F4F6" strokeWidth="12" />
+                  {donut.map((slice) => {
+                    if (slice.value <= 0) return null;
+                    const length = (slice.value / donutTotal) * CIRC;
+                    const start = offset;
+                    offset += length;
+                    return (
+                      <circle key={slice.label} cx="50" cy="50" r="42" fill="none" stroke={slice.colour}
+                        strokeWidth="12" strokeDasharray={`${length} ${CIRC - length}`} strokeDashoffset={-start} />
+                    );
+                  })}
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-sm font-black leading-none text-gray-900">{formatMoney(view?.summary.totalRemitted ?? 0)}</span>
+                  <span className="text-[9px] text-gray-400">Verified</span>
+                </div>
+              </div>
+              <div className="min-w-0 flex-1 space-y-1.5">
+                {donut.map((slice) => (
+                  <div key={slice.label} className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="flex items-center gap-1.5 text-gray-600">
+                      <span className="h-2 w-2 rounded-full" style={{ background: slice.colour }} />{slice.label}
+                    </span>
+                    <span className="font-semibold text-gray-700">{formatMoney(slice.value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Top Agents by Remitted Amount</h3>
+            {(view?.summary.topAgents ?? []).length === 0 ? (
+              <p className="m-0 mt-3 text-xs text-gray-400">No payments yet.</p>
+            ) : (
+              <ul className="m-0 mt-3 list-none space-y-2.5 p-0">
+                {view!.summary.topAgents.map((agent, index) => (
+                  <li key={agent.agentId} className="flex items-center gap-2.5">
+                    <span className="w-3 shrink-0 text-[11px] font-black text-gray-400">{index + 1}</span>
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-black ${customerAvatarTone(agent.agentId)}`}>
+                      {customerInitial(agent.fullName)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-gray-800">{agent.fullName}</span>
+                    <span className="shrink-0 text-[11px] font-bold text-gray-700">{formatMoney(agent.amount)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      </div>
+    );
+  };
+
+  // Discrepancies: variances between what should have arrived and what did.
+  const renderPdaDiscrepancyTab = () => {
+    const view = pdaCodDiscrepancies;
+    const stats = view?.stats ?? null;
+
+    const typeChip = (type: string) =>
+      type === "Underpayment" || type === "Missing Payment" ? "bg-rose-50 text-rose-700"
+      : type === "Overpayment" ? "bg-violet-50 text-violet-700"
+      : type === "Refund Not Deducted" ? "bg-amber-50 text-amber-700"
+      : "bg-gray-100 text-gray-600";
+    const statusChip = (status: string) =>
+      status === "Resolved" ? "bg-emerald-50 text-emerald-700"
+      : status === "Written Off" ? "bg-gray-100 text-gray-600"
+      : status === "Under Review" ? "bg-sky-50 text-sky-700"
+      : "bg-amber-50 text-amber-700";
+
+    const rows = (view?.rows ?? []).filter((row) => {
+      if (pdaDiscType !== "All" && row.discrepancyType !== pdaDiscType) return false;
+      if (pdaDiscStatus !== "All" && row.status !== pdaDiscStatus) return false;
+      return true;
+    });
+
+    const palette: Record<string, string> = {
+      "Underpayment": "#EF4444", "Refund Not Deducted": "#F59E0B", "Overpayment": "#8B5CF6",
+      "Missing Payment": "#DC2626", "Wrong Amount Collected": "#0EA5E9", "Other": "#9CA3AF"
+    };
+    const donut = (stats?.byType ?? []).map((entry) => ({
+      label: entry.type, value: entry.amount, colour: palette[entry.type] ?? "#9CA3AF"
+    }));
+    const donutTotal = Math.max(1, donut.reduce((sum, s) => sum + s.value, 0));
+    const CIRC = 2 * Math.PI * 42;
+    let offset = 0;
+
+    return (
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr),300px]">
+        <div className="min-w-0 space-y-4">
+          <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="m-0 text-base font-bold text-gray-900">Discrepancies</h3>
+                <p className="m-0 mt-0.5 text-xs text-gray-500">Orders with variances between expected and actual remittance.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <select className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700"
+                  value={pdaDiscType} onChange={(e) => setPdaDiscType(e.target.value)}>
+                  <option value="All">All types</option>
+                  {["Underpayment", "Overpayment", "Refund Not Deducted", "Missing Payment", "Wrong Amount Collected", "Other"].map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+                <select className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700"
+                  value={pdaDiscStatus} onChange={(e) => setPdaDiscStatus(e.target.value)}>
+                  <option value="All">All statuses</option>
+                  {["Pending", "Under Review", "Resolved", "Written Off", "Rejected"].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <button type="button" onClick={() => { setPdaDiscDraft({ agentId: pdaCodAgentId, orderId: "", customerName: "", discrepancyType: "Underpayment", expected: "", actual: "", note: "" }); setModal("pdaCodDiscrepancy"); }}
+                  className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1560a8]">
+                  Log Discrepancy
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-4 border-t border-gray-100 pt-4 sm:grid-cols-3 lg:grid-cols-6">
+              {[
+                { label: "Total Cases", value: String(stats?.cases ?? 0) },
+                { label: "Total Amount", value: formatMoney(stats?.totalAmount ?? 0), tone: "text-rose-600" },
+                { label: "Pending Resolution", value: String(stats?.pending ?? 0), tone: "text-amber-600" },
+                { label: "Resolved", value: String(stats?.resolved ?? 0), tone: "text-emerald-600" },
+                { label: "Overpayment", value: String(stats?.overpayment ?? 0), tone: "text-violet-600" },
+                { label: "Underpayment", value: String(stats?.underpayment ?? 0), tone: "text-rose-600" }
+              ].map((cell) => (
+                <div key={cell.label}>
+                  <div className="text-[11px] font-semibold text-gray-400">{cell.label}</div>
+                  <div className={`text-[17px] font-black ${cell.tone ?? "text-gray-900"}`}>{cell.value}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                    <th className="px-5 py-2.5">Discrepancy ID</th>
+                    <th className="px-3 py-2.5">Agent</th>
+                    <th className="px-3 py-2.5">Order</th>
+                    <th className="px-3 py-2.5">Type</th>
+                    <th className="px-3 py-2.5">Expected</th>
+                    <th className="px-3 py-2.5">Actual</th>
+                    <th className="px-3 py-2.5">Variance</th>
+                    <th className="px-3 py-2.5">Status</th>
+                    <th className="px-3 py-2.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 ? (
+                    <tr><td colSpan={9} className="px-5 py-12 text-center text-sm text-gray-400">
+                      {(view?.rows ?? []).length === 0
+                        ? "No discrepancies logged. Short payments, overpayments and undeducted refunds all belong here."
+                        : "Nothing matches those filters."}
+                    </td></tr>
+                  ) : rows.map((row) => (
+                    <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                      <td className="px-5 py-3 font-semibold text-[#1F8FE0]">{row.code}</td>
+                      <td className="px-3 py-3">
+                        <div className="text-[12px] font-bold text-gray-900">{row.agentName}</div>
+                        <div className="text-[10px] text-gray-400">{row.agentCode}</div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="text-[12px] text-gray-700">{row.orderId ? `#${row.orderId}` : "—"}</div>
+                        <div className="text-[10px] text-gray-400">{row.customerName ?? ""}</div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${typeChip(row.discrepancyType)}`}>{row.discrepancyType}</span>
+                      </td>
+                      <td className="px-3 py-3 text-gray-700">{formatMoney(row.expected)}</td>
+                      <td className="px-3 py-3 text-gray-700">{formatMoney(row.actual)}</td>
+                      <td className={`px-3 py-3 font-black ${row.variance < 0 ? "text-rose-600" : "text-violet-600"}`}>
+                        {row.variance >= 0 ? "+" : "−"}{formatMoney(Math.abs(row.variance))}
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${statusChip(row.status)}`}>{row.status}</span>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {!["Resolved", "Written Off"].includes(row.status) && (
+                            <button type="button" onClick={() => void pdaResolveDiscrepancy(row.id, "Resolved")}
+                              className="!min-h-0 rounded-lg border border-emerald-200 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50">Resolve</button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div className="space-y-4">
+          <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Discrepancy Summary</h3>
+            {donut.length === 0 ? (
+              <p className="m-0 mt-3 text-xs text-gray-400">Nothing logged yet.</p>
+            ) : (
+              <div className="mt-4 flex items-center gap-4">
+                <div className="relative h-[104px] w-[104px] shrink-0">
+                  <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+                    <circle cx="50" cy="50" r="42" fill="none" stroke="#F3F4F6" strokeWidth="12" />
+                    {donut.map((slice) => {
+                      const length = (slice.value / donutTotal) * CIRC;
+                      const start = offset;
+                      offset += length;
+                      return (
+                        <circle key={slice.label} cx="50" cy="50" r="42" fill="none" stroke={slice.colour}
+                          strokeWidth="12" strokeDasharray={`${length} ${CIRC - length}`} strokeDashoffset={-start} />
+                      );
+                    })}
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-sm font-black leading-none text-gray-900">{formatMoney(stats?.totalAmount ?? 0)}</span>
+                    <span className="text-[9px] text-gray-400">Total</span>
+                  </div>
+                </div>
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  {donut.map((slice) => (
+                    <div key={slice.label} className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="flex items-center gap-1.5 truncate text-gray-600">
+                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: slice.colour }} />{slice.label}
+                      </span>
+                      <span className="shrink-0 font-semibold text-gray-700">{formatMoney(slice.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Top Agents with Discrepancies</h3>
+            {(stats?.topAgents ?? []).length === 0 ? (
+              <p className="m-0 mt-3 text-xs text-gray-400">None.</p>
+            ) : (
+              <ul className="m-0 mt-3 list-none space-y-2.5 p-0">
+                {stats!.topAgents.map((agent) => (
+                  <li key={agent.agentId} className="flex items-center gap-2.5">
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-black ${customerAvatarTone(agent.agentId)}`}>
+                      {customerInitial(agent.fullName)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-gray-800">{agent.fullName}</span>
+                    <span className="shrink-0 text-[11px] font-bold text-rose-600">{formatMoney(agent.amount)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      </div>
+    );
+  };
+
   // COD & Reconciliation. Company cash and agent earnings stay visibly apart
   // throughout - an agent never nets their fee off the customer's payment.
   const renderPdaCodPage = () => {
@@ -48459,60 +49152,11 @@ ${waybillLineItems(w).length > 1
               </>
             )}
 
-            {pdaCodTab === "Agent Remittance" && (
-              <div className="p-5">
-                {pdaCod && pdaCodAgentId ? renderPdaCod() : (
-                  <p className="m-0 py-10 text-center text-sm text-gray-500">
-                    Pick an agent from Collections Overview to see their full reconciliation.
-                  </p>
-                )}
-              </div>
-            )}
+            {pdaCodTab === "Agent Remittance" && <div className="p-5">{renderPdaAgentRemittanceTab()}</div>}
 
-            {pdaCodTab === "Payment History" && (
-              <div className="divide-y divide-gray-100">
-                {(view?.remittances ?? []).length === 0 ? (
-                  <p className="m-0 px-5 py-14 text-center text-sm text-gray-400">No payments recorded yet.</p>
-                ) : view!.remittances.map((row) => (
-                  <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-                    <div className="min-w-0">
-                      <div className="text-[13px] font-bold text-gray-900">{formatMoney(row.amount)}</div>
-                      <div className="text-[11px] text-gray-500">
-                        {row.agentName} · {row.method}{row.reference ? ` · ${row.reference}` : ""}
-                      </div>
-                    </div>
-                    <div className="shrink-0 text-right text-[11px] text-gray-400">
-                      <div>{new Date(row.receivedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</div>
-                      <div>received by {row.receivedByName ?? "office"}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {pdaCodTab === "Payment History" && <div className="p-5">{renderPdaPaymentHistoryTab()}</div>}
 
-            {pdaCodTab === "Discrepancies" && (
-              <div className="divide-y divide-gray-100">
-                {(view?.discrepancies ?? []).length === 0 ? (
-                  <p className="m-0 px-5 py-14 text-center text-sm text-gray-400">
-                    No cash discrepancies. Short payments, overpayments and Missing COD reports all appear here.
-                  </p>
-                ) : view!.discrepancies.map((row) => (
-                  <div key={`${row.kind}-${row.id}`} className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
-                    <div className="min-w-0">
-                      <div className="text-[13px] font-bold text-gray-900">
-                        {row.agentName}
-                        {row.orderId && <span className="ml-2 text-[11px] font-semibold text-gray-400">order {row.orderId}</span>}
-                      </div>
-                      <p className="m-0 text-[11px] text-gray-600">{row.detail}</p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className="text-[13px] font-black text-rose-600">{formatMoney(row.amount)}</span>
-                      <span className="rounded-md bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700">{row.status}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {pdaCodTab === "Discrepancies" && <div className="p-5">{renderPdaDiscrepancyTab()}</div>}
           </section>
 
           <div className="space-y-4">
@@ -80123,6 +80767,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "pdaAssignOrder" && "Who can take this order?"}
                 {modal === "pdaFeeRule" && "Add a delivery rate"}
                 {modal === "pdaIncident" && "Report an incident"}
+                {modal === "pdaCodDiscrepancy" && "Log a cash discrepancy"}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -85683,6 +86328,66 @@ ${waybillLineItems(w).length > 1
 	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
 	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={pdaCreateFeeRule}>
 	                    {pdaSaving ? "Saving…" : "Save rate"}
+	                  </button>
+	                </div>
+	              </div>
+	            )}
+
+	            {modal === "pdaCodDiscrepancy" && (
+	              <div className="space-y-4">
+	                <p className="m-0 text-xs text-gray-500">
+	                  A variance between what should have reached the office and what did. This is an accounting case to resolve — if you suspect misconduct, raise an <strong>incident</strong> instead, which suspends the agent.
+	                </p>
+	                <div className="grid gap-3 sm:grid-cols-2">
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Agent *</span>
+	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.agentId}
+	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, agentId: e.target.value }))}>
+	                      <option value="">Choose…</option>
+	                      {(pdaCodOverview?.agents ?? []).map((agent) => (
+	                        <option key={agent.agentId} value={agent.agentId}>{agent.fullName}</option>
+	                      ))}
+	                    </select>
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Type *</span>
+	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.discrepancyType}
+	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, discrepancyType: e.target.value }))}>
+	                      {["Underpayment", "Overpayment", "Refund Not Deducted", "Missing Payment", "Wrong Amount Collected", "Other"].map((t) => (
+	                        <option key={t} value={t}>{t}</option>
+	                      ))}
+	                    </select>
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Order</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.orderId}
+	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, orderId: e.target.value }))} />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Customer</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.customerName}
+	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, customerName: e.target.value }))} />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Expected *</span>
+	                    <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.expected}
+	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, expected: e.target.value }))} />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Actually received *</span>
+	                    <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.actual}
+	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, actual: e.target.value }))} />
+	                  </label>
+	                  <label className="flex flex-col gap-1 sm:col-span-2">
+	                    <span className="text-xs font-bold text-gray-600">What happened?</span>
+	                    <textarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDiscDraft.note}
+	                      onChange={(e) => setPdaDiscDraft((v) => ({ ...v, note: e.target.value }))} />
+	                  </label>
+	                </div>
+	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
+	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={pdaCreateCodDiscrepancy}>
+	                    {pdaSaving ? "Saving…" : "Log discrepancy"}
 	                  </button>
 	                </div>
 	              </div>
