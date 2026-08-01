@@ -126,7 +126,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -195,7 +195,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -11151,10 +11151,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaDetail, setPdaDetail] = useState<PdaAgentDetail | null>(null);
   const [pdaPortalTab, setPdaPortalTab] = useState<PdaPortalTab>("Home");
   const [pdaStockAgentId, setPdaStockAgentId] = useState("");
+  const [pdaCodAgentId, setPdaCodAgentId] = useState("");
+  const [pdaCod, setPdaCod] = useState<PdaCodView | null>(null);
+  const [pdaRemittanceDraft, setPdaRemittanceDraft] = useState({ amount: "", method: "Cash", reference: "" });
   const [pdaStock, setPdaStock] = useState<{ stock: any[]; ledger: any[]; transfers: any[] } | null>(null);
   const [pdaSendStockDraft, setPdaSendStockDraft] = useState({ productId: "", quantity: "", waybillReference: "" });
   const [pdaMySummary, setPdaMySummary] = useState<PdaMySummary | null>(null);
   const [pdaMyOrders, setPdaMyOrders] = useState<PdaAssignment[]>([]);
+  const [pdaWallet, setPdaWallet] = useState<PdaWallet | null>(null);
   const [pdaActiveAssignment, setPdaActiveAssignment] = useState<PdaAssignment | null>(null);
   const [pdaDeliveredDraft, setPdaDeliveredDraft] = useState({ amountCollected: "", paymentMethod: "Cash", proofType: "Customer OTP", proofReference: "" });
   const [pdaFailedDraft, setPdaFailedDraft] = useState({ outcome: "Failed", failureReason: "", failureNote: "" });
@@ -40366,12 +40370,14 @@ ${waybillLineItems(w).length > 1
   // ── Agent portal actions ───────────────────────────────
   const loadPdaPortal = async () => {
     try {
-      const [summary, orders] = await Promise.all([
+      const [summary, orders, wallet] = await Promise.all([
         personalDeliveryAgentsApi.mySummary(),
-        personalDeliveryAgentsApi.myOrders()
+        personalDeliveryAgentsApi.myOrders(),
+        personalDeliveryAgentsApi.myWallet()
       ]);
       setPdaMySummary(summary);
       setPdaMyOrders(orders?.rows ?? []);
+      setPdaWallet(wallet);
     } catch (err: any) {
       showToast(err?.message ?? "Could not load your dashboard.");
     }
@@ -40508,6 +40514,43 @@ ${waybillLineItems(w).length > 1
   /** Product name for a stock row, falling back to the id when unknown. */
   const productNameById = (productId: string) =>
     products.find((p) => p.id === productId)?.name ?? productId;
+
+  const openPdaCod = async (agentId: string) => {
+    setPdaCodAgentId(agentId);
+    try {
+      setPdaCod(await personalDeliveryAgentsApi.agentCod(agentId));
+    } catch (err: any) { showToast(err?.message ?? "Could not load the cash position."); }
+  };
+
+  const pdaRecordRemittance = async () => {
+    if (!pdaCodAgentId) return;
+    const amount = Number(pdaRemittanceDraft.amount);
+    if (!Number.isFinite(amount) || amount <= 0) { showToast("Enter the amount received."); return; }
+    setPdaSaving(true);
+    try {
+      const result = await personalDeliveryAgentsApi.recordRemittance(pdaCodAgentId, {
+        amount,
+        method: pdaRemittanceDraft.method,
+        reference: pdaRemittanceDraft.reference.trim() || undefined
+      });
+      setModal(null);
+      // An unexplained surplus matters as much as a shortfall, so it is said
+      // out loud rather than quietly absorbed.
+      showToast(result.note ?? `Applied to ${result.applied} order${result.applied === 1 ? "" : "s"}.`);
+      await Promise.all([openPdaCod(pdaCodAgentId), loadPersonalDeliveryAgents()]);
+    } catch (err: any) { showToast(err?.message ?? "Could not record that payment."); }
+    finally { setPdaSaving(false); }
+  };
+
+  const pdaPayEarnings = async (agentId: string) => {
+    setPdaSaving(true);
+    try {
+      const result = await personalDeliveryAgentsApi.payEarnings(agentId, {});
+      showToast(`Paid ${formatMoney(result.amount)} across ${result.orders} order${result.orders === 1 ? "" : "s"}.`);
+      await openPdaCod(agentId);
+    } catch (err: any) { showToast(err?.message ?? "Could not pay those earnings."); }
+    finally { setPdaSaving(false); }
+  };
 
   const openPdaStock = async (agentId: string) => {
     setPdaStockAgentId(agentId);
@@ -46622,13 +46665,30 @@ ${waybillLineItems(w).length > 1
               ))}
             </div>
 
-            {/* Money is deliberately blank rather than ₦0. An agent holding our
-                cash who is shown "₦0 to remit" is the worst possible answer. */}
-            <section className="mt-3 rounded-2xl border border-dashed border-gray-300 bg-white px-4 py-3">
-              <div className="text-sm font-black text-gray-900">Your wallet</div>
-              <p className="m-0 mt-1 text-xs text-gray-500">
-                Earnings and cash to remit appear here once the office finishes setting up COD reconciliation. Nothing is shown as zero in the meantime, so you never see “nothing to remit” by mistake.
-              </p>
+            {/* Two separate pots, never one number. What the agent OWES us and
+                what we OWE them must never blur into a single "balance" - that
+                is exactly how a shortfall hides. */}
+            <section className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Company money you are holding</div>
+                <div className={`mt-1 text-2xl font-black ${(pdaWallet?.codToRemit ?? 0) > 0 ? "text-red-600" : "text-gray-900"}`}>
+                  {formatMoney(pdaWallet?.codToRemit ?? 0)}
+                </div>
+                <p className="m-0 mt-0.5 text-[11px] text-gray-500">
+                  {(pdaWallet?.ordersWithCashOutstanding ?? 0) > 0
+                    ? `From ${pdaWallet?.ordersWithCashOutstanding} delivered order${pdaWallet?.ordersWithCashOutstanding === 1 ? "" : "s"}. Hand over the full amount — your fee is paid to you separately.`
+                    : "Nothing to hand over right now."}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Your earnings</div>
+                <div className="mt-1 text-2xl font-black text-emerald-600">{formatMoney(pdaWallet?.availableEarnings ?? 0)}</div>
+                <p className="m-0 mt-0.5 text-[11px] text-gray-500">
+                  ready to be paid to you{(pdaWallet?.pendingEarnings ?? 0) > 0
+                    ? ` · ${formatMoney(pdaWallet?.pendingEarnings ?? 0)} more once that cash reaches the office`
+                    : ""}
+                </p>
+              </div>
             </section>
           </>
         )}
@@ -46741,6 +46801,169 @@ ${waybillLineItems(w).length > 1
             ))}
           </div>
         </nav>
+      </div>
+    );
+  };
+
+  // COD & Reconciliation. Company cash and agent earnings are shown as two
+  // separate columns of money throughout - an agent never nets their fee off
+  // the customer's payment, so the books must not imply that they can.
+  const renderPdaCod = () => {
+    const operational = pdaAgents.filter((agent) => PDA_OPERATIONAL_STATUSES.includes(agent.accountStatus));
+    const selected = pdaCodAgentId ? pdaAgents.find((a) => a.id === pdaCodAgentId) : null;
+    const view = pdaCod;
+
+    const reconTone = (status: string) =>
+      status === "Reconciled" || status === "Nothing to Remit" ? "bg-emerald-50 text-emerald-700"
+      : status === "Cash Held by Agent" ? "bg-amber-50 text-amber-700"
+      : status === "Partially Remitted" ? "bg-orange-50 text-orange-700"
+      : status === "Overpayment" || status === "Short Payment" || status === "Under Review" ? "bg-red-50 text-red-700"
+      : "bg-gray-50 text-gray-500";
+
+    return (
+      <div className="space-y-4">
+        <section className="rounded-xl border border-blue-100 bg-blue-50/60 px-5 py-4">
+          <h2 className="m-0 text-sm font-bold text-gray-900">How the money works</h2>
+          <p className="m-0 mt-1 text-xs text-gray-600">
+            The agent collects the <strong>full</strong> customer payment and hands over the <strong>full</strong> amount. Their delivery fee is paid separately, once that order's cash is in. They never deduct it themselves — if they could, an agent keeping their ₦4,500 fee and an agent ₦4,500 short would look identical in the books.
+          </p>
+        </section>
+
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+          <h3 className="m-0 text-sm font-bold text-gray-900">Pick an agent</h3>
+          {operational.length === 0 ? (
+            <p className="m-0 mt-3 rounded-lg border border-dashed border-gray-300 px-4 py-6 text-center text-xs text-gray-400">
+              No approved agents yet.
+            </p>
+          ) : (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {operational.map((agent) => (
+                <button key={agent.id} type="button" onClick={() => void openPdaCod(agent.id)}
+                  className={`!min-h-0 rounded-lg border px-3 py-2 text-xs font-bold ${pdaCodAgentId === agent.id ? "border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]" : "border-gray-200 text-gray-700 hover:bg-gray-50"}`}>
+                  {agent.fullName}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {selected && view && (
+          <>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Our cash they hold</div>
+                <div className={`mt-1 text-xl font-black ${view.position.outstanding > 0 ? "text-red-600" : "text-gray-900"}`}>
+                  {formatMoney(view.position.outstanding)}
+                </div>
+                <div className="mt-0.5 text-[11px] text-gray-400">
+                  across {view.position.ordersWithCashOutstanding} order{view.position.ordersWithCashOutstanding === 1 ? "" : "s"}
+                </div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">We owe them (available)</div>
+                <div className="mt-1 text-xl font-black text-emerald-600">{formatMoney(view.position.availableEarnings)}</div>
+                <div className="mt-0.5 text-[11px] text-gray-400">cash for those orders is in</div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Their pending fees</div>
+                <div className="mt-1 text-xl font-black text-gray-900">{formatMoney(view.position.pendingEarnings)}</div>
+                <div className="mt-0.5 text-[11px] text-gray-400">not payable until the cash arrives</div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">COD limit</div>
+                <div className="mt-1 text-xl font-black text-gray-900">
+                  {selected.maxCodExposure ? formatMoney(selected.maxCodExposure) : "Not set"}
+                </div>
+                <div className="mt-0.5 text-[11px] text-gray-400">
+                  {selected.maxCodExposure ? "new orders blocked above this" : "no cap - new orders never blocked"}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => { setPdaRemittanceDraft({ amount: "", method: "Cash", reference: "" }); setModal("pdaRemittance"); }}
+                className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1560a8]">
+                Record cash received
+              </button>
+              <button type="button" disabled={view.position.availableEarnings <= 0 || pdaSaving}
+                onClick={() => void pdaPayEarnings(selected.id)}
+                className="!min-h-0 rounded-lg border border-emerald-200 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-40">
+                Pay {formatMoney(view.position.availableEarnings)} in earnings
+              </button>
+            </div>
+
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-200">
+                <h3 className="m-0 text-sm font-bold text-gray-900">Delivered orders</h3>
+              </div>
+              {view.rows.length === 0 ? (
+                <p className="m-0 px-5 py-8 text-center text-xs text-gray-400">No delivered orders yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                        <th className="px-5 py-2">Order</th>
+                        <th className="px-3 py-2">Collected</th>
+                        <th className="px-3 py-2" title="Always the full amount collected. The agent's fee is never deducted from it.">Due to us</th>
+                        <th className="px-3 py-2">Remitted</th>
+                        <th className="px-3 py-2">Difference</th>
+                        <th className="px-3 py-2">Their fee</th>
+                        <th className="px-3 py-2">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {view.rows.map((row) => (
+                        <tr key={row.assignmentId} className="border-t border-gray-100">
+                          <td className="px-5 py-2">
+                            <div className="font-bold text-gray-900">{row.customer ?? row.orderId}</div>
+                            <div className="text-[11px] text-gray-400">{row.orderId}</div>
+                          </td>
+                          <td className="px-3 py-2 text-gray-700">{formatMoney(row.amountCollected)}</td>
+                          <td className="px-3 py-2 font-black text-gray-900">{formatMoney(row.amountDue)}</td>
+                          <td className="px-3 py-2 text-gray-700">{formatMoney(row.amountRemitted)}</td>
+                          <td className={`px-3 py-2 font-bold ${row.difference > 0 ? "text-red-600" : row.difference < 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                            {formatMoney(row.difference)}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className="text-emerald-700">{formatMoney(row.deliveryFee)}</span>
+                            <span className="ml-1 text-[10px] text-gray-400">{row.earningStatus}</span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${reconTone(row.reconciliationStatus)}`}>
+                              {row.reconciliationStatus}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            {view.remittances.length > 0 && (
+              <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-200">
+                  <h3 className="m-0 text-sm font-bold text-gray-900">Cash received from this agent</h3>
+                </div>
+                <div className="divide-y divide-gray-100">
+                  {view.remittances.map((row: any) => (
+                    <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 text-xs">
+                      <div>
+                        <span className="font-black text-gray-900">{formatMoney(Number(row.amount))}</span>
+                        <span className="ml-2 text-gray-500">{row.method}{row.reference ? ` · ${row.reference}` : ""}</span>
+                      </div>
+                      <span className="text-gray-400">
+                        {new Date(row.received_at).toLocaleDateString([], { dateStyle: "medium" })} · {row.received_by_name ?? "office"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
+        )}
       </div>
     );
   };
@@ -47180,7 +47403,9 @@ ${waybillLineItems(w).length > 1
       { label: "Restricted", value: String(totals?.restricted ?? 0), hint: "Blocked from new assignments", tone: "text-red-600" },
       { label: "KYC Items Outstanding", value: String(totals?.kycItemsOutstanding ?? 0), hint: `${totals?.guarantorsOutstanding ?? 0} guarantors unverified`, tone: "text-amber-600" },
       { label: "Units With Agents", value: String(totals?.inventoryHeld ?? 0), hint: `${totals?.inventoryAvailable ?? 0} available · ${totals?.stockInTransit ?? 0} in transit` },
-      { label: "Stock Unaccounted", value: String(totals?.inventoryUnaccounted ?? 0), hint: `${totals?.openStockReports ?? 0} report${(totals?.openStockReports ?? 0) === 1 ? "" : "s"} awaiting review`, tone: (totals?.inventoryUnaccounted ?? 0) > 0 ? "text-red-600" : undefined }
+      { label: "Stock Unaccounted", value: String(totals?.inventoryUnaccounted ?? 0), hint: `${totals?.openStockReports ?? 0} report${(totals?.openStockReports ?? 0) === 1 ? "" : "s"} awaiting review`, tone: (totals?.inventoryUnaccounted ?? 0) > 0 ? "text-red-600" : undefined },
+      { label: "Our Cash With Agents", value: formatMoney(totals?.codOutstanding ?? 0), hint: `${totals?.agentsHoldingCash ?? 0} agent${(totals?.agentsHoldingCash ?? 0) === 1 ? "" : "s"} holding it`, tone: (totals?.codOutstanding ?? 0) > 0 ? "text-red-600" : undefined },
+      { label: "Earnings We Owe", value: formatMoney(totals?.earningsAvailable ?? 0), hint: `${formatMoney(totals?.earningsPending ?? 0)} pending until cash is in`, tone: "text-emerald-600" }
     ];
 
     return (
@@ -47216,10 +47441,10 @@ ${waybillLineItems(w).length > 1
             <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
               <h2 className="text-sm font-bold text-gray-900">Not measurable yet</h2>
               <p className="mt-1 text-xs text-gray-500">
-                Orders assigned, dispatches in progress and COD outstanding are shown as soon as Orders &amp; Dispatch and COD &amp; Reconciliation are built. They are left blank rather than shown as ₦0 - a zero here would look like nothing is outstanding.
+                Today's order counts arrive with the Orders &amp; Dispatch management view. They are left blank rather than shown as 0, so an empty figure is never mistaken for a quiet day.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
-                {["Orders Assigned Today", "Dispatches In Progress", "Delivered Today", "COD Outstanding", "Overdue Remittances"].map((label) => (
+                {["Orders Assigned Today", "Dispatches In Progress", "Delivered Today"].map((label) => (
                   <span key={label} className="rounded-lg border border-dashed border-gray-300 px-2.5 py-1 text-[11px] font-semibold text-gray-400">{label}</span>
                 ))}
               </div>
@@ -47292,6 +47517,8 @@ ${waybillLineItems(w).length > 1
           renderPdaApplicationsAndKyc()
         ) : pdaSubPage === "Inventory" ? (
           renderPdaInventory()
+        ) : pdaSubPage === "COD & Reconciliation" ? (
+          renderPdaCod()
         ) : (
           <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-12 text-center">
             <h2 className="text-base font-bold text-gray-900">{pdaSubPage}</h2>
@@ -75877,6 +76104,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "pdaFailed" && "What happened?"}
                 {modal === "pdaReschedule" && "Reschedule"}
                 {modal === "pdaSendStock" && "Send stock to agent"}
+                {modal === "pdaRemittance" && "Record cash received"}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -81383,6 +81611,38 @@ ${waybillLineItems(w).length > 1
                 </div>
               );
             })()}
+
+	            {modal === "pdaRemittance" && (
+	              <div className="space-y-4">
+	                <p className="m-0 text-xs text-gray-500">
+	                  Record this only when the money is actually in hand — “the agent says they sent it” and “we have it” are different things, and only the second reduces what they owe. It clears their oldest unpaid deliveries first.
+	                </p>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Amount received *</span>
+	                  <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRemittanceDraft.amount}
+	                    onChange={(e) => setPdaRemittanceDraft((v) => ({ ...v, amount: e.target.value }))} />
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">How</span>
+	                  <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRemittanceDraft.method}
+	                    onChange={(e) => setPdaRemittanceDraft((v) => ({ ...v, method: e.target.value }))}>
+	                    {["Cash", "Transfer", "POS", "Other"].map((o) => <option key={o} value={o}>{o}</option>)}
+	                  </select>
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Reference</span>
+	                  <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRemittanceDraft.reference}
+	                    onChange={(e) => setPdaRemittanceDraft((v) => ({ ...v, reference: e.target.value }))}
+	                    placeholder="Transfer reference, teller number…" />
+	                </label>
+	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
+	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={pdaRecordRemittance}>
+	                    {pdaSaving ? "Recording…" : "Record payment"}
+	                  </button>
+	                </div>
+	              </div>
+	            )}
 
 	            {modal === "pdaSendStock" && (
 	              <div className="space-y-4">
