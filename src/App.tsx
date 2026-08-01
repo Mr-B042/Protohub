@@ -126,7 +126,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -195,8 +195,8 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | null;
-type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | null;
+type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -246,6 +246,13 @@ const PDA_SUBNAV_ITEMS: Array<{ key: PdaSubPage; label: string; icon: typeof Lay
 // Mirrors the same groups in backend/src/routes/personal-delivery-agents.ts.
 // Only these statuses mean an agent may actually hold stock and take orders.
 const PDA_OPERATIONAL_STATUSES = ["Approved", "Probation", "Active"];
+type PdaPortalTab = "Home" | "Orders" | "Profile";
+const PDA_PORTAL_TABS: Array<{ key: PdaPortalTab; label: string; icon: typeof LayoutPanelTop }> = [
+  { key: "Home", label: "Home", icon: LayoutPanelTop },
+  { key: "Orders", label: "Orders", icon: PackageCheck },
+  { key: "Profile", label: "Profile", icon: Users }
+];
+
 const PDA_PENDING_STATUSES = [
   "Application Started", "KYC Incomplete", "KYC Submitted",
   "Guarantor Verification Pending", "Management Review"
@@ -549,7 +556,7 @@ type SmsInboundMessage = {
 type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 type CreateOrderContext = "admin" | "rep";
 type DateRange = { start: string; end: string };
-type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer" | "Recovery Rep";
+type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent";
 type UserPermission =
   | "create_orders" | "edit_orders" | "delete_orders" | "change_order_status" | "reassign_orders"
   | "manage_inventory" | "manage_products"
@@ -2443,6 +2450,9 @@ const defaultPermsByRole: Record<EditableUserRole, UserPermission[]> = {
   // Recovery-only: no fresh-order creation, no weekend stock/inventory access -
   // every order in their queue arrives via reassignment, never round-robin.
   "Recovery Rep":      ["change_order_status", "reassign_orders"],
+  // An outside individual, not staff. They update only their own deliveries
+  // through the portal endpoints, so they hold no company permissions at all.
+  "Delivery Agent":    [],
 };
 
 const defaultPermissionsForRole = (role: EditableUserRole | undefined): UserPermission[] =>
@@ -2498,6 +2508,11 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   // calling queue, neither of which this role uses).
   "Recovery Rep": [
     "Recovery Rep Dashboard", "Customers", "Notifications", "Settings", "WhatsApp"
+  ],
+  // A Personal Delivery Agent is an outside individual, not staff. They get
+  // their own portal and nothing else - no customer list, no company data.
+  "Delivery Agent": [
+    "My Deliveries", "Settings"
   ]
 };
 
@@ -2509,7 +2524,8 @@ const defaultLandingByRole: Record<EditableUserRole, AccessiblePage> = {
   "Inventory Manager": "Inventory",
   "Marketer":          "Marketing",
   "Viewer":            "Orders",
-  "Recovery Rep":      "Recovery Rep Dashboard"
+  "Recovery Rep":      "Recovery Rep Dashboard",
+  "Delivery Agent":    "My Deliveries"
 };
 
 const dashboardHashByPage: Record<ActivePage, string> = {
@@ -2533,6 +2549,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Weekend Stock Summary": "#/dashboard/admin/weekend-stock-summary",
   Agents: "#/dashboard/admin/agents",
   "Personal Delivery Agents": "#/dashboard/admin/personal-delivery-agents",
+  "My Deliveries": "#/dashboard/agent/deliveries",
   Waybill: "#/dashboard/admin/waybill",
   Payroll: "#/dashboard/admin/payroll",
   Customers: "#/dashboard/admin/customers",
@@ -11132,6 +11149,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaNewAgent, setPdaNewAgent] = useState({ fullName: "", phone: "", whatsappPhone: "", state: "", city: "", transportMethod: "" });
   const [pdaSaving, setPdaSaving] = useState(false);
   const [pdaDetail, setPdaDetail] = useState<PdaAgentDetail | null>(null);
+  const [pdaPortalTab, setPdaPortalTab] = useState<PdaPortalTab>("Home");
+  const [pdaMySummary, setPdaMySummary] = useState<PdaMySummary | null>(null);
+  const [pdaMyOrders, setPdaMyOrders] = useState<PdaAssignment[]>([]);
+  const [pdaActiveAssignment, setPdaActiveAssignment] = useState<PdaAssignment | null>(null);
+  const [pdaDeliveredDraft, setPdaDeliveredDraft] = useState({ amountCollected: "", paymentMethod: "Cash", proofType: "Customer OTP", proofReference: "" });
+  const [pdaFailedDraft, setPdaFailedDraft] = useState({ outcome: "Failed", failureReason: "", failureNote: "" });
+  const [pdaRescheduleDraft, setPdaRescheduleDraft] = useState({ rescheduledTo: "", daypart: "", reason: "" });
   const [pdaGuarantorDraft, setPdaGuarantorDraft] = useState<{
     slot: number; guarantorType: string; fullName: string; relationship: string;
     phone: string; whatsappPhone: string; address: string; occupation: string; consentGiven: boolean;
@@ -22773,6 +22797,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "weekend-stock-summary": "Weekend Stock Summary",
       agents: "Agents",
       "personal-delivery-agents": "Personal Delivery Agents",
+      "my-deliveries": "My Deliveries",
       waybill: "Waybill",
       payroll: "Payroll",
       customers: "Customers",
@@ -29024,6 +29049,7 @@ ${waybillLineItems(w).length > 1
       "Weekend Stock Summary": "#/dashboard/admin/weekend-stock-summary",
       Agents: "#/dashboard/admin/agents",
   "Personal Delivery Agents": "#/dashboard/admin/personal-delivery-agents",
+  "My Deliveries": "#/dashboard/agent/deliveries",
       Waybill: "#/dashboard/admin/waybill",
       Payroll: "#/dashboard/admin/payroll",
       Customers: "#/dashboard/admin/customers",
@@ -29089,13 +29115,17 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
       if (label === "Inventory") {
         setInventoryView("dashboard");
       }
       if (label === "Sales Reps") {
         setSalesRepsPageTab("Overview");
         setSalesRepView("list");
+      }
+      if (label === "Personal Delivery Agents") {
+        setPdaSubPage("Overview");
+        setPdaDetail(null);
       }
       if (label === "Call Rep Console") {
         setCallQueueIndex(0);
@@ -40319,10 +40349,158 @@ ${waybillLineItems(w).length > 1
   };
 
   useEffect(() => {
+    if (activePage !== "My Deliveries") return;
+    void loadPdaPortal();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage]);
+
+  useEffect(() => {
     if (activePage !== "Personal Delivery Agents") return;
     void loadPersonalDeliveryAgents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, currentRole]);
+
+  // ── Agent portal actions ───────────────────────────────
+  const loadPdaPortal = async () => {
+    try {
+      const [summary, orders] = await Promise.all([
+        personalDeliveryAgentsApi.mySummary(),
+        personalDeliveryAgentsApi.myOrders()
+      ]);
+      setPdaMySummary(summary);
+      setPdaMyOrders(orders?.rows ?? []);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not load your dashboard.");
+    }
+  };
+
+  const pdaSetAvailability = async (availability: string) => {
+    try {
+      await personalDeliveryAgentsApi.setAvailability(availability);
+      await loadPdaPortal();
+    } catch (err: any) { showToast(err?.message ?? "Could not change your availability."); }
+  };
+
+  const pdaRespond = async (assignmentId: string, accept: boolean) => {
+    let declineReason: string | undefined;
+    if (!accept) {
+      const reason = window.prompt(
+        "Why can you not take this one?\nToo far / Not available / Transport issue / Fee too low / Product not physically available / Unsafe location / Too many active orders / Other"
+      );
+      if (!reason || !reason.trim()) return;
+      declineReason = reason.trim();
+    }
+    try {
+      await personalDeliveryAgentsApi.respond(assignmentId, { accept, declineReason });
+      showToast(accept ? "Accepted. Call the customer before you move." : "Declined. The office will reassign it.");
+      await loadPdaPortal();
+    } catch (err: any) { showToast(err?.message ?? "Could not send your answer."); }
+  };
+
+  const pdaOpenContactSheet = (row: PdaAssignment) => {
+    setPdaActiveAssignment(row);
+    setModal("pdaContact");
+  };
+
+  const pdaSetContact = async (customerContactStatus: string) => {
+    if (!pdaActiveAssignment) return;
+    try {
+      await personalDeliveryAgentsApi.setContact(pdaActiveAssignment.id, { customerContactStatus });
+      setModal(null);
+      showToast(customerContactStatus === "Customer Ready"
+        ? "Saved. You can start this delivery now."
+        : "Saved.");
+      await loadPdaPortal();
+    } catch (err: any) { showToast(err?.message ?? "Could not save that."); }
+  };
+
+  const pdaDispatch = async (assignmentId: string) => {
+    const minutes = window.prompt("Roughly how many minutes until you arrive?", "30");
+    if (minutes === null) return;
+    try {
+      await personalDeliveryAgentsApi.dispatch(assignmentId, { expectedMinutes: Number(minutes) || 0 });
+      showToast("Delivery started. Safe trip.");
+      await loadPdaPortal();
+    } catch (err: any) {
+      // The server runs the same readiness gate, so this is what an agent sees
+      // if they somehow get here without the customer confirming.
+      showToast(err?.message ?? "You cannot start this delivery yet.");
+    }
+  };
+
+  const pdaOpenDeliveredSheet = (row: PdaAssignment) => {
+    setPdaActiveAssignment(row);
+    setPdaDeliveredDraft({
+      amountCollected: String(row.order?.amount ?? ""),
+      paymentMethod: "Cash",
+      proofType: "Customer OTP",
+      proofReference: ""
+    });
+    setModal("pdaDelivered");
+  };
+
+  const pdaSubmitDelivered = async () => {
+    if (!pdaActiveAssignment) return;
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.markDelivered(pdaActiveAssignment.id, {
+        amountCollected: Number(pdaDeliveredDraft.amountCollected || 0),
+        paymentMethod: pdaDeliveredDraft.paymentMethod,
+        proofType: pdaDeliveredDraft.proofType,
+        proofReference: pdaDeliveredDraft.proofReference.trim() || undefined
+      });
+      setModal(null);
+      showToast("Marked delivered. Well done.");
+      await loadPdaPortal();
+    } catch (err: any) { showToast(err?.message ?? "Could not close this delivery."); }
+    finally { setPdaSaving(false); }
+  };
+
+  const pdaOpenFailedSheet = (row: PdaAssignment) => {
+    setPdaActiveAssignment(row);
+    setPdaFailedDraft({ outcome: "Failed", failureReason: "", failureNote: "" });
+    setModal("pdaFailed");
+  };
+
+  const pdaSubmitFailed = async () => {
+    if (!pdaActiveAssignment) return;
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.markFailed(pdaActiveAssignment.id, {
+        outcome: pdaFailedDraft.outcome,
+        failureReason: pdaFailedDraft.failureReason,
+        failureNote: pdaFailedDraft.failureNote.trim() || undefined
+      });
+      setModal(null);
+      showToast("Recorded. The office can see what happened.");
+      await loadPdaPortal();
+    } catch (err: any) { showToast(err?.message ?? "Could not record that."); }
+    finally { setPdaSaving(false); }
+  };
+
+  const pdaOpenRescheduleSheet = (row: PdaAssignment) => {
+    setPdaActiveAssignment(row);
+    setPdaRescheduleDraft({ rescheduledTo: "", daypart: "", reason: "" });
+    setModal("pdaReschedule");
+  };
+
+  const pdaSubmitReschedule = async () => {
+    if (!pdaActiveAssignment) return;
+    setPdaSaving(true);
+    try {
+      const { stockReleased } = await personalDeliveryAgentsApi.reschedule(pdaActiveAssignment.id, {
+        rescheduledTo: pdaRescheduleDraft.rescheduledTo || undefined,
+        daypart: pdaRescheduleDraft.daypart || undefined,
+        reason: pdaRescheduleDraft.reason.trim() || undefined
+      });
+      setModal(null);
+      showToast(stockReleased
+        ? "Saved. With no firm date the item goes back to your available stock."
+        : "Saved. The item stays reserved for that date.");
+      await loadPdaPortal();
+    } catch (err: any) { showToast(err?.message ?? "Could not reschedule."); }
+    finally { setPdaSaving(false); }
+  };
 
   const openPdaApplication = async (agentId: string) => {
     try {
@@ -46330,6 +46508,204 @@ ${waybillLineItems(w).length > 1
         );
       })()}
       </>
+    );
+  };
+
+  // ===== Personal Delivery Agent portal (mobile-first) =====
+  // Built for someone working one-handed on a phone between deliveries, not
+  // for an office screen: large targets, one obvious next action per order,
+  // and no company reporting. Everything an agent cannot act on is left out.
+  const renderPdaPortal = () => {
+    const summary = pdaMySummary;
+    const agent = summary?.agent;
+
+    const contactLabel = (status: string) =>
+      status === "Customer Ready" ? "Customer is ready" : status;
+
+    // Exactly one next action per order, so there is never a decision to make
+    // about which button is the right one.
+    const nextStepFor = (row: PdaAssignment): { label: string; hint: string } => {
+      if (row.assignmentStatus === "Awaiting Agent Acceptance") return { label: "Accept or decline", hint: "This job is waiting for your answer" };
+      if (row.assignmentStatus === "Declined") return { label: "Declined", hint: "The office will reassign it" };
+      if (["Delivered", "Failed", "Rejected", "Cancelled"].includes(row.deliveryStatus)) return { label: row.deliveryStatus, hint: "Nothing more to do" };
+      if (row.deliveryStatus === "Dispatch Started" || row.deliveryStatus === "Arrived at Customer Location") {
+        return { label: "On the way", hint: "Close it when you arrive" };
+      }
+      if (row.customerContactStatus !== "Customer Ready") return { label: "Call the customer", hint: "Confirm they are ready before you move" };
+      return { label: "Ready to go", hint: "You can start this delivery" };
+    };
+
+    const openRows = pdaMyOrders.filter((row) => !["Delivered", "Failed", "Rejected", "Cancelled"].includes(row.deliveryStatus));
+    const doneRows = pdaMyOrders.filter((row) => ["Delivered", "Failed", "Rejected", "Cancelled"].includes(row.deliveryStatus));
+    const visibleRows = pdaPortalTab === "Orders" ? pdaMyOrders : openRows;
+
+    return (
+      <div className="mx-auto w-full max-w-xl pb-24">
+        <header className="px-1 pt-1">
+          <h1 className="m-0 text-xl font-black text-gray-900">Hello{agent ? `, ${agent.fullName.split(" ")[0]}` : ""}</h1>
+          <p className="m-0 text-xs text-gray-500">{agent ? `${agent.agentCode} · ${agent.accountStatus}` : "Loading your profile…"}</p>
+        </header>
+
+        {agent && !PDA_OPERATIONAL_STATUSES.includes(agent.accountStatus) && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Your account is <strong>{agent.accountStatus}</strong>. You cannot take new orders until the office clears it.
+          </div>
+        )}
+
+        {pdaPortalTab === "Home" && (
+          <>
+            {agent && PDA_OPERATIONAL_STATUSES.includes(agent.accountStatus) && (
+              <section className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <div>
+                  <div className="text-sm font-black text-gray-900">
+                    {agent.availability === "Available" ? "You are available" : `You are ${agent.availability.toLowerCase()}`}
+                  </div>
+                  <p className="m-0 text-[11px] text-gray-500">Turn this off when you cannot take deliveries.</p>
+                </div>
+                <button type="button" role="switch" aria-checked={agent.availability === "Available"}
+                  onClick={() => void pdaSetAvailability(agent.availability === "Available" ? "Unavailable" : "Available")}
+                  className={`relative h-8 w-14 !min-h-0 shrink-0 rounded-full p-0 transition-colors ${agent.availability === "Available" ? "bg-emerald-500" : "bg-gray-300"}`}>
+                  <span className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow transition-all ${agent.availability === "Available" ? "left-7" : "left-1"}`} />
+                </button>
+              </section>
+            )}
+
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              {[
+                { label: "Waiting for your answer", value: summary?.counts.awaitingAcceptance ?? 0, tone: "text-amber-600" },
+                { label: "Need a call first", value: summary?.counts.awaitingCustomerConfirmation ?? 0, tone: "text-sky-600" },
+                { label: "Ready to go", value: summary?.counts.readyToDispatch ?? 0, tone: "text-emerald-600" },
+                { label: "On the way", value: summary?.counts.inProgress ?? 0, tone: "text-[#1F8FE0]" },
+                { label: "Rescheduled", value: summary?.counts.rescheduled ?? 0, tone: "text-gray-700" },
+                { label: "Delivered today", value: summary?.counts.deliveredToday ?? 0, tone: "text-emerald-600" }
+              ].map((tile) => (
+                <div key={tile.label} className="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                  <div className={`text-2xl font-black ${tile.tone}`}>{tile.value}</div>
+                  <div className="text-[11px] font-semibold text-gray-500">{tile.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Money is deliberately blank rather than ₦0. An agent holding our
+                cash who is shown "₦0 to remit" is the worst possible answer. */}
+            <section className="mt-3 rounded-2xl border border-dashed border-gray-300 bg-white px-4 py-3">
+              <div className="text-sm font-black text-gray-900">Your wallet</div>
+              <p className="m-0 mt-1 text-xs text-gray-500">
+                Earnings and cash to remit appear here once the office finishes setting up COD reconciliation. Nothing is shown as zero in the meantime, so you never see “nothing to remit” by mistake.
+              </p>
+            </section>
+          </>
+        )}
+
+        <section className="mt-4 space-y-3">
+          <h2 className="m-0 px-1 text-sm font-black text-gray-900">
+            {pdaPortalTab === "Home" ? "What needs you now" : "All your orders"}
+          </h2>
+          {visibleRows.length === 0 ? (
+            <p className="m-0 rounded-2xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-400">
+              {pdaPortalTab === "Home" ? "Nothing waiting on you right now." : "No orders yet."}
+            </p>
+          ) : visibleRows.map((row) => {
+            const step = nextStepFor(row);
+            const canDispatch = row.assignmentStatus === "Accepted"
+              && row.customerContactStatus === "Customer Ready"
+              && ["Ready for Dispatch", "Rescheduled"].includes(row.deliveryStatus)
+              && ["Locked", "Approved"].includes(row.feeStatus);
+            const moving = ["Dispatch Started", "Arrived at Customer Location"].includes(row.deliveryStatus);
+            const closed = ["Delivered", "Failed", "Rejected", "Cancelled"].includes(row.deliveryStatus);
+            return (
+              <article key={row.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-base font-black text-gray-900">{row.order?.customer ?? row.orderId}</div>
+                    <p className="m-0 text-xs text-gray-500">
+                      {row.order?.productName ?? "Product"}{row.order?.quantity ? ` × ${row.order.quantity}` : ""}
+                    </p>
+                    <p className="m-0 text-xs text-gray-500">{[row.order?.address, row.order?.state].filter(Boolean).join(", ")}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-black text-gray-600">{row.deliveryStatus}</span>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl bg-gray-50 px-3 py-2">
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Collect from customer</div>
+                    <div className="text-sm font-black text-gray-900">{formatMoney(row.order?.amount ?? 0)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-gray-400">You earn</div>
+                    <div className="text-sm font-black text-emerald-600">{formatMoney(row.deliveryFee)}</div>
+                  </div>
+                </div>
+
+                <p className="m-0 mt-2 text-xs">
+                  <span className="font-black text-gray-500">Customer: </span>
+                  <span className={row.customerContactStatus === "Customer Ready" ? "font-black text-emerald-600" : "text-gray-700"}>
+                    {contactLabel(row.customerContactStatus)}
+                  </span>
+                </p>
+                {!closed && <p className="m-0 mt-0.5 text-[11px] font-semibold text-gray-500">{step.hint}</p>}
+
+                {!closed && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {row.assignmentStatus === "Awaiting Agent Acceptance" ? (
+                      <>
+                        <button type="button" onClick={() => void pdaRespond(row.id, true)}
+                          className="!min-h-0 flex-1 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white">Accept</button>
+                        <button type="button" onClick={() => void pdaRespond(row.id, false)}
+                          className="!min-h-0 flex-1 rounded-xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700">Decline</button>
+                      </>
+                    ) : (
+                      <>
+                        {row.order?.phone && (
+                          <a href={`tel:${row.order.phone}`} className="!min-h-0 flex-1 rounded-xl border border-gray-200 px-3 py-3 text-center text-sm font-black text-gray-700">Call</a>
+                        )}
+                        <button type="button" onClick={() => pdaOpenContactSheet(row)}
+                          className="!min-h-0 flex-1 rounded-xl border border-gray-200 px-3 py-3 text-sm font-black text-gray-700">Update customer</button>
+                        {moving ? (
+                          <>
+                            <button type="button" onClick={() => pdaOpenDeliveredSheet(row)}
+                              className="!min-h-0 w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white">Delivered</button>
+                            <button type="button" onClick={() => pdaOpenFailedSheet(row)}
+                              className="!min-h-0 flex-1 rounded-xl border border-red-200 px-3 py-3 text-sm font-black text-red-700">Failed</button>
+                            <button type="button" onClick={() => pdaOpenRescheduleSheet(row)}
+                              className="!min-h-0 flex-1 rounded-xl border border-gray-200 px-3 py-3 text-sm font-black text-gray-700">Reschedule</button>
+                          </>
+                        ) : (
+                          <button type="button" disabled={!canDispatch} onClick={() => void pdaDispatch(row.id)}
+                            title={canDispatch ? undefined : "The customer must confirm they are ready first"}
+                            className="!min-h-0 w-full rounded-xl bg-[#1F8FE0] px-4 py-3 text-sm font-black text-white disabled:bg-gray-200 disabled:text-gray-400">
+                            {canDispatch ? "Start delivery" : "Confirm the customer is ready first"}
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {closed && row.failureReason && (
+                  <p className="m-0 mt-2 text-xs text-red-600"><span className="font-black">Reason: </span>{row.failureReason}</p>
+                )}
+              </article>
+            );
+          })}
+          {pdaPortalTab === "Home" && doneRows.length > 0 && (
+            <p className="m-0 px-1 text-[11px] text-gray-400">{doneRows.length} finished order{doneRows.length === 1 ? "" : "s"} — see the Orders tab.</p>
+          )}
+        </section>
+
+        {/* Bottom bar: thumb-reachable, the way a phone is actually held. */}
+        <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 backdrop-blur">
+          <div className="mx-auto flex max-w-xl">
+            {PDA_PORTAL_TABS.map((tab) => (
+              <button key={tab.key} type="button" onClick={() => setPdaPortalTab(tab.key)}
+                className={`!min-h-0 flex flex-1 flex-col items-center gap-0.5 px-2 py-2.5 text-[10px] font-bold ${pdaPortalTab === tab.key ? "text-[#1F8FE0]" : "text-gray-400"}`}>
+                <tab.icon className="h-5 w-5" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+      </div>
     );
   };
 
@@ -59333,6 +59709,8 @@ ${waybillLineItems(w).length > 1
                 </div>
               );
             })()
+          ) : activePage === "My Deliveries" ? (
+            renderPdaPortal()
           ) : activePage === "Personal Delivery Agents" ? (
             renderPersonalDeliveryAgents()
           ) : activePage === "Agents" ? (
@@ -75320,6 +75698,10 @@ ${waybillLineItems(w).length > 1
                 {modal === "addAgent" && "Add New Agent"}
                 {modal === "addPersonalDeliveryAgent" && "Start Agent Application"}
                 {modal === "pdaGuarantor" && `Guarantor ${pdaGuarantorDraft?.slot ?? ""}`}
+                {modal === "pdaContact" && "Update the customer"}
+                {modal === "pdaDelivered" && "Confirm delivery"}
+                {modal === "pdaFailed" && "What happened?"}
+                {modal === "pdaReschedule" && "Reschedule"}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -80826,6 +81208,133 @@ ${waybillLineItems(w).length > 1
                 </div>
               );
             })()}
+
+	            {modal === "pdaContact" && (
+	              <div className="space-y-3">
+	                <p className="m-0 text-xs text-gray-500">
+	                  Only pick “Ready to receive” when the customer has actually said they are available now. Starting a delivery before that is how a wasted trip happens.
+	                </p>
+	                {[
+	                  { value: "Customer Ready", label: "Ready to receive", tone: "border-emerald-200 text-emerald-700" },
+	                  { value: "Contacted", label: "Spoke to them, not ready yet", tone: "border-gray-200 text-gray-700" },
+	                  { value: "Not Picking", label: "Not picking up", tone: "border-gray-200 text-gray-700" },
+	                  { value: "Number Not Reachable", label: "Number not reachable", tone: "border-gray-200 text-gray-700" },
+	                  { value: "Customer Requested Callback", label: "Asked me to call back", tone: "border-gray-200 text-gray-700" },
+	                  { value: "Customer Requested Reschedule", label: "Wants another day", tone: "border-gray-200 text-gray-700" },
+	                  { value: "Customer Cancelled", label: "Cancelled the order", tone: "border-red-200 text-red-700" }
+	                ].map((option) => (
+	                  <button key={option.value} type="button" onClick={() => void pdaSetContact(option.value)}
+	                    className={`!min-h-0 w-full rounded-xl border px-4 py-3 text-left text-sm font-bold ${option.tone}`}>
+	                    {option.label}
+	                  </button>
+	                ))}
+	              </div>
+	            )}
+
+	            {modal === "pdaDelivered" && (
+	              <div className="space-y-4">
+	                <p className="m-0 text-xs text-gray-500">
+	                  Proof is required — it protects you as much as the company if the money is ever queried.
+	                </p>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">How much did you collect? *</span>
+	                  <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDeliveredDraft.amountCollected}
+	                    onChange={(e) => setPdaDeliveredDraft((v) => ({ ...v, amountCollected: e.target.value }))} />
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Payment method</span>
+	                  <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDeliveredDraft.paymentMethod}
+	                    onChange={(e) => setPdaDeliveredDraft((v) => ({ ...v, paymentMethod: e.target.value }))}>
+	                    {["Cash", "Transfer", "POS", "Already paid"].map((o) => <option key={o} value={o}>{o}</option>)}
+	                  </select>
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Proof *</span>
+	                  <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDeliveredDraft.proofType}
+	                    onChange={(e) => setPdaDeliveredDraft((v) => ({ ...v, proofType: e.target.value }))}>
+	                    {["Customer OTP", "Confirmation call", "Customer signature", "Delivery photograph"].map((o) => <option key={o} value={o}>{o}</option>)}
+	                  </select>
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Proof details *</span>
+	                  <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaDeliveredDraft.proofReference}
+	                    onChange={(e) => setPdaDeliveredDraft((v) => ({ ...v, proofReference: e.target.value }))}
+	                    placeholder="OTP code, or who confirmed it" />
+	                </label>
+	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-3 text-sm font-bold text-gray-700" onClick={closeModal}>Cancel</button>
+	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-60" onClick={pdaSubmitDelivered}>
+	                    {pdaSaving ? "Saving…" : "Confirm delivered"}
+	                  </button>
+	                </div>
+	              </div>
+	            )}
+
+	            {modal === "pdaFailed" && (
+	              <div className="space-y-4">
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Outcome</span>
+	                  <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFailedDraft.outcome}
+	                    onChange={(e) => setPdaFailedDraft((v) => ({ ...v, outcome: e.target.value }))}>
+	                    <option value="Failed">Failed</option>
+	                    <option value="Rejected">Customer rejected it</option>
+	                  </select>
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Reason *</span>
+	                  <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFailedDraft.failureReason}
+	                    onChange={(e) => setPdaFailedDraft((v) => ({ ...v, failureReason: e.target.value }))}>
+	                    <option value="">Choose a reason…</option>
+	                    {["Customer unavailable", "Customer rejected product", "Customer did not have payment", "Price objection", "Customer changed mind", "Wrong address", "Customer could not be reached", "Product issue", "Agent transport problem", "Safety concern", "Other"].map((o) => (
+	                      <option key={o} value={o}>{o}</option>
+	                    ))}
+	                  </select>
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Anything else? {pdaFailedDraft.failureReason === "Other" && <span className="text-red-600">Required</span>}</span>
+	                  <textarea rows={3} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFailedDraft.failureNote}
+	                    onChange={(e) => setPdaFailedDraft((v) => ({ ...v, failureNote: e.target.value }))} />
+	                </label>
+	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-3 text-sm font-bold text-gray-700" onClick={closeModal}>Cancel</button>
+	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-red-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-60" onClick={pdaSubmitFailed}>
+	                    {pdaSaving ? "Saving…" : "Record it"}
+	                  </button>
+	                </div>
+	              </div>
+	            )}
+
+	            {modal === "pdaReschedule" && (
+	              <div className="space-y-4">
+	                <p className="m-0 text-xs text-gray-500">
+	                  If the customer gave a firm date, put it in and the item stays reserved for them. If they only said “I will call you”, leave the date blank — the item goes back to your available stock so it is not held for someone who may never call.
+	                </p>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">New date (leave blank if they gave none)</span>
+	                  <input type="date" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRescheduleDraft.rescheduledTo}
+	                    onChange={(e) => setPdaRescheduleDraft((v) => ({ ...v, rescheduledTo: e.target.value }))} />
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Time of day</span>
+	                  <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRescheduleDraft.daypart}
+	                    onChange={(e) => setPdaRescheduleDraft((v) => ({ ...v, daypart: e.target.value }))}>
+	                    <option value="">Any time</option>
+	                    {["Morning", "Afternoon", "Evening"].map((o) => <option key={o} value={o}>{o}</option>)}
+	                  </select>
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">What did the customer say?</span>
+	                  <textarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaRescheduleDraft.reason}
+	                    onChange={(e) => setPdaRescheduleDraft((v) => ({ ...v, reason: e.target.value }))} />
+	                </label>
+	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-3 text-sm font-bold text-gray-700" onClick={closeModal}>Cancel</button>
+	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-3 text-sm font-bold text-white disabled:opacity-60" onClick={pdaSubmitReschedule}>
+	                    {pdaSaving ? "Saving…" : "Save"}
+	                  </button>
+	                </div>
+	              </div>
+	            )}
 
 	            {modal === "pdaGuarantor" && pdaGuarantorDraft && (
 	              <div className="space-y-4">

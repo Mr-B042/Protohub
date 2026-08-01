@@ -638,6 +638,34 @@ export type PdaAgentDetail = {
   blockers: string[];
 };
 
+export type PdaAssignment = {
+  id: string; orderId: string; agentId: string;
+  assignmentStatus: string; offeredAt: string; declineReason?: string | null;
+  customerContactStatus: string; lastContactAt?: string | null; customerReadyAt?: string | null;
+  deliveryStatus: string; dispatchStartedAt?: string | null; expectedArrivalAt?: string | null;
+  deliveredAt?: string | null; failureReason?: string | null; failureNote?: string | null;
+  rescheduledTo?: string | null; rescheduleReason?: string | null; stockReserved: boolean;
+  deliveryFee: number; feeStatus: string;
+  amountCollected?: number | null; paymentMethod?: string | null; proofType?: string | null;
+  order?: {
+    id: string; customer: string; phone: string; address?: string | null; state?: string | null;
+    productName?: string | null; quantity?: number | null; amount: number;
+  } | null;
+};
+
+export type PdaMySummary = {
+  agent: {
+    id: string; fullName: string; agentCode: string; accountStatus: string;
+    trustLevel: string; availability: string; probationEndsAt?: string | null;
+  };
+  counts: {
+    awaitingAcceptance: number; awaitingCustomerConfirmation: number; readyToDispatch: number;
+    inProgress: number; rescheduled: number; deliveredToday: number;
+  };
+  /** null values mean "not built yet", never "zero" - see the route comment. */
+  wallet: { available: number | null; pending: number | null; codToRemit: number | null; note?: string };
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   reviewKycItem: (itemId: string, body: unknown) =>
@@ -660,6 +688,24 @@ export const personalDeliveryAgentsApi = {
     post<{ path: string }>("/api/personal-delivery-agents/media/upload", { dataUrl }),
   signedMediaUrl: (path: string) =>
     get<{ url: string }>(`/api/personal-delivery-agents/media/signed?path=${encodeURIComponent(path)}`),
+  assign: (id: string, body: unknown) => post<{ row: PdaAssignment }>(`/api/personal-delivery-agents/${id}/assign`, body),
+  // The agent's own portal
+  mySummary: () => get<PdaMySummary>("/api/personal-delivery-agents/my/summary"),
+  myOrders: () => get<{ rows: PdaAssignment[] }>("/api/personal-delivery-agents/my/orders"),
+  respond: (assignmentId: string, body: unknown) =>
+    post<{ row: PdaAssignment }>(`/api/personal-delivery-agents/my/orders/${assignmentId}/respond`, body),
+  setContact: (assignmentId: string, body: unknown) =>
+    post<{ row: PdaAssignment }>(`/api/personal-delivery-agents/my/orders/${assignmentId}/contact`, body),
+  dispatch: (assignmentId: string, body: unknown) =>
+    post<{ row: PdaAssignment }>(`/api/personal-delivery-agents/my/orders/${assignmentId}/dispatch`, body),
+  markDelivered: (assignmentId: string, body: unknown) =>
+    post<{ row: PdaAssignment }>(`/api/personal-delivery-agents/my/orders/${assignmentId}/delivered`, body),
+  markFailed: (assignmentId: string, body: unknown) =>
+    post<{ row: PdaAssignment }>(`/api/personal-delivery-agents/my/orders/${assignmentId}/failed`, body),
+  reschedule: (assignmentId: string, body: unknown) =>
+    post<{ row: PdaAssignment; stockReleased: boolean }>(`/api/personal-delivery-agents/my/orders/${assignmentId}/reschedule`, body),
+  setAvailability: (availability: string) =>
+    post<{ availability: string }>("/api/personal-delivery-agents/my/availability", { availability }),
   list: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
     return get<{ rows: PersonalDeliveryAgentRow[]; pendingMigration?: boolean }>(`/api/personal-delivery-agents${qs}`);

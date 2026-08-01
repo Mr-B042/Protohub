@@ -16,6 +16,10 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { randomUUID } from "node:crypto";
 import { approvalBlockers } from "../lib/pda-approval.js";
+import {
+  dispatchBlockers, deliveryProofBlockers, rescheduleKeepsStockReserved,
+  failureReasonBlockers, CUSTOMER_READY
+} from "../lib/pda-delivery-flow.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -711,6 +715,403 @@ router.post("/:id/status", requireRole(...MANAGEMENT_ROLES), async (req, res) =>
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not update the status." });
   }
+});
+
+
+// ─────────────────────────────────────────────────────────
+// Order assignments and the agent's own workflow (migration 190).
+// ─────────────────────────────────────────────────────────
+
+const ASSIGNMENTS = "pda_order_assignments";
+/** The agent's own portal role. */
+const AGENT_ROLE = "Delivery Agent";
+
+const mapAssignment = (row: any) => ({
+  id: row.id,
+  orderId: row.order_id,
+  agentId: row.agent_id,
+  assignmentStatus: row.assignment_status,
+  offeredAt: row.offered_at,
+  declineReason: row.decline_reason ?? null,
+  customerContactStatus: row.customer_contact_status,
+  lastContactAt: row.last_contact_at ?? null,
+  customerReadyAt: row.customer_ready_at ?? null,
+  deliveryStatus: row.delivery_status,
+  dispatchStartedAt: row.dispatch_started_at ?? null,
+  expectedArrivalAt: row.expected_arrival_at ?? null,
+  deliveredAt: row.delivered_at ?? null,
+  failureReason: row.failure_reason ?? null,
+  failureNote: row.failure_note ?? null,
+  rescheduledTo: row.rescheduled_to ?? null,
+  rescheduleReason: row.reschedule_reason ?? null,
+  stockReserved: row.stock_reserved,
+  deliveryFee: Number(row.delivery_fee ?? 0),
+  feeStatus: row.fee_status,
+  amountCollected: row.amount_collected === null || row.amount_collected === undefined
+    ? null : Number(row.amount_collected),
+  paymentMethod: row.payment_method ?? null,
+  proofType: row.proof_type ?? null,
+  order: row.order ?? null
+});
+
+/** org_id can arrive as an array on some tokens; normalise once. */
+const orgIdOf = (req: any): string =>
+  Array.isArray(req.user?.orgId) ? String(req.user.orgId[0] ?? "") : String(req.user?.orgId ?? "");
+
+/** Express route params are typed loosely here; take the first value. */
+const paramOf = (value: unknown): string =>
+  Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
+
+/**
+ * The personal delivery agent record behind the signed-in user.
+ * Returns null for anyone who is not a portal agent.
+ */
+async function agentForUser(orgId: string, userId: string) {
+  const { data } = await supabase.from(AGENTS)
+    .select("id, full_name, agent_code, account_status, trust_level, availability, max_active_orders, max_cod_exposure, probation_ends_at")
+    .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+  return data ?? null;
+}
+
+// ── POST /api/personal-delivery-agents/:id/assign ─────────
+// Management offers an order to an agent. Refused unless the agent is actually
+// allowed to work - approval is not a formality, it is what stands between a
+// stranger and our stock and cash.
+const AssignSchema = z.object({
+  orderId: z.string().trim().min(1),
+  deliveryFee: z.number().min(0),
+  lockFee: z.boolean().optional()
+});
+
+router.post("/:id/assign", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = AssignSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const orgId = req.user!.orgId;
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, account_status, availability, max_active_orders")
+      .eq("org_id", orgId).eq("id", req.params.id).single();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+
+    if (!OPERATIONAL_STATUSES.includes(String(agent.account_status))) {
+      res.status(409).json({
+        error: `${agent.account_status} agents cannot be given orders. Approve the application first.`
+      });
+      return;
+    }
+
+    // Probation and trust levels exist to cap exposure, so the limit is checked
+    // here rather than trusted to whoever is doing the assigning.
+    if (agent.max_active_orders) {
+      const { count } = await supabase.from(ASSIGNMENTS)
+        .select("id", { count: "exact", head: true })
+        .eq("agent_id", agent.id)
+        .in("delivery_status", ["Ready for Dispatch", "Dispatch Started", "Arrived at Customer Location", "Rescheduled"]);
+      if ((count ?? 0) >= agent.max_active_orders) {
+        res.status(409).json({ error: `This agent is already at their limit of ${agent.max_active_orders} active orders.` });
+        return;
+      }
+    }
+
+    const { data, error } = await supabase.from(ASSIGNMENTS).insert({
+      org_id: orgId,
+      order_id: parsed.data.orderId,
+      agent_id: agent.id,
+      assignment_status: "Awaiting Agent Acceptance",
+      delivery_fee: parsed.data.deliveryFee,
+      fee_status: parsed.data.lockFee ? "Locked" : "Proposed",
+      fee_locked_at: parsed.data.lockFee ? new Date().toISOString() : null,
+      fee_proposed_by: "Management"
+    }).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(201).json({ row: mapAssignment(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not assign that order." });
+  }
+});
+
+// ── GET /api/personal-delivery-agents/my/summary ──────────
+// The agent's own Home screen. Deliberately small: an agent needs their work
+// queue and their money, not company reports.
+router.get("/my/summary", requireRole(AGENT_ROLE), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const agent = await agentForUser(orgId, req.user!.id);
+    if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
+
+    const { data: assignments } = await supabase.from(ASSIGNMENTS)
+      .select("*").eq("agent_id", agent.id).order("offered_at", { ascending: false });
+    const rows = assignments ?? [];
+    const open = rows.filter((r: any) => !["Delivered", "Failed", "Rejected", "Cancelled"].includes(r.delivery_status));
+
+    res.json({
+      agent: {
+        id: agent.id, fullName: agent.full_name, agentCode: agent.agent_code,
+        accountStatus: agent.account_status, trustLevel: agent.trust_level,
+        availability: agent.availability, probationEndsAt: agent.probation_ends_at ?? null
+      },
+      counts: {
+        awaitingAcceptance: rows.filter((r: any) => r.assignment_status === "Awaiting Agent Acceptance").length,
+        awaitingCustomerConfirmation: open.filter((r: any) => r.customer_contact_status !== "Customer Ready").length,
+        readyToDispatch: open.filter((r: any) => r.customer_contact_status === "Customer Ready"
+          && r.delivery_status === "Ready for Dispatch").length,
+        inProgress: open.filter((r: any) => ["Dispatch Started", "Arrived at Customer Location"].includes(r.delivery_status)).length,
+        rescheduled: open.filter((r: any) => r.delivery_status === "Rescheduled").length,
+        deliveredToday: rows.filter((r: any) => String(r.delivered_at ?? "").slice(0, 10) === new Date().toISOString().slice(0, 10)).length
+      },
+      // Earnings and cash owed arrive with COD & Reconciliation. Reported as
+      // unavailable rather than as zero: an agent seeing "₦0 to remit" when
+      // they are holding our cash is the worst possible wrong answer.
+      wallet: { available: null, pending: null, codToRemit: null, note: "COD & Reconciliation is not built yet" }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load your dashboard." });
+  }
+});
+
+// ── GET /api/personal-delivery-agents/my/orders ───────────
+router.get("/my/orders", requireRole(AGENT_ROLE), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const agent = await agentForUser(orgId, req.user!.id);
+    if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
+
+    const { data: assignments, error } = await supabase.from(ASSIGNMENTS)
+      .select("*").eq("agent_id", agent.id).order("offered_at", { ascending: false }).limit(200);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    const orderIds = [...new Set((assignments ?? []).map((row: any) => row.order_id))];
+    const { data: orders } = orderIds.length
+      ? await supabase.from("orders")
+          .select("id, customer, phone, address, state, product_name, package_name, amount, quantity, status")
+          .eq("org_id", orgId).in("id", orderIds)
+      : { data: [] as any[] };
+    const orderById = new Map((orders ?? []).map((o: any) => [o.id, o]));
+
+    res.json({
+      rows: (assignments ?? []).map((row: any) => {
+        const order = orderById.get(row.order_id);
+        return mapAssignment({
+          ...row,
+          // Only what the agent needs to do the job. No cost, no margin.
+          order: order ? {
+            id: order.id, customer: order.customer, phone: order.phone,
+            address: order.address, state: order.state,
+            productName: order.package_name || order.product_name,
+            quantity: order.quantity, amount: Number(order.amount ?? 0)
+          } : null
+        });
+      })
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load your orders." });
+  }
+});
+
+/** Loads an assignment and proves it belongs to the signed-in agent. */
+async function loadOwnAssignment(orgId: string, userId: string, assignmentId: string) {
+  const agent = await agentForUser(orgId, userId);
+  if (!agent) return { error: "No delivery agent profile is linked to this login." as const };
+  const { data } = await supabase.from(ASSIGNMENTS)
+    .select("*").eq("org_id", orgId).eq("id", assignmentId).eq("agent_id", agent.id).maybeSingle();
+  if (!data) return { error: "That order is not assigned to you." as const };
+  return { agent, assignment: data };
+}
+
+// ── POST .../my/orders/:assignmentId/respond ──────────────
+const RespondSchema = z.object({
+  accept: z.boolean(),
+  declineReason: z.enum([
+    "Too far", "Not available", "Transport issue", "Fee too low",
+    "Product not physically available", "Unsafe location", "Too many active orders", "Other"
+  ]).optional()
+}).superRefine((value, ctx) => {
+  if (!value.accept && !value.declineReason) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["declineReason"], message: "Say why you cannot take it." });
+  }
+});
+
+router.post("/my/orders/:assignmentId/respond", requireRole(AGENT_ROLE), async (req, res) => {
+  const parsed = RespondSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  if ("error" in found) { res.status(404).json({ error: found.error }); return; }
+  const { data, error } = await supabase.from(ASSIGNMENTS).update({
+    assignment_status: parsed.data.accept ? "Accepted" : "Declined",
+    decline_reason: parsed.data.accept ? null : parsed.data.declineReason,
+    responded_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }).eq("id", req.params.assignmentId).select("*").single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ row: mapAssignment(data) });
+});
+
+// ── POST .../my/orders/:assignmentId/contact ──────────────
+const ContactSchema = z.object({
+  customerContactStatus: z.enum([
+    "Contacted", "Customer Ready", "Not Picking", "Number Not Reachable",
+    "Customer Requested Callback", "Customer Requested Reschedule", "Customer Cancelled"
+  ])
+});
+
+router.post("/my/orders/:assignmentId/contact", requireRole(AGENT_ROLE), async (req, res) => {
+  const parsed = ContactSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  if ("error" in found) { res.status(404).json({ error: found.error }); return; }
+  const isReady = parsed.data.customerContactStatus === CUSTOMER_READY;
+  const { data, error } = await supabase.from(ASSIGNMENTS).update({
+    customer_contact_status: parsed.data.customerContactStatus,
+    last_contact_at: new Date().toISOString(),
+    // Cleared when readiness is withdrawn, so a stale "ready" can never unlock
+    // dispatch after the customer has gone quiet again.
+    customer_ready_at: isReady ? new Date().toISOString() : null,
+    updated_at: new Date().toISOString()
+  }).eq("id", req.params.assignmentId).select("*").single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ row: mapAssignment(data) });
+});
+
+// ── POST .../my/orders/:assignmentId/dispatch ─────────────
+router.post("/my/orders/:assignmentId/dispatch", requireRole(AGENT_ROLE), async (req, res) => {
+  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  if ("error" in found) { res.status(404).json({ error: found.error }); return; }
+  const a = found.assignment;
+  const blockers = dispatchBlockers({
+    assignmentStatus: a.assignment_status,
+    customerContactStatus: a.customer_contact_status,
+    deliveryStatus: a.delivery_status,
+    feeStatus: a.fee_status
+  });
+  if (blockers.length > 0) { res.status(409).json({ error: "You cannot start this delivery yet.", blockers }); return; }
+
+  const minutes = Number(req.body?.expectedMinutes ?? 0);
+  const expected = Number.isFinite(minutes) && minutes > 0
+    ? new Date(Date.now() + minutes * 60_000).toISOString() : null;
+
+  const { data, error } = await supabase.from(ASSIGNMENTS).update({
+    delivery_status: "Dispatch Started",
+    dispatch_started_at: new Date().toISOString(),
+    expected_arrival_at: expected,
+    stock_reserved: true,
+    updated_at: new Date().toISOString()
+  }).eq("id", req.params.assignmentId).select("*").single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ row: mapAssignment(data) });
+});
+
+// ── POST .../my/orders/:assignmentId/delivered ────────────
+const DeliveredSchema = z.object({
+  amountCollected: z.number().min(0),
+  paymentMethod: z.enum(["Cash", "Transfer", "POS", "Already paid"]),
+  proofType: z.string().trim().min(1),
+  proofFilePath: z.string().trim().max(500).optional(),
+  proofReference: z.string().trim().max(200).optional()
+});
+
+router.post("/my/orders/:assignmentId/delivered", requireRole(AGENT_ROLE), async (req, res) => {
+  const parsed = DeliveredSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  if ("error" in found) { res.status(404).json({ error: found.error }); return; }
+
+  const blockers = deliveryProofBlockers(parsed.data);
+  if (blockers.length > 0) { res.status(409).json({ error: "This delivery needs proof before it can be closed.", blockers }); return; }
+
+  const { data, error } = await supabase.from(ASSIGNMENTS).update({
+    delivery_status: "Delivered",
+    delivered_at: new Date().toISOString(),
+    amount_collected: parsed.data.amountCollected,
+    payment_method: parsed.data.paymentMethod,
+    proof_type: parsed.data.proofType,
+    proof_file_path: parsed.data.proofFilePath ?? null,
+    proof_reference: parsed.data.proofReference ?? null,
+    stock_reserved: false,
+    updated_at: new Date().toISOString()
+  }).eq("id", req.params.assignmentId).select("*").single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ row: mapAssignment(data) });
+});
+
+// ── POST .../my/orders/:assignmentId/failed ───────────────
+const FailedSchema = z.object({
+  outcome: z.enum(["Failed", "Rejected"]),
+  failureReason: z.string().trim().min(1),
+  failureNote: z.string().trim().max(1000).optional()
+});
+
+router.post("/my/orders/:assignmentId/failed", requireRole(AGENT_ROLE), async (req, res) => {
+  const parsed = FailedSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  if ("error" in found) { res.status(404).json({ error: found.error }); return; }
+
+  const blockers = failureReasonBlockers(parsed.data.failureReason, parsed.data.failureNote);
+  if (blockers.length > 0) { res.status(409).json({ error: blockers[0], blockers }); return; }
+
+  const { data, error } = await supabase.from(ASSIGNMENTS).update({
+    delivery_status: parsed.data.outcome,
+    failure_reason: parsed.data.failureReason,
+    failure_note: parsed.data.failureNote ?? null,
+    // The unit is back with the agent, so it must stop being held for this order.
+    stock_reserved: false,
+    updated_at: new Date().toISOString()
+  }).eq("id", req.params.assignmentId).select("*").single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ row: mapAssignment(data) });
+});
+
+// ── POST .../my/orders/:assignmentId/reschedule ───────────
+const RescheduleSchema = z.object({
+  rescheduledTo: z.string().trim().max(20).optional(),
+  daypart: z.string().trim().max(40).optional(),
+  reason: z.string().trim().max(500).optional()
+});
+
+router.post("/my/orders/:assignmentId/reschedule", requireRole(AGENT_ROLE), async (req, res) => {
+  const parsed = RescheduleSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  if ("error" in found) { res.status(404).json({ error: found.error }); return; }
+
+  // A firm date holds the unit. "I'll call you later" does not - otherwise one
+  // vague customer can block a unit of stock indefinitely.
+  const keepReserved = rescheduleKeepsStockReserved(parsed.data.rescheduledTo);
+  const { data, error } = await supabase.from(ASSIGNMENTS).update({
+    delivery_status: "Rescheduled",
+    rescheduled_to: keepReserved ? parsed.data.rescheduledTo : null,
+    reschedule_daypart: parsed.data.daypart ?? null,
+    reschedule_reason: parsed.data.reason ?? null,
+    stock_reserved: keepReserved,
+    customer_contact_status: "Customer Requested Reschedule",
+    customer_ready_at: null,
+    dispatch_started_at: null,
+    updated_at: new Date().toISOString()
+  }).eq("id", req.params.assignmentId).select("*").single();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ row: mapAssignment(data), stockReleased: !keepReserved });
+});
+
+// ── POST .../my/availability ──────────────────────────────
+router.post("/my/availability", requireRole(AGENT_ROLE), async (req, res) => {
+  const availability = String(req.body?.availability ?? "");
+  if (!["Available", "Busy", "Unavailable", "Offline"].includes(availability)) {
+    res.status(400).json({ error: "Pick a valid availability." });
+    return;
+  }
+  const agent = await agentForUser(orgIdOf(req), req.user!.id);
+  if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
+  // A restricted or suspended agent must not be able to put themselves back on
+  // the board by flipping a toggle.
+  if (!OPERATIONAL_STATUSES.includes(String(agent.account_status))) {
+    res.status(409).json({ error: `Your account is ${agent.account_status}. Contact the office.` });
+    return;
+  }
+  const { error } = await supabase.from(AGENTS)
+    .update({ availability, updated_at: new Date().toISOString() })
+    .eq("org_id", req.user!.orgId).eq("id", agent.id);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ availability });
 });
 
 export default router;
