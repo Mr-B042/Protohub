@@ -555,6 +555,68 @@ export const productsApi = {
 };
 
 // ── Orders ────────────────────────────────────────────────
+export type PersonalDeliveryAgentRow = {
+  id: string;
+  agentCode: string;
+  fullName: string;
+  phone: string;
+  whatsappPhone?: string | null;
+  email?: string | null;
+  state?: string | null;
+  city?: string | null;
+  residentialAddress?: string | null;
+  photoUrl?: string | null;
+  serviceAreas: string[];
+  serviceRadiusKm?: number | null;
+  transportMethod?: string | null;
+  accountStatus: string;
+  kycStatus: string;
+  trustLevel: string;
+  availability: string;
+  maxStockUnits?: number | null;
+  maxCodExposure?: number | null;
+  maxActiveOrders?: number | null;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountName?: string | null;
+  approvedAt?: string | null;
+  probationEndsAt?: string | null;
+  kycExpiresAt?: string | null;
+  restrictionReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PersonalDeliveryAgentOverview = {
+  pendingMigration?: boolean;
+  totals: {
+    totalAgents: number;
+    operational: number;
+    pendingApplications: number;
+    restricted: number;
+    terminated: number;
+    rejected: number;
+    availableNow: number;
+    onProbation: number;
+    kycExpiringSoon: number;
+    kycItemsOutstanding: number;
+    guarantorsOutstanding: number;
+  } | null;
+  byStatus?: Record<string, number>;
+  // Capabilities that do not exist yet, named so the UI can say so rather than
+  // showing a zero that would read as "nothing outstanding".
+  unavailable?: Record<string, string>;
+};
+
+export const personalDeliveryAgentsApi = {
+  list: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return get<{ rows: PersonalDeliveryAgentRow[]; pendingMigration?: boolean }>(`/api/personal-delivery-agents${qs}`);
+  },
+  overview: () => get<PersonalDeliveryAgentOverview>("/api/personal-delivery-agents/overview"),
+  create: (body: unknown) => post<{ row: PersonalDeliveryAgentRow }>("/api/personal-delivery-agents", body)
+};
+
 export const ordersApi = {
   list: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
