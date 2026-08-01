@@ -2217,6 +2217,39 @@ const paramOf = (value: unknown): string =>
   Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
 
 /**
+ * Lets Owner/Admin/Manager open the agent portal while VIEWING AS an agent,
+ * so they can see exactly what an agent sees. Everyone else must be an agent.
+ *
+ * Read-only by design: `assertNotSpying` blocks every state-changing agent
+ * action while viewing-as. A delivery marked "delivered" by an owner wearing
+ * an agent's face is indistinguishable from the agent doing it, and this whole
+ * module exists to keep stock and cash traceable to a person.
+ */
+function requireAgentPortal(req: any, res: any, next: any) {
+  const realRole = String(req.user?.role ?? "");
+  const viewedRole = String(req.user?.effectiveUserRole ?? "");
+  if (realRole === AGENT_ROLE) return next();
+  if (viewedRole === AGENT_ROLE && ["Owner", "Admin", "Manager"].includes(realRole)) return next();
+  res.status(403).json({ error: "Requires the Delivery Agent portal." });
+}
+
+/** True when a manager is viewing as an agent rather than being one. */
+const isViewingAsAgent = (req: any) =>
+  String(req.user?.role ?? "") !== AGENT_ROLE && String(req.user?.effectiveUserRole ?? "") === AGENT_ROLE;
+
+/** Refuses an action that would be recorded as the agent's own. */
+function assertNotSpying(req: any, res: any): boolean {
+  if (!isViewingAsAgent(req)) return false;
+  res.status(403).json({
+    error: "You are viewing as this agent. Actions are disabled so nothing is recorded as if they did it."
+  });
+  return true;
+}
+
+/** Which login the portal should resolve - the viewed agent when viewing as. */
+const portalUserId = (req: any): string => String(req.user?.effectiveUserId ?? req.user?.id ?? "");
+
+/**
  * The personal delivery agent record behind the signed-in user.
  * Returns null for anyone who is not a portal agent.
  */
@@ -2309,10 +2342,10 @@ router.post("/:id/assign", requireRole(...MANAGEMENT_ROLES), async (req, res) =>
 // ── GET /api/personal-delivery-agents/my/summary ──────────
 // The agent's own Home screen. Deliberately small: an agent needs their work
 // queue and their money, not company reports.
-router.get("/my/summary", requireRole(AGENT_ROLE), async (req, res) => {
+router.get("/my/summary", requireAgentPortal, async (req, res) => {
   try {
     const orgId = req.user!.orgId;
-    const agent = await agentForUser(orgId, req.user!.id);
+    const agent = await agentForUser(orgId, portalUserId(req));
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
 
     const { data: assignments } = await supabase.from(ASSIGNMENTS)
@@ -2361,10 +2394,10 @@ router.get("/my/summary", requireRole(AGENT_ROLE), async (req, res) => {
 });
 
 // ── GET /api/personal-delivery-agents/my/orders ───────────
-router.get("/my/orders", requireRole(AGENT_ROLE), async (req, res) => {
+router.get("/my/orders", requireAgentPortal, async (req, res) => {
   try {
     const orgId = req.user!.orgId;
-    const agent = await agentForUser(orgId, req.user!.id);
+    const agent = await agentForUser(orgId, portalUserId(req));
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
 
     const { data: assignments, error } = await supabase.from(ASSIGNMENTS)
@@ -2449,10 +2482,11 @@ const RespondSchema = z.object({
   }
 });
 
-router.post("/my/orders/:assignmentId/respond", requireRole(AGENT_ROLE), async (req, res) => {
+router.post("/my/orders/:assignmentId/respond", requireAgentPortal, async (req, res) => {
+  if (assertNotSpying(req, res)) return;
   const parsed = RespondSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
-  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
   const { data, error } = await supabase.from(ASSIGNMENTS).update({
     assignment_status: parsed.data.accept ? "Accepted" : "Declined",
@@ -2472,10 +2506,11 @@ const ContactSchema = z.object({
   ])
 });
 
-router.post("/my/orders/:assignmentId/contact", requireRole(AGENT_ROLE), async (req, res) => {
+router.post("/my/orders/:assignmentId/contact", requireAgentPortal, async (req, res) => {
+  if (assertNotSpying(req, res)) return;
   const parsed = ContactSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
-  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
   const isReady = parsed.data.customerContactStatus === CUSTOMER_READY;
   const { data, error } = await supabase.from(ASSIGNMENTS).update({
@@ -2491,8 +2526,9 @@ router.post("/my/orders/:assignmentId/contact", requireRole(AGENT_ROLE), async (
 });
 
 // ── POST .../my/orders/:assignmentId/dispatch ─────────────
-router.post("/my/orders/:assignmentId/dispatch", requireRole(AGENT_ROLE), async (req, res) => {
-  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+router.post("/my/orders/:assignmentId/dispatch", requireAgentPortal, async (req, res) => {
+  if (assertNotSpying(req, res)) return;
+  const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
   const a = found.assignment;
   const blockers = dispatchBlockers({
@@ -2528,10 +2564,11 @@ const DeliveredSchema = z.object({
   proofReference: z.string().trim().max(200).optional()
 });
 
-router.post("/my/orders/:assignmentId/delivered", requireRole(AGENT_ROLE), async (req, res) => {
+router.post("/my/orders/:assignmentId/delivered", requireAgentPortal, async (req, res) => {
+  if (assertNotSpying(req, res)) return;
   const parsed = DeliveredSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
-  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
 
   const blockers = deliveryProofBlockers(parsed.data);
@@ -2570,10 +2607,11 @@ const FailedSchema = z.object({
   failureNote: z.string().trim().max(1000).optional()
 });
 
-router.post("/my/orders/:assignmentId/failed", requireRole(AGENT_ROLE), async (req, res) => {
+router.post("/my/orders/:assignmentId/failed", requireAgentPortal, async (req, res) => {
+  if (assertNotSpying(req, res)) return;
   const parsed = FailedSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
-  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
 
   const blockers = failureReasonBlockers(parsed.data.failureReason, parsed.data.failureNote);
@@ -2605,10 +2643,11 @@ const RescheduleSchema = z.object({
   reason: z.string().trim().max(500).optional()
 });
 
-router.post("/my/orders/:assignmentId/reschedule", requireRole(AGENT_ROLE), async (req, res) => {
+router.post("/my/orders/:assignmentId/reschedule", requireAgentPortal, async (req, res) => {
+  if (assertNotSpying(req, res)) return;
   const parsed = RescheduleSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
-  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
 
   // A firm date holds the unit. "I'll call you later" does not - otherwise one
@@ -2630,13 +2669,14 @@ router.post("/my/orders/:assignmentId/reschedule", requireRole(AGENT_ROLE), asyn
 });
 
 // ── POST .../my/availability ──────────────────────────────
-router.post("/my/availability", requireRole(AGENT_ROLE), async (req, res) => {
+router.post("/my/availability", requireAgentPortal, async (req, res) => {
+  if (assertNotSpying(req, res)) return;
   const availability = String(req.body?.availability ?? "");
   if (!["Available", "Busy", "Unavailable", "Offline"].includes(availability)) {
     res.status(400).json({ error: "Pick a valid availability." });
     return;
   }
-  const agent = await agentForUser(orgIdOf(req), req.user!.id);
+  const agent = await agentForUser(orgIdOf(req), portalUserId(req));
   if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
   // A restricted or suspended agent must not be able to put themselves back on
   // the board by flipping a toggle.
@@ -2734,12 +2774,13 @@ const ConfirmTransferSchema = z.object({
   proofFilePath: z.string().trim().max(500).optional()
 });
 
-router.post("/my/transfers/:transferId/confirm", requireRole(AGENT_ROLE), async (req, res) => {
+router.post("/my/transfers/:transferId/confirm", requireAgentPortal, async (req, res) => {
+  if (assertNotSpying(req, res)) return;
   const parsed = ConfirmTransferSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
   try {
     const orgId = orgIdOf(req);
-    const agent = await agentForUser(orgId, req.user!.id);
+    const agent = await agentForUser(orgId, portalUserId(req));
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
 
     const transferId = paramOf(req.params.transferId);
@@ -2806,10 +2847,10 @@ router.get("/:id/stock", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
 });
 
 // ── GET /my/stock ─────────────────────────────────────────
-router.get("/my/stock", requireRole(AGENT_ROLE), async (req, res) => {
+router.get("/my/stock", requireAgentPortal, async (req, res) => {
   try {
     const orgId = orgIdOf(req);
-    const agent = await agentForUser(orgId, req.user!.id);
+    const agent = await agentForUser(orgId, portalUserId(req));
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
     const [stockRes, transferRes, ledgerRes] = await Promise.all([
       supabase.from(STOCK).select("*").eq("agent_id", agent.id),
@@ -2836,12 +2877,13 @@ const DiscrepancySchema = z.object({
   agentNote: z.string().trim().max(1000).optional()
 });
 
-router.post("/my/stock/discrepancy", requireRole(AGENT_ROLE), async (req, res) => {
+router.post("/my/stock/discrepancy", requireAgentPortal, async (req, res) => {
+  if (assertNotSpying(req, res)) return;
   const parsed = DiscrepancySchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
   try {
     const orgId = orgIdOf(req);
-    const agent = await agentForUser(orgId, req.user!.id);
+    const agent = await agentForUser(orgId, portalUserId(req));
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
 
     const { data: stockRow } = await supabase.from(STOCK)
@@ -3124,10 +3166,10 @@ router.post("/:id/earnings/pay", requireRole("Owner", "Admin"), async (req, res)
 // ── GET /my/wallet ────────────────────────────────────────
 // The agent's own money. Company cash and their earnings are kept visibly
 // apart so "what I owe" is never confused with "what I am owed".
-router.get("/my/wallet", requireRole(AGENT_ROLE), async (req, res) => {
+router.get("/my/wallet", requireAgentPortal, async (req, res) => {
   try {
     const orgId = orgIdOf(req);
-    const agent = await agentForUser(orgId, req.user!.id);
+    const agent = await agentForUser(orgId, portalUserId(req));
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
 
     const { data: assignments } = await supabase.from(ASSIGNMENTS)
@@ -3499,12 +3541,13 @@ router.get("/fees/negotiations", requireRole(...MANAGEMENT_ROLES), async (req, r
 });
 
 // The agent asks for a different rate on an awkward order.
-router.post("/my/orders/:assignmentId/propose-fee", requireRole(AGENT_ROLE), async (req, res) => {
+router.post("/my/orders/:assignmentId/propose-fee", requireAgentPortal, async (req, res) => {
+  if (assertNotSpying(req, res)) return;
   const proposedFee = Number(req.body?.proposedFee);
   const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
   if (!Number.isFinite(proposedFee) || proposedFee < 0) { res.status(400).json({ error: "Enter the fee you need." }); return; }
   if (!reason) { res.status(400).json({ error: "Say why the standard fee does not work." }); return; }
-  const found = await loadOwnAssignment(orgIdOf(req), req.user!.id, paramOf(req.params.assignmentId));
+  const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
   // Once the trip has begun the cost is already sunk, so the fee is settled.
   if (found.assignment.dispatch_started_at) {

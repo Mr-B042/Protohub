@@ -47370,6 +47370,10 @@ ${waybillLineItems(w).length > 1
   const renderPdaPortal = () => {
     const summary = pdaMySummary;
     const agent = summary?.agent;
+    // An owner viewing as an agent sees exactly what the agent sees, but cannot
+    // act: a delivery marked complete from here would be indistinguishable from
+    // the agent doing it, and this module exists to keep that traceable.
+    const readOnly = isSpying;
 
     const contactLabel = (status: string) =>
       status === "Customer Ready" ? "Customer is ready" : status;
@@ -47394,6 +47398,14 @@ ${waybillLineItems(w).length > 1
 
     return (
       <div className="mx-auto w-full max-w-xl pb-24">
+        {readOnly && (
+          <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="m-0 text-[13px] font-black text-amber-900">You are viewing this agent's portal</p>
+            <p className="m-0 mt-0.5 text-[11px] text-amber-800">
+              This is exactly what they see. Actions are switched off so nothing is recorded as if they did it.
+            </p>
+          </div>
+        )}
         <header className="px-1 pt-1">
           <h1 className="m-0 text-xl font-black text-gray-900">Hello{agent ? `, ${agent.fullName.split(" ")[0]}` : ""}</h1>
           <p className="m-0 text-xs text-gray-500">{agent ? `${agent.agentCode} · ${agent.accountStatus}` : "Loading your profile…"}</p>
@@ -47415,7 +47427,7 @@ ${waybillLineItems(w).length > 1
                   </div>
                   <p className="m-0 text-[11px] text-gray-500">Turn this off when you cannot take deliveries.</p>
                 </div>
-                <button type="button" role="switch" aria-checked={agent.availability === "Available"}
+                <button type="button" role="switch" aria-checked={agent.availability === "Available"} disabled={readOnly}
                   onClick={() => void pdaSetAvailability(agent.availability === "Available" ? "Unavailable" : "Available")}
                   className={`relative h-8 w-14 !min-h-0 shrink-0 rounded-full p-0 transition-colors ${agent.availability === "Available" ? "bg-emerald-500" : "bg-gray-300"}`}>
                   <span className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow transition-all ${agent.availability === "Available" ? "left-7" : "left-1"}`} />
@@ -47520,29 +47532,29 @@ ${waybillLineItems(w).length > 1
                   <div className="mt-3 flex flex-wrap gap-2">
                     {row.assignmentStatus === "Awaiting Agent Acceptance" ? (
                       <>
-                        <button type="button" onClick={() => void pdaRespond(row.id, true)}
-                          className="!min-h-0 flex-1 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white">Accept</button>
-                        <button type="button" onClick={() => void pdaRespond(row.id, false)}
-                          className="!min-h-0 flex-1 rounded-xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700">Decline</button>
+                        <button type="button" disabled={readOnly} onClick={() => void pdaRespond(row.id, true)}
+                          className="!min-h-0 flex-1 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-40">Accept</button>
+                        <button type="button" disabled={readOnly} onClick={() => void pdaRespond(row.id, false)}
+                          className="!min-h-0 flex-1 rounded-xl border border-gray-200 px-4 py-3 text-sm font-black text-gray-700 disabled:opacity-40">Decline</button>
                       </>
                     ) : (
                       <>
                         {row.order?.phone && (
                           <a href={`tel:${row.order.phone}`} className="!min-h-0 flex-1 rounded-xl border border-gray-200 px-3 py-3 text-center text-sm font-black text-gray-700">Call</a>
                         )}
-                        <button type="button" onClick={() => pdaOpenContactSheet(row)}
-                          className="!min-h-0 flex-1 rounded-xl border border-gray-200 px-3 py-3 text-sm font-black text-gray-700">Update customer</button>
+                        <button type="button" disabled={readOnly} onClick={() => pdaOpenContactSheet(row)}
+                          className="!min-h-0 flex-1 rounded-xl border border-gray-200 px-3 py-3 text-sm font-black text-gray-700 disabled:opacity-40">Update customer</button>
                         {moving ? (
                           <>
-                            <button type="button" onClick={() => pdaOpenDeliveredSheet(row)}
-                              className="!min-h-0 w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white">Delivered</button>
-                            <button type="button" onClick={() => pdaOpenFailedSheet(row)}
-                              className="!min-h-0 flex-1 rounded-xl border border-red-200 px-3 py-3 text-sm font-black text-red-700">Failed</button>
-                            <button type="button" onClick={() => pdaOpenRescheduleSheet(row)}
-                              className="!min-h-0 flex-1 rounded-xl border border-gray-200 px-3 py-3 text-sm font-black text-gray-700">Reschedule</button>
+                            <button type="button" disabled={readOnly} onClick={() => pdaOpenDeliveredSheet(row)}
+                              className="!min-h-0 w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-40">Delivered</button>
+                            <button type="button" disabled={readOnly} onClick={() => pdaOpenFailedSheet(row)}
+                              className="!min-h-0 flex-1 rounded-xl border border-red-200 px-3 py-3 text-sm font-black text-red-700 disabled:opacity-40">Failed</button>
+                            <button type="button" disabled={readOnly} onClick={() => pdaOpenRescheduleSheet(row)}
+                              className="!min-h-0 flex-1 rounded-xl border border-gray-200 px-3 py-3 text-sm font-black text-gray-700 disabled:opacity-40">Reschedule</button>
                           </>
                         ) : (
-                          <button type="button" disabled={!canDispatch} onClick={() => void pdaDispatch(row.id)}
+                          <button type="button" disabled={!canDispatch || readOnly} onClick={() => void pdaDispatch(row.id)}
                             title={canDispatch ? undefined : "The customer must confirm they are ready first"}
                             className="!min-h-0 w-full rounded-xl bg-[#1F8FE0] px-4 py-3 text-sm font-black text-white disabled:bg-gray-200 disabled:text-gray-400">
                             {canDispatch ? "Start delivery" : "Confirm the customer is ready first"}
@@ -47586,7 +47598,7 @@ ${waybillLineItems(w).length > 1
                         Sent {new Date(transfer.sent_at).toLocaleDateString([], { dateStyle: "medium" })}
                         {transfer.waybill_reference ? ` · ${transfer.waybill_reference}` : ""}
                       </div>
-                      <button type="button" onClick={() => void pdaConfirmTransfer(transfer.id, Number(transfer.quantity_sent))}
+                      <button type="button" disabled={readOnly} onClick={() => void pdaConfirmTransfer(transfer.id, Number(transfer.quantity_sent))}
                         className="!min-h-0 mt-2 w-full rounded-xl bg-[#1F8FE0] px-4 py-2.5 text-sm font-black text-white">
                         Confirm what arrived
                       </button>
@@ -47609,7 +47621,7 @@ ${waybillLineItems(w).length > 1
                       <div className="text-base font-black text-gray-900">{productNameById(row.product_id)}</div>
                       <div className="text-[11px] text-gray-400">{held} unit{held === 1 ? "" : "s"} with you</div>
                     </div>
-                    <button type="button" onClick={() => void pdaReportStockIssue(row.product_id, Number(row.available ?? 0))}
+                    <button type="button" disabled={readOnly} onClick={() => void pdaReportStockIssue(row.product_id, Number(row.available ?? 0))}
                       className="!min-h-0 shrink-0 rounded-xl border border-amber-200 px-3 py-2 text-[11px] font-black text-amber-700">
                       Report a problem
                     </button>
