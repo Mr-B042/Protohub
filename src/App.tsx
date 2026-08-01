@@ -128,7 +128,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11204,6 +11204,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaCodDiscrepancies, setPdaCodDiscrepancies] = useState<PdaCodDiscrepancyView | null>(null);
   const [pdaDiscType, setPdaDiscType] = useState("All");
   const [pdaDiscStatus, setPdaDiscStatus] = useState("All");
+  const [pdaIncidentsOverview, setPdaIncidentsOverview] = useState<PdaIncidentsOverview | null>(null);
+  const [pdaIncSearch, setPdaIncSearch] = useState("");
+  const [pdaIncType, setPdaIncType] = useState("All");
+  const [pdaIncStatus, setPdaIncStatus] = useState("All");
+  const [pdaIncAgent, setPdaIncAgent] = useState("All");
+  const [pdaIncPage, setPdaIncPage] = useState(1);
   const [pdaDiscDraft, setPdaDiscDraft] = useState({ agentId: "", orderId: "", customerName: "", discrepancyType: "Underpayment", expected: "", actual: "", note: "" });
   const [pdaFeeRules, setPdaFeeRules] = useState<PdaFeeRule[]>([]);
   const [pdaNegotiations, setPdaNegotiations] = useState<any[]>([]);
@@ -40467,7 +40473,10 @@ ${waybillLineItems(w).length > 1
       void loadPdaDispatchSummary();
     }
     if (pdaSubPage === "Fees & Earnings") void loadPdaFees();
-    if (pdaSubPage === "Incidents") void loadPdaIncidents();
+    if (pdaSubPage === "Incidents") {
+      void loadPdaIncidents();
+      void loadPdaIncidentsOverview();
+    }
     if (pdaSubPage === "Reports") void loadPdaReports();
     if (pdaSubPage === "Settings") void loadPdaSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -40681,6 +40690,12 @@ ${waybillLineItems(w).length > 1
     } catch (err: any) { showToast(err?.message ?? "Could not record that decision."); }
   };
 
+  const loadPdaIncidentsOverview = async () => {
+    try {
+      setPdaIncidentsOverview(await personalDeliveryAgentsApi.incidentsOverview());
+    } catch (err: any) { showToast(err?.message ?? "Could not load incidents."); }
+  };
+
   const loadPdaIncidents = async () => {
     try {
       const result = await personalDeliveryAgentsApi.incidents();
@@ -40708,7 +40723,7 @@ ${waybillLineItems(w).length > 1
       showToast(result.agentSuspended
         ? "Recorded. That agent is suspended from new work while this is investigated."
         : "Incident recorded.");
-      await Promise.all([loadPdaIncidents(), loadPersonalDeliveryAgents()]);
+      await Promise.all([loadPdaIncidents(), loadPdaIncidentsOverview(), loadPersonalDeliveryAgents()]);
     } catch (err: any) { showToast(err?.message ?? "Could not record that."); }
     finally { setPdaSaving(false); }
   };
@@ -40722,7 +40737,7 @@ ${waybillLineItems(w).length > 1
     }
     try {
       await personalDeliveryAgentsApi.updateIncident(id, { status, resolution });
-      await loadPdaIncidents();
+      await Promise.all([loadPdaIncidents(), loadPdaIncidentsOverview()]);
     } catch (err: any) { showToast(err?.message ?? "Could not update that incident."); }
   };
 
@@ -47404,6 +47419,321 @@ ${waybillLineItems(w).length > 1
     </div>
   );
 
+  // Incidents. Raising one is how a problem gets owned, so the page is built
+  // around "who has it and what happens next", not just a list.
+  const renderPdaIncidentsPage = () => {
+    const view = pdaIncidentsOverview;
+    const counts = view?.counts ?? null;
+
+    const priorityChip = (severity: string) =>
+      severity === "Critical" ? "bg-red-100 text-red-800"
+      : severity === "High" ? "bg-rose-50 text-rose-700"
+      : severity === "Medium" ? "bg-amber-50 text-amber-700"
+      : "bg-emerald-50 text-emerald-700";
+    const statusChip = (status: string) =>
+      status === "Resolved" ? "bg-emerald-50 text-emerald-700"
+      : ["Closed", "Closed - No Action"].includes(status) ? "bg-gray-100 text-gray-600"
+      : status === "Open" ? "bg-rose-50 text-rose-700"
+      : "bg-amber-50 text-amber-700";
+
+    const rows = (view?.rows ?? []).filter((row) => {
+      if (pdaIncType !== "All" && row.incidentType !== pdaIncType) return false;
+      if (pdaIncStatus !== "All" && row.status !== pdaIncStatus) return false;
+      if (pdaIncAgent !== "All" && row.agentId !== pdaIncAgent) return false;
+      if (!pdaIncSearch.trim()) return true;
+      const q = pdaIncSearch.trim().toLowerCase();
+      return row.code.toLowerCase().includes(q)
+        || row.agentName.toLowerCase().includes(q)
+        || row.description.toLowerCase().includes(q)
+        || (row.orderId ?? "").toLowerCase().includes(q);
+    });
+    const PAGE = 8;
+    const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+    const page = Math.min(pdaIncPage, pages);
+    const pageRows = rows.slice((page - 1) * PAGE, page * PAGE);
+
+    const typePalette = ["#EF4444", "#F59E0B", "#10B981", "#0EA5E9", "#8B5CF6", "#6366F1", "#9CA3AF"];
+    const priorityPalette: Record<string, string> = {
+      Critical: "#B91C1C", High: "#EF4444", Medium: "#F59E0B", Low: "#10B981"
+    };
+    const CIRC = 2 * Math.PI * 42;
+
+    const donutCard = (title: string, slices: Array<{ label: string; count: number; colour: string }>, total: number) => {
+      let offset = 0;
+      return (
+        <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <h3 className="m-0 text-sm font-bold text-gray-900">{title}</h3>
+          {slices.length === 0 ? (
+            <p className="m-0 mt-3 text-xs text-gray-400">Nothing logged yet.</p>
+          ) : (
+            <div className="mt-4 flex items-center gap-4">
+              <div className="relative h-[104px] w-[104px] shrink-0">
+                <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+                  <circle cx="50" cy="50" r="42" fill="none" stroke="#F3F4F6" strokeWidth="12" />
+                  {slices.map((slice) => {
+                    const length = (slice.count / Math.max(1, total)) * CIRC;
+                    const start = offset;
+                    offset += length;
+                    return (
+                      <circle key={slice.label} cx="50" cy="50" r="42" fill="none" stroke={slice.colour}
+                        strokeWidth="12" strokeDasharray={`${length} ${CIRC - length}`} strokeDashoffset={-start} />
+                    );
+                  })}
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-lg font-black leading-none text-gray-900">{total}</span>
+                  <span className="text-[10px] text-gray-400">Total</span>
+                </div>
+              </div>
+              <div className="min-w-0 flex-1 space-y-1.5">
+                {slices.map((slice) => (
+                  <div key={slice.label} className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="flex items-center gap-1.5 truncate text-gray-600">
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: slice.colour }} />
+                      {slice.label}
+                    </span>
+                    <span className="shrink-0 font-semibold text-gray-700">
+                      {slice.count} <span className="text-gray-400">({total > 0 ? Math.round((slice.count / total) * 1000) / 10 : 0}%)</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      );
+    };
+
+    const typeSlices = (view?.byType ?? []).map((entry, index) => ({
+      label: entry.label, count: entry.count, colour: typePalette[index % typePalette.length]
+    }));
+    const prioritySlices = (view?.byPriority ?? []).map((entry) => ({
+      label: entry.label, count: entry.count, colour: priorityPalette[entry.label] ?? "#9CA3AF"
+    }));
+    const typeTotal = typeSlices.reduce((sum, s) => sum + s.count, 0);
+    const priorityTotal = prioritySlices.reduce((sum, s) => sum + s.count, 0);
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-xl font-bold text-gray-900">Incidents</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Track and manage issues, complaints and delivery incidents.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => pdaCsvDownload("incidents",
+              ["Incident", "Date", "Agent", "Order", "Type", "Priority", "Status", "Amount at risk", "Summary", "Resolution"],
+              (view?.rows ?? []).map((row) => [
+                row.code, row.createdAt, row.agentName, row.orderId ?? "", row.incidentType,
+                row.severity, row.status, String(row.amountAtRisk), row.description, row.resolution ?? ""
+              ]))}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+              <Download className="h-4 w-4" /> Download Incidents Report
+            </button>
+            <button type="button" onClick={() => { setPdaIncidentDraft({ agentId: "", orderId: "", incidentType: "Customer Complaint", severity: "Medium", description: "", amountAtRisk: "" }); setModal("pdaIncident"); }}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg bg-[#1F8FE0] px-3.5 py-2 text-sm font-semibold text-white hover:bg-[#1560a8]">
+              <Plus className="h-4 w-4" /> Log New Incident
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
+          {pdaKpiCard({ label: "Total Incidents", value: String(counts?.total ?? 0), icon: AlertTriangle, tint: "bg-rose-50 text-rose-600", foot: "This month", delta: counts?.totalDeltaPct ?? null })}
+          {pdaKpiCard({ label: "Open Incidents", value: String(counts?.open ?? 0), icon: CalendarClock, tint: "bg-amber-50 text-amber-600", foot: "This month", delta: counts?.openDeltaPct ?? null })}
+          {pdaKpiCard({ label: "In Progress", value: String(counts?.inProgress ?? 0), icon: RefreshCw, tint: "bg-orange-50 text-orange-600", foot: "This month", delta: counts?.inProgressDeltaPct ?? null })}
+          {pdaKpiCard({ label: "Resolved", value: String(counts?.resolved ?? 0), icon: CheckCircle2, tint: "bg-emerald-50 text-emerald-600", foot: "This month", delta: counts?.resolvedDeltaPct ?? null })}
+          {pdaKpiCard({ label: "Closed", value: String(counts?.closed ?? 0), icon: Archive, tint: "bg-violet-50 text-violet-600", foot: "This month", delta: counts?.closedDeltaPct ?? null })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[240px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+              placeholder="Search by incident ID, keyword, agent or order ID..." value={pdaIncSearch}
+              onChange={(e) => { setPdaIncSearch(e.target.value); setPdaIncPage(1); }} />
+          </div>
+          <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+            value={pdaIncAgent} onChange={(e) => { setPdaIncAgent(e.target.value); setPdaIncPage(1); }}>
+            <option value="All">Agent: All</option>
+            {pdaAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.fullName}</option>)}
+          </select>
+          <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+            value={pdaIncType} onChange={(e) => { setPdaIncType(e.target.value); setPdaIncPage(1); }}>
+            <option value="All">Type: All</option>
+            {(view?.byType ?? []).map((entry) => <option key={entry.label} value={entry.label}>{entry.label}</option>)}
+          </select>
+          <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+            value={pdaIncStatus} onChange={(e) => { setPdaIncStatus(e.target.value); setPdaIncPage(1); }}>
+            <option value="All">Status: All</option>
+            {["Open", "In Progress", "Resolved", "Closed"].map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button type="button" onClick={() => { setPdaIncSearch(""); setPdaIncType("All"); setPdaIncStatus("All"); setPdaIncAgent("All"); setPdaIncPage(1); }}
+            className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+            <RefreshCw className="h-4 w-4" /> Reset
+          </button>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr),300px]">
+          <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="px-5 py-4">
+              <h3 className="m-0 text-base font-bold text-gray-900">Incidents List</h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-y border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                    <th className="px-5 py-2.5">Incident ID</th>
+                    <th className="px-3 py-2.5">Date Reported</th>
+                    <th className="px-3 py-2.5">Agent</th>
+                    <th className="px-3 py-2.5">Order</th>
+                    <th className="px-3 py-2.5">Type</th>
+                    <th className="px-3 py-2.5">Priority</th>
+                    <th className="px-3 py-2.5">Status</th>
+                    <th className="px-3 py-2.5">Summary</th>
+                    <th className="px-3 py-2.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="px-5 py-14 text-center">
+                        <p className="m-0 text-sm font-semibold text-gray-500">
+                          {(view?.rows ?? []).length === 0 ? "No incidents logged." : "Nothing matches those filters."}
+                        </p>
+                        {(view?.rows ?? []).length === 0 && (
+                          <p className="m-0 mt-1 text-xs text-gray-400">
+                            Log one when something goes wrong — a Critical incident, or a High one involving money or trust, suspends the agent from new work straight away.
+                          </p>
+                        )}
+                      </td>
+                    </tr>
+                  ) : pageRows.map((row) => (
+                    <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                      <td className="px-5 py-3 font-semibold text-[#1F8FE0]">{row.code}</td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <div className="text-[12px] text-gray-700">{new Date(row.createdAt).toLocaleDateString([], { dateStyle: "medium" })}</div>
+                        <div className="text-[10px] text-gray-400">{new Date(row.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-black ${customerAvatarTone(row.agentId)}`}>
+                            {customerInitial(row.agentName)}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="text-[12px] font-bold text-gray-900">{row.agentName}</div>
+                            <div className="text-[10px] text-gray-400">{row.agentCode}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-[12px] text-gray-600">{row.orderId ? `#${row.orderId}` : "—"}</td>
+                      <td className="px-3 py-3 text-[12px] font-semibold text-gray-800">{row.incidentType}</td>
+                      <td className="px-3 py-3">
+                        <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${priorityChip(row.severity)}`}>{row.severity}</span>
+                      </td>
+                      <td className="px-3 py-3">
+                        <select value={row.status} onChange={(e) => void pdaUpdateIncident(row.id, e.target.value)}
+                          className={`rounded-md border-0 px-2 py-1 text-[11px] font-bold ${statusChip(row.status)}`}>
+                          {["Open", "In Progress", "Resolved", "Closed"].map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-3 py-3 max-w-[240px]">
+                        <p className="m-0 text-[12px] text-gray-600">{row.description}</p>
+                        {row.amountAtRisk > 0 && (
+                          <p className="m-0 text-[11px] font-bold text-rose-600">{formatMoney(row.amountAtRisk)} at risk</p>
+                        )}
+                        {row.resolution && <p className="m-0 text-[11px] text-emerald-700">Resolved: {row.resolution}</p>}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button type="button" title="Open this agent" onClick={() => { setPdaSubPage("Active Agents"); setPdaActiveSearch(row.agentName); }}
+                            className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                            <Eye className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {rows.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-5 py-3">
+                <span className="text-xs text-gray-500">
+                  Showing {(page - 1) * PAGE + 1} to {Math.min(page * PAGE, rows.length)} of {rows.length} incidents
+                </span>
+                <div className="flex items-center gap-1">
+                  <button type="button" disabled={page <= 1} onClick={() => setPdaIncPage(page - 1)}
+                    className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  {Array.from({ length: pages }).slice(0, 4).map((_, index) => (
+                    <button key={index} type="button" onClick={() => setPdaIncPage(index + 1)}
+                      className={`!min-h-0 inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-xs font-bold ${
+                        page === index + 1 ? "bg-[#1F8FE0] text-white" : "border border-gray-200 text-gray-600"}`}>
+                      {index + 1}
+                    </button>
+                  ))}
+                  <button type="button" disabled={page >= pages} onClick={() => setPdaIncPage(page + 1)}
+                    className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <div className="space-y-4">
+            {donutCard("Incidents by Type", typeSlices, typeTotal)}
+            {donutCard("Incidents by Priority", prioritySlices, priorityTotal)}
+
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Recent Activity</h3>
+              {(view?.recentActivity ?? []).length === 0 ? (
+                <p className="m-0 mt-3 text-xs text-gray-400">Nothing logged yet.</p>
+              ) : (
+                <ul className="m-0 mt-3 list-none space-y-2.5 p-0">
+                  {view!.recentActivity.map((event, index) => (
+                    <li key={`${event.code}-${index}`} className="flex items-start gap-2.5">
+                      <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${event.resolved ? "bg-emerald-500" : "bg-rose-500"}`} />
+                      <div className="min-w-0">
+                        <div className="text-[12px] font-semibold text-gray-800">{event.label}</div>
+                        <div className="text-[11px] text-gray-400">
+                          {event.agentName} · {new Date(event.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Quick Actions</h3>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => { setPdaIncidentDraft({ agentId: "", orderId: "", incidentType: "Customer Complaint", severity: "Medium", description: "", amountAtRisk: "" }); setModal("pdaIncident"); }}
+                  className="!min-h-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100">
+                  Log New Incident
+                </button>
+                <button type="button" onClick={() => { setPdaIncStatus("Open"); setPdaIncPage(1); }}
+                  className="!min-h-0 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] font-bold text-rose-700 hover:bg-rose-100">
+                  Show Open Only
+                </button>
+                <button type="button" onClick={() => setPdaSubPage("COD & Reconciliation")}
+                  className="!min-h-0 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-2 text-[11px] font-bold text-blue-700 hover:bg-blue-100">
+                  Agent Statement
+                </button>
+                <button type="button" onClick={() => setPdaSubPage("Settings")}
+                  className="!min-h-0 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
+                  Incident Settings
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Incidents. Raising a High or Critical one suspends the agent immediately -
   // that is what raising it is for.
   const renderPdaIncidents = () => {
@@ -52173,7 +52503,7 @@ ${waybillLineItems(w).length > 1
         ) : pdaSubPage === "Fees & Earnings" ? (
           renderPdaFees()
         ) : pdaSubPage === "Incidents" ? (
-          renderPdaIncidents()
+          renderPdaIncidentsPage()
         ) : pdaSubPage === "Reports" ? (
           renderPdaReports()
         ) : pdaSubPage === "Settings" ? (
@@ -86396,7 +86726,7 @@ ${waybillLineItems(w).length > 1
 	            {modal === "pdaIncident" && (
 	              <div className="space-y-4">
 	                <p className="m-0 text-xs text-gray-500">
-	                  A <strong>High</strong> or <strong>Critical</strong> incident suspends the agent from new work immediately, while it is investigated. That is what raising one is for.
+	                  A <strong>Critical</strong> incident — or a <strong>High</strong> one involving money or trust (theft, COD, misconduct) — suspends the agent from new work while it is investigated. A high-priority service complaint does not, because suspending someone over a late delivery costs them their income and you your capacity.
 	                </p>
 	                <div className="grid gap-3 sm:grid-cols-2">
 	                  <label className="flex flex-col gap-1">
@@ -86416,7 +86746,7 @@ ${waybillLineItems(w).length > 1
 	                    <span className="text-xs font-bold text-gray-600">What happened *</span>
 	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.incidentType}
 	                      onChange={(e) => setPdaIncidentDraft((v) => ({ ...v, incidentType: e.target.value }))}>
-	                      {["Missing inventory", "Damaged product", "Missing COD", "Customer complaint", "Agent misconduct", "Delivery accident", "Theft", "Wrong product delivered", "False delivery claim", "Unsafe delivery location", "Other"].map((o) => (
+	                      {["Customer Complaint", "COD Discrepancy", "Delivery Issue", "Return Issue", "Payment Delay", "Missing inventory", "Damaged product", "Agent misconduct", "Delivery accident", "Theft", "Wrong product delivered", "False delivery claim", "Unsafe delivery location", "Other"].map((o) => (
 	                        <option key={o} value={o}>{o}</option>
 	                      ))}
 	                    </select>

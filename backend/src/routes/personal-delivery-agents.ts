@@ -1534,6 +1534,88 @@ router.get("/cod-overview", requireRole(...MANAGEMENT_ROLES), async (req, res) =
   }
 });
 
+// ── GET /api/personal-delivery-agents/incidents-overview ──
+router.get("/incidents-overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const lastMonthKey = lastMonth.toISOString().slice(0, 7);
+    const monthOf = (value: any) => String(value ?? "").slice(0, 7);
+
+    const [{ data: incidents }, { data: agentRows }] = await Promise.all([
+      supabase.from(INCIDENTS).select("*").eq("org_id", orgId).order("created_at", { ascending: false }).limit(500),
+      supabase.from(AGENTS).select("id, agent_code, full_name").eq("org_id", orgId)
+    ]);
+    const rows = (incidents ?? []) as any[];
+    const agentById = new Map((agentRows ?? []).map((a: any) => [a.id, a]));
+
+    const OPEN = ["Open"];
+    const PROGRESS = ["In Progress", "Under Investigation", "Awaiting Agent Response", "Escalated"];
+    const CLOSED = ["Closed", "Closed - No Action"];
+    const bucket = (source: any[]) => ({
+      total: source.length,
+      open: source.filter((r) => OPEN.includes(r.status)).length,
+      inProgress: source.filter((r) => PROGRESS.includes(r.status)).length,
+      resolved: source.filter((r) => r.status === "Resolved").length,
+      closed: source.filter((r) => CLOSED.includes(r.status)).length
+    });
+    const thisMonth = rows.filter((r) => monthOf(r.created_at) === monthKey);
+    const priorMonth = rows.filter((r) => monthOf(r.created_at) === lastMonthKey);
+    const now = bucket(thisMonth);
+    const before = bucket(priorMonth);
+    const pct = (a: number, b: number) => b <= 0 ? null : Math.round(((a - b) / b) * 1000) / 10;
+
+    const groupBy = (key: string) => {
+      const map = new Map<string, number>();
+      for (const row of rows) map.set(String(row[key]), (map.get(String(row[key])) ?? 0) + 1);
+      return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([label, count]) => ({ label, count }));
+    };
+
+    res.json({
+      rows: rows.map((row: any, index: number) => ({
+        id: row.id,
+        code: row.incident_code
+          ?? `INC-${String(row.created_at ?? "").slice(2, 10).replace(/-/g, "")}-${String(rows.length - index).padStart(3, "0")}`,
+        agentId: row.agent_id,
+        agentName: agentById.get(row.agent_id)?.full_name ?? "Unknown agent",
+        agentCode: agentById.get(row.agent_id)?.agent_code ?? "",
+        orderId: row.order_id ?? null,
+        incidentType: row.incident_type,
+        severity: row.severity,
+        status: row.status,
+        description: row.description,
+        amountAtRisk: Number(row.amount_at_risk ?? 0),
+        reportedByName: row.reported_by_name ?? null,
+        resolution: row.resolution ?? null,
+        createdAt: row.created_at,
+        resolvedAt: row.resolved_at ?? null
+      })),
+      counts: {
+        ...now,
+        totalDeltaPct: pct(now.total, before.total),
+        openDeltaPct: pct(now.open, before.open),
+        inProgressDeltaPct: pct(now.inProgress, before.inProgress),
+        resolvedDeltaPct: pct(now.resolved, before.resolved),
+        closedDeltaPct: pct(now.closed, before.closed)
+      },
+      byType: groupBy("incident_type"),
+      byPriority: groupBy("severity"),
+      recentActivity: rows.slice(0, 5).map((row: any) => ({
+        code: row.incident_code ?? row.id,
+        label: row.resolved_at ? `Incident resolved: ${row.incident_code ?? ""}`.trim()
+          : `New incident logged: ${row.incident_code ?? ""}`.trim(),
+        agentName: agentById.get(row.agent_id)?.full_name ?? "Unknown agent",
+        at: row.resolved_at ?? row.created_at,
+        resolved: Boolean(row.resolved_at)
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load incidents." });
+  }
+});
+
 // ── GET /api/personal-delivery-agents/:id ─────────────────
 // Management only: this returns KYC documents, guarantors and bank details.
 router.get("/:id", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
@@ -3294,6 +3376,7 @@ const IncidentSchema = z.object({
   agentId: z.string().uuid(),
   orderId: z.string().trim().max(60).optional(),
   incidentType: z.enum([
+    "Customer Complaint", "COD Discrepancy", "Delivery Issue", "Return Issue", "Payment Delay",
     "Missing inventory", "Damaged product", "Missing COD", "Customer complaint",
     "Agent misconduct", "Delivery accident", "Theft", "Wrong product delivered",
     "False delivery claim", "Unsafe delivery location", "Other"
@@ -3306,8 +3389,13 @@ const IncidentSchema = z.object({
 router.post("/incidents", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = IncidentSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  const { count: existingCount } = await supabase.from(INCIDENTS)
+    .select("id", { count: "exact", head: true }).eq("org_id", orgIdOf(req));
+  const incidentCode = `INC-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${String((existingCount ?? 0) + 1).padStart(3, "0")}`;
+
   const { data, error } = await supabase.from(INCIDENTS).insert({
     org_id: orgIdOf(req), agent_id: parsed.data.agentId,
+    incident_code: incidentCode,
     order_id: parsed.data.orderId ?? null,
     incident_type: parsed.data.incidentType, severity: parsed.data.severity,
     description: parsed.data.description,
@@ -3317,9 +3405,17 @@ router.post("/incidents", requireRole(...MANAGEMENT_ROLES), async (req, res) => 
   }).select("*").single();
   if (error) { res.status(500).json({ error: error.message }); return; }
 
-  // A serious open incident should stop new work reaching that agent while it
-  // is investigated - that is the entire point of raising one.
-  if (parsed.data.severity === "Critical" || parsed.data.severity === "High") {
+  // Suspension is for incidents that put stock, cash or a customer's safety at
+  // risk - NOT for every High-priority service complaint. Suspending an agent
+  // over a late delivery costs them their income and the company its capacity,
+  // so the bar is Critical, or High on a money/trust matter.
+  const TRUST_INCIDENTS = [
+    "Theft", "Missing COD", "COD Discrepancy", "Agent misconduct",
+    "False delivery claim", "Missing inventory", "Payment Delay"
+  ];
+  const shouldSuspend = parsed.data.severity === "Critical"
+    || (parsed.data.severity === "High" && TRUST_INCIDENTS.includes(parsed.data.incidentType));
+  if (shouldSuspend) {
     await supabase.from(AGENTS).update({
       account_status: "Temporarily Suspended",
       availability: "Offline",
@@ -3328,16 +3424,19 @@ router.post("/incidents", requireRole(...MANAGEMENT_ROLES), async (req, res) => 
     }).eq("org_id", orgIdOf(req)).eq("id", parsed.data.agentId)
       .in("account_status", OPERATIONAL_STATUSES);
   }
-  res.status(201).json({ row: data, agentSuspended: ["Critical", "High"].includes(parsed.data.severity) });
+  res.status(201).json({ row: data, agentSuspended: shouldSuspend });
 });
 
 const IncidentUpdateSchema = z.object({
-  status: z.enum(["Open", "Under Investigation", "Awaiting Agent Response", "Resolved", "Closed - No Action", "Escalated"]),
+  status: z.enum([
+    "Open", "In Progress", "Resolved", "Closed",
+    "Under Investigation", "Awaiting Agent Response", "Closed - No Action", "Escalated"
+  ]),
   resolution: z.string().trim().max(2000).optional(),
   finalDecision: z.string().trim().max(500).optional(),
   amountAtRisk: z.number().min(0).optional()
 }).superRefine((value, ctx) => {
-  if ((value.status === "Resolved" || value.status === "Closed - No Action") && !value.resolution?.trim()) {
+  if (["Resolved", "Closed", "Closed - No Action"].includes(value.status) && !value.resolution?.trim()) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["resolution"], message: "Record what was actually decided." });
   }
 });
@@ -3351,7 +3450,7 @@ router.patch("/incidents/:incidentId", requireRole(...MANAGEMENT_ROLES), async (
   if (parsed.data.resolution !== undefined) patch.resolution = parsed.data.resolution;
   if (parsed.data.finalDecision !== undefined) patch.final_decision = parsed.data.finalDecision;
   if (parsed.data.amountAtRisk !== undefined) patch.amount_at_risk = parsed.data.amountAtRisk;
-  if (parsed.data.status === "Resolved" || parsed.data.status === "Closed - No Action") {
+  if (["Resolved", "Closed", "Closed - No Action"].includes(parsed.data.status)) {
     patch.resolved_at = new Date().toISOString();
   }
   const { data, error } = await supabase.from(INCIDENTS).update(patch)
