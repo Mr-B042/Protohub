@@ -919,11 +919,35 @@ export type PdaStockLedgerView = {
   };
 };
 
+export type PdaCodAgentRow = {
+  agentId: string; agentCode: string; fullName: string;
+  ordersDelivered: number; codCollected: number;
+  /** null - Protohub does not record refunds. Not the same as zero refunds. */
+  refunds: number | null;
+  netCollected: number; remitted: number; pending: number; status: string;
+};
+
+export type PdaCodOverview = {
+  counts: {
+    collected: number; collectedDeltaPct: number | null;
+    toRemit: number; remitted: number; remittedDeltaPct: number | null;
+    pending: number; overdue: number;
+    discrepancyAmount: number; discrepancyCases: number;
+    collectionRatePct: number | null; graceDays: number;
+  };
+  agents: PdaCodAgentRow[];
+  topAgents: Array<{ agentId: string; fullName: string; amount: number }>;
+  remittances: Array<{ id: string; agentId: string; agentName: string; amount: number; method: string; reference?: string | null; receivedAt: string; receivedByName?: string | null }>;
+  discrepancies: Array<{ id: string; kind: "incident" | "reconciliation"; agentName: string; orderId?: string | null; amount: number; detail: string; status: string; at: string }>;
+  recentActivity: Array<{ label: string; at: string; kind: string }>;
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),
   activeAgents: () => get<PdaActiveAgentsView>("/api/personal-delivery-agents/active-agents"),
   inventoryOverview: () => get<PdaInventoryOverview>("/api/personal-delivery-agents/inventory-overview"),
+  codOverview: () => get<PdaCodOverview>("/api/personal-delivery-agents/cod-overview"),
   stockLedger: () => get<PdaStockLedgerView>("/api/personal-delivery-agents/stock-ledger"),
   dispatchSummary: () => get<PdaDispatchSummary>("/api/personal-delivery-agents/dispatch-summary"),
   applicationReview: (id: string) => get<PdaReviewView>(`/api/personal-delivery-agents/applications/${id}/review`),
