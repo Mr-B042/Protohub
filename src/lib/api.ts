@@ -782,8 +782,28 @@ export type PdaSettings = {
   workingHoursStart: string; workingHoursEnd: string; kycValidMonths: number;
 };
 
+export type PdaApplicationRow = {
+  id: string; applicationId: string; fullName: string; phone: string; location: string;
+  photoUrl?: string | null; status: string; accountStatus: string;
+  kycApproved: number; kycTotal: number; kycPct: number;
+  guarantorStatus: string; guarantorsVerified: number; guarantorsTotal: number;
+  documentsPending: number; submittedOn: string; approvedAt?: string | null;
+  blockers: string[];
+};
+
+export type PdaApplicationsView = {
+  rows: PdaApplicationRow[];
+  counts: {
+    total: number; submitted: number; kycIncomplete: number; guarantorPending: number;
+    readyForApproval: number; approvedThisMonth: number;
+    /** null when there is no prior month to compare against. */
+    approvedDeltaVsLastMonth: number | null;
+  };
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
+  applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),
   reviewKycItem: (itemId: string, body: unknown) =>
     patch<{ row: PdaKycItem }>(`/api/personal-delivery-agents/kyc-items/${itemId}`, body),
   issueVerificationPhrase: (id: string) =>

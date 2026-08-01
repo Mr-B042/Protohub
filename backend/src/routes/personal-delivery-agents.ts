@@ -578,6 +578,106 @@ const mapDocument = (row: any) => ({
   rejectionReason: row.rejection_reason ?? null
 });
 
+// ── GET /api/personal-delivery-agents/applications ────────
+// The Applications & KYC list: one row per application with its checklist
+// progress, guarantor state and the action it is actually waiting on.
+router.get("/applications", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const [{ data: agentRows }, { data: kycRows }, { data: guarantorRows }, { data: docRows }] = await Promise.all([
+      supabase.from(AGENTS)
+        .select("id, agent_code, full_name, phone, state, city, photo_url, account_status, kyc_status, created_at, approved_at")
+        .eq("org_id", orgId).order("created_at", { ascending: false }),
+      supabase.from(KYC).select("agent_id, mandatory, status").eq("org_id", orgId),
+      supabase.from(GUARANTORS).select("agent_id, slot, verification_status, guarantor_type").eq("org_id", orgId),
+      supabase.from(DOCS).select("agent_id, status, label").eq("org_id", orgId)
+    ]);
+
+    const agents = agentRows ?? [];
+    const byAgent = <T extends { agent_id: string }>(rows: T[] | null, id: string) =>
+      (rows ?? []).filter((row) => row.agent_id === id);
+
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const lastMonthKey = lastMonth.toISOString().slice(0, 7);
+
+    const rows = agents.map((agent: any) => {
+      const kyc = byAgent(kycRows as any, agent.id);
+      const guarantors = byAgent(guarantorRows as any, agent.id);
+      const documents = byAgent(docRows as any, agent.id);
+
+      // Progress counts the MANDATORY items only - an optional extra should not
+      // make an application look further along than it is.
+      const mandatory = kyc.filter((item: any) => item.mandatory);
+      const approved = mandatory.filter((item: any) => item.status === "Approved").length;
+      const total = mandatory.length;
+
+      const guarantorsVerified = guarantors.filter((g: any) => g.verification_status === "Approved").length;
+      const guarantorStatus = guarantors.length === 0 ? "Not started"
+        : guarantorsVerified >= 2 ? "Verified"
+        : guarantors.some((g: any) => ["Rejected", "Declined Responsibility", "Information Mismatch"].includes(g.verification_status))
+          ? "Problem"
+        : guarantorsVerified === 0 ? "Not started" : "One pending";
+
+      const blockers = approvalBlockers(kyc as any, guarantors as any, documents as any);
+
+      // What the row is actually waiting on, which is not always the raw
+      // account_status - an application can be "KYC Submitted" while the real
+      // hold-up is an unverified guarantor.
+      const status = agent.account_status === "Rejected" ? "Rejected"
+        : agent.account_status === "Terminated" ? "Terminated"
+        : OPERATIONAL_STATUSES.includes(String(agent.account_status)) ? "Approved"
+        : blockers.length === 0 ? "Ready for Approval"
+        : agent.account_status === "Application Started" ? "Draft"
+        : guarantorStatus !== "Verified" && approved === total && total > 0 ? "Guarantor Pending"
+        : approved < total ? "KYC Incomplete"
+        : "Submitted";
+
+      return {
+        id: agent.id,
+        applicationId: `PDA-APP-${String(agent.agent_code ?? "").replace(/^PDA-/, "")}`,
+        fullName: agent.full_name,
+        phone: agent.phone,
+        location: [agent.city, agent.state].filter(Boolean).join(", "),
+        photoUrl: agent.photo_url ?? null,
+        status,
+        accountStatus: agent.account_status,
+        kycApproved: approved,
+        kycTotal: total,
+        kycPct: total > 0 ? Math.round((approved / total) * 100) : 0,
+        guarantorStatus,
+        guarantorsVerified,
+        guarantorsTotal: 2,
+        documentsPending: documents.filter((d: any) => d.status !== "Approved").length,
+        submittedOn: agent.created_at,
+        approvedAt: agent.approved_at ?? null,
+        blockers
+      };
+    });
+
+    const approvedThisMonth = agents.filter((a: any) => String(a.approved_at ?? "").slice(0, 7) === monthKey).length;
+    const approvedLastMonth = agents.filter((a: any) => String(a.approved_at ?? "").slice(0, 7) === lastMonthKey).length;
+
+    res.json({
+      rows,
+      counts: {
+        total: rows.length,
+        submitted: rows.filter((r) => r.status === "Submitted").length,
+        kycIncomplete: rows.filter((r) => r.status === "KYC Incomplete").length,
+        guarantorPending: rows.filter((r) => r.status === "Guarantor Pending").length,
+        readyForApproval: rows.filter((r) => r.status === "Ready for Approval").length,
+        approvedThisMonth,
+        // Null rather than +0 when there is no prior month to compare against.
+        approvedDeltaVsLastMonth: approvedLastMonth === 0 && approvedThisMonth === 0
+          ? null : approvedThisMonth - approvedLastMonth
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load applications." });
+  }
+});
+
 // ── GET /api/personal-delivery-agents/:id ─────────────────
 // Management only: this returns KYC documents, guarantors and bank details.
 router.get("/:id", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
