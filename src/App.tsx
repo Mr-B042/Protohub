@@ -126,7 +126,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -195,7 +195,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -11152,6 +11152,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaPortalTab, setPdaPortalTab] = useState<PdaPortalTab>("Home");
   const [pdaStockAgentId, setPdaStockAgentId] = useState("");
   const [pdaCodAgentId, setPdaCodAgentId] = useState("");
+  const [pdaDispatchRows, setPdaDispatchRows] = useState<PdaDispatchRow[]>([]);
+  const [pdaDispatchFilter, setPdaDispatchFilter] = useState("All");
+  const [pdaDispatchSearch, setPdaDispatchSearch] = useState("");
+  const [pdaCandidateOrderId, setPdaCandidateOrderId] = useState("");
+  const [pdaCandidates, setPdaCandidates] = useState<PdaCandidateView | null>(null);
+  const [pdaCandidateFee, setPdaCandidateFee] = useState("");
   const [pdaCod, setPdaCod] = useState<PdaCodView | null>(null);
   const [pdaRemittanceDraft, setPdaRemittanceDraft] = useState({ amount: "", method: "Cash", reference: "" });
   const [pdaStock, setPdaStock] = useState<{ stock: any[]; ledger: any[]; transfers: any[] } | null>(null);
@@ -40363,6 +40369,12 @@ ${waybillLineItems(w).length > 1
 
   useEffect(() => {
     if (activePage !== "Personal Delivery Agents") return;
+    void loadPdaDispatch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, currentRole]);
+
+  useEffect(() => {
+    if (activePage !== "Personal Delivery Agents") return;
     void loadPersonalDeliveryAgents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, currentRole]);
@@ -40514,6 +40526,43 @@ ${waybillLineItems(w).length > 1
   /** Product name for a stock row, falling back to the id when unknown. */
   const productNameById = (productId: string) =>
     products.find((p) => p.id === productId)?.name ?? productId;
+
+  const loadPdaDispatch = async () => {
+    try {
+      const result = await personalDeliveryAgentsApi.assignments();
+      setPdaDispatchRows(result?.rows ?? []);
+    } catch (err: any) { showToast(err?.message ?? "Could not load dispatch."); }
+  };
+
+  const openPdaCandidates = async (orderId: string) => {
+    if (!orderId) { showToast("Enter an order number first."); return; }
+    try {
+      const view = await personalDeliveryAgentsApi.candidates(orderId);
+      setPdaCandidates(view);
+      setPdaCandidateFee("");
+      setModal("pdaAssignOrder");
+    } catch (err: any) { showToast(err?.message ?? "Could not find that order."); }
+  };
+
+  const pdaAssignOrder = async (agentId: string) => {
+    if (!pdaCandidates) return;
+    const fee = Number(pdaCandidateFee);
+    if (!Number.isFinite(fee) || fee < 0) { showToast("Set the delivery fee first."); return; }
+    setPdaSaving(true);
+    try {
+      // The fee is locked at assignment so it cannot be renegotiated once the
+      // agent has already made the trip.
+      await personalDeliveryAgentsApi.assign(agentId, {
+        orderId: pdaCandidates.order.id,
+        deliveryFee: fee,
+        lockFee: true
+      });
+      setModal(null);
+      showToast("Offered to the agent. They must accept before anything moves.");
+      await Promise.all([loadPdaDispatch(), loadPersonalDeliveryAgents()]);
+    } catch (err: any) { showToast(err?.message ?? "Could not assign that order."); }
+    finally { setPdaSaving(false); }
+  };
 
   const openPdaCod = async (agentId: string) => {
     setPdaCodAgentId(agentId);
@@ -46805,6 +46854,153 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // Orders & Dispatch. Management sees the whole fleet; a Sales Rep sees only
+  // the deliveries on their own customers' orders, with cash figures already
+  // stripped server-side.
+  const renderPdaDispatch = () => {
+    const isManagement = ["Owner", "Admin", "Manager"].includes(currentRole);
+    const rows = pdaDispatchRows.filter((row) => {
+      if (pdaDispatchFilter !== "All" && row.deliveryStatus !== pdaDispatchFilter) return false;
+      if (!pdaDispatchSearch.trim()) return true;
+      const q = pdaDispatchSearch.trim().toLowerCase();
+      return (row.customer ?? "").toLowerCase().includes(q)
+        || row.orderId.toLowerCase().includes(q)
+        || (row.agentName ?? "").toLowerCase().includes(q);
+    });
+
+    const statusTone = (status: string) =>
+      status === "Delivered" ? "bg-emerald-50 text-emerald-700"
+      : status === "Failed" || status === "Rejected" ? "bg-red-50 text-red-700"
+      : status === "Dispatch Started" || status === "Arrived at Customer Location" ? "bg-sky-50 text-sky-700"
+      : status === "Rescheduled" ? "bg-amber-50 text-amber-700"
+      : "bg-gray-50 text-gray-600";
+
+    // Something accepted but untouched for a day is the quiet failure mode:
+    // nobody complains, the customer just waits.
+    const isStale = (row: PdaDispatchRow) => {
+      if (["Delivered", "Failed", "Rejected", "Cancelled"].includes(row.deliveryStatus)) return false;
+      const last = row.lastUpdatedAt ? new Date(row.lastUpdatedAt).getTime() : 0;
+      return last > 0 && Date.now() - last > 24 * 60 * 60 * 1000;
+    };
+
+    return (
+      <div className="space-y-4">
+        {isManagement && (
+          <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="m-0 text-sm font-bold text-gray-900">Give an order to an agent</h2>
+                <p className="m-0 mt-0.5 text-xs text-gray-500">
+                  Enter the order number to see who can actually take it — and for everyone who cannot, the reason why.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" placeholder="Order number"
+                  value={pdaCandidateOrderId} onChange={(e) => setPdaCandidateOrderId(e.target.value)} />
+                <button type="button" onClick={() => void openPdaCandidates(pdaCandidateOrderId.trim())}
+                  className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-sm font-bold text-white hover:bg-[#1560a8]">
+                  Find agents
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-200">
+            <div>
+              <h2 className="m-0 text-base font-bold text-gray-900">
+                {isManagement ? "All deliveries" : "Deliveries on your orders"}
+              </h2>
+              <p className="m-0 text-xs text-gray-500">
+                {isManagement
+                  ? "Every order given to a personal delivery agent."
+                  : "Agents delivering to your customers. Their bank details, KYC and cash position are not shown to Sales Reps."}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input className="rounded-lg border border-gray-200 px-3 py-2 text-xs" placeholder="Customer, order or agent"
+                value={pdaDispatchSearch} onChange={(e) => setPdaDispatchSearch(e.target.value)} />
+              <select className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold"
+                value={pdaDispatchFilter} onChange={(e) => setPdaDispatchFilter(e.target.value)}>
+                {["All", "Ready for Dispatch", "Dispatch Started", "Arrived at Customer Location", "Delivered", "Failed", "Rejected", "Rescheduled"].map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {rows.length === 0 ? (
+            <p className="m-0 px-5 py-12 text-center text-sm text-gray-400">
+              {pdaDispatchRows.length === 0
+                ? "No orders have been given to a personal delivery agent yet."
+                : "Nothing matches that filter."}
+            </p>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {rows.map((row) => (
+                <div key={row.id} className="px-5 py-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-gray-900">
+                        {row.customer ?? row.orderId}
+                        <span className="ml-2 text-[11px] font-semibold text-gray-400">{row.orderId}</span>
+                      </div>
+                      <p className="m-0 text-xs text-gray-500">
+                        {[row.productName, row.state].filter(Boolean).join(" · ")}
+                      </p>
+                      <p className="m-0 mt-0.5 text-xs">
+                        <span className="font-semibold text-gray-500">Agent: </span>
+                        <span className="font-bold text-gray-800">{row.agentName ?? "unassigned"}</span>
+                        {row.agentAvailability && <span className="ml-1 text-gray-400">({row.agentAvailability.toLowerCase()})</span>}
+                      </p>
+                      <p className="m-0 text-xs">
+                        <span className="font-semibold text-gray-500">Customer: </span>
+                        <span className={row.customerContactStatus === "Customer Ready" ? "font-bold text-emerald-600" : "text-gray-700"}>
+                          {row.customerContactStatus}
+                        </span>
+                      </p>
+                      {row.failureReason && <p className="m-0 text-xs text-red-600"><span className="font-black">Failed: </span>{row.failureReason}</p>}
+                      {row.declineReason && <p className="m-0 text-xs text-amber-700"><span className="font-black">Declined: </span>{row.declineReason}</p>}
+                    </div>
+
+                    <div className="flex shrink-0 flex-col items-end gap-1.5">
+                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${statusTone(row.deliveryStatus)}`}>
+                        {row.deliveryStatus}
+                      </span>
+                      {row.assignmentStatus === "Awaiting Agent Acceptance" && (
+                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-700">Not accepted yet</span>
+                      )}
+                      {isStale(row) && (
+                        <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-black text-red-700">No update in 24h</span>
+                      )}
+                      <div className="text-[11px] text-gray-400">
+                        Order {formatMoney(row.orderValue)} · fee {formatMoney(row.deliveryFee)}
+                      </div>
+                      {isManagement && row.reconciliationStatus && row.deliveryStatus === "Delivered" && (
+                        <div className="text-[11px] font-semibold text-gray-500">{row.reconciliationStatus}</div>
+                      )}
+                      {row.agentPhone && (
+                        <div className="flex gap-1.5">
+                          <a href={`tel:${row.agentPhone}`} className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-700">Call agent</a>
+                          {buildWhatsAppTargets(row.agentPhone, `Hello, following up on order ${row.orderId}.`).normalUrl && (
+                            <a href={buildWhatsAppTargets(row.agentPhone, `Hello, following up on order ${row.orderId}.`).normalUrl ?? undefined}
+                              target="_blank" rel="noreferrer"
+                              className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-700">WhatsApp</a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  };
+
   // COD & Reconciliation. Company cash and agent earnings are shown as two
   // separate columns of money throughout - an agent never nets their fee off
   // the customer's payment, so the books must not imply that they can.
@@ -47405,7 +47601,10 @@ ${waybillLineItems(w).length > 1
       { label: "Units With Agents", value: String(totals?.inventoryHeld ?? 0), hint: `${totals?.inventoryAvailable ?? 0} available · ${totals?.stockInTransit ?? 0} in transit` },
       { label: "Stock Unaccounted", value: String(totals?.inventoryUnaccounted ?? 0), hint: `${totals?.openStockReports ?? 0} report${(totals?.openStockReports ?? 0) === 1 ? "" : "s"} awaiting review`, tone: (totals?.inventoryUnaccounted ?? 0) > 0 ? "text-red-600" : undefined },
       { label: "Our Cash With Agents", value: formatMoney(totals?.codOutstanding ?? 0), hint: `${totals?.agentsHoldingCash ?? 0} agent${(totals?.agentsHoldingCash ?? 0) === 1 ? "" : "s"} holding it`, tone: (totals?.codOutstanding ?? 0) > 0 ? "text-red-600" : undefined },
-      { label: "Earnings We Owe", value: formatMoney(totals?.earningsAvailable ?? 0), hint: `${formatMoney(totals?.earningsPending ?? 0)} pending until cash is in`, tone: "text-emerald-600" }
+      { label: "Earnings We Owe", value: formatMoney(totals?.earningsAvailable ?? 0), hint: `${formatMoney(totals?.earningsPending ?? 0)} pending until cash is in`, tone: "text-emerald-600" },
+      { label: "Assigned Today", value: String(totals?.ordersAssignedToday ?? 0), hint: `${totals?.ordersAwaitingAcceptance ?? 0} not accepted yet` },
+      { label: "Out For Delivery", value: String(totals?.dispatchesInProgress ?? 0), hint: `${totals?.deliveredToday ?? 0} delivered today`, tone: "text-sky-600" },
+      { label: "No Update In 24h", value: String(totals?.staleOpenOrders ?? 0), hint: "accepted but sitting quiet", tone: (totals?.staleOpenOrders ?? 0) > 0 ? "text-red-600" : undefined }
     ];
 
     return (
@@ -47434,21 +47633,6 @@ ${waybillLineItems(w).length > 1
                 </div>
               ))}
             </div>
-
-            {/* The operational figures (orders, COD, inventory held) genuinely do
-                not exist yet. Saying so beats printing zeros that look like a
-                clean bill of health on money and stock. */}
-            <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
-              <h2 className="text-sm font-bold text-gray-900">Not measurable yet</h2>
-              <p className="mt-1 text-xs text-gray-500">
-                Today's order counts arrive with the Orders &amp; Dispatch management view. They are left blank rather than shown as 0, so an empty figure is never mistaken for a quiet day.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {["Orders Assigned Today", "Dispatches In Progress", "Delivered Today"].map((label) => (
-                  <span key={label} className="rounded-lg border border-dashed border-gray-300 px-2.5 py-1 text-[11px] font-semibold text-gray-400">{label}</span>
-                ))}
-              </div>
-            </section>
 
             <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-200">
@@ -47519,6 +47703,8 @@ ${waybillLineItems(w).length > 1
           renderPdaInventory()
         ) : pdaSubPage === "COD & Reconciliation" ? (
           renderPdaCod()
+        ) : pdaSubPage === "Orders & Dispatch" ? (
+          renderPdaDispatch()
         ) : (
           <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-12 text-center">
             <h2 className="text-base font-bold text-gray-900">{pdaSubPage}</h2>
@@ -76105,6 +76291,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "pdaReschedule" && "Reschedule"}
                 {modal === "pdaSendStock" && "Send stock to agent"}
                 {modal === "pdaRemittance" && "Record cash received"}
+                {modal === "pdaAssignOrder" && "Who can take this order?"}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -81611,6 +81798,49 @@ ${waybillLineItems(w).length > 1
                 </div>
               );
             })()}
+
+	            {modal === "pdaAssignOrder" && pdaCandidates && (
+	              <div className="space-y-4">
+	                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs">
+	                  <div className="font-black text-gray-900">{pdaCandidates.order.customer}</div>
+	                  <div className="text-gray-600">
+	                    {[pdaCandidates.order.productName, pdaCandidates.order.state].filter(Boolean).join(" · ")}
+	                    {pdaCandidates.order.quantity ? ` · qty ${pdaCandidates.order.quantity}` : ""}
+	                    {" · "}{formatMoney(pdaCandidates.order.amount)}
+	                  </div>
+	                </div>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Delivery fee *</span>
+	                  <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaCandidateFee}
+	                    onChange={(e) => setPdaCandidateFee(e.target.value)} placeholder="4500" />
+	                  <span className="text-[11px] text-gray-500">Locked once assigned, so it cannot be renegotiated after the trip.</span>
+	                </label>
+	                <div className="space-y-2">
+	                  {pdaCandidates.candidates.length === 0 ? (
+	                    <p className="m-0 text-xs text-gray-500">No personal delivery agents exist yet.</p>
+	                  ) : pdaCandidates.candidates.map((candidate) => (
+	                    <div key={candidate.agentId} className={`rounded-lg border px-3 py-2 ${candidate.eligible ? "border-emerald-200 bg-emerald-50/40" : "border-gray-200 bg-gray-50"}`}>
+	                      <div className="flex flex-wrap items-center justify-between gap-2">
+	                        <span className="text-sm font-bold text-gray-900">{candidate.fullName}</span>
+	                        {candidate.eligible ? (
+	                          <button type="button" disabled={pdaSaving} onClick={() => void pdaAssignOrder(candidate.agentId)}
+	                            className="!min-h-0 rounded-md bg-[#1F8FE0] px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-60">
+	                            Give it to them
+	                          </button>
+	                        ) : (
+	                          <span className="text-[10px] font-black uppercase text-gray-400">Cannot take it</span>
+	                        )}
+	                      </div>
+	                      {candidate.reasons.length > 0 && (
+	                        <ul className="m-0 mt-1 list-disc pl-4 text-[11px] text-gray-600">
+	                          {candidate.reasons.map((reason) => <li key={reason}>{reason}</li>)}
+	                        </ul>
+	                      )}
+	                    </div>
+	                  ))}
+	                </div>
+	              </div>
+	            )}
 
 	            {modal === "pdaRemittance" && (
 	              <div className="space-y-4">

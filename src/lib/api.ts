@@ -612,6 +612,12 @@ export type PersonalDeliveryAgentOverview = {
     ordersWithCashOutstanding: number;
     earningsAvailable: number;
     earningsPending: number;
+    ordersAssignedToday: number;
+    ordersAwaitingAcceptance: number;
+    dispatchesInProgress: number;
+    deliveredToday: number;
+    failedToday: number;
+    staleOpenOrders: number;
   } | null;
   byStatus?: Record<string, number>;
   // Capabilities that do not exist yet, named so the UI can say so rather than
@@ -702,6 +708,23 @@ export type PdaWallet = {
   codLimit: number | null;
 };
 
+export type PdaDispatchRow = {
+  id: string; orderId: string; customer?: string | null; state?: string | null;
+  productName?: string | null; orderValue: number;
+  agentId: string; agentName?: string | null; agentPhone?: string | null; agentAvailability?: string | null;
+  assignmentStatus: string; customerContactStatus: string; deliveryStatus: string;
+  declineReason?: string | null; failureReason?: string | null;
+  deliveryFee: number; expectedArrivalAt?: string | null; dispatchStartedAt?: string | null;
+  deliveredAt?: string | null; rescheduledTo?: string | null; lastUpdatedAt?: string | null;
+  /** Management only - a rep monitoring a delivery never receives these. */
+  amountCollected?: number | null; amountRemitted?: number; reconciliationStatus?: string;
+};
+
+export type PdaCandidateView = {
+  order: { id: string; customer: string; state?: string | null; productName?: string | null; quantity?: number | null; amount: number };
+  candidates: Array<{ agentId: string; fullName: string; eligible: boolean; reasons: string[]; score: number }>;
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   reviewKycItem: (itemId: string, body: unknown) =>
@@ -759,6 +782,13 @@ export const personalDeliveryAgentsApi = {
   payEarnings: (id: string, body: unknown) =>
     post<{ row: any; orders: number; amount: number }>(`/api/personal-delivery-agents/${id}/earnings/pay`, body),
   myWallet: () => get<PdaWallet>("/api/personal-delivery-agents/my/wallet"),
+  // Orders & Dispatch
+  assignments: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return get<{ rows: PdaDispatchRow[]; scope: "management" | "rep" }>(`/api/personal-delivery-agents/assignments${qs}`);
+  },
+  candidates: (orderId: string) =>
+    get<PdaCandidateView>(`/api/personal-delivery-agents/assignments/candidates?orderId=${encodeURIComponent(orderId)}`),
   list: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
     return get<{ rows: PersonalDeliveryAgentRow[]; pendingMigration?: boolean }>(`/api/personal-delivery-agents${qs}`);

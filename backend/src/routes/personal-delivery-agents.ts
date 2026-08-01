@@ -25,6 +25,7 @@ import {
   reconciliationStatusFor, earningStatusFor, cashPositionFor,
   outstandingForAssignment, allocateRemittance, codAssignmentBlockers
 } from "../lib/pda-cod.js";
+import { rankCandidates } from "../lib/pda-assignment-match.js";
 import { recordStockLossExpense } from "../lib/stock-loss-expense.js";
 
 const router = Router();
@@ -208,6 +209,27 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
       })),
       (cashRows ?? []).map((row: any) => row.earning_status)
     );
+    // Today's dispatch picture. Counted from the assignment rows already
+    // loaded above, so this costs no extra query.
+    const { data: todayRows } = await supabase.from("pda_order_assignments")
+      .select("offered_at, delivered_at, delivery_status, assignment_status")
+      .eq("org_id", req.user!.orgId);
+    const isToday = (value: any) => String(value ?? "").slice(0, 10) === todayKey;
+    const orders = {
+      assignedToday: (todayRows ?? []).filter((row: any) => isToday(row.offered_at)).length,
+      awaitingAcceptance: (todayRows ?? []).filter((row: any) => row.assignment_status === "Awaiting Agent Acceptance").length,
+      dispatchesInProgress: (todayRows ?? []).filter((row: any) =>
+        ["Dispatch Started", "Arrived at Customer Location"].includes(row.delivery_status)).length,
+      deliveredToday: (todayRows ?? []).filter((row: any) => isToday(row.delivered_at)).length,
+      failedToday: (todayRows ?? []).filter((row: any) =>
+        ["Failed", "Rejected"].includes(row.delivery_status) && isToday(row.offered_at)).length,
+      // Something an agent accepted but has not touched in over a day. This is
+      // the quiet failure mode - nobody complains, the customer just waits.
+      staleOpen: (todayRows ?? []).filter((row: any) =>
+        !["Delivered", "Failed", "Rejected", "Cancelled"].includes(row.delivery_status)
+        && row.assignment_status === "Accepted"
+        && !isToday(row.offered_at)).length
+    };
     // Agents personally holding company money, not orders - one agent sitting
     // on five unremitted deliveries is one problem, not five.
     const agentsHoldingCash = new Set(
@@ -254,16 +276,18 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
         agentsHoldingCash,
         ordersWithCashOutstanding: cash.ordersWithCashOutstanding,
         earningsAvailable: cash.availableEarnings,
-        earningsPending: cash.pendingEarnings
+        earningsPending: cash.pendingEarnings,
+        ordersAssignedToday: orders.assignedToday,
+        ordersAwaitingAcceptance: orders.awaitingAcceptance,
+        dispatchesInProgress: orders.dispatchesInProgress,
+        deliveredToday: orders.deliveredToday,
+        failedToday: orders.failedToday,
+        staleOpenOrders: orders.staleOpen
       },
       byStatus,
       // Named explicitly so the UI can say "not built yet" instead of showing
       // a zero that looks like a clean bill of health.
-      unavailable: {
-        ordersAssignedToday: "Orders & Dispatch is not built yet",
-        dispatchesInProgress: "Orders & Dispatch is not built yet",
-        deliveredToday: "Orders & Dispatch is not built yet"
-      }
+      unavailable: {}
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load the overview." });
@@ -1735,6 +1759,175 @@ router.get("/my/wallet", requireRole(AGENT_ROLE), async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load your wallet." });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────
+// Orders & Dispatch
+// ─────────────────────────────────────────────────────────
+
+/** Live figures needed to judge whether an agent can take more work. */
+async function agentCapacitySnapshot(orgId: string, productId?: string | null) {
+  const [{ data: agents }, { data: assignments }, { data: stock }] = await Promise.all([
+    supabase.from(AGENTS)
+      .select("id, full_name, account_status, availability, trust_level, state, service_areas, max_active_orders, max_cod_exposure")
+      .eq("org_id", orgId),
+    supabase.from(ASSIGNMENTS)
+      .select("agent_id, delivery_status, amount_collected, amount_remitted, delivery_fee")
+      .eq("org_id", orgId),
+    productId
+      ? supabase.from("pda_agent_stock").select("agent_id, available").eq("org_id", orgId).eq("product_id", productId)
+      : Promise.resolve({ data: [] as any[] })
+  ]);
+
+  const rows = assignments ?? [];
+  const activeByAgent = new Map<string, number>();
+  const cashByAgent = new Map<string, number>();
+  for (const row of rows as any[]) {
+    if (["Ready for Dispatch", "Dispatch Started", "Arrived at Customer Location", "Rescheduled"].includes(row.delivery_status)) {
+      activeByAgent.set(row.agent_id, (activeByAgent.get(row.agent_id) ?? 0) + 1);
+    }
+    const owed = outstandingForAssignment({
+      deliveryStatus: row.delivery_status,
+      amountCollected: row.amount_collected,
+      amountRemitted: row.amount_remitted,
+      deliveryFee: row.delivery_fee
+    });
+    if (owed > 0) cashByAgent.set(row.agent_id, (cashByAgent.get(row.agent_id) ?? 0) + owed);
+  }
+  const stockByAgent = new Map<string, number>(
+    (stock ?? []).map((row: any) => [row.agent_id, Number(row.available ?? 0)])
+  );
+
+  return (agents ?? []).map((row: any) => ({
+    id: row.id,
+    fullName: row.full_name,
+    accountStatus: row.account_status,
+    availability: row.availability,
+    trustLevel: row.trust_level,
+    state: row.state,
+    serviceAreas: Array.isArray(row.service_areas) ? row.service_areas : [],
+    maxActiveOrders: row.max_active_orders,
+    maxCodExposure: row.max_cod_exposure === null || row.max_cod_exposure === undefined
+      ? null : Number(row.max_cod_exposure),
+    activeOrders: activeByAgent.get(row.id) ?? 0,
+    cashOutstanding: cashByAgent.get(row.id) ?? 0,
+    availableStock: stockByAgent.get(row.id) ?? 0
+  }));
+}
+
+// ── GET /assignments/candidates?orderId= ──────────────────
+// Who can take this order, and for everyone who cannot, why not. The reasons
+// matter: a dispatcher facing an empty list needs to know whether nobody has
+// stock or nobody is online, not just that the list is empty.
+router.get("/assignments/candidates", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const orderId = typeof req.query.orderId === "string" ? req.query.orderId : "";
+    if (!orderId) { res.status(400).json({ error: "An order id is required." }); return; }
+
+    const { data: order } = await supabase.from("orders")
+      .select("id, customer, state, product_id, product_name, quantity, amount")
+      .eq("org_id", orgId).eq("id", orderId).maybeSingle();
+    if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+
+    const agents = await agentCapacitySnapshot(orgId, order.product_id);
+    const ranked = rankCandidates(agents, {
+      state: order.state,
+      quantity: Math.max(1, Number(order.quantity ?? 1)),
+      amount: Number(order.amount ?? 0)
+    });
+
+    res.json({
+      order: {
+        id: order.id, customer: order.customer, state: order.state,
+        productName: order.product_name, quantity: order.quantity, amount: Number(order.amount ?? 0)
+      },
+      candidates: ranked
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not work out who can take this order." });
+  }
+});
+
+// ── GET /assignments ──────────────────────────────────────
+// Management sees every assignment. A Sales Rep sees only the ones on THEIR
+// customers' orders - they monitor their own deliveries, they do not run the
+// agent fleet.
+router.get("/assignments", requireRole(...READ_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const isManagement = (MANAGEMENT_ROLES as readonly string[]).includes(req.user!.role);
+
+    let query = supabase.from(ASSIGNMENTS).select("*").eq("org_id", orgId)
+      .order("offered_at", { ascending: false }).limit(300);
+    const status = typeof req.query.status === "string" ? req.query.status : null;
+    if (status && status !== "All") query = query.eq("delivery_status", status);
+    const agentId = typeof req.query.agentId === "string" ? req.query.agentId : null;
+    if (agentId) query = query.eq("agent_id", agentId);
+
+    const { data: assignments, error } = await query;
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    const orderIds = [...new Set((assignments ?? []).map((row: any) => row.order_id))];
+    const { data: orders } = orderIds.length
+      ? await supabase.from("orders")
+          .select("id, customer, phone, state, product_name, package_name, amount, assigned_rep_id")
+          .eq("org_id", orgId).in("id", orderIds)
+      : { data: [] as any[] };
+    const orderById = new Map((orders ?? []).map((o: any) => [o.id, o]));
+
+    const { data: agentRows } = await supabase.from(AGENTS)
+      .select("id, full_name, phone, availability, account_status").eq("org_id", orgId);
+    const agentById = new Map((agentRows ?? []).map((a: any) => [a.id, a]));
+
+    const scopeId = req.user!.effectiveUserId ?? req.user!.id;
+    const rows = (assignments ?? [])
+      .filter((row: any) => {
+        if (isManagement) return true;
+        return orderById.get(row.order_id)?.assigned_rep_id === scopeId;
+      })
+      .map((row: any) => {
+        const order = orderById.get(row.order_id);
+        const agent = agentById.get(row.agent_id);
+        return {
+          id: row.id,
+          orderId: row.order_id,
+          customer: order?.customer ?? null,
+          state: order?.state ?? null,
+          productName: order?.package_name || order?.product_name || null,
+          orderValue: Number(order?.amount ?? 0),
+          agentId: row.agent_id,
+          agentName: agent?.full_name ?? null,
+          // A rep needs to be able to ring the agent about their own customer.
+          agentPhone: agent?.phone ?? null,
+          agentAvailability: agent?.availability ?? null,
+          assignmentStatus: row.assignment_status,
+          customerContactStatus: row.customer_contact_status,
+          deliveryStatus: row.delivery_status,
+          declineReason: row.decline_reason,
+          failureReason: row.failure_reason,
+          deliveryFee: Number(row.delivery_fee ?? 0),
+          expectedArrivalAt: row.expected_arrival_at,
+          dispatchStartedAt: row.dispatch_started_at,
+          deliveredAt: row.delivered_at,
+          rescheduledTo: row.rescheduled_to,
+          // Managers and reps both need "when did anyone last touch this".
+          lastUpdatedAt: row.updated_at,
+          // Cash figures are management-only: a rep monitoring a delivery has
+          // no business seeing what an agent owes the company.
+          ...(isManagement ? {
+            amountCollected: row.amount_collected === null ? null : Number(row.amount_collected),
+            amountRemitted: Number(row.amount_remitted ?? 0),
+            reconciliationStatus: row.reconciliation_status
+          } : {})
+        };
+      });
+
+    res.json({ rows, scope: isManagement ? "management" : "rep" });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load dispatch." });
   }
 });
 
