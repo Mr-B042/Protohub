@@ -126,7 +126,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -195,7 +195,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -246,6 +246,10 @@ const PDA_SUBNAV_ITEMS: Array<{ key: PdaSubPage; label: string; icon: typeof Lay
 // Mirrors the same groups in backend/src/routes/personal-delivery-agents.ts.
 // Only these statuses mean an agent may actually hold stock and take orders.
 const PDA_OPERATIONAL_STATUSES = ["Approved", "Probation", "Active"];
+const PDA_PENDING_STATUSES = [
+  "Application Started", "KYC Incomplete", "KYC Submitted",
+  "Guarantor Verification Pending", "Management Review"
+];
 const PDA_RESTRICTED_STATUSES = [
   "Restricted", "Temporarily Suspended", "KYC Expired",
   "Cash Remittance Overdue", "Inventory Discrepancy"
@@ -11127,6 +11131,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaLoading, setPdaLoading] = useState(false);
   const [pdaNewAgent, setPdaNewAgent] = useState({ fullName: "", phone: "", whatsappPhone: "", state: "", city: "", transportMethod: "" });
   const [pdaSaving, setPdaSaving] = useState(false);
+  const [pdaDetail, setPdaDetail] = useState<PdaAgentDetail | null>(null);
+  const [pdaGuarantorDraft, setPdaGuarantorDraft] = useState<{
+    slot: number; guarantorType: string; fullName: string; relationship: string;
+    phone: string; whatsappPhone: string; address: string; occupation: string; consentGiven: boolean;
+  } | null>(null);
   const [showRecoveryRepDateRange, setShowRecoveryRepDateRange] = useState(false);
   const [recoveryRepSettingsOpen, setRecoveryRepSettingsOpen] = useState(false);
   const [recoveryRepSettingsDraft, setRecoveryRepSettingsDraft] = useState<{
@@ -40315,6 +40324,85 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, currentRole]);
 
+  const openPdaApplication = async (agentId: string) => {
+    try {
+      setPdaDetail(await personalDeliveryAgentsApi.detail(agentId));
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not open that application.");
+    }
+  };
+
+  const pdaSeedDocuments = async (agentId: string) => {
+    try {
+      const { seeded } = await personalDeliveryAgentsApi.seedDocuments(agentId);
+      showToast(seeded > 0 ? `${seeded} agreement${seeded === 1 ? "" : "s"} prepared.` : "All agreements are already prepared.");
+      await openPdaApplication(agentId);
+    } catch (err: any) { showToast(err?.message ?? "Could not prepare the agreements."); }
+  };
+
+  const pdaIssuePhrase = async (agentId: string) => {
+    try {
+      const { phrase } = await personalDeliveryAgentsApi.issueVerificationPhrase(agentId);
+      showToast(`Phrase issued: ${phrase}`);
+      await openPdaApplication(agentId);
+    } catch (err: any) { showToast(err?.message ?? "Could not issue a phrase."); }
+  };
+
+  const pdaApprove = async (agentId: string) => {
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.approve(agentId);
+      showToast("Approved. The agent starts on probation with reduced stock and COD limits.");
+      await Promise.all([openPdaApplication(agentId), loadPersonalDeliveryAgents()]);
+    } catch (err: any) {
+      // The server runs the same gate, so a stale screen cannot slip an
+      // unfinished application through.
+      showToast(err?.message ?? "Could not approve this application.");
+    } finally { setPdaSaving(false); }
+  };
+
+  const pdaOpenGuarantorForm = (slot: number, existing?: PdaGuarantor) => {
+    setPdaGuarantorDraft({
+      slot,
+      guarantorType: existing?.guarantorType ?? (slot === 1 ? "Family" : "Independent"),
+      fullName: existing?.fullName ?? "",
+      relationship: existing?.relationship ?? "",
+      phone: existing?.phone ?? "",
+      whatsappPhone: existing?.whatsappPhone ?? "",
+      address: existing?.address ?? "",
+      occupation: existing?.occupation ?? "",
+      consentGiven: existing?.consentGiven ?? false
+    });
+    setModal("pdaGuarantor");
+  };
+
+  const savePdaGuarantor = async () => {
+    if (!pdaGuarantorDraft || !pdaDetail) return;
+    if (!pdaGuarantorDraft.fullName.trim() || !pdaGuarantorDraft.phone.trim()) {
+      showToast("A guarantor needs at least a name and phone number.");
+      return;
+    }
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.saveGuarantor(pdaDetail.agent.id, {
+        slot: pdaGuarantorDraft.slot,
+        guarantorType: pdaGuarantorDraft.guarantorType || undefined,
+        fullName: pdaGuarantorDraft.fullName.trim(),
+        relationship: pdaGuarantorDraft.relationship.trim() || undefined,
+        phone: pdaGuarantorDraft.phone.trim(),
+        whatsappPhone: pdaGuarantorDraft.whatsappPhone.trim() || undefined,
+        address: pdaGuarantorDraft.address.trim() || undefined,
+        occupation: pdaGuarantorDraft.occupation.trim() || undefined,
+        consentGiven: pdaGuarantorDraft.consentGiven
+      });
+      showToast(`Guarantor ${pdaGuarantorDraft.slot} saved.`);
+      setModal(null);
+      setPdaGuarantorDraft(null);
+      await openPdaApplication(pdaDetail.agent.id);
+    } catch (err: any) { showToast(err?.message ?? "Could not save the guarantor."); }
+    finally { setPdaSaving(false); }
+  };
+
   const createPersonalDeliveryAgent = async () => {
     if (!pdaNewAgent.fullName.trim() || !pdaNewAgent.phone.trim()) {
       showToast("Name and phone are required to start an application.");
@@ -46245,6 +46333,281 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // Applications & KYC. Review is item-by-item on purpose: the Approve button
+  // stays disabled until every mandatory requirement passes, and the server
+  // enforces the same rule so a disabled button is never the only guard.
+  const renderPdaApplicationsAndKyc = () => {
+    const detail = pdaDetail;
+    const applications = pdaAgents.filter((agent) => PDA_PENDING_STATUSES.includes(agent.accountStatus));
+    const kycStatusTone = (status: string) =>
+      status === "Approved" ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+      : status === "Rejected" ? "bg-red-50 text-red-700 border-red-100"
+      : status === "Replacement Requested" ? "bg-amber-50 text-amber-700 border-amber-100"
+      : status === "Submitted" || status === "Uploaded" ? "bg-sky-50 text-sky-700 border-sky-100"
+      : "bg-gray-50 text-gray-500 border-gray-200";
+
+    const reviewItem = async (itemId: string, status: string) => {
+      let rejectionReason: string | undefined;
+      if (status === "Rejected" || status === "Replacement Requested") {
+        const reason = window.prompt("What is wrong with it? The applicant is told this.");
+        if (!reason || !reason.trim()) return;
+        rejectionReason = reason.trim();
+      }
+      try {
+        await personalDeliveryAgentsApi.reviewKycItem(itemId, { status, rejectionReason });
+        await openPdaApplication(detail!.agent.id);
+      } catch (err: any) { showToast(err?.message ?? "Could not update that item."); }
+    };
+
+    const reviewDocument = async (documentId: string, status: string) => {
+      let rejectionReason: string | undefined;
+      if (status === "Rejected" || status === "Replacement Requested") {
+        const reason = window.prompt("What is wrong with this document?");
+        if (!reason || !reason.trim()) return;
+        rejectionReason = reason.trim();
+      }
+      try {
+        await personalDeliveryAgentsApi.reviewDocument(documentId, { status, rejectionReason });
+        await openPdaApplication(detail!.agent.id);
+      } catch (err: any) { showToast(err?.message ?? "Could not update that document."); }
+    };
+
+    const verifyGuarantor = async (guarantorId: string, verificationStatus: string) => {
+      const note = window.prompt(`Notes from the ${verificationStatus.toLowerCase()} check (optional):`) ?? "";
+      try {
+        await personalDeliveryAgentsApi.verifyGuarantor(guarantorId, { verificationStatus, verificationNotes: note });
+        await openPdaApplication(detail!.agent.id);
+      } catch (err: any) { showToast(err?.message ?? "Could not update the guarantor."); }
+    };
+
+    const openFile = async (path?: string | null) => {
+      if (!path) return;
+      try {
+        // Signed, short-lived link - KYC files live in a private bucket and are
+        // never reachable by URL alone.
+        const { url } = await personalDeliveryAgentsApi.signedMediaUrl(path);
+        window.open(url, "_blank", "noopener");
+      } catch (err: any) { showToast(err?.message ?? "Could not open that file."); }
+    };
+
+    return (
+      <div className="grid gap-4 lg:grid-cols-[320px,1fr]">
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden self-start">
+          <div className="px-4 py-3 border-b border-gray-200">
+            <h2 className="text-sm font-bold text-gray-900">Applications</h2>
+            <p className="text-[11px] text-gray-500 mt-0.5">{applications.length} in onboarding</p>
+          </div>
+          {applications.length === 0 ? (
+            <p className="m-0 px-4 py-10 text-center text-xs text-gray-400">
+              No applications in progress. Start one from the Overview.
+            </p>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {applications.map((agent) => (
+                <button key={agent.id} type="button" onClick={() => void openPdaApplication(agent.id)}
+                  className={`!min-h-0 w-full px-4 py-3 text-left transition-colors ${detail?.agent.id === agent.id ? "bg-blue-50" : "hover:bg-gray-50"}`}>
+                  <div className="text-sm font-bold text-gray-900">{agent.fullName}</div>
+                  <div className="text-[11px] text-gray-400">{agent.agentCode} · {agent.accountStatus}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {!detail ? (
+          <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-14 text-center">
+            <p className="m-0 text-sm text-gray-500">Pick an application to review it.</p>
+          </section>
+        ) : (
+          <div className="space-y-4">
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-bold text-gray-900">{detail.agent.fullName}</h2>
+                  <p className="m-0 text-xs text-gray-500">
+                    {detail.agent.agentCode} · {detail.agent.phone}
+                    {detail.agent.city || detail.agent.state ? ` · ${[detail.agent.city, detail.agent.state].filter(Boolean).join(", ")}` : ""}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => void pdaSeedDocuments(detail.agent.id)}
+                    className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50">
+                    Prepare agreements
+                  </button>
+                  <button type="button" disabled={detail.blockers.length > 0 || pdaSaving}
+                    onClick={() => void pdaApprove(detail.agent.id)}
+                    title={detail.blockers.length > 0 ? "Every requirement must pass first" : undefined}
+                    className="!min-h-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40">
+                    Approve agent
+                  </button>
+                </div>
+              </div>
+
+              {detail.blockers.length > 0 ? (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                  <p className="m-0 text-xs font-black text-amber-800">
+                    Cannot approve yet — {detail.blockers.length} requirement{detail.blockers.length === 1 ? "" : "s"} outstanding:
+                  </p>
+                  <ul className="m-0 mt-1 list-disc pl-4 text-[11px] text-amber-800">
+                    {detail.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
+                  </ul>
+                </div>
+              ) : (
+                <p className="m-0 mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800">
+                  Every requirement has passed. Approving starts a 30-day probation with reduced stock and COD limits.
+                </p>
+              )}
+            </section>
+
+            {/* Live verification: a phrase issued now, said on camera with the
+                applicant's name and today's date, is what stops an old or
+                borrowed recording passing as a live check. */}
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="m-0 text-sm font-bold text-gray-900">Live verification phrase</h3>
+                  <p className="m-0 mt-0.5 max-w-lg text-[11px] text-gray-500">
+                    Send this phrase to the applicant and ask them to record themselves saying their name, today's date and the phrase, while slowly showing their face and ID. Re-issuing invalidates any earlier recording.
+                  </p>
+                </div>
+                <button type="button" onClick={() => void pdaIssuePhrase(detail.agent.id)}
+                  className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50">
+                  {detail.agent.verificationPhrase ? "Re-issue phrase" : "Issue phrase"}
+                </button>
+              </div>
+              {detail.agent.verificationPhrase && (
+                <p className="m-0 mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm font-black text-gray-900">
+                  “{detail.agent.verificationPhrase}”
+                </p>
+              )}
+            </section>
+
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-200">
+                <h3 className="m-0 text-sm font-bold text-gray-900">Verification checklist</h3>
+                <p className="m-0 text-[11px] text-gray-500">Approve or reject each requirement on its own.</p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {detail.kycItems.map((item) => (
+                  <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-gray-900">
+                        {item.label}
+                        {!item.mandatory && <span className="ml-2 text-[10px] font-bold uppercase text-gray-400">Optional</span>}
+                      </div>
+                      {item.rejectionReason && <p className="m-0 text-[11px] text-red-600">{item.rejectionReason}</p>}
+                      {item.filePath && (
+                        <button type="button" onClick={() => void openFile(item.filePath)} className="!min-h-0 text-[11px] font-bold text-[#1F8FE0] underline">
+                          View file
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${kycStatusTone(item.status)}`}>{item.status}</span>
+                      <button type="button" onClick={() => void reviewItem(item.id, "Approved")}
+                        className="!min-h-0 rounded-md border border-emerald-200 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50">Approve</button>
+                      <button type="button" onClick={() => void reviewItem(item.id, "Replacement Requested")}
+                        className="!min-h-0 rounded-md border border-amber-200 px-2 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-50">Ask again</button>
+                      <button type="button" onClick={() => void reviewItem(item.id, "Rejected")}
+                        className="!min-h-0 rounded-md border border-red-200 px-2 py-1 text-[11px] font-bold text-red-700 hover:bg-red-50">Reject</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-200">
+                <h3 className="m-0 text-sm font-bold text-gray-900">Guarantors</h3>
+                <p className="m-0 text-[11px] text-gray-500">
+                  Two required, verified separately. One may be family; the other must be someone independently verifiable — an employer, landlord, business owner or community leader. Two relatives can simply back each other up.
+                </p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {[1, 2].map((slot) => {
+                  const guarantor = detail.guarantors.find((g) => g.slot === slot);
+                  return (
+                    <div key={slot} className="px-5 py-3">
+                      {!guarantor ? (
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <span className="text-sm text-gray-500">Guarantor {slot} not added yet.</span>
+                          <button type="button" onClick={() => pdaOpenGuarantorForm(slot)}
+                            className="!min-h-0 rounded-md border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-700 hover:bg-gray-50">Add guarantor {slot}</button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-bold text-gray-900">
+                              {guarantor.fullName}
+                              <span className="ml-2 text-[10px] font-bold uppercase text-gray-400">{guarantor.guarantorType ?? "type not set"}</span>
+                            </div>
+                            <p className="m-0 text-[11px] text-gray-500">
+                              {[guarantor.relationship, guarantor.occupation, guarantor.phone].filter(Boolean).join(" · ")}
+                            </p>
+                            {guarantor.verificationNotes && <p className="m-0 text-[11px] text-gray-600">{guarantor.verificationNotes}</p>}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${kycStatusTone(guarantor.verificationStatus)}`}>
+                              {guarantor.verificationStatus}
+                            </span>
+                            <select value="" onChange={(e) => { if (e.target.value) void verifyGuarantor(guarantor.id, e.target.value); }}
+                              className="rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-700">
+                              <option value="">Set status…</option>
+                              {["Call Scheduled", "Reached", "Confirmed", "Information Mismatch", "Declined Responsibility", "Unable to Verify", "Approved", "Rejected"].map((option) => (
+                                <option key={option} value={option}>{option}</option>
+                              ))}
+                            </select>
+                            <button type="button" onClick={() => pdaOpenGuarantorForm(slot, guarantor)}
+                              className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-700 hover:bg-gray-50">Edit</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-200">
+                <h3 className="m-0 text-sm font-bold text-gray-900">Signed agreements</h3>
+                <p className="m-0 text-[11px] text-gray-500">Each is approved on its own and carries its version, so a re-issued agreement never inherits an old approval.</p>
+              </div>
+              {detail.documents.length === 0 ? (
+                <p className="m-0 px-5 py-8 text-center text-xs text-gray-400">
+                  No agreements prepared yet. Use “Prepare agreements” above.
+                </p>
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {detail.documents.map((doc) => (
+                    <div key={doc.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-gray-900">{doc.label} <span className="text-[10px] text-gray-400">{doc.version}</span></div>
+                        {doc.rejectionReason && <p className="m-0 text-[11px] text-red-600">{doc.rejectionReason}</p>}
+                        {doc.signedFilePath && (
+                          <button type="button" onClick={() => void openFile(doc.signedFilePath)} className="!min-h-0 text-[11px] font-bold text-[#1F8FE0] underline">
+                            View signed copy
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${kycStatusTone(doc.status)}`}>{doc.status}</span>
+                        <button type="button" onClick={() => void reviewDocument(doc.id, "Approved")}
+                          className="!min-h-0 rounded-md border border-emerald-200 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50">Approve</button>
+                        <button type="button" onClick={() => void reviewDocument(doc.id, "Replacement Requested")}
+                          className="!min-h-0 rounded-md border border-amber-200 px-2 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-50">Ask again</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // ===== Personal Delivery Agents =====
   // A Personal Delivery Agent holds Protohub stock AND collects customer cash,
   // which is why this module is separate from `agents` (registered logistics
@@ -46377,6 +46740,8 @@ ${waybillLineItems(w).length > 1
               )}
             </section>
           </>
+        ) : pdaSubPage === "Applications & KYC" ? (
+          renderPdaApplicationsAndKyc()
         ) : (
           <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-12 text-center">
             <h2 className="text-base font-bold text-gray-900">{pdaSubPage}</h2>
@@ -74954,6 +75319,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "addSalesRep" && "Add New Sales Representative"}
                 {modal === "addAgent" && "Add New Agent"}
                 {modal === "addPersonalDeliveryAgent" && "Start Agent Application"}
+                {modal === "pdaGuarantor" && `Guarantor ${pdaGuarantorDraft?.slot ?? ""}`}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -80460,6 +80826,64 @@ ${waybillLineItems(w).length > 1
                 </div>
               );
             })()}
+
+	            {modal === "pdaGuarantor" && pdaGuarantorDraft && (
+	              <div className="space-y-4">
+	                <p className="m-0 text-xs text-gray-500">
+	                  Guarantor {pdaGuarantorDraft.slot} of 2. One may be family; the other must be someone independently verifiable — an employer, landlord, business owner or community leader. Two relatives can simply back each other up, so an all-family pair blocks approval.
+	                </p>
+	                <div className="grid gap-3 sm:grid-cols-2">
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Guarantor type</span>
+	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.guarantorType}
+	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, guarantorType: e.target.value } : v)}>
+	                      <option value="Family">Family</option>
+	                      <option value="Independent">Independent (employer, landlord, community leader)</option>
+	                    </select>
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Full name *</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.fullName}
+	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, fullName: e.target.value } : v)} />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Relationship to applicant</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.relationship}
+	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, relationship: e.target.value } : v)} placeholder="Elder brother, landlord…" />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Occupation</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.occupation}
+	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, occupation: e.target.value } : v)} />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Phone *</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.phone}
+	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, phone: e.target.value } : v)} />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">WhatsApp</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.whatsappPhone}
+	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, whatsappPhone: e.target.value } : v)} />
+	                  </label>
+	                  <label className="flex flex-col gap-1 sm:col-span-2">
+	                    <span className="text-xs font-bold text-gray-600">Address</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.address}
+	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, address: e.target.value } : v)} />
+	                  </label>
+	                </div>
+	                <label className="flex items-center gap-2 text-xs font-semibold text-gray-700">
+	                  <input type="checkbox" checked={pdaGuarantorDraft.consentGiven}
+	                    onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, consentGiven: e.target.checked } : v)} />
+	                  They have agreed to be contacted and to stand as guarantor
+	                </label>
+	                <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={closeModal}>Cancel</button>
+	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white hover:bg-[#1560a8] disabled:opacity-60"
+	                    onClick={savePdaGuarantor}>{pdaSaving ? "Saving…" : "Save guarantor"}</button>
+	                </div>
+	              </div>
+	            )}
 
 	            {modal === "addPersonalDeliveryAgent" && (
 	              <div className="space-y-4">

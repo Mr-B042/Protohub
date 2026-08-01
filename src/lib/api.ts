@@ -608,7 +608,58 @@ export type PersonalDeliveryAgentOverview = {
   unavailable?: Record<string, string>;
 };
 
+export type PdaKycItem = {
+  id: string; itemKey: string; label: string; mandatory: boolean; status: string;
+  filePath?: string | null; reviewedAt?: string | null; reviewNote?: string | null;
+  rejectionReason?: string | null;
+};
+
+export type PdaGuarantor = {
+  id: string; slot: number; guarantorType?: string | null; fullName: string;
+  relationship?: string | null; phone: string; whatsappPhone?: string | null;
+  address?: string | null; occupation?: string | null;
+  idDocumentPath?: string | null; photoPath?: string | null; signedFormPath?: string | null;
+  consentGiven: boolean; verificationStatus: string; verificationNotes?: string | null;
+  verifiedAt?: string | null; callScheduledAt?: string | null;
+};
+
+export type PdaDocument = {
+  id: string; documentKey: string; label: string; version: string;
+  signedFilePath?: string | null; uploadedAt?: string | null; status: string;
+  approvedAt?: string | null; rejectionReason?: string | null;
+};
+
+export type PdaAgentDetail = {
+  agent: PersonalDeliveryAgentRow & { verificationPhrase?: string | null; verificationPhraseIssuedAt?: string | null };
+  kycItems: PdaKycItem[];
+  guarantors: PdaGuarantor[];
+  documents: PdaDocument[];
+  /** Every outstanding requirement. Empty means the application can be approved. */
+  blockers: string[];
+};
+
 export const personalDeliveryAgentsApi = {
+  detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
+  reviewKycItem: (itemId: string, body: unknown) =>
+    patch<{ row: PdaKycItem }>(`/api/personal-delivery-agents/kyc-items/${itemId}`, body),
+  issueVerificationPhrase: (id: string) =>
+    post<{ phrase: string }>(`/api/personal-delivery-agents/${id}/verification-phrase`, {}),
+  saveGuarantor: (id: string, body: unknown) =>
+    post<{ row: PdaGuarantor }>(`/api/personal-delivery-agents/${id}/guarantors`, body),
+  verifyGuarantor: (guarantorId: string, body: unknown) =>
+    patch<{ row: PdaGuarantor }>(`/api/personal-delivery-agents/guarantors/${guarantorId}`, body),
+  seedDocuments: (id: string) =>
+    post<{ seeded: number }>(`/api/personal-delivery-agents/${id}/documents/seed`, {}),
+  reviewDocument: (documentId: string, body: unknown) =>
+    patch<{ row: PdaDocument }>(`/api/personal-delivery-agents/documents/${documentId}`, body),
+  approve: (id: string) =>
+    post<{ row: PersonalDeliveryAgentRow }>(`/api/personal-delivery-agents/${id}/approve`, {}),
+  setStatus: (id: string, body: unknown) =>
+    post<{ row: PersonalDeliveryAgentRow }>(`/api/personal-delivery-agents/${id}/status`, body),
+  uploadMedia: (dataUrl: string) =>
+    post<{ path: string }>("/api/personal-delivery-agents/media/upload", { dataUrl }),
+  signedMediaUrl: (path: string) =>
+    get<{ url: string }>(`/api/personal-delivery-agents/media/signed?path=${encodeURIComponent(path)}`),
   list: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
     return get<{ rows: PersonalDeliveryAgentRow[]; pendingMigration?: boolean }>(`/api/personal-delivery-agents${qs}`);
