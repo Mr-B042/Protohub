@@ -5,6 +5,7 @@ import { PAGE_HELP, DEFAULT_HELP } from "./help-content";
 import {
   ArrowRight,
   Archive,
+  ArrowLeftRight,
   Bell,
   BellRing,
   Check,
@@ -127,7 +128,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11178,6 +11179,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaDispatchSummary, setPdaDispatchSummary] = useState<PdaDispatchSummary | null>(null);
   const [pdaDispatchAgent, setPdaDispatchAgent] = useState("All");
   const [pdaDispatchPage, setPdaDispatchPage] = useState(1);
+  const [pdaInventoryOverview, setPdaInventoryOverview] = useState<PdaInventoryOverview | null>(null);
+  const [pdaStockLedger, setPdaStockLedger] = useState<PdaStockLedgerView | null>(null);
+  const [pdaInvTab, setPdaInvTab] = useState<"Agent Stock Overview" | "Stock Movement Ledger">("Agent Stock Overview");
+  const [pdaInvSearch, setPdaInvSearch] = useState("");
+  const [pdaInvDiscrepancy, setPdaInvDiscrepancy] = useState("All");
+  const [pdaInvPage, setPdaInvPage] = useState(1);
+  const [pdaLedgerSearch, setPdaLedgerSearch] = useState("");
+  const [pdaLedgerMovement, setPdaLedgerMovement] = useState("All");
+  const [pdaLedgerAgent, setPdaLedgerAgent] = useState("All");
+  const [pdaLedgerPage, setPdaLedgerPage] = useState(1);
   const [pdaFeeRules, setPdaFeeRules] = useState<PdaFeeRule[]>([]);
   const [pdaNegotiations, setPdaNegotiations] = useState<any[]>([]);
   const [pdaFeeDraft, setPdaFeeDraft] = useState({ scope: "state", matchValue: "", fee: "", sameDaySurcharge: "", distanceMinKm: "", distanceMaxKm: "" });
@@ -40429,6 +40440,7 @@ ${waybillLineItems(w).length > 1
       void loadPdaGuarantorQueue();
     }
     if (pdaSubPage === "Active Agents") void loadPdaActiveAgents();
+    if (pdaSubPage === "Inventory") void loadPdaInventory();
     if (pdaSubPage === "Orders & Dispatch") {
       void loadPdaActiveAgents();
       void loadPdaDispatchSummary();
@@ -40735,6 +40747,17 @@ ${waybillLineItems(w).length > 1
       // never accidentally increase someone's exposure.
       showToast(err?.message ?? "Could not save those settings.");
     } finally { setPdaSaving(false); }
+  };
+
+  const loadPdaInventory = async () => {
+    try {
+      const [overview, ledger] = await Promise.all([
+        personalDeliveryAgentsApi.inventoryOverview(),
+        personalDeliveryAgentsApi.stockLedger()
+      ]);
+      setPdaInventoryOverview(overview);
+      setPdaStockLedger(ledger);
+    } catch (err: any) { showToast(err?.message ?? "Could not load agent inventory."); }
   };
 
   const loadPdaActiveAgents = async () => {
@@ -48375,6 +48398,528 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // Agent-Held Inventory. Two tabs over the same data: what agents hold right
+  // now, and every movement that got it there.
+  const renderPdaInventoryPage = () => {
+    const view = pdaInventoryOverview;
+    const counts = view?.counts ?? null;
+    const ledger = pdaStockLedger;
+
+    const pctOf = (value: number) =>
+      counts && counts.totalUnits > 0 ? `${Math.round((value / counts.totalUnits) * 1000) / 10}% of total` : "—";
+
+    const agentRows = (view?.agents ?? []).filter((row) => {
+      if (pdaInvDiscrepancy === "With issues" && row.openIssues === 0) return false;
+      if (pdaInvDiscrepancy === "Clean" && row.openIssues > 0) return false;
+      if (!pdaInvSearch.trim()) return true;
+      const q = pdaInvSearch.trim().toLowerCase();
+      return row.fullName.toLowerCase().includes(q) || row.location.toLowerCase().includes(q) || (row.phone ?? "").includes(q);
+    });
+    const PAGE = 8;
+    const totalPages = Math.max(1, Math.ceil(agentRows.length / PAGE));
+    const page = Math.min(pdaInvPage, totalPages);
+    const pageRows = agentRows.slice((page - 1) * PAGE, page * PAGE);
+
+    const donut = [
+      { label: "Available", value: counts?.available ?? 0, colour: "#10B981" },
+      { label: "Reserved", value: counts?.reserved ?? 0, colour: "#F59E0B" },
+      { label: "Out for Delivery", value: counts?.outForDelivery ?? 0, colour: "#8B5CF6" },
+      { label: "In Transit", value: counts?.inTransit ?? 0, colour: "#0EA5E9" },
+      { label: "Damaged / Missing", value: counts?.damagedMissing ?? 0, colour: "#EF4444" }
+    ];
+    const donutTotal = Math.max(1, donut.reduce((sum, slice) => sum + slice.value, 0));
+    const CIRC = 2 * Math.PI * 42;
+    let offset = 0;
+
+    const movementChip = (movement: string) =>
+      movement === "Received from company" ? "bg-emerald-50 text-emerald-700"
+      : movement === "Reserved for order" ? "bg-amber-50 text-amber-700"
+      : movement === "Out for delivery" ? "bg-violet-50 text-violet-700"
+      : movement === "Delivered to customer" ? "bg-emerald-50 text-emerald-700"
+      : movement.startsWith("Written off") || movement === "Under investigation" ? "bg-rose-50 text-rose-700"
+      : "bg-sky-50 text-sky-700";
+
+    const ledgerRows = (ledger?.rows ?? []).filter((row) => {
+      if (pdaLedgerMovement !== "All" && row.movement !== pdaLedgerMovement) return false;
+      if (pdaLedgerAgent !== "All" && row.agentId !== pdaLedgerAgent) return false;
+      if (!pdaLedgerSearch.trim()) return true;
+      const q = pdaLedgerSearch.trim().toLowerCase();
+      return (row.productName ?? "").toLowerCase().includes(q)
+        || row.agentName.toLowerCase().includes(q)
+        || (row.orderId ?? "").toLowerCase().includes(q);
+    });
+    const LPAGE = 10;
+    const ledgerPages = Math.max(1, Math.ceil(ledgerRows.length / LPAGE));
+    const lpage = Math.min(pdaLedgerPage, ledgerPages);
+    const ledgerPageRows = ledgerRows.slice((lpage - 1) * LPAGE, lpage * LPAGE);
+
+    const ledgerDonut = [
+      { label: "Stock Received", value: ledger?.counts.received ?? 0, colour: "#10B981" },
+      { label: "Out for Delivery", value: ledger?.counts.issued ?? 0, colour: "#8B5CF6" },
+      { label: "Reserved", value: ledger?.counts.reserved ?? 0, colour: "#F59E0B" },
+      { label: "Delivered", value: ledger?.counts.delivered ?? 0, colour: "#0EA5E9" },
+      { label: "Returned", value: ledger?.counts.returned ?? 0, colour: "#6366F1" },
+      { label: "Damaged / Adjusted", value: ledger?.counts.adjusted ?? 0, colour: "#EF4444" }
+    ];
+    const ledgerTotal = Math.max(1, ledgerDonut.reduce((sum, slice) => sum + slice.value, 0));
+    let loffset = 0;
+
+    const quickActions = (
+      <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <h3 className="m-0 text-sm font-bold text-gray-900">Quick Actions</h3>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button type="button" onClick={() => setPdaInvTab("Stock Movement Ledger")}
+            className="!min-h-0 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-2 text-[11px] font-bold text-blue-700 hover:bg-blue-100">
+            Stock Transfer History
+          </button>
+          <button type="button" onClick={() => setPdaInvDiscrepancy("With issues")}
+            className="!min-h-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100">
+            Agent Stock Count
+          </button>
+          <button type="button" onClick={() => { setPdaInvTab("Agent Stock Overview"); setPdaInvDiscrepancy("With issues"); setPdaInvPage(1); }}
+            className="!min-h-0 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] font-bold text-rose-700 hover:bg-rose-100">
+            View Discrepancies
+          </button>
+          <button type="button" onClick={() => setPdaSubPage("Settings")}
+            className="!min-h-0 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
+            Inventory Settings
+          </button>
+        </div>
+      </section>
+    );
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-xl font-bold text-gray-900">
+              {pdaInvTab === "Stock Movement Ledger" ? "Stock Movement Ledger" : "Agent-Held Inventory"}
+            </h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">
+              {pdaInvTab === "Stock Movement Ledger"
+                ? "Detailed history of all stock movements with personal delivery agents."
+                : "Track all company stock currently assigned to and held by Personal Delivery Agents."}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => pdaInvTab === "Stock Movement Ledger"
+              ? pdaCsvDownload("stock-ledger",
+                  ["Date", "Movement", "Product", "Agent", "Order", "Transfer", "Quantity", "Balance after", "Location", "Recorded by"],
+                  (ledger?.rows ?? []).map((row) => [
+                    row.at, row.movement, productNameById(row.productId), row.agentName,
+                    row.orderId ?? "", row.transferId ?? "", String(row.quantity), String(row.balanceAfter),
+                    row.location, row.recordedByName
+                  ]))
+              : pdaCsvDownload("agent-inventory",
+                  ["Agent", "Location", "Products held", "Total units", "Available", "Reserved", "Out for delivery", "Damaged/Missing", "Stock value", "Open issues", "Last count"],
+                  (view?.agents ?? []).map((row) => [
+                    row.fullName, row.location, String(row.productsHeld), String(row.totalUnits),
+                    String(row.available), String(row.reserved), String(row.outForDelivery),
+                    String(row.damagedMissing), String(row.stockValue), String(row.openIssues), row.lastCountAt ?? "Never"
+                  ]))}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+              <Download className="h-4 w-4" /> {pdaInvTab === "Stock Movement Ledger" ? "Export Ledger" : "Download Inventory Report"}
+            </button>
+            <button type="button" onClick={() => { setPdaSendStockDraft({ productId: "", quantity: "", waybillReference: "" }); setModal("pdaSendStock"); }}
+              disabled={!pdaStockAgentId}
+              title={pdaStockAgentId ? undefined : "Pick an agent in the table first"}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg bg-[#1F8FE0] px-3.5 py-2 text-sm font-semibold text-white hover:bg-[#1560a8] disabled:opacity-40">
+              <ArrowLeftRight className="h-4 w-4" /> Transfer Stock to Agent
+            </button>
+          </div>
+        </div>
+
+        {pdaInvTab === "Agent Stock Overview" ? (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 xl:grid-cols-8">
+            {pdaKpiCard({ label: "Agents Holding Stock", value: String(counts?.agentsHoldingStock ?? 0), icon: Users, tint: "bg-blue-50 text-blue-600" })}
+            {pdaKpiCard({ label: "Total Units With Agents", value: String(counts?.totalUnits ?? 0), icon: Box, tint: "bg-indigo-50 text-indigo-600" })}
+            {pdaKpiCard({ label: "Available Units", value: String(counts?.available ?? 0), icon: CheckCircle2, tint: "bg-emerald-50 text-emerald-600", foot: pctOf(counts?.available ?? 0) })}
+            {pdaKpiCard({ label: "Reserved for Orders", value: String(counts?.reserved ?? 0), icon: CalendarClock, tint: "bg-amber-50 text-amber-600", foot: pctOf(counts?.reserved ?? 0) })}
+            {pdaKpiCard({ label: "Out for Delivery", value: String(counts?.outForDelivery ?? 0), icon: PackageCheck, tint: "bg-violet-50 text-violet-600", foot: pctOf(counts?.outForDelivery ?? 0) })}
+            {pdaKpiCard({ label: "In Transit to Agents", value: String(counts?.inTransit ?? 0), icon: ArrowLeftRight, tint: "bg-sky-50 text-sky-600", delta: counts?.inTransitDeltaPct ?? null })}
+            {pdaKpiCard({ label: "Damaged / Missing", value: String(counts?.damagedMissing ?? 0), icon: AlertTriangle, tint: "bg-rose-50 text-rose-600", foot: pctOf(counts?.damagedMissing ?? 0) })}
+            {pdaKpiCard({ label: "Stock Value With Agents", value: formatMoney(counts?.totalValue ?? 0), icon: Banknote, tint: "bg-emerald-50 text-emerald-600" })}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
+            {pdaKpiCard({ label: "Total Movements", value: String(ledger?.counts.total ?? 0), icon: FileText, tint: "bg-blue-50 text-blue-600", delta: ledger?.counts.totalDeltaPct ?? null })}
+            {pdaKpiCard({ label: "Stock Received", value: String(ledger?.counts.received ?? 0), icon: Download, tint: "bg-emerald-50 text-emerald-600", delta: ledger?.counts.receivedDeltaPct ?? null })}
+            {pdaKpiCard({ label: "Out for Delivery", value: String(ledger?.counts.issued ?? 0), icon: PackageCheck, tint: "bg-violet-50 text-violet-600", delta: ledger?.counts.issuedDeltaPct ?? null })}
+            {pdaKpiCard({ label: "Reserved for Orders", value: String(ledger?.counts.reserved ?? 0), icon: CalendarClock, tint: "bg-amber-50 text-amber-600", delta: ledger?.counts.reservedDeltaPct ?? null })}
+            {pdaKpiCard({ label: "Delivered", value: String(ledger?.counts.delivered ?? 0), icon: CheckCircle2, tint: "bg-sky-50 text-sky-600", delta: ledger?.counts.deliveredDeltaPct ?? null })}
+            {pdaKpiCard({ label: "Returned / Back", value: String(ledger?.counts.returned ?? 0), icon: RefreshCw, tint: "bg-rose-50 text-rose-600", delta: ledger?.counts.returnedDeltaPct ?? null })}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[240px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            {pdaInvTab === "Agent Stock Overview" ? (
+              <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+                placeholder="Search by agent name, phone, or location..." value={pdaInvSearch}
+                onChange={(e) => { setPdaInvSearch(e.target.value); setPdaInvPage(1); }} />
+            ) : (
+              <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+                placeholder="Search by product, agent, order ID, transfer ID..." value={pdaLedgerSearch}
+                onChange={(e) => { setPdaLedgerSearch(e.target.value); setPdaLedgerPage(1); }} />
+            )}
+          </div>
+          {pdaInvTab === "Agent Stock Overview" ? (
+            <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+              value={pdaInvDiscrepancy} onChange={(e) => { setPdaInvDiscrepancy(e.target.value); setPdaInvPage(1); }}>
+              <option value="All">Discrepancy: All</option>
+              <option value="With issues">With open issues</option>
+              <option value="Clean">No issues</option>
+            </select>
+          ) : (
+            <>
+              <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+                value={pdaLedgerMovement} onChange={(e) => { setPdaLedgerMovement(e.target.value); setPdaLedgerPage(1); }}>
+                <option value="All">Movement Type: All</option>
+                {["Received from company", "Reserved for order", "Released back to available", "Out for delivery", "Delivered to customer", "Returned to available", "Written off damaged", "Written off missing", "Adjustment approved"].map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+              <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+                value={pdaLedgerAgent} onChange={(e) => { setPdaLedgerAgent(e.target.value); setPdaLedgerPage(1); }}>
+                <option value="All">Agent: All</option>
+                {(view?.agents ?? []).map((agent) => <option key={agent.agentId} value={agent.agentId}>{agent.fullName}</option>)}
+              </select>
+            </>
+          )}
+          <button type="button"
+            onClick={() => {
+              setPdaInvSearch(""); setPdaInvDiscrepancy("All"); setPdaInvPage(1);
+              setPdaLedgerSearch(""); setPdaLedgerMovement("All"); setPdaLedgerAgent("All"); setPdaLedgerPage(1);
+            }}
+            className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+            <RefreshCw className="h-4 w-4" /> Reset
+          </button>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr),300px]">
+          <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="flex gap-1 border-b border-gray-200 px-3">
+              {(["Agent Stock Overview", "Stock Movement Ledger"] as const).map((tab) => (
+                <button key={tab} type="button" onClick={() => setPdaInvTab(tab)}
+                  className={`!min-h-0 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px] font-semibold ${
+                    pdaInvTab === tab ? "border-[#1F8FE0] text-[#1F8FE0]" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            {pdaInvTab === "Agent Stock Overview" ? (
+              <>
+                <div className="px-5 py-4">
+                  <h3 className="m-0 text-base font-bold text-gray-900">Agents Holding Stock</h3>
+                  <p className="m-0 mt-0.5 text-xs font-semibold text-[#1F8FE0]">{agentRows.length} agent{agentRows.length === 1 ? "" : "s"} found</p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-y border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                        <th className="px-5 py-2.5">Agent</th>
+                        <th className="px-3 py-2.5">Location</th>
+                        <th className="px-3 py-2.5">Products</th>
+                        <th className="px-3 py-2.5">Total Units</th>
+                        <th className="px-3 py-2.5">Available</th>
+                        <th className="px-3 py-2.5">Reserved</th>
+                        <th className="px-3 py-2.5">Out</th>
+                        <th className="px-3 py-2.5">Stock Value</th>
+                        <th className="px-3 py-2.5">Issues</th>
+                        <th className="px-3 py-2.5">Last Count</th>
+                        <th className="px-3 py-2.5 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={11} className="px-5 py-14 text-center">
+                            <p className="m-0 text-sm font-semibold text-gray-500">
+                              {(view?.agents ?? []).length === 0 ? "No agent is holding stock yet." : "No agents match those filters."}
+                            </p>
+                            {(view?.agents ?? []).length === 0 && (
+                              <p className="m-0 mt-1 text-xs text-gray-400">
+                                Send stock to an approved agent — it stays in transit until they confirm what arrived.
+                              </p>
+                            )}
+                          </td>
+                        </tr>
+                      ) : pageRows.map((row) => (
+                        <tr key={row.agentId} className={`border-b border-gray-100 last:border-0 hover:bg-gray-50 ${pdaStockAgentId === row.agentId ? "bg-blue-50/60" : ""}`}>
+                          <td className="px-5 py-3">
+                            <div className="flex items-center gap-3">
+                              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-black ${customerAvatarTone(row.agentId)}`}>
+                                {customerInitial(row.fullName)}
+                              </span>
+                              <div className="min-w-0">
+                                <div className="font-bold text-gray-900">{row.fullName}</div>
+                                <div className="text-[11px] text-gray-400">{row.phone}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 text-[12px] text-gray-600">{row.location || "—"}</td>
+                          <td className="px-3 py-3 text-gray-700">{row.productsHeld}</td>
+                          <td className="px-3 py-3 font-bold text-gray-900">{row.totalUnits}</td>
+                          <td className="px-3 py-3 font-bold text-emerald-600">{row.available}</td>
+                          <td className="px-3 py-3 font-bold text-amber-600">{row.reserved}</td>
+                          <td className="px-3 py-3 font-bold text-violet-600">{row.outForDelivery}</td>
+                          <td className="px-3 py-3 font-bold text-gray-900">{formatMoney(row.stockValue)}</td>
+                          <td className="px-3 py-3">
+                            {row.openIssues > 0 ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-2 py-1 text-[11px] font-bold text-rose-700">
+                                <AlertTriangle className="h-3 w-3" /> {row.openIssues}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600">
+                                <CheckCircle2 className="h-3 w-3" /> None
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3 whitespace-nowrap text-[12px] text-gray-600">
+                            {/* A movement is not a count - never reconciled says so. */}
+                            {row.lastCountAt ? new Date(row.lastCountAt).toLocaleDateString([], { dateStyle: "medium" }) : <span className="text-gray-400">Never</span>}
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button type="button" title="View stock and ledger" onClick={() => void openPdaStock(row.agentId)}
+                                className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                                <Eye className="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" title="Send stock to this agent"
+                                onClick={() => { setPdaStockAgentId(row.agentId); setPdaSendStockDraft({ productId: "", quantity: "", waybillReference: "" }); setModal("pdaSendStock"); }}
+                                className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                                <ArrowLeftRight className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {agentRows.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-5 py-3">
+                    <span className="text-xs text-gray-500">
+                      Showing {(page - 1) * PAGE + 1} to {Math.min(page * PAGE, agentRows.length)} of {agentRows.length} agents
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button type="button" disabled={page <= 1} onClick={() => setPdaInvPage(page - 1)}
+                        className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      {Array.from({ length: totalPages }).slice(0, 3).map((_, index) => (
+                        <button key={index} type="button" onClick={() => setPdaInvPage(index + 1)}
+                          className={`!min-h-0 inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-xs font-bold ${
+                            page === index + 1 ? "bg-[#1F8FE0] text-white" : "border border-gray-200 text-gray-600"}`}>
+                          {index + 1}
+                        </button>
+                      ))}
+                      <button type="button" disabled={page >= totalPages} onClick={() => setPdaInvPage(page + 1)}
+                        className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-y border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                        <th className="px-5 py-2.5">Date &amp; Time</th>
+                        <th className="px-3 py-2.5">Movement</th>
+                        <th className="px-3 py-2.5">Product</th>
+                        <th className="px-3 py-2.5">Agent</th>
+                        <th className="px-3 py-2.5">Reference</th>
+                        <th className="px-3 py-2.5">Qty</th>
+                        <th className="px-3 py-2.5">Balance After</th>
+                        <th className="px-3 py-2.5">Recorded By</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ledgerPageRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="px-5 py-14 text-center">
+                            <p className="m-0 text-sm font-semibold text-gray-500">
+                              {(ledger?.rows ?? []).length === 0 ? "No stock has moved yet." : "Nothing matches those filters."}
+                            </p>
+                            {(ledger?.rows ?? []).length === 0 && (
+                              <p className="m-0 mt-1 text-xs text-gray-400">
+                                Every receipt, reservation, delivery and write-off is recorded here automatically.
+                              </p>
+                            )}
+                          </td>
+                        </tr>
+                      ) : ledgerPageRows.map((row) => (
+                        <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                          <td className="px-5 py-3 whitespace-nowrap">
+                            <div className="text-[12px] text-gray-800">{new Date(row.at).toLocaleDateString([], { dateStyle: "medium" })}</div>
+                            <div className="text-[11px] text-gray-400">{new Date(row.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${movementChip(row.movement)}`}>{row.movement}</span>
+                          </td>
+                          <td className="px-3 py-3 text-[12px] font-semibold text-gray-800">{productNameById(row.productId)}</td>
+                          <td className="px-3 py-3">
+                            <div className="text-[12px] text-gray-800">{row.agentName}</div>
+                            <div className="text-[11px] text-gray-400">{row.location || "—"}</div>
+                          </td>
+                          <td className="px-3 py-3">
+                            {row.orderId ? (
+                              <>
+                                <div className="text-[12px] text-gray-700">{row.orderId}</div>
+                                <span className="inline-flex rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">Order</span>
+                              </>
+                            ) : row.transferId ? (
+                              <span className="inline-flex rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">Transfer</span>
+                            ) : (
+                              <span className="inline-flex rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Adjustment</span>
+                            )}
+                          </td>
+                          <td className={`px-3 py-3 font-black ${row.movement === "Received from company" || row.movement === "Returned to available" ? "text-emerald-600" : "text-rose-600"}`}>
+                            {row.movement === "Received from company" || row.movement === "Returned to available" ? "+" : "−"}{row.quantity}
+                          </td>
+                          <td className="px-3 py-3 font-bold text-gray-900">{row.balanceAfter}</td>
+                          <td className="px-3 py-3 text-[12px] text-gray-600">{row.recordedByName}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {ledgerRows.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-5 py-3">
+                    <span className="text-xs text-gray-500">
+                      Showing {(lpage - 1) * LPAGE + 1} to {Math.min(lpage * LPAGE, ledgerRows.length)} of {ledgerRows.length} movements
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button type="button" disabled={lpage <= 1} onClick={() => setPdaLedgerPage(lpage - 1)}
+                        className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      {Array.from({ length: ledgerPages }).slice(0, 3).map((_, index) => (
+                        <button key={index} type="button" onClick={() => setPdaLedgerPage(index + 1)}
+                          className={`!min-h-0 inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-xs font-bold ${
+                            lpage === index + 1 ? "bg-[#1F8FE0] text-white" : "border border-gray-200 text-gray-600"}`}>
+                          {index + 1}
+                        </button>
+                      ))}
+                      <button type="button" disabled={lpage >= ledgerPages} onClick={() => setPdaLedgerPage(lpage + 1)}
+                        className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+
+          <div className="space-y-4">
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">
+                {pdaInvTab === "Stock Movement Ledger" ? "Movement Summary" : "Inventory Summary"}
+              </h3>
+              <div className="mt-4 flex items-center gap-4">
+                <div className="relative h-[104px] w-[104px] shrink-0">
+                  <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+                    <circle cx="50" cy="50" r="42" fill="none" stroke="#F3F4F6" strokeWidth="12" />
+                    {(pdaInvTab === "Stock Movement Ledger" ? ledgerDonut : donut).map((slice) => {
+                      if (slice.value <= 0) return null;
+                      const total = pdaInvTab === "Stock Movement Ledger" ? ledgerTotal : donutTotal;
+                      const length = (slice.value / total) * CIRC;
+                      const start = pdaInvTab === "Stock Movement Ledger" ? loffset : offset;
+                      if (pdaInvTab === "Stock Movement Ledger") loffset += length; else offset += length;
+                      return (
+                        <circle key={slice.label} cx="50" cy="50" r="42" fill="none"
+                          stroke={slice.colour} strokeWidth="12"
+                          strokeDasharray={`${length} ${CIRC - length}`} strokeDashoffset={-start} />
+                      );
+                    })}
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-lg font-black leading-none text-gray-900">
+                      {pdaInvTab === "Stock Movement Ledger" ? (ledger?.counts.total ?? 0) : (counts?.totalUnits ?? 0)}
+                    </span>
+                    <span className="text-[10px] text-gray-400">Total</span>
+                  </div>
+                </div>
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  {(pdaInvTab === "Stock Movement Ledger" ? ledgerDonut : donut).map((slice) => (
+                    <div key={slice.label} className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="flex items-center gap-1.5 text-gray-600">
+                        <span className="h-2 w-2 rounded-full" style={{ background: slice.colour }} />
+                        {slice.label}
+                      </span>
+                      <span className="font-semibold text-gray-700">{slice.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            {pdaInvTab === "Agent Stock Overview" && (
+              <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <h3 className="m-0 text-sm font-bold text-gray-900">Low Stock with Agents</h3>
+                {(view?.lowStock ?? []).length === 0 ? (
+                  <p className="m-0 mt-3 text-xs text-gray-400">
+                    {(view?.agents ?? []).length === 0 ? "No agent stock yet." : "Nothing is running low."}
+                  </p>
+                ) : (
+                  <ul className="m-0 mt-3 list-none space-y-2.5 p-0">
+                    {view!.lowStock.map((item) => (
+                      <li key={item.productId} className="flex items-center gap-2.5">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-400">
+                          <Box className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[12px] font-bold text-gray-800">{productNameById(item.productId)}</div>
+                          <div className="text-[11px] text-gray-400">Total available: {item.available} units</div>
+                        </div>
+                        <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Low</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
+
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Recent Stock Activity</h3>
+              {(view?.recentActivity ?? []).length === 0 ? (
+                <p className="m-0 mt-3 text-xs text-gray-400">Nothing has moved yet.</p>
+              ) : (
+                <ul className="m-0 mt-3 list-none space-y-2.5 p-0">
+                  {view!.recentActivity.map((event) => (
+                    <li key={event.id} className="flex items-start gap-2.5">
+                      <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                        event.movement === "Received from company" ? "bg-emerald-500"
+                        : event.movement.startsWith("Written off") ? "bg-rose-500"
+                        : "bg-sky-500"}`} />
+                      <div className="min-w-0">
+                        <div className="text-[12px] font-semibold text-gray-800">
+                          {productNameById(event.productId)} · {event.movement.toLowerCase()} ({event.quantity})
+                        </div>
+                        <div className="text-[11px] text-gray-400">
+                          {event.agentName} · {new Date(event.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            {quickActions}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Inventory. Agents cannot edit their own quantities anywhere in this UI -
   // they confirm what arrived and report discrepancies; a manager approves.
   const renderPdaInventory = () => {
@@ -50586,7 +51131,7 @@ ${waybillLineItems(w).length > 1
         ) : pdaSubPage === "Applications & KYC" ? (
           renderPdaApplicationsAndKyc()
         ) : pdaSubPage === "Inventory" ? (
-          renderPdaInventory()
+          renderPdaInventoryPage()
         ) : pdaSubPage === "COD & Reconciliation" ? (
           renderPdaCod()
         ) : pdaSubPage === "Active Agents" ? (

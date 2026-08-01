@@ -1184,6 +1184,210 @@ router.get("/dispatch-summary", requireRole(...MANAGEMENT_ROLES), async (req, re
   }
 });
 
+// ── GET /api/personal-delivery-agents/inventory-overview ──
+// Agent-held inventory: who holds what, what it is worth, and what is wrong.
+//
+// A product's total available is compared against this floor to flag it as
+// low. Deliberately a named constant rather than a magic number buried in a
+// filter, so it is obvious what "Low" means when someone asks.
+const LOW_STOCK_FLOOR_UNITS = 25;
+
+router.get("/inventory-overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const lastMonthKey = lastMonth.toISOString().slice(0, 7);
+    const monthOf = (value: any) => String(value ?? "").slice(0, 7);
+
+    const [{ data: stock }, { data: agentRows }, { data: transfers }, { data: ledger }, { data: discrepancies }, { data: pricing }] =
+      await Promise.all([
+        supabase.from(STOCK).select("*").eq("org_id", orgId),
+        supabase.from(AGENTS).select("id, full_name, phone, state, city, account_status, availability").eq("org_id", orgId),
+        supabase.from(TRANSFERS).select("*").eq("org_id", orgId),
+        supabase.from(LEDGER).select("*").eq("org_id", orgId).order("created_at", { ascending: false }).limit(500),
+        supabase.from(DISCREPANCIES).select("*").eq("org_id", orgId),
+        supabase.from("product_pricings").select("product_id, unit_cost")
+      ]);
+
+    const unitCost = new Map<string, number>();
+    for (const row of (pricing ?? []) as any[]) {
+      const cost = Number(row.unit_cost ?? 0);
+      if (cost > 0) unitCost.set(String(row.product_id), Math.max(unitCost.get(String(row.product_id)) ?? 0, cost));
+    }
+
+    const stockRows = (stock ?? []) as any[];
+    const agentById = new Map((agentRows ?? []).map((a: any) => [a.id, a]));
+    const openDiscrepancies = (discrepancies ?? []).filter((d: any) => ["Reported", "Under Investigation"].includes(d.status));
+
+    const bucketTotals = stockRows.reduce((acc, row) => ({
+      available: acc.available + Number(row.available ?? 0),
+      reserved: acc.reserved + Number(row.reserved ?? 0),
+      outForDelivery: acc.outForDelivery + Number(row.out_for_delivery ?? 0),
+      damagedMissing: acc.damagedMissing + Number(row.damaged ?? 0) + Number(row.missing ?? 0) + Number(row.awaiting_investigation ?? 0)
+    }), { available: 0, reserved: 0, outForDelivery: 0, damagedMissing: 0 });
+
+    const inTransit = (transfers ?? []).filter((t: any) => t.status === "In Transit")
+      .reduce((sum: number, t: any) => sum + Number(t.quantity_sent ?? 0), 0);
+    const inTransitLastMonth = (transfers ?? [])
+      .filter((t: any) => monthOf(t.sent_at) === lastMonthKey)
+      .reduce((sum: number, t: any) => sum + Number(t.quantity_sent ?? 0), 0);
+    const inTransitThisMonth = (transfers ?? [])
+      .filter((t: any) => monthOf(t.sent_at) === monthKey)
+      .reduce((sum: number, t: any) => sum + Number(t.quantity_sent ?? 0), 0);
+
+    const totalUnits = bucketTotals.available + bucketTotals.reserved + bucketTotals.outForDelivery + bucketTotals.damagedMissing;
+    const totalValue = stockRows.reduce((sum, row) =>
+      sum + (Number(row.available ?? 0) + Number(row.reserved ?? 0) + Number(row.out_for_delivery ?? 0))
+        * (unitCost.get(String(row.product_id)) ?? 0), 0);
+
+    const byAgent = new Map<string, any[]>();
+    for (const row of stockRows) {
+      if (!byAgent.has(row.agent_id)) byAgent.set(row.agent_id, []);
+      byAgent.get(row.agent_id)!.push(row);
+    }
+    const agents = [...byAgent.entries()].map(([agentId, rows]) => {
+      const agent = agentById.get(agentId);
+      const sum = (key: string) => rows.reduce((total, row) => total + Number(row[key] ?? 0), 0);
+      const value = rows.reduce((total, row) =>
+        total + (Number(row.available ?? 0) + Number(row.reserved ?? 0) + Number(row.out_for_delivery ?? 0))
+          * (unitCost.get(String(row.product_id)) ?? 0), 0);
+      // "Last count" means a reconciliation actually happened - a movement is
+      // not a count, so an agent whose stock has only ever moved reads Never.
+      const lastCount = (discrepancies ?? [])
+        .filter((d: any) => d.agent_id === agentId && d.status === "Approved")
+        .map((d: any) => d.reviewed_at).filter(Boolean).sort().pop() ?? null;
+      return {
+        agentId,
+        fullName: agent?.full_name ?? "Unknown agent",
+        phone: agent?.phone ?? "",
+        location: [agent?.city, agent?.state].filter(Boolean).join(", "),
+        accountStatus: agent?.account_status ?? "",
+        productsHeld: rows.filter((row) =>
+          Number(row.available ?? 0) + Number(row.reserved ?? 0) + Number(row.out_for_delivery ?? 0) > 0).length,
+        totalUnits: sum("available") + sum("reserved") + sum("out_for_delivery") + sum("damaged") + sum("missing") + sum("awaiting_investigation"),
+        available: sum("available"),
+        reserved: sum("reserved"),
+        outForDelivery: sum("out_for_delivery"),
+        damagedMissing: sum("damaged") + sum("missing") + sum("awaiting_investigation"),
+        stockValue: Math.round(value),
+        openIssues: openDiscrepancies.filter((d: any) => d.agent_id === agentId).length,
+        lastCountAt: lastCount
+      };
+    }).sort((a, b) => b.totalUnits - a.totalUnits);
+
+    // Low stock is measured ACROSS all agents: one agent running out matters
+    // far less than the product being scarce everywhere.
+    const byProduct = new Map<string, number>();
+    for (const row of stockRows) {
+      byProduct.set(String(row.product_id), (byProduct.get(String(row.product_id)) ?? 0) + Number(row.available ?? 0));
+    }
+    const lowStock = [...byProduct.entries()]
+      .filter(([, available]) => available <= LOW_STOCK_FLOOR_UNITS)
+      .sort((a, b) => a[1] - b[1])
+      .slice(0, 5)
+      .map(([productId, available]) => ({ productId, available, floor: LOW_STOCK_FLOOR_UNITS }));
+
+    const pct = (now: number, before: number) => before <= 0 ? null : Math.round(((now - before) / before) * 1000) / 10;
+
+    res.json({
+      counts: {
+        agentsHoldingStock: agents.filter((a) => a.totalUnits > 0).length,
+        totalUnits,
+        available: bucketTotals.available,
+        reserved: bucketTotals.reserved,
+        outForDelivery: bucketTotals.outForDelivery,
+        damagedMissing: bucketTotals.damagedMissing,
+        inTransit,
+        inTransitDeltaPct: pct(inTransitThisMonth, inTransitLastMonth),
+        totalValue: Math.round(totalValue),
+        openDiscrepancies: openDiscrepancies.length
+      },
+      agents,
+      lowStock,
+      recentActivity: (ledger ?? []).slice(0, 6).map((row: any) => ({
+        id: row.id, movement: row.movement, quantity: Number(row.quantity ?? 0),
+        productId: row.product_id, productName: row.product_name,
+        agentName: agentById.get(row.agent_id)?.full_name ?? "an agent",
+        at: row.created_at
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load agent inventory." });
+  }
+});
+
+// ── GET /api/personal-delivery-agents/stock-ledger ────────
+router.get("/stock-ledger", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const lastMonthKey = lastMonth.toISOString().slice(0, 7);
+    const monthOf = (value: any) => String(value ?? "").slice(0, 7);
+
+    const [{ data: ledger }, { data: agentRows }] = await Promise.all([
+      supabase.from(LEDGER).select("*").eq("org_id", orgId).order("created_at", { ascending: false }).limit(1000),
+      supabase.from(AGENTS).select("id, full_name, state, city").eq("org_id", orgId)
+    ]);
+    const rows = (ledger ?? []) as any[];
+    const agentById = new Map((agentRows ?? []).map((a: any) => [a.id, a]));
+
+    const countBy = (source: any[], movements: string[]) =>
+      source.filter((r) => movements.includes(r.movement)).length;
+    const thisMonth = rows.filter((r) => monthOf(r.created_at) === monthKey);
+    const priorMonth = rows.filter((r) => monthOf(r.created_at) === lastMonthKey);
+    const pct = (now: number, before: number) => before <= 0 ? null : Math.round(((now - before) / before) * 1000) / 10;
+
+    const summaryFor = (source: any[]) => ({
+      total: source.length,
+      received: countBy(source, ["Received from company"]),
+      issued: countBy(source, ["Out for delivery"]),
+      reserved: countBy(source, ["Reserved for order"]),
+      delivered: countBy(source, ["Delivered to customer"]),
+      returned: countBy(source, ["Returned to available", "Released back to available", "Returned to company"]),
+      adjusted: countBy(source, ["Written off damaged", "Written off missing", "Under investigation", "Adjustment approved"])
+    });
+    const now = summaryFor(thisMonth);
+    const before = summaryFor(priorMonth);
+
+    res.json({
+      rows: rows.map((row: any) => {
+        const agent = agentById.get(row.agent_id);
+        return {
+          id: row.id,
+          at: row.created_at,
+          movement: row.movement,
+          productId: row.product_id,
+          productName: row.product_name,
+          agentId: row.agent_id,
+          agentName: agent?.full_name ?? "Unknown agent",
+          location: [agent?.city, agent?.state].filter(Boolean).join(", "),
+          quantity: Number(row.quantity ?? 0),
+          balanceAfter: Number(row.balance_after ?? 0),
+          orderId: row.order_id ?? null,
+          transferId: row.transfer_id ?? null,
+          note: row.note ?? null,
+          recordedByName: row.recorded_by_name ?? "System"
+        };
+      }),
+      counts: {
+        ...now,
+        totalDeltaPct: pct(now.total, before.total),
+        receivedDeltaPct: pct(now.received, before.received),
+        issuedDeltaPct: pct(now.issued, before.issued),
+        reservedDeltaPct: pct(now.reserved, before.reserved),
+        deliveredDeltaPct: pct(now.delivered, before.delivered),
+        returnedDeltaPct: pct(now.returned, before.returned)
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the stock ledger." });
+  }
+});
+
 // ── GET /api/personal-delivery-agents/:id ─────────────────
 // Management only: this returns KYC documents, guarantors and bank details.
 router.get("/:id", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
