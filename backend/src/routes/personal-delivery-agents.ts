@@ -62,7 +62,7 @@ function isMissingTable(error: { code?: string; message?: string } | null | unde
 const SELECT = `
   id, agent_code, full_name, phone, whatsapp_phone, email, state, city,
   residential_address, photo_url, service_areas, service_radius_km, transport_method,
-  account_status, kyc_status, trust_level, availability,
+  account_status, kyc_status, trust_level, availability, vehicle_model, vehicle_plate,
   max_stock_units, max_cod_exposure, max_active_orders,
   bank_name, bank_account_number, bank_account_name,
   approved_at, probation_ends_at, kyc_expires_at, restriction_reason,
@@ -84,6 +84,8 @@ const mapAgent = (row: any) => ({
   serviceRadiusKm: row.service_radius_km === null || row.service_radius_km === undefined
     ? null : Number(row.service_radius_km),
   transportMethod: row.transport_method ?? null,
+  vehicleModel: row.vehicle_model ?? null,
+  vehiclePlate: row.vehicle_plate ?? null,
   accountStatus: row.account_status,
   kycStatus: row.kyc_status,
   trustLevel: row.trust_level,
@@ -1004,6 +1006,182 @@ router.post("/notes", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   }).select("*").single();
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.status(201).json({ row: { id: data.id, body: data.body, authorName: data.author_name, createdAt: data.created_at } });
+});
+
+// ── GET /api/personal-delivery-agents/active-agents ───────
+// The Active Agents screen: verified agents with their live state, workload,
+// earnings and performance.
+router.get("/active-agents", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    const monthKey = monthStart.toISOString().slice(0, 7);
+    const lastMonth = new Date(monthStart);
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const lastMonthKey = lastMonth.toISOString().slice(0, 7);
+
+    const [{ data: agentRows }, { data: assignments }, { data: payouts }] = await Promise.all([
+      supabase.from(AGENTS).select("*").eq("org_id", orgId).order("approved_at", { ascending: false }),
+      supabase.from(ASSIGNMENTS).select("*").eq("org_id", orgId),
+      supabase.from("pda_earning_payouts").select("agent_id, amount, paid_at").eq("org_id", orgId)
+    ]);
+
+    const all = agentRows ?? [];
+    const operational = all.filter((a: any) => OPERATIONAL_STATUSES.includes(String(a.account_status)));
+    const rows = (assignments ?? []) as any[];
+    const monthOf = (value: any) => String(value ?? "").slice(0, 7);
+
+    const agents = operational.map((agent: any) => {
+      const mine = rows.filter((r) => r.agent_id === agent.id);
+      const closed = mine.filter((r) => ["Delivered", "Failed", "Rejected"].includes(r.delivery_status));
+      const delivered = mine.filter((r) => r.delivery_status === "Delivered");
+      const deliveredThisMonth = delivered.filter((r) => monthOf(r.delivered_at) === monthKey);
+      const paidThisMonth = (payouts ?? [])
+        .filter((p: any) => p.agent_id === agent.id && monthOf(p.paid_at) === monthKey)
+        .reduce((sum: number, p: any) => sum + Number(p.amount ?? 0), 0);
+      const deliveryRate = closed.length > 0 ? delivered.length / closed.length : null;
+
+      return {
+        id: agent.id,
+        agentCode: agent.agent_code,
+        fullName: agent.full_name,
+        phone: agent.phone,
+        location: [agent.city, agent.state].filter(Boolean).join(", "),
+        accountStatus: agent.account_status,
+        availability: agent.availability,
+        trustLevel: agent.trust_level,
+        transportMethod: agent.transport_method ?? null,
+        vehicleModel: agent.vehicle_model ?? null,
+        vehiclePlate: agent.vehicle_plate ?? null,
+        joinedAt: agent.approved_at ?? agent.created_at,
+        deliveries: delivered.length,
+        deliveriesThisMonth: deliveredThisMonth.length,
+        // ⚠️ NOT a customer rating - Protohub collects none. This is the
+        // agent's delivery success expressed out of 5 so the column is real
+        // rather than invented, and it is null until they have closed
+        // anything, because a new agent is not a 0-star agent.
+        performanceScore: deliveryRate === null ? null : Math.round(deliveryRate * 50) / 10,
+        deliveryRatePct: deliveryRate === null ? null : Math.round(deliveryRate * 1000) / 10,
+        earningsThisMonth: paidThisMonth,
+        activeOrders: mine.filter((r) =>
+          ["Ready for Dispatch", "Dispatch Started", "Arrived at Customer Location", "Rescheduled"].includes(r.delivery_status)).length
+      };
+    });
+
+    const deliveredThisMonth = rows.filter((r) => monthOf(r.delivered_at) === monthKey).length;
+    const deliveredLastMonth = rows.filter((r) => monthOf(r.delivered_at) === lastMonthKey).length;
+    const paidThisMonth = (payouts ?? []).filter((p: any) => monthOf(p.paid_at) === monthKey)
+      .reduce((sum: number, p: any) => sum + Number(p.amount ?? 0), 0);
+    const paidLastMonth = (payouts ?? []).filter((p: any) => monthOf(p.paid_at) === lastMonthKey)
+      .reduce((sum: number, p: any) => sum + Number(p.amount ?? 0), 0);
+    const rated = agents.filter((a) => a.performanceScore !== null);
+    const pct = (now: number, before: number) => before <= 0 ? null : Math.round(((now - before) / before) * 1000) / 10;
+
+    res.json({
+      rows: agents,
+      counts: {
+        totalActive: operational.length,
+        joinedThisMonth: operational.filter((a: any) => monthOf(a.approved_at) === monthKey).length,
+        onlineNow: operational.filter((a: any) => a.availability === "Available").length,
+        onDelivery: agents.filter((a) => a.activeOrders > 0).length,
+        deliveriesThisMonth: deliveredThisMonth,
+        deliveriesDeltaPct: pct(deliveredThisMonth, deliveredLastMonth),
+        // Null when nobody has closed an order yet - an average of nothing is
+        // not zero.
+        averageScore: rated.length > 0
+          ? Math.round((rated.reduce((sum, a) => sum + (a.performanceScore ?? 0), 0) / rated.length) * 10) / 10
+          : null,
+        ratedAgents: rated.length,
+        paidThisMonth,
+        paidDeltaPct: pct(paidThisMonth, paidLastMonth)
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load active agents." });
+  }
+});
+
+// ── GET /api/personal-delivery-agents/dispatch-summary ────
+// The Orders & Dispatch right rail and KPI strip.
+router.get("/dispatch-summary", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const lastMonthKey = lastMonth.toISOString().slice(0, 7);
+
+    const [{ data: assignments }, { data: agentRows }] = await Promise.all([
+      supabase.from(ASSIGNMENTS).select("*").eq("org_id", orgId),
+      supabase.from(AGENTS).select("id, full_name, availability, account_status").eq("org_id", orgId)
+    ]);
+    const rows = (assignments ?? []) as any[];
+    const monthOf = (value: any) => String(value ?? "").slice(0, 7);
+    const thisMonth = rows.filter((r) => monthOf(r.offered_at) === monthKey);
+    const lastMonthRows = rows.filter((r) => monthOf(r.offered_at) === lastMonthKey);
+    const pct = (now: number, before: number) => before <= 0 ? null : Math.round(((now - before) / before) * 1000) / 10;
+
+    const bucket = (source: any[]) => ({
+      total: source.length,
+      confirmed: source.filter((r) => r.assignment_status === "Accepted").length,
+      dispatched: source.filter((r) => ["Dispatch Started", "Arrived at Customer Location", "Delivered"].includes(r.delivery_status)).length,
+      pendingDispatch: source.filter((r) => r.delivery_status === "Ready for Dispatch").length,
+      delivered: source.filter((r) => r.delivery_status === "Delivered").length,
+      cancelled: source.filter((r) => ["Failed", "Rejected", "Cancelled"].includes(r.delivery_status)).length,
+      cod: source.filter((r) => r.delivery_status === "Delivered")
+        .reduce((sum: number, r: any) => sum + Number(r.amount_collected ?? 0), 0)
+    });
+    const now = bucket(thisMonth);
+    const before = bucket(lastMonthRows);
+
+    const deliveredByAgent = new Map<string, number>();
+    for (const row of rows) {
+      if (row.delivery_status === "Delivered") {
+        deliveredByAgent.set(row.agent_id, (deliveredByAgent.get(row.agent_id) ?? 0) + 1);
+      }
+    }
+    const agentById = new Map((agentRows ?? []).map((a: any) => [a.id, a]));
+    const topAgents = [...deliveredByAgent.entries()]
+      .sort((a, b) => b[1] - a[1]).slice(0, 5)
+      .map(([agentId, deliveries]) => ({
+        agentId, deliveries, fullName: agentById.get(agentId)?.full_name ?? "Unknown agent"
+      }));
+
+    // Recent activity is derived from the assignment timestamps themselves, so
+    // it can never describe something that did not happen.
+    const events: Array<{ label: string; at: string; kind: string }> = [];
+    for (const row of rows) {
+      if (row.delivered_at) events.push({ label: `Order ${row.order_id} delivered`, at: row.delivered_at, kind: "delivered" });
+      if (row.dispatch_started_at) events.push({ label: `Order ${row.order_id} dispatched`, at: row.dispatch_started_at, kind: "dispatched" });
+      if (row.responded_at) {
+        events.push({
+          label: `Order ${row.order_id} ${row.assignment_status === "Accepted" ? "accepted" : "declined"} by agent`,
+          at: row.responded_at, kind: row.assignment_status === "Accepted" ? "confirmed" : "cancelled"
+        });
+      }
+      events.push({ label: `Order ${row.order_id} offered to an agent`, at: row.offered_at, kind: "created" });
+    }
+    events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+
+    res.json({
+      counts: {
+        ...now,
+        totalDeltaPct: pct(now.total, before.total),
+        confirmedDeltaPct: pct(now.confirmed, before.confirmed),
+        dispatchedDeltaPct: pct(now.dispatched, before.dispatched),
+        pendingDeltaPct: pct(now.pendingDispatch, before.pendingDispatch),
+        cancelledDeltaPct: pct(now.cancelled, before.cancelled),
+        codDeltaPct: pct(now.cod, before.cod)
+      },
+      topAgents,
+      recentActivity: events.slice(0, 8),
+      agentsOnline: (agentRows ?? []).filter((a: any) =>
+        a.availability === "Available" && OPERATIONAL_STATUSES.includes(String(a.account_status))).length
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the dispatch summary." });
+  }
 });
 
 // ── GET /api/personal-delivery-agents/:id ─────────────────

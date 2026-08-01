@@ -569,6 +569,8 @@ export type PersonalDeliveryAgentRow = {
   serviceAreas: string[];
   serviceRadiusKm?: number | null;
   transportMethod?: string | null;
+  vehicleModel?: string | null;
+  vehiclePlate?: string | null;
   accountStatus: string;
   kycStatus: string;
   trustLevel: string;
@@ -847,9 +849,44 @@ export type PdaGuarantorDetail = {
   activity: PdaActivityEntry[];
 };
 
+export type PdaActiveAgentRow = {
+  id: string; agentCode: string; fullName: string; phone: string; location: string;
+  accountStatus: string; availability: string; trustLevel: string;
+  transportMethod?: string | null; vehicleModel?: string | null; vehiclePlate?: string | null;
+  joinedAt: string; deliveries: number; deliveriesThisMonth: number;
+  /** Delivery success out of 5. NOT a customer rating - none are collected. Null until they close an order. */
+  performanceScore: number | null;
+  deliveryRatePct: number | null;
+  earningsThisMonth: number; activeOrders: number;
+};
+
+export type PdaActiveAgentsView = {
+  rows: PdaActiveAgentRow[];
+  counts: {
+    totalActive: number; joinedThisMonth: number; onlineNow: number; onDelivery: number;
+    deliveriesThisMonth: number; deliveriesDeltaPct: number | null;
+    averageScore: number | null; ratedAgents: number;
+    paidThisMonth: number; paidDeltaPct: number | null;
+  };
+};
+
+export type PdaDispatchSummary = {
+  counts: {
+    total: number; confirmed: number; dispatched: number; pendingDispatch: number;
+    delivered: number; cancelled: number; cod: number;
+    totalDeltaPct: number | null; confirmedDeltaPct: number | null; dispatchedDeltaPct: number | null;
+    pendingDeltaPct: number | null; cancelledDeltaPct: number | null; codDeltaPct: number | null;
+  };
+  topAgents: Array<{ agentId: string; fullName: string; deliveries: number }>;
+  recentActivity: Array<{ label: string; at: string; kind: string }>;
+  agentsOnline: number;
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),
+  activeAgents: () => get<PdaActiveAgentsView>("/api/personal-delivery-agents/active-agents"),
+  dispatchSummary: () => get<PdaDispatchSummary>("/api/personal-delivery-agents/dispatch-summary"),
   applicationReview: (id: string) => get<PdaReviewView>(`/api/personal-delivery-agents/applications/${id}/review`),
   guarantorQueue: () => get<{ rows: PdaGuarantorQueueRow[]; counts: { total: number; outstanding: number } }>("/api/personal-delivery-agents/guarantors/queue"),
   guarantorDetail: (id: string) => get<PdaGuarantorDetail>(`/api/personal-delivery-agents/guarantors/${id}/detail`),
