@@ -2,6 +2,7 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
+import { recordStockLossExpense } from "../lib/stock-loss-expense.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendLowStockEmail } from "../lib/mailer.js";
 import { getOrgPushBranding } from "../lib/push-branding.js";
@@ -427,6 +428,22 @@ router.post("/count-entries/:entryId/adjust",
       by_user_id:   req.user!.id,
       note:         `Write-off: ${delta >= 0 ? "+" : ""}${delta} units — ${reasonLabel}. (Stock count reconciliation)`
     });
+
+    // Book the cost of what went missing. Adjusting the quantity alone left the
+    // loss invisible in the P&L - the write-off reason was recorded but never
+    // cost anything. Only a shortfall (delta < 0) is a loss; a surplus means
+    // the count found MORE than the system knew, which is not an expense.
+    if (delta < 0) {
+      await recordStockLossExpense({
+        orgId: req.user!.orgId,
+        reference: String(req.params.entryId),
+        productId: entry.product_id,
+        productName: entry.product_name ?? "Unknown product",
+        units: Math.abs(delta),
+        reason: reasonLabel,
+        context: `Stock count — ${entry.agent_name ?? "agent"}`
+      });
+    }
 
     // Mark entry verified
     const { data: updated, error: updateError } = await supabase
