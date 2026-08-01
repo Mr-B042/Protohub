@@ -186,6 +186,7 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
     }
 
     const todayKey = new Date().toISOString().slice(0, 10);
+    const yesterdayKey = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
 
     // Inventory held is real now that stock exists (migration 191), so it is a
     // counted figure rather than one of the "not measurable yet" placeholders.
@@ -240,6 +241,126 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
         .map((row: any) => row.agent_id)
     ).size;
 
+    // ── Everything the Overview design shows, counted from real rows ──
+    const { data: settingsRow } = await supabase.from("pda_settings")
+      .select("remittance_grace_days").eq("org_id", req.user!.orgId).maybeSingle();
+    const graceDays = Number(settingsRow?.remittance_grace_days ?? 3);
+
+    const { data: fullAssignments } = await supabase.from("pda_order_assignments")
+      .select("agent_id, delivery_status, assignment_status, customer_contact_status, amount_collected, amount_remitted, delivery_fee, offered_at, delivered_at")
+      .eq("org_id", req.user!.orgId);
+    const allAssignments = fullAssignments ?? [];
+    const dayOf = (value: any) => String(value ?? "").slice(0, 10);
+
+    // Real day-over-day comparisons. Where yesterday had nothing, the delta is
+    // null rather than a meaningless +100%.
+    const pctChange = (today: number, before: number): number | null =>
+      before <= 0 ? null : Math.round(((today - before) / before) * 1000) / 10;
+    const assignedYesterday = allAssignments.filter((r: any) => dayOf(r.offered_at) === yesterdayKey).length;
+    const deliveredYesterday = allAssignments.filter((r: any) => dayOf(r.delivered_at) === yesterdayKey).length;
+    const deliveredTodayRows = allAssignments.filter((r: any) => dayOf(r.delivered_at) === todayKey);
+    const codCollectedToday = deliveredTodayRows.reduce((sum: number, r: any) => sum + Number(r.amount_collected ?? 0), 0);
+    const codCollectedYesterday = allAssignments
+      .filter((r: any) => dayOf(r.delivered_at) === yesterdayKey)
+      .reduce((sum: number, r: any) => sum + Number(r.amount_collected ?? 0), 0);
+    const closedToday = allAssignments.filter((r: any) =>
+      dayOf(r.delivered_at) === todayKey || (["Failed", "Rejected"].includes(r.delivery_status) && dayOf(r.offered_at) === todayKey));
+
+    const comparisons = {
+      ordersAssignedDeltaPct: pctChange(
+        allAssignments.filter((r: any) => dayOf(r.offered_at) === todayKey).length, assignedYesterday),
+      deliveredDeltaPct: pctChange(deliveredTodayRows.length, deliveredYesterday),
+      codCollectedDeltaPct: pctChange(codCollectedToday, codCollectedYesterday),
+      successRatePct: closedToday.length > 0
+        ? Math.round((deliveredTodayRows.length / closedToday.length) * 1000) / 10
+        : null
+    };
+
+    // Cash held past the grace period. This is the figure worth chasing.
+    const overdueCutoff = new Date(Date.now() - graceDays * 86400000).toISOString().slice(0, 10);
+    const overdueCash = allAssignments
+      .filter((r: any) => r.delivery_status === "Delivered"
+        && dayOf(r.delivered_at) !== "" && dayOf(r.delivered_at) < overdueCutoff)
+      .reduce((sum: number, r: any) =>
+        sum + Math.max(0, Number(r.amount_collected ?? 0) - Number(r.amount_remitted ?? 0)), 0);
+
+    const kycBreakdown = {
+      verified: countWhere((a: any) => OPERATIONAL_STATUSES.includes(String(a.account_status))),
+      pending: countWhere((a: any) => ["KYC Submitted", "Guarantor Verification Pending", "Management Review"].includes(String(a.account_status))),
+      incomplete: countWhere((a: any) => ["Application Started", "KYC Incomplete"].includes(String(a.account_status))),
+      rejected: countWhere((a: any) => ["Rejected", "Terminated"].includes(String(a.account_status)))
+    };
+
+    const orderStatusToday = {
+      inProgress: allAssignments.filter((r: any) => ["Dispatch Started", "Arrived at Customer Location"].includes(r.delivery_status)).length,
+      awaitingCustomer: allAssignments.filter((r: any) =>
+        !["Delivered", "Failed", "Rejected", "Cancelled"].includes(r.delivery_status)
+        && r.customer_contact_status !== "Customer Ready").length,
+      readyForPickup: allAssignments.filter((r: any) =>
+        r.delivery_status === "Ready for Dispatch" && r.customer_contact_status === "Customer Ready").length,
+      delivered: deliveredTodayRows.length,
+      failed: allAssignments.filter((r: any) =>
+        ["Failed", "Rejected"].includes(r.delivery_status) && dayOf(r.offered_at) === todayKey).length
+    };
+
+    // Inventory value needs real unit costs - the same source the order COGS
+    // uses, so the figure agrees with the P&L.
+    const { data: pricingRows } = await supabase.from("product_pricings").select("product_id, unit_cost");
+    const unitCostByProduct = new Map<string, number>();
+    for (const row of (pricingRows ?? []) as any[]) {
+      const cost = Number(row.unit_cost ?? 0);
+      if (cost > 0) unitCostByProduct.set(String(row.product_id), Math.max(unitCostByProduct.get(String(row.product_id)) ?? 0, cost));
+    }
+    const { data: valuedStock } = await supabase.from("pda_agent_stock")
+      .select("agent_id, product_id, available, reserved, out_for_delivery").eq("org_id", req.user!.orgId);
+    const stockValueByAgent = new Map<string, { units: number; value: number }>();
+    let inventoryValue = 0;
+    for (const row of (valuedStock ?? []) as any[]) {
+      const units = Number(row.available ?? 0) + Number(row.reserved ?? 0) + Number(row.out_for_delivery ?? 0);
+      const value = units * (unitCostByProduct.get(String(row.product_id)) ?? 0);
+      inventoryValue += value;
+      const current = stockValueByAgent.get(row.agent_id) ?? { units: 0, value: 0 };
+      stockValueByAgent.set(row.agent_id, { units: current.units + units, value: current.value + value });
+    }
+
+    // The agent table on the Overview.
+    const { data: agentDetail } = await supabase.from(AGENTS)
+      .select("id, agent_code, full_name, phone, photo_url, account_status, kyc_status, availability, state, city, service_areas, service_radius_km")
+      .eq("org_id", req.user!.orgId).order("created_at", { ascending: false });
+    const agentRows = (agentDetail ?? []).map((row: any) => {
+      const mine = allAssignments.filter((a: any) => a.agent_id === row.id);
+      const active = mine.filter((a: any) =>
+        ["Ready for Dispatch", "Dispatch Started", "Arrived at Customer Location", "Rescheduled"].includes(a.delivery_status));
+      const closed = mine.filter((a: any) => ["Delivered", "Failed", "Rejected"].includes(a.delivery_status));
+      const delivered = mine.filter((a: any) => a.delivery_status === "Delivered");
+      const codHeldRows = delivered.filter((a: any) => Number(a.amount_collected ?? 0) > Number(a.amount_remitted ?? 0));
+      const stock = stockValueByAgent.get(row.id) ?? { units: 0, value: 0 };
+      return {
+        id: row.id,
+        agentCode: row.agent_code,
+        fullName: row.full_name,
+        phone: row.phone,
+        photoUrl: row.photo_url ?? null,
+        accountStatus: row.account_status,
+        kycStatus: row.kyc_status,
+        availability: row.availability,
+        serviceArea: [row.city, row.state].filter(Boolean).join(", ")
+          || (Array.isArray(row.service_areas) ? row.service_areas.join(", ") : ""),
+        serviceRadiusKm: row.service_radius_km === null || row.service_radius_km === undefined
+          ? null : Number(row.service_radius_km),
+        activeOrders: active.length,
+        inProgress: mine.filter((a: any) => ["Dispatch Started", "Arrived at Customer Location"].includes(a.delivery_status)).length,
+        inventoryUnits: stock.units,
+        inventoryValue: Math.round(stock.value),
+        codHeld: codHeldRows.reduce((sum: number, a: any) =>
+          sum + Math.max(0, Number(a.amount_collected ?? 0) - Number(a.amount_remitted ?? 0)), 0),
+        codOrders: codHeldRows.length,
+        // Null, never 0 - an agent with no closed orders has no record yet,
+        // which is a different thing from a 0% delivery rate.
+        performancePct: closed.length > 0 ? Math.round((delivered.length / closed.length) * 1000) / 10 : null
+      };
+    });
+
     const inventory = (stockRows ?? []).reduce((acc: any, row: any) => ({
       available: acc.available + Number(row.available ?? 0),
       reserved: acc.reserved + Number(row.reserved ?? 0),
@@ -286,8 +407,22 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
         staleOpenOrders: orders.staleOpen
       },
       byStatus,
-      // Named explicitly so the UI can say "not built yet" instead of showing
-      // a zero that looks like a clean bill of health.
+      // Yesterday's equivalents, so the "vs yesterday" deltas on the KPI cards
+      // are computed from real dated rows rather than invented.
+      comparisons,
+      kycBreakdown,
+      ordersToday: orderStatusToday,
+      inventory: {
+        totalUnits: inventory.available + inventory.reserved + inventory.outForDelivery,
+        totalValue: inventoryValue,
+        unaccounted: inventory.unaccounted
+      },
+      codOverview: {
+        collectedToday: codCollectedToday,
+        outstanding: cash.outstanding,
+        overdue: overdueCash
+      },
+      agents: agentRows,
       unavailable: {}
     });
   } catch (error: any) {

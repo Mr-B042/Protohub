@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Copy,
+  CreditCard,
   Download,
   Eye,
   EyeOff,
@@ -11165,6 +11166,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaIncidentDraft, setPdaIncidentDraft] = useState({ agentId: "", orderId: "", incidentType: "Missing COD", severity: "Medium", description: "", amountAtRisk: "" });
   const [pdaReports, setPdaReports] = useState<PdaReportRow[]>([]);
   const [pdaSettingsDraft, setPdaSettingsDraft] = useState<PdaSettings | null>(null);
+  const [pdaOverviewSearch, setPdaOverviewSearch] = useState("");
+  const [pdaOverviewStatus, setPdaOverviewStatus] = useState("All");
+  const [pdaOverviewAvailability, setPdaOverviewAvailability] = useState("All");
+  const [pdaOverviewPage, setPdaOverviewPage] = useState(1);
   const [pdaCod, setPdaCod] = useState<PdaCodView | null>(null);
   const [pdaRemittanceDraft, setPdaRemittanceDraft] = useState({ amount: "", method: "Cash", reference: "" });
   const [pdaStock, setPdaStock] = useState<{ stock: any[]; ledger: any[]; transfers: any[] } | null>(null);
@@ -48026,41 +48031,150 @@ ${waybillLineItems(w).length > 1
   const renderPersonalDeliveryAgents = () => {
     const isManagement = ["Owner", "Admin", "Manager"].includes(currentRole);
     const totals = pdaOverview?.totals ?? null;
+    const comparisons = pdaOverview?.comparisons ?? null;
     const pending = Boolean(pdaOverview?.pendingMigration);
 
-    const statusTone = (status: string) =>
-      PDA_OPERATIONAL_STATUSES.includes(status) ? "bg-emerald-50 text-emerald-700 border-emerald-100"
-      : PDA_RESTRICTED_STATUSES.includes(status) ? "bg-amber-50 text-amber-700 border-amber-100"
-      : status === "Terminated" || status === "Rejected" ? "bg-red-50 text-red-700 border-red-100"
-      : "bg-sky-50 text-sky-700 border-sky-100";
+    // A delta is only shown when there is a real prior period to compare with.
+    // "+100% vs yesterday" off a base of zero says nothing.
+    const delta = (value: number | null | undefined) =>
+      value === null || value === undefined ? null : value;
 
-    // Counted from real rows only. Where the capability does not exist yet the
-    // tile says so - a zero would read as "nothing outstanding", which is a
-    // false reassurance about money and stock.
-    const kpiTiles: Array<{ label: string; value: string; hint?: string; tone?: string; notBuilt?: boolean }> = [
-      { label: "Total Agents", value: String(totals?.totalAgents ?? 0), hint: `${totals?.operational ?? 0} can take work` },
-      { label: "Pending Applications", value: String(totals?.pendingApplications ?? 0), hint: "Awaiting KYC review", tone: "text-amber-600" },
-      { label: "Available Now", value: String(totals?.availableNow ?? 0), hint: "Approved and online", tone: "text-emerald-600" },
-      { label: "On Probation", value: String(totals?.onProbation ?? 0), hint: "Reduced stock and COD limits" },
-      { label: "Restricted", value: String(totals?.restricted ?? 0), hint: "Blocked from new assignments", tone: "text-red-600" },
-      { label: "KYC Items Outstanding", value: String(totals?.kycItemsOutstanding ?? 0), hint: `${totals?.guarantorsOutstanding ?? 0} guarantors unverified`, tone: "text-amber-600" },
-      { label: "Units With Agents", value: String(totals?.inventoryHeld ?? 0), hint: `${totals?.inventoryAvailable ?? 0} available · ${totals?.stockInTransit ?? 0} in transit` },
-      { label: "Stock Unaccounted", value: String(totals?.inventoryUnaccounted ?? 0), hint: `${totals?.openStockReports ?? 0} report${(totals?.openStockReports ?? 0) === 1 ? "" : "s"} awaiting review`, tone: (totals?.inventoryUnaccounted ?? 0) > 0 ? "text-red-600" : undefined },
-      { label: "Our Cash With Agents", value: formatMoney(totals?.codOutstanding ?? 0), hint: `${totals?.agentsHoldingCash ?? 0} agent${(totals?.agentsHoldingCash ?? 0) === 1 ? "" : "s"} holding it`, tone: (totals?.codOutstanding ?? 0) > 0 ? "text-red-600" : undefined },
-      { label: "Earnings We Owe", value: formatMoney(totals?.earningsAvailable ?? 0), hint: `${formatMoney(totals?.earningsPending ?? 0)} pending until cash is in`, tone: "text-emerald-600" },
-      { label: "Assigned Today", value: String(totals?.ordersAssignedToday ?? 0), hint: `${totals?.ordersAwaitingAcceptance ?? 0} not accepted yet` },
-      { label: "Out For Delivery", value: String(totals?.dispatchesInProgress ?? 0), hint: `${totals?.deliveredToday ?? 0} delivered today`, tone: "text-sky-600" },
-      { label: "No Update In 24h", value: String(totals?.staleOpenOrders ?? 0), hint: "accepted but sitting quiet", tone: (totals?.staleOpenOrders ?? 0) > 0 ? "text-red-600" : undefined }
+    const kpiCards = [
+      {
+        label: "Total Agents", value: String(totals?.totalAgents ?? 0),
+        icon: Users, tint: "bg-blue-50 text-blue-600",
+        sub: <span className="text-emerald-600 font-bold">Active: {totals?.operational ?? 0}</span>,
+        foot: "Onboarded"
+      },
+      {
+        label: "Pending Applications", value: String(totals?.pendingApplications ?? 0),
+        icon: ClipboardCheck, tint: "bg-amber-50 text-amber-600",
+        foot: "Needs Review"
+      },
+      {
+        label: "Orders Assigned Today", value: String(totals?.ordersAssignedToday ?? 0),
+        icon: PackageCheck, tint: "bg-indigo-50 text-indigo-600",
+        sub: delta(comparisons?.ordersAssignedDeltaPct) !== null
+          ? <span className={`font-bold ${(comparisons!.ordersAssignedDeltaPct ?? 0) >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+              {(comparisons!.ordersAssignedDeltaPct ?? 0) >= 0 ? "+" : ""}{comparisons!.ordersAssignedDeltaPct}% vs yesterday
+            </span>
+          : <span className="text-gray-400">no orders yesterday to compare</span>
+      },
+      {
+        label: "Deliveries Completed Today", value: String(totals?.deliveredToday ?? 0),
+        icon: CheckCircle2, tint: "bg-emerald-50 text-emerald-600",
+        sub: comparisons?.successRatePct !== null && comparisons?.successRatePct !== undefined
+          ? <span className="font-bold text-emerald-600">{comparisons.successRatePct}% success rate</span>
+          : <span className="text-gray-400">nothing closed today yet</span>
+      },
+      {
+        label: "COD Collected (Today)", value: formatMoney(pdaOverview?.codOverview?.collectedToday ?? 0),
+        icon: Banknote, tint: "bg-violet-50 text-violet-600",
+        sub: delta(comparisons?.codCollectedDeltaPct) !== null
+          ? <span className={`font-bold ${(comparisons!.codCollectedDeltaPct ?? 0) >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+              {(comparisons!.codCollectedDeltaPct ?? 0) >= 0 ? "+" : ""}{comparisons!.codCollectedDeltaPct}% vs yesterday
+            </span>
+          : <span className="text-gray-400">nothing collected yesterday</span>
+      },
+      {
+        label: "COD Outstanding", value: formatMoney(pdaOverview?.codOverview?.outstanding ?? 0),
+        icon: CreditCard, tint: "bg-rose-50 text-rose-600",
+        sub: (pdaOverview?.codOverview?.overdue ?? 0) > 0
+          ? <span className="font-bold text-red-600">Overdue: {formatMoney(pdaOverview!.codOverview!.overdue)}</span>
+          : <span className="text-gray-400">none past the grace period</span>
+      }
+    ];
+
+    const agentRows = (pdaOverview?.agents ?? []).filter((agent) => {
+      if (pdaOverviewStatus !== "All" && agent.accountStatus !== pdaOverviewStatus) return false;
+      if (pdaOverviewAvailability !== "All" && agent.availability !== pdaOverviewAvailability) return false;
+      if (!pdaOverviewSearch.trim()) return true;
+      const q = pdaOverviewSearch.trim().toLowerCase();
+      return agent.fullName.toLowerCase().includes(q)
+        || agent.agentCode.toLowerCase().includes(q)
+        || (agent.phone ?? "").includes(q);
+    });
+    const PAGE = 5;
+    const totalPages = Math.max(1, Math.ceil(agentRows.length / PAGE));
+    const page = Math.min(pdaOverviewPage, totalPages);
+    const pageRows = agentRows.slice((page - 1) * PAGE, page * PAGE);
+
+    const availabilityDot = (availability: string) =>
+      availability === "Available" ? "bg-emerald-500"
+      : availability === "Busy" ? "bg-amber-500"
+      : availability === "Unavailable" ? "bg-red-500" : "bg-gray-300";
+    const availabilitySub = (availability: string) =>
+      availability === "Available" ? "Online"
+      : availability === "Busy" ? "On delivery"
+      : availability === "Unavailable" ? "Offline" : "Suspended";
+
+    const kyc = pdaOverview?.kycBreakdown ?? { verified: 0, pending: 0, incomplete: 0, rejected: 0 };
+    const kycTotal = kyc.verified + kyc.pending + kyc.incomplete + kyc.rejected;
+    const kycSlices = [
+      { label: "Verified", value: kyc.verified, colour: "#059669" },
+      { label: "Pending", value: kyc.pending, colour: "#F59E0B" },
+      { label: "Incomplete", value: kyc.incomplete, colour: "#8B5CF6" },
+      { label: "Rejected", value: kyc.rejected, colour: "#9CA3AF" }
+    ];
+    // Donut drawn with stroke-dasharray - no charting library is available and
+    // one arc per slice is all this needs.
+    const CIRC = 2 * Math.PI * 42;
+    let dashOffset = 0;
+
+    const ot = pdaOverview?.ordersToday ?? { inProgress: 0, awaitingCustomer: 0, readyForPickup: 0, delivered: 0, failed: 0 };
+    const otTotal = Math.max(1, ot.inProgress + ot.awaitingCustomer + ot.readyForPickup + ot.delivered + ot.failed);
+    const orderBars = [
+      { label: "In Progress", value: ot.inProgress, colour: "bg-blue-500" },
+      { label: "Awaiting Customer", value: ot.awaitingCustomer, colour: "bg-amber-500" },
+      { label: "Ready for Pickup", value: ot.readyForPickup, colour: "bg-violet-500" },
+      { label: "Delivered", value: ot.delivered, colour: "bg-emerald-500" },
+      { label: "Failed/Rejected", value: ot.failed, colour: "bg-red-500" }
     ];
 
     return (
-      <div className="space-y-6">
-        <header className="flex flex-col gap-1">
-          <h1 className="text-2xl font-bold text-[#1F8FE0]">Personal Delivery Agents</h1>
-          <p className="text-sm font-medium text-gray-500">
-            Individuals who hold Protohub stock and collect customer payment. Separate from the logistics companies on the Agents page, because they carry both our inventory and our cash.
-          </p>
+      <div className="space-y-5">
+        <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h1 className="m-0 flex items-center gap-2 text-2xl font-bold text-gray-900">
+              Personal Delivery Agents
+              <span title="Individuals who hold Protohub stock and collect customer payment. Separate from the logistics companies on the Agents page, because they carry both our inventory and our cash.">
+                <Info className="h-4 w-4 text-gray-400" />
+              </span>
+            </h1>
+            <p className="m-0 mt-1 text-sm text-gray-500">
+              Manage personal delivery agents, KYC verification, inventory, orders, COD and performance.
+            </p>
+          </div>
+          {isManagement && (
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setPdaSubPage("Settings")}
+                className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                <Settings className="h-4 w-4" /> Settings
+              </button>
+              <button type="button" onClick={() => setModal("addPersonalDeliveryAgent")}
+                className="!min-h-0 inline-flex items-center gap-2 rounded-lg bg-[#1F8FE0] px-3.5 py-2 text-sm font-semibold text-white hover:bg-[#1560a8]">
+                <Plus className="h-4 w-4" /> Add New Agent
+              </button>
+            </div>
+          )}
         </header>
+
+        {/* Horizontal tabs, mirroring the sidebar sub-nav. Both drive the same
+            state, so the two can never disagree about where you are. */}
+        <div className="-mx-1 overflow-x-auto border-b border-gray-200">
+          <div className="flex min-w-max gap-1 px-1">
+            {PDA_SUBNAV_ITEMS.filter((item) => !item.ownerOnly || currentRole === "Owner").map((item) => (
+              <button key={item.key} type="button" onClick={() => setPdaSubPage(item.key)}
+                className={`!min-h-0 inline-flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors ${
+                  pdaSubPage === item.key
+                    ? "border-[#1F8FE0] text-[#1F8FE0]"
+                    : "border-transparent text-gray-500 hover:text-gray-800"}`}>
+                <item.icon className="h-4 w-4" />
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {pending && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -48070,78 +48184,301 @@ ${waybillLineItems(w).length > 1
 
         {pdaSubPage === "Overview" ? (
           <>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-              {kpiTiles.map((tile) => (
-                <div key={tile.label} className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
-                  <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{tile.label}</div>
-                  <div className={`mt-1 text-xl font-black ${tile.tone ?? "text-gray-900"}`}>{tile.value}</div>
-                  {tile.hint && <div className="mt-0.5 text-[11px] text-gray-400">{tile.hint}</div>}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              {kpiCards.map((card) => (
+                <div key={card.label} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${card.tint}`}>
+                      <card.icon className="h-5 w-5" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-semibold text-gray-500">{card.label}</div>
+                      <div className="mt-0.5 text-2xl font-black leading-tight text-gray-900">{card.value}</div>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-[11px]">{card.sub}</div>
+                  {card.foot && <div className="mt-1 text-[11px] text-gray-400">{card.foot}</div>}
                 </div>
               ))}
             </div>
 
-            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-200">
-                <div>
-                  <h2 className="text-base font-bold text-gray-900">Agents</h2>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {isManagement
-                      ? "Every application and active agent. An agent cannot hold stock or take orders until they are Approved."
-                      : "Agents connected to your orders. Bank details, KYC documents, guarantors and home addresses are not shown to Sales Reps."}
-                  </p>
-                </div>
-                {isManagement && (
-                  <button type="button" onClick={() => setModal("addPersonalDeliveryAgent")}
-                    className="!min-h-0 inline-flex items-center gap-2 rounded-lg bg-[#1F8FE0] px-3 py-2 text-sm font-bold text-white hover:bg-[#1560a8]">
-                    <Plus className="h-4 w-4" /> Start an application
-                  </button>
-                )}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-[220px] flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+                  placeholder="Search agent name, phone, ID..."
+                  value={pdaOverviewSearch} onChange={(e) => { setPdaOverviewSearch(e.target.value); setPdaOverviewPage(1); }} />
               </div>
-              {pdaAgents.length === 0 ? (
-                <div className="px-5 py-12 text-center">
-                  <p className="m-0 text-sm font-semibold text-gray-500">No personal delivery agents yet.</p>
-                  <p className="m-0 mt-1 text-xs text-gray-400">
-                    Start an application to begin onboarding. Nobody receives stock or orders until every KYC item, both guarantors and all signed agreements are approved one by one.
-                  </p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400">
-                        <th className="px-5 py-2">Agent</th>
-                        <th className="px-4 py-2">Account status</th>
-                        <th className="px-4 py-2">Trust</th>
-                        <th className="px-4 py-2">Availability</th>
-                        <th className="px-4 py-2">Service area</th>
-                        <th className="px-4 py-2">Transport</th>
+              <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+                value={pdaOverviewStatus} onChange={(e) => { setPdaOverviewStatus(e.target.value); setPdaOverviewPage(1); }}>
+                <option value="All">Status: All</option>
+                {["Active", "Probation", "Approved", "Restricted", "Temporarily Suspended", "Terminated", "Rejected"].map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+                value={pdaOverviewAvailability} onChange={(e) => { setPdaOverviewAvailability(e.target.value); setPdaOverviewPage(1); }}>
+                <option value="All">Availability: All</option>
+                {["Available", "Busy", "Unavailable", "Offline"].map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+
+            <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div className="px-5 py-4">
+                <h2 className="m-0 text-base font-bold text-gray-900">Active Personal Delivery Agents</h2>
+                <p className="m-0 mt-0.5 text-xs text-gray-500">All verified and onboarded agents.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-y border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                      <th className="px-5 py-2.5">Agent</th>
+                      <th className="px-3 py-2.5">Status / KYC</th>
+                      <th className="px-3 py-2.5">Availability</th>
+                      <th className="px-3 py-2.5">Service Area</th>
+                      <th className="px-3 py-2.5">Active Orders</th>
+                      <th className="px-3 py-2.5">Inventory Value</th>
+                      <th className="px-3 py-2.5">COD Held</th>
+                      <th className="px-3 py-2.5">Performance</th>
+                      <th className="px-3 py-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="px-5 py-14 text-center">
+                          <p className="m-0 text-sm font-semibold text-gray-500">
+                            {(pdaOverview?.agents ?? []).length === 0 ? "No personal delivery agents yet." : "No agents match those filters."}
+                          </p>
+                          {(pdaOverview?.agents ?? []).length === 0 && (
+                            <p className="m-0 mt-1 text-xs text-gray-400">
+                              Use “Add New Agent” to start an application. Nobody receives stock or orders until every KYC item, both guarantors and all agreements are approved one by one.
+                            </p>
+                          )}
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {pdaAgents.map((agent) => (
-                        <tr key={agent.id} className="border-t border-gray-100 hover:bg-gray-50">
-                          <td className="px-5 py-3">
-                            <div className="font-bold text-gray-900">{agent.fullName}</div>
-                            <div className="text-xs text-gray-400">{agent.agentCode} · {agent.phone}</div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-black ${statusTone(agent.accountStatus)}`}>
-                              {agent.accountStatus}
+                    ) : pageRows.map((agent) => (
+                      <tr key={agent.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-3">
+                            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(agent.id)}`}>
+                              {customerInitial(agent.fullName)}
                             </span>
-                          </td>
-                          <td className="px-4 py-3 text-gray-600">{agent.trustLevel}</td>
-                          <td className="px-4 py-3 text-gray-600">{agent.availability}</td>
-                          <td className="px-4 py-3 text-gray-600">
-                            {[agent.city, agent.state].filter(Boolean).join(", ") || "-"}
-                          </td>
-                          <td className="px-4 py-3 text-gray-600">{agent.transportMethod ?? "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                            <div className="min-w-0">
+                              <div className="font-bold text-gray-900">{agent.fullName}</div>
+                              <div className="text-[11px] text-gray-400">{agent.agentCode}</div>
+                              <div className="text-[11px] text-gray-500">{agent.phone}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <span className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-bold ${
+                            PDA_OPERATIONAL_STATUSES.includes(agent.accountStatus) ? "bg-emerald-50 text-emerald-700"
+                            : PDA_RESTRICTED_STATUSES.includes(agent.accountStatus) ? "bg-rose-50 text-rose-700"
+                            : "bg-gray-100 text-gray-600"}`}>
+                            {agent.accountStatus}
+                          </span>
+                          <div className={`mt-1 flex items-center gap-1 text-[11px] font-semibold ${agent.kycStatus === "Approved" ? "text-emerald-600" : "text-gray-400"}`}>
+                            <CheckCircle2 className="h-3 w-3" /> {agent.kycStatus === "Approved" ? "KYC Verified" : agent.kycStatus}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-1.5 text-[13px] font-bold text-gray-800">
+                            <span className={`h-2 w-2 rounded-full ${availabilityDot(agent.availability)}`} />
+                            {agent.availability}
+                          </div>
+                          <div className="text-[11px] text-gray-400">{availabilitySub(agent.availability)}</div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="text-[13px] text-gray-800">{agent.serviceArea || "—"}</div>
+                          {agent.serviceRadiusKm !== null && (
+                            <div className="text-[11px] text-gray-400">Radius: {agent.serviceRadiusKm}km</div>
+                          )}
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="font-bold text-gray-900">{agent.activeOrders}</div>
+                          <div className="text-[11px] text-gray-400">{agent.inProgress} in progress</div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="font-bold text-gray-900">{formatMoney(agent.inventoryValue)}</div>
+                          <div className="text-[11px] text-gray-400">{agent.inventoryUnits} items</div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className={`font-bold ${agent.codHeld > 0 ? "text-gray-900" : "text-gray-400"}`}>{formatMoney(agent.codHeld)}</div>
+                          <div className="text-[11px] text-gray-400">{agent.codOrders} order{agent.codOrders === 1 ? "" : "s"}</div>
+                        </td>
+                        <td className="px-3 py-3 min-w-[110px]">
+                          {agent.performancePct === null ? (
+                            <>
+                              {/* A dash, never 0% - no closed orders is not a
+                                  failing score, and this figure affects pay. */}
+                              <div className="font-bold text-gray-300">—</div>
+                              <div className="text-[11px] text-gray-400">no closed orders</div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="font-bold text-gray-900">{agent.performancePct}%</div>
+                              <div className="mt-1 h-1.5 w-full rounded-full bg-gray-100">
+                                <div className={`h-1.5 rounded-full ${agent.performancePct >= 60 ? "bg-emerald-500" : "bg-amber-500"}`}
+                                  style={{ width: `${Math.min(100, agent.performancePct)}%` }} />
+                              </div>
+                            </>
+                          )}
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <a href={`tel:${agent.phone}`} title="Call" className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                              <Phone className="h-3.5 w-3.5" />
+                            </a>
+                            {buildWhatsAppTargets(agent.phone ?? "", `Hello ${agent.fullName},`).normalUrl && (
+                              <a href={buildWhatsAppTargets(agent.phone ?? "", `Hello ${agent.fullName},`).normalUrl ?? undefined}
+                                target="_blank" rel="noreferrer" title="WhatsApp"
+                                className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                                <WhatsAppIcon className="h-3.5 w-3.5" />
+                              </a>
+                            )}
+                            <button type="button" title="Open application"
+                              onClick={() => { setPdaSubPage("Applications & KYC"); void openPdaApplication(agent.id); }}
+                              className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                              <Eye className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {agentRows.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-5 py-3">
+                  <span className="text-xs text-gray-500">
+                    Showing {(page - 1) * PAGE + 1} to {Math.min(page * PAGE, agentRows.length)} of {agentRows.length} agent{agentRows.length === 1 ? "" : "s"}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button type="button" disabled={page <= 1} onClick={() => setPdaOverviewPage(page - 1)}
+                      className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    {Array.from({ length: totalPages }).slice(0, 3).map((_, index) => (
+                      <button key={index} type="button" onClick={() => setPdaOverviewPage(index + 1)}
+                        className={`!min-h-0 inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-xs font-bold ${
+                          page === index + 1 ? "bg-[#1F8FE0] text-white" : "border border-gray-200 text-gray-600"}`}>
+                        {index + 1}
+                      </button>
+                    ))}
+                    {totalPages > 3 && (
+                      <>
+                        <span className="px-1 text-xs text-gray-400">…</span>
+                        <button type="button" onClick={() => setPdaOverviewPage(totalPages)}
+                          className={`!min-h-0 inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-xs font-bold ${
+                            page === totalPages ? "bg-[#1F8FE0] text-white" : "border border-gray-200 text-gray-600"}`}>
+                          {totalPages}
+                        </button>
+                      </>
+                    )}
+                    <button type="button" disabled={page >= totalPages} onClick={() => setPdaOverviewPage(page + 1)}
+                      className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               )}
             </section>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <h3 className="m-0 text-sm font-bold text-gray-900">KYC Verification Status</h3>
+                <div className="mt-4 flex items-center gap-4">
+                  <div className="relative h-[104px] w-[104px] shrink-0">
+                    <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+                      <circle cx="50" cy="50" r="42" fill="none" stroke="#F3F4F6" strokeWidth="12" />
+                      {kycTotal > 0 && kycSlices.map((slice) => {
+                        if (slice.value <= 0) return null;
+                        const length = (slice.value / kycTotal) * CIRC;
+                        const offset = dashOffset;
+                        dashOffset += length;
+                        return (
+                          <circle key={slice.label} cx="50" cy="50" r="42" fill="none"
+                            stroke={slice.colour} strokeWidth="12"
+                            strokeDasharray={`${length} ${CIRC - length}`}
+                            strokeDashoffset={-offset} />
+                        );
+                      })}
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                      <span className="text-xl font-black leading-none text-gray-900">{kycTotal}</span>
+                      <span className="text-[10px] text-gray-400">Total Agents</span>
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    {kycSlices.map((slice) => (
+                      <div key={slice.label} className="flex items-center justify-between gap-2 text-[12px]">
+                        <span className="flex items-center gap-1.5 text-gray-600">
+                          <span className="h-2 w-2 rounded-full" style={{ background: slice.colour }} />
+                          {slice.label}
+                        </span>
+                        <span className="font-semibold text-gray-700">
+                          {slice.value} <span className="text-gray-400">({kycTotal > 0 ? Math.round((slice.value / kycTotal) * 1000) / 10 : 0}%)</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <button type="button" onClick={() => setPdaSubPage("Applications & KYC")}
+                  className="!min-h-0 mt-4 text-xs font-bold text-[#1F8FE0]">View all applications →</button>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <h3 className="m-0 text-sm font-bold text-gray-900">Orders Status (Today)</h3>
+                <div className="mt-4 space-y-2.5">
+                  {orderBars.map((bar) => (
+                    <div key={bar.label} className="flex items-center gap-3 text-[12px]">
+                      <span className="w-[104px] shrink-0 text-gray-600">{bar.label}</span>
+                      <span className="h-2 flex-1 rounded-full bg-gray-100">
+                        <span className={`block h-2 rounded-full ${bar.colour}`} style={{ width: `${Math.round((bar.value / otTotal) * 100)}%` }} />
+                      </span>
+                      <span className="w-16 shrink-0 text-right font-semibold text-gray-700">
+                        {bar.value} <span className="text-gray-400">({Math.round((bar.value / otTotal) * 100)}%)</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={() => setPdaSubPage("Orders & Dispatch")}
+                  className="!min-h-0 mt-4 text-xs font-bold text-[#1F8FE0]">View all orders →</button>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <h3 className="m-0 flex items-center gap-2 text-sm font-bold text-gray-900">
+                  <Box className="h-4 w-4 text-gray-400" /> Inventory Overview
+                </h3>
+                <div className="mt-4 text-2xl font-black text-gray-900">{pdaOverview?.inventory?.totalUnits ?? 0}</div>
+                <div className="text-[11px] text-gray-400">Total Items Across Agents</div>
+                <div className="mt-3 text-[11px] font-semibold text-gray-500">Total Inventory Value</div>
+                <div className="text-xl font-black text-gray-900">{formatMoney(pdaOverview?.inventory?.totalValue ?? 0)}</div>
+                {(pdaOverview?.inventory?.unaccounted ?? 0) > 0 && (
+                  <div className="mt-1 text-[11px] font-bold text-red-600">
+                    {pdaOverview!.inventory!.unaccounted} unaccounted
+                  </div>
+                )}
+                <button type="button" onClick={() => setPdaSubPage("Inventory")}
+                  className="!min-h-0 mt-4 text-xs font-bold text-[#1F8FE0]">View inventory →</button>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <h3 className="m-0 flex items-center gap-2 text-sm font-bold text-gray-900">
+                  <Banknote className="h-4 w-4 text-gray-400" /> COD Overview
+                </h3>
+                <div className="mt-4 text-2xl font-black text-gray-900">{formatMoney(pdaOverview?.codOverview?.collectedToday ?? 0)}</div>
+                <div className="text-[11px] text-gray-400">Collected Today</div>
+                <div className="mt-3 text-[11px] font-semibold text-gray-500">Outstanding</div>
+                <div className={`text-xl font-black ${(pdaOverview?.codOverview?.outstanding ?? 0) > 0 ? "text-red-600" : "text-gray-900"}`}>
+                  {formatMoney(pdaOverview?.codOverview?.outstanding ?? 0)}
+                </div>
+                <button type="button" onClick={() => setPdaSubPage("COD & Reconciliation")}
+                  className="!min-h-0 mt-4 text-xs font-bold text-[#1F8FE0]">View reconciliation →</button>
+              </div>
+            </div>
           </>
         ) : pdaSubPage === "Applications & KYC" ? (
           renderPdaApplicationsAndKyc()
@@ -48160,10 +48497,10 @@ ${waybillLineItems(w).length > 1
         ) : pdaSubPage === "Settings" ? (
           renderPdaSettings()
         ) : (
-          <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-12 text-center">
+          <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
             <h2 className="text-base font-bold text-gray-900">{pdaSubPage}</h2>
             <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
-              Not built yet. The foundation for this module is in place - agents, the item-by-item KYC checklist, guarantors and signed agreements - and {pdaSubPage} is next in the build order.
+              Nothing here yet.
             </p>
           </section>
         )}
