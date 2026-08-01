@@ -26241,6 +26241,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return text.split(/\s+/).filter(Boolean).length >= FAILED_NOTE_MIN_WORDS;
   };
   const STUCK_IN_NEW_MINUTES = 20;
+  // Protohub has no "Rejected" status - a rejection is free text the rep typed
+  // into call_outcome. ONE definition, shared by the Needs Attention check and
+  // the Recovery Candidates reason, so the two can never disagree about what
+  // counts as a rejection.
+  const REJECTION_OUTCOME_PATTERN = /reject|refus|denied|not interested|returned/i;
+  // call_outcome is an append-only log ("25/07: ... 27/07: ..."). Only the LAST
+  // entry is the current position: an order whose log mentions a rejection in
+  // the middle but ends "Ready" is very much alive. Checked on production -
+  // testing the whole log flagged 11 orders, testing the last line flagged 9,
+  // and the 2 extra were genuinely still being worked (#1356 "Failed delivery",
+  // #2856 "Out of coverage").
+  const latestOutcomeLine = (order: TrackedOrder): string => {
+    const lines = (order.callOutcome ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return lines.length > 0 ? lines[lines.length - 1] : "";
+  };
   const renderNeedsAttentionPanel = () => {
     // Matches the exact duplicate-hold check in public-orders.ts: last-10-digit
     // phone match, same product, prior order created within the 7 days before
@@ -26267,6 +26282,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           : undefined;
         return { order, priorOrder };
       });
+
+    // Dead orders wearing a live status. The rep wrote that the customer
+    // refused, but nobody changed the status - so the order still counts as
+    // open pipeline in every report, AND Recovery skips it (candidateReason
+    // only tests the rejection pattern on orders already Failed/Cancelled).
+    // Fixing the status fixes both at once, which is why this is a prompt to
+    // close the order properly rather than a silent pull into Recovery.
+    //
+    // Deliberately NOT limited by the fresh-start baseline: an order sitting in
+    // the wrong status is wrong regardless of when it was placed, and the
+    // oldest ones (#982 from June) are exactly the ones nobody will spot
+    // otherwise. There are single digits of these, so it cannot flood.
+    const lostButOpenRows = trackedOrders
+      .filter((order) => {
+        const status = (order.status ?? "New") as Exclude<OrderStatus, "All Orders">;
+        if (["Delivered", "Failed", "Cancelled"].includes(status)) return false;
+        return REJECTION_OUTCOME_PATTERN.test(latestOutcomeLine(order));
+      })
+      .sort((a, b) => new Date(a.createdAt ?? "").getTime() - new Date(b.createdAt ?? "").getTime());
 
     const skippedDeductionRows = trackedOrders.filter((order) => order.status === "Delivered" && !order.stockDeducted && needsAttentionInScope(order.deliveredDate, order.createdAt));
     const stockRetryRows: Array<{ order: TrackedOrder; reason: string; detail: string }> = [
@@ -26873,6 +26907,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <Gift className="h-3.5 w-3.5 text-emerald-600" /> Open Sales Rep Bonuses to add a rule
               </button>
             )}
+          </div>
+        )
+      },
+      {
+        key: "lost-but-open",
+        title: "Customer Said No, Order Still Open",
+        icon: <AlertTriangle className="w-4 h-4 text-gray-500" />,
+        count: lostButOpenRows.length,
+        helper: "The rep's latest note says the customer refused, but the order still carries a live status. Two costs: it counts as open pipeline in your delivery-rate and conversion numbers, and Recovery skips it (only Failed/Cancelled orders become candidates). Set the real status and both fix themselves - it drops out of the pipeline and a Recovery Rep can pick it up. Not limited by the fresh-start date, since a wrong status is wrong whenever it was placed.",
+        body: lostButOpenRows.length === 0 ? allClear : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400"><th className="pb-2">Order</th><th className="pb-2">Customer</th><th className="pb-2">Placed</th><th className="pb-2">Current status</th><th className="pb-2">Latest note from the rep</th></tr></thead>
+              <tbody>
+                {lostButOpenRows.map((order) => (
+                  <tr key={order.id} className="border-t border-gray-100">
+                    <td className="py-2">
+                      <button type="button" onClick={() => openOrderDetailPopup(order.id)} className="!min-h-0 font-black text-[#1F8FE0] hover:underline">{order.id}</button>
+                    </td>
+                    <td className="py-2 font-semibold text-gray-900">{order.customer}</td>
+                    <td className="py-2 whitespace-nowrap text-gray-500">{order.createdAt ? new Date(order.createdAt).toLocaleDateString([], { dateStyle: "medium" }) : "-"}</td>
+                    <td className="py-2"><span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${orderStatusPillClass(order.status ?? "New", order.callOutcome)}`}>{order.status ?? "New"}</span></td>
+                    <td className="py-2 max-w-[320px] text-gray-600">{latestOutcomeLine(order)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )
       },
@@ -46068,7 +46129,6 @@ ${waybillLineItems(w).length > 1
     // Anything still open is deliberately excluded - Postponed, and orders
     // sitting in New/Confirmed - because the rep who owns them is still
     // working them. Two reps on one order is the bug both exclusions prevent.
-    const REJECTION_OUTCOME_PATTERN = /reject|refus|denied|not interested|returned/i;
     const candidateReason = (order: TrackedOrder): string | null => {
       const status = order.status ?? "New";
       const outcome = (order.callOutcome ?? "").trim();
@@ -50068,7 +50128,14 @@ ${waybillLineItems(w).length > 1
       && !failedNoteIsMeaningful(order.callOutcome ?? "")
       && inScope(order.deliveredDate, order.createdAt)
     ).length;
-    return reviewHold + skippedDeduction + stockMismatch + unassigned + stuckInNew + thinFailedNotes;
+    // Same rule as the panel's "Customer Said No, Order Still Open" section,
+    // and deliberately not baseline-gated there or here - the two must match.
+    const lostButOpen = trackedOrders.filter((order) => {
+      const status = (order.status ?? "New") as Exclude<OrderStatus, "All Orders">;
+      if (["Delivered", "Failed", "Cancelled"].includes(status)) return false;
+      return REJECTION_OUTCOME_PATTERN.test(latestOutcomeLine(order));
+    }).length;
+    return reviewHold + skippedDeduction + stockMismatch + unassigned + stuckInNew + thinFailedNotes + lostButOpen;
   })();
 
   return (
