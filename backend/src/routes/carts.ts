@@ -1555,6 +1555,177 @@ const CartDatePatchSchema = z.object({
   reason: z.string().trim().min(3).max(500)
 }).strict();
 
+// ── Cart follow-up log (migration 202) ────────────────────
+const CART_ATTEMPTS = "cart_contact_attempts";
+
+/** Outcomes that end the chase, so the cart's status can follow the last call. */
+const CART_OUTCOME_STATUS: Record<string, string> = {
+  "Not interested": "Not interested",
+  "Wrong number": "No response",
+  "Unresponsive": "No response",
+  "Number not reachable": "No response",
+  "Interested": "Contacted",
+  "Wants to order now": "Contacted",
+  "Asked to call back": "Contacted",
+  "Price concern": "Contacted"
+};
+
+const AttemptSchema = z.object({
+  channel: z.enum(["Call", "WhatsApp", "SMS", "Email", "Other"]).default("Call"),
+  outcomeCode: z.enum([
+    "Interested", "Not interested", "Unresponsive", "Number not reachable",
+    "Asked to call back", "Wants to order now", "Price concern", "Wrong number", "Other"
+  ]),
+  customOutcome: z.string().trim().max(160).optional(),
+  outcomeNote: z.string().trim().max(1000).optional(),
+  customerReached: z.boolean().optional(),
+  nextActionAt: z.string().trim().max(40).optional()
+}).superRefine((value, ctx) => {
+  // "Other" with no words is unreportable - it tells the next person nothing.
+  if (value.outcomeCode === "Other" && !value.customOutcome?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["customOutcome"], message: "Describe the outcome." });
+  }
+});
+
+router.get("/:id/contact-attempts",
+  requireRole("Owner", "Admin", "Manager", "Sales Rep"),
+  async (req, res) => {
+    const { data, error } = await supabase.from(CART_ATTEMPTS)
+      .select("*").eq("org_id", req.user!.orgId).eq("cart_id", req.params.id)
+      .order("attempted_at", { ascending: false });
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ rows: data ?? [] });
+  }
+);
+
+router.post("/:id/contact-attempts",
+  requireRole("Owner", "Admin", "Manager", "Sales Rep"),
+  async (req, res) => {
+    const parsed = AttemptSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+    try {
+      const orgId = req.user!.orgId;
+      const { data: cart } = await supabase.from("abandoned_carts")
+        .select("id, status, assigned_rep_id").eq("org_id", orgId).eq("id", req.params.id).maybeSingle();
+      if (!cart) { res.status(404).json({ error: "Cart not found." }); return; }
+
+      // A rep may only log against their own cart. Otherwise one rep's work
+      // could land on another's record and their follow-up numbers would be
+      // someone else's.
+      const scopeId = req.user!.effectiveUserId ?? req.user!.id;
+      if (req.user!.role === "Sales Rep" && cart.assigned_rep_id !== scopeId) {
+        res.status(403).json({ error: "That cart is not assigned to you." });
+        return;
+      }
+
+      const { data, error } = await supabase.from(CART_ATTEMPTS).insert({
+        org_id: orgId,
+        cart_id: req.params.id,
+        rep_id: cart.assigned_rep_id ?? scopeId,
+        rep_name: req.user!.name,
+        channel: parsed.data.channel,
+        outcome_code: parsed.data.outcomeCode,
+        custom_outcome: parsed.data.customOutcome ?? null,
+        outcome_note: parsed.data.outcomeNote ?? null,
+        customer_reached: parsed.data.customerReached ?? false,
+        next_action_at: parsed.data.nextActionAt || null
+      }).select("*").single();
+      if (error) { res.status(500).json({ error: error.message }); return; }
+
+      // Move the cart's status to match the latest outcome, but never overwrite
+      // Converted - a sale already made is not undone by a later phone call.
+      const nextStatus = CART_OUTCOME_STATUS[parsed.data.outcomeCode];
+      if (nextStatus && cart.status !== "Converted") {
+        await supabase.from("abandoned_carts")
+          .update({ status: nextStatus, last_activity: new Date().toISOString() })
+          .eq("org_id", orgId).eq("id", req.params.id);
+      } else {
+        await supabase.from("abandoned_carts")
+          .update({ last_activity: new Date().toISOString() })
+          .eq("org_id", orgId).eq("id", req.params.id);
+      }
+
+      res.status(201).json({ row: data, statusMovedTo: cart.status === "Converted" ? null : nextStatus ?? null });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message ?? "Could not log that follow-up." });
+    }
+  }
+);
+
+// ── GET /api/carts/follow-up-overview ─────────────────────
+// Supervisor view: every assigned cart with who owns it, what the last call
+// said and when - so "is this rep updating their own carts" is answerable
+// without opening them one by one.
+router.get("/follow-up-overview",
+  requireRole("Owner", "Admin", "Manager"),
+  async (req, res) => {
+    try {
+      const orgId = req.user!.orgId;
+      const { data: carts } = await supabase.from("abandoned_carts")
+        .select("id, customer, phone, status, amount, currency, product_name, package_name, assigned_rep_id, created_at, last_activity")
+        .eq("org_id", orgId)
+        .not("assigned_rep_id", "is", null)
+        .order("last_activity", { ascending: false })
+        .limit(500);
+      const rows = carts ?? [];
+      const cartIds = rows.map((row: any) => row.id);
+
+      const { data: attempts } = cartIds.length
+        ? await supabase.from(CART_ATTEMPTS)
+            .select("cart_id, outcome_code, custom_outcome, outcome_note, attempted_at, rep_name, customer_reached, next_action_at")
+            .eq("org_id", orgId).in("cart_id", cartIds)
+            .order("attempted_at", { ascending: false })
+        : { data: [] as any[] };
+
+      const latestByCart = new Map<string, any>();
+      const countByCart = new Map<string, number>();
+      for (const attempt of (attempts ?? []) as any[]) {
+        countByCart.set(attempt.cart_id, (countByCart.get(attempt.cart_id) ?? 0) + 1);
+        if (!latestByCart.has(attempt.cart_id)) latestByCart.set(attempt.cart_id, attempt);
+      }
+
+      const { data: users } = await supabase.from("users").select("id, name").eq("org_id", orgId);
+      const nameById = new Map((users ?? []).map((u: any) => [u.id, u.name]));
+
+      const { data: linkedOrders } = cartIds.length
+        ? await supabase.from("orders").select("id, source_cart_id, status").eq("org_id", orgId).in("source_cart_id", cartIds)
+        : { data: [] as any[] };
+      const orderByCart = new Map((linkedOrders ?? []).map((o: any) => [o.source_cart_id, o]));
+
+      res.json({
+        rows: rows.map((row: any) => {
+          const latest = latestByCart.get(row.id) ?? null;
+          const order = orderByCart.get(row.id) ?? null;
+          return {
+            id: row.id,
+            customer: row.customer,
+            phone: row.phone,
+            productName: row.package_name || row.product_name,
+            amount: Number(row.amount ?? 0),
+            status: row.status,
+            repId: row.assigned_rep_id,
+            repName: nameById.get(row.assigned_rep_id) ?? "Unknown rep",
+            createdAt: row.created_at,
+            lastActivity: row.last_activity,
+            attempts: countByCart.get(row.id) ?? 0,
+            lastOutcome: latest
+              ? (latest.outcome_code === "Other" ? latest.custom_outcome : latest.outcome_code)
+              : null,
+            lastOutcomeNote: latest?.outcome_note ?? null,
+            lastAttemptAt: latest?.attempted_at ?? null,
+            lastAttemptBy: latest?.rep_name ?? null,
+            nextActionAt: latest?.next_action_at ?? null,
+            convertedOrderId: order?.id ?? null,
+            convertedOrderStatus: order?.status ?? null
+          };
+        })
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message ?? "Could not load cart follow-ups." });
+    }
+  }
+);
+
 router.patch("/:id",
   requireRole("Owner", "Admin", "Sales Rep"),
   async (req, res) => {
