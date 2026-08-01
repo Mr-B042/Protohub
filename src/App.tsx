@@ -126,7 +126,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -195,7 +195,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -11158,6 +11158,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaCandidateOrderId, setPdaCandidateOrderId] = useState("");
   const [pdaCandidates, setPdaCandidates] = useState<PdaCandidateView | null>(null);
   const [pdaCandidateFee, setPdaCandidateFee] = useState("");
+  const [pdaFeeRules, setPdaFeeRules] = useState<PdaFeeRule[]>([]);
+  const [pdaNegotiations, setPdaNegotiations] = useState<any[]>([]);
+  const [pdaFeeDraft, setPdaFeeDraft] = useState({ scope: "state", matchValue: "", fee: "", sameDaySurcharge: "", distanceMinKm: "", distanceMaxKm: "" });
+  const [pdaIncidents, setPdaIncidents] = useState<PdaIncident[]>([]);
+  const [pdaIncidentDraft, setPdaIncidentDraft] = useState({ agentId: "", orderId: "", incidentType: "Missing COD", severity: "Medium", description: "", amountAtRisk: "" });
+  const [pdaReports, setPdaReports] = useState<PdaReportRow[]>([]);
+  const [pdaSettingsDraft, setPdaSettingsDraft] = useState<PdaSettings | null>(null);
   const [pdaCod, setPdaCod] = useState<PdaCodView | null>(null);
   const [pdaRemittanceDraft, setPdaRemittanceDraft] = useState({ amount: "", method: "Cash", reference: "" });
   const [pdaStock, setPdaStock] = useState<{ stock: any[]; ledger: any[]; transfers: any[] } | null>(null);
@@ -40373,6 +40380,17 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, currentRole]);
 
+  // Each surface loads only what it shows, so opening the module does not pull
+  // every report and ledger nobody has asked for.
+  useEffect(() => {
+    if (activePage !== "Personal Delivery Agents") return;
+    if (pdaSubPage === "Fees & Earnings") void loadPdaFees();
+    if (pdaSubPage === "Incidents") void loadPdaIncidents();
+    if (pdaSubPage === "Reports") void loadPdaReports();
+    if (pdaSubPage === "Settings") void loadPdaSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, pdaSubPage]);
+
   useEffect(() => {
     if (activePage !== "Personal Delivery Agents") return;
     void loadPersonalDeliveryAgents();
@@ -40526,6 +40544,149 @@ ${waybillLineItems(w).length > 1
   /** Product name for a stock row, falling back to the id when unknown. */
   const productNameById = (productId: string) =>
     products.find((p) => p.id === productId)?.name ?? productId;
+
+  const loadPdaFees = async () => {
+    try {
+      const [rules, negotiations] = await Promise.all([
+        personalDeliveryAgentsApi.feeRules(),
+        personalDeliveryAgentsApi.negotiations()
+      ]);
+      setPdaFeeRules(rules?.rows ?? []);
+      setPdaNegotiations(negotiations?.rows ?? []);
+    } catch (err: any) { showToast(err?.message ?? "Could not load rates."); }
+  };
+
+  const pdaCreateFeeRule = async () => {
+    const fee = Number(pdaFeeDraft.fee);
+    if (!Number.isFinite(fee) || fee < 0) { showToast("Enter the fee."); return; }
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.createFeeRule({
+        scope: pdaFeeDraft.scope,
+        matchValue: pdaFeeDraft.matchValue.trim() || undefined,
+        fee,
+        sameDaySurcharge: pdaFeeDraft.sameDaySurcharge ? Number(pdaFeeDraft.sameDaySurcharge) : undefined,
+        distanceMinKm: pdaFeeDraft.distanceMinKm ? Number(pdaFeeDraft.distanceMinKm) : undefined,
+        distanceMaxKm: pdaFeeDraft.distanceMaxKm ? Number(pdaFeeDraft.distanceMaxKm) : undefined
+      });
+      setModal(null);
+      showToast("Rate saved.");
+      await loadPdaFees();
+    } catch (err: any) { showToast(err?.message ?? "Could not save that rate."); }
+    finally { setPdaSaving(false); }
+  };
+
+  const pdaDeleteFeeRule = async (ruleId: string) => {
+    try {
+      // Retired rather than deleted, so an order priced by it stays explainable.
+      await personalDeliveryAgentsApi.deleteFeeRule(ruleId);
+      showToast("Rate retired. Orders already priced by it keep their fee.");
+      await loadPdaFees();
+    } catch (err: any) { showToast(err?.message ?? "Could not retire that rate."); }
+  };
+
+  const pdaDecideNegotiation = async (id: string, decision: string) => {
+    let note: string | undefined;
+    if (decision === "Rejected") {
+      const reason = window.prompt("Why are you turning this down? The agent is told this.");
+      if (!reason || !reason.trim()) return;
+      note = reason.trim();
+    }
+    try {
+      await personalDeliveryAgentsApi.decideNegotiation(id, { decision, note });
+      showToast(decision === "Approved" ? "Approved and locked to the order." : "Rejected. The standard fee stands.");
+      await loadPdaFees();
+    } catch (err: any) { showToast(err?.message ?? "Could not record that decision."); }
+  };
+
+  const loadPdaIncidents = async () => {
+    try {
+      const result = await personalDeliveryAgentsApi.incidents();
+      setPdaIncidents(result?.rows ?? []);
+    } catch (err: any) { showToast(err?.message ?? "Could not load incidents."); }
+  };
+
+  const pdaCreateIncident = async () => {
+    if (!pdaIncidentDraft.agentId || pdaIncidentDraft.description.trim().length < 5) {
+      showToast("Pick the agent and describe what happened.");
+      return;
+    }
+    setPdaSaving(true);
+    try {
+      const result = await personalDeliveryAgentsApi.createIncident({
+        agentId: pdaIncidentDraft.agentId,
+        orderId: pdaIncidentDraft.orderId.trim() || undefined,
+        incidentType: pdaIncidentDraft.incidentType,
+        severity: pdaIncidentDraft.severity,
+        description: pdaIncidentDraft.description.trim(),
+        amountAtRisk: pdaIncidentDraft.amountAtRisk ? Number(pdaIncidentDraft.amountAtRisk) : undefined
+      });
+      setModal(null);
+      // Suspension is the point of raising a serious one, so it is said plainly.
+      showToast(result.agentSuspended
+        ? "Recorded. That agent is suspended from new work while this is investigated."
+        : "Incident recorded.");
+      await Promise.all([loadPdaIncidents(), loadPersonalDeliveryAgents()]);
+    } catch (err: any) { showToast(err?.message ?? "Could not record that."); }
+    finally { setPdaSaving(false); }
+  };
+
+  const pdaUpdateIncident = async (id: string, status: string) => {
+    let resolution: string | undefined;
+    if (status === "Resolved" || status === "Closed - No Action") {
+      const outcome = window.prompt("What was actually decided?");
+      if (!outcome || !outcome.trim()) return;
+      resolution = outcome.trim();
+    }
+    try {
+      await personalDeliveryAgentsApi.updateIncident(id, { status, resolution });
+      await loadPdaIncidents();
+    } catch (err: any) { showToast(err?.message ?? "Could not update that incident."); }
+  };
+
+  const loadPdaReports = async () => {
+    try {
+      const result = await personalDeliveryAgentsApi.reports();
+      setPdaReports(result?.rows ?? []);
+    } catch (err: any) { showToast(err?.message ?? "Could not build the report."); }
+  };
+
+  const loadPdaSettings = async () => {
+    try {
+      const result = await personalDeliveryAgentsApi.settings();
+      setPdaSettingsDraft(result?.settings ?? null);
+    } catch (err: any) { showToast(err?.message ?? "Could not load settings."); }
+  };
+
+  const pdaSaveSettings = async () => {
+    if (!pdaSettingsDraft) return;
+    setPdaSaving(true);
+    try {
+      const numeric = (value: unknown) => Number(value);
+      await personalDeliveryAgentsApi.saveSettings({
+        probationDays: numeric(pdaSettingsDraft.probationDays),
+        probationMaxStock: numeric(pdaSettingsDraft.probationMaxStock),
+        probationMaxCod: numeric(pdaSettingsDraft.probationMaxCod),
+        probationMaxActiveOrders: numeric(pdaSettingsDraft.probationMaxActiveOrders),
+        verifiedMaxStock: numeric(pdaSettingsDraft.verifiedMaxStock),
+        verifiedMaxCod: numeric(pdaSettingsDraft.verifiedMaxCod),
+        verifiedMaxActiveOrders: numeric(pdaSettingsDraft.verifiedMaxActiveOrders),
+        trustedMaxStock: numeric(pdaSettingsDraft.trustedMaxStock),
+        trustedMaxCod: numeric(pdaSettingsDraft.trustedMaxCod),
+        trustedMaxActiveOrders: numeric(pdaSettingsDraft.trustedMaxActiveOrders),
+        staleOrderHours: numeric(pdaSettingsDraft.staleOrderHours),
+        remittanceGraceDays: numeric(pdaSettingsDraft.remittanceGraceDays),
+        workingHoursStart: pdaSettingsDraft.workingHoursStart,
+        workingHoursEnd: pdaSettingsDraft.workingHoursEnd,
+        kycValidMonths: numeric(pdaSettingsDraft.kycValidMonths)
+      });
+      showToast("Settings saved.");
+    } catch (err: any) {
+      // The server refuses limits that shrink as trust grows, so a demotion can
+      // never accidentally increase someone's exposure.
+      showToast(err?.message ?? "Could not save those settings.");
+    } finally { setPdaSaving(false); }
+  };
 
   const loadPdaDispatch = async () => {
     try {
@@ -46854,6 +47015,291 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // Fees & Earnings. Rules are data, not code, so a state can be repriced
+  // without a deploy - and the most specific rule always wins.
+  const renderPdaFees = () => (
+    <div className="space-y-4">
+      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-200">
+          <div>
+            <h2 className="m-0 text-base font-bold text-gray-900">Standard rates</h2>
+            <p className="m-0 text-xs text-gray-500">
+              When several rules fit one delivery, the most specific wins — a city rate beats its state rate, which beats the default. Adding a city rate never silently changes the rest of that state.
+            </p>
+          </div>
+          <button type="button" onClick={() => { setPdaFeeDraft({ scope: "state", matchValue: "", fee: "", sameDaySurcharge: "", distanceMinKm: "", distanceMaxKm: "" }); setModal("pdaFeeRule"); }}
+            className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1560a8]">Add a rate</button>
+        </div>
+        {pdaFeeRules.length === 0 ? (
+          <p className="m-0 px-5 py-10 text-center text-xs text-gray-400">
+            No rates set. Add a default rate at minimum, so nothing is ever dispatched unpriced.
+          </p>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {pdaFeeRules.filter((rule) => rule.active).map((rule) => (
+              <div key={rule.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div>
+                  <div className="text-sm font-bold text-gray-900">
+                    {rule.scope === "default" ? "Default rate"
+                      : rule.scope === "distance" ? `${rule.distanceMinKm ?? 0}–${rule.distanceMaxKm ?? "+"} km`
+                      : `${rule.scope[0].toUpperCase()}${rule.scope.slice(1)}: ${rule.matchValue}`}
+                  </div>
+                  {rule.sameDaySurcharge > 0 && (
+                    <p className="m-0 text-[11px] text-gray-500">+{formatMoney(rule.sameDaySurcharge)} same-day surcharge</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-black text-gray-900">{formatMoney(rule.fee)}</span>
+                  <button type="button" onClick={() => void pdaDeleteFeeRule(rule.id)}
+                    className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50">Retire</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200">
+          <h2 className="m-0 text-base font-bold text-gray-900">Rate requests from agents</h2>
+          <p className="m-0 text-xs text-gray-500">
+            For awkward deliveries where the standard rate does not work. An agent cannot request a change once they have already set off — by then the cost is sunk.
+          </p>
+        </div>
+        {pdaNegotiations.length === 0 ? (
+          <p className="m-0 px-5 py-10 text-center text-xs text-gray-400">No rate requests.</p>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {pdaNegotiations.map((row: any) => (
+              <div key={row.id} className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-gray-900">
+                    Asking {formatMoney(Number(row.proposed_fee))}
+                    <span className="ml-2 text-xs font-semibold text-gray-400">
+                      standard {formatMoney(Number(row.standard_fee ?? 0))}
+                    </span>
+                  </div>
+                  {row.proposed_reason && <p className="m-0 text-xs text-gray-600">{row.proposed_reason}</p>}
+                  {row.decision_note && <p className="m-0 text-[11px] text-gray-500">Decision: {row.decision_note}</p>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
+                    row.status === "Approved" ? "bg-emerald-50 text-emerald-700"
+                    : row.status === "Rejected" ? "bg-red-50 text-red-700"
+                    : "bg-amber-50 text-amber-700"}`}>{row.status}</span>
+                  {row.status === "Pending" && (
+                    <>
+                      <button type="button" onClick={() => void pdaDecideNegotiation(row.id, "Approved")}
+                        className="!min-h-0 rounded-md border border-emerald-200 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50">Approve</button>
+                      <button type="button" onClick={() => void pdaDecideNegotiation(row.id, "Rejected")}
+                        className="!min-h-0 rounded-md border border-red-200 px-2 py-1 text-[11px] font-bold text-red-700 hover:bg-red-50">Reject</button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+
+  // Incidents. Raising a High or Critical one suspends the agent immediately -
+  // that is what raising it is for.
+  const renderPdaIncidents = () => {
+    const severityTone = (severity: string) =>
+      severity === "Critical" ? "bg-red-100 text-red-800"
+      : severity === "High" ? "bg-red-50 text-red-700"
+      : severity === "Medium" ? "bg-amber-50 text-amber-700"
+      : "bg-gray-100 text-gray-600";
+    const open = pdaIncidents.filter((row) => !["Resolved", "Closed - No Action"].includes(row.status));
+    const atRisk = open.reduce((sum, row) => sum + Number(row.amount_at_risk ?? 0), 0);
+
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Open incidents</div>
+            <div className={`mt-1 text-xl font-black ${open.length > 0 ? "text-red-600" : "text-gray-900"}`}>{open.length}</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Money at risk</div>
+            <div className={`mt-1 text-xl font-black ${atRisk > 0 ? "text-red-600" : "text-gray-900"}`}>{formatMoney(atRisk)}</div>
+          </div>
+          <div className="flex items-center rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+            <button type="button" onClick={() => { setPdaIncidentDraft({ agentId: "", orderId: "", incidentType: "Missing COD", severity: "Medium", description: "", amountAtRisk: "" }); setModal("pdaIncident"); }}
+              className="!min-h-0 w-full rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1560a8]">Report an incident</button>
+          </div>
+        </div>
+
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          {pdaIncidents.length === 0 ? (
+            <p className="m-0 px-5 py-12 text-center text-sm text-gray-400">No incidents recorded.</p>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {pdaIncidents.map((row) => (
+                <div key={row.id} className="px-5 py-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-gray-900">
+                        {row.incident_type}
+                        <span className="ml-2 text-xs font-semibold text-gray-400">
+                          {pdaAgents.find((a) => a.id === row.agent_id)?.fullName ?? "agent"}
+                          {row.order_id ? ` · order ${row.order_id}` : ""}
+                        </span>
+                      </div>
+                      <p className="m-0 mt-0.5 text-xs text-gray-600">{row.description}</p>
+                      {row.resolution && <p className="m-0 mt-0.5 text-[11px] text-emerald-700"><span className="font-black">Resolved: </span>{row.resolution}</p>}
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1.5">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${severityTone(row.severity)}`}>{row.severity}</span>
+                      {Number(row.amount_at_risk) > 0 && (
+                        <span className="text-[11px] font-bold text-red-600">{formatMoney(Number(row.amount_at_risk))} at risk</span>
+                      )}
+                      <select value={row.status} onChange={(e) => void pdaUpdateIncident(row.id, e.target.value)}
+                        className="rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-700">
+                        {["Open", "Under Investigation", "Awaiting Agent Response", "Escalated", "Resolved", "Closed - No Action"].map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  };
+
+  // Reports. A rate with no deliveries behind it shows a dash, never 0% -
+  // "no data" and "never delivers" are different facts about a person.
+  const renderPdaReports = () => (
+    <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-200">
+        <h2 className="m-0 text-base font-bold text-gray-900">Agent performance</h2>
+        <p className="m-0 text-xs text-gray-500">
+          Counted from real rows. A dash means no data yet rather than a score of zero.
+        </p>
+      </div>
+      {pdaReports.length === 0 ? (
+        <p className="m-0 px-5 py-12 text-center text-sm text-gray-400">No agents to report on yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                <th className="px-5 py-2">Agent</th>
+                <th className="px-3 py-2">Offered</th>
+                <th className="px-3 py-2">Accepted</th>
+                <th className="px-3 py-2">Delivered</th>
+                <th className="px-3 py-2">Delivery rate</th>
+                <th className="px-3 py-2">Our cash held</th>
+                <th className="px-3 py-2">Units held</th>
+                <th className="px-3 py-2">Open issues</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pdaReports.map((row) => (
+                <tr key={row.agentId} className="border-t border-gray-100">
+                  <td className="px-5 py-2">
+                    <div className="font-bold text-gray-900">{row.fullName}</div>
+                    <div className="text-[11px] text-gray-400">{row.agentCode} · {row.trustLevel}</div>
+                  </td>
+                  <td className="px-3 py-2 text-gray-600">{row.ordersOffered}</td>
+                  <td className="px-3 py-2 text-gray-600">
+                    {row.ordersAccepted}
+                    {row.acceptanceRatePct !== null && <span className="ml-1 text-[11px] text-gray-400">({row.acceptanceRatePct}%)</span>}
+                  </td>
+                  <td className="px-3 py-2 font-bold text-gray-900">{row.delivered}</td>
+                  <td className="px-3 py-2">
+                    {row.deliveryRatePct === null
+                      ? <span className="text-gray-300">—</span>
+                      : <span className={row.deliveryRatePct >= 60 ? "font-bold text-emerald-600" : "font-bold text-amber-600"}>{row.deliveryRatePct}%</span>}
+                  </td>
+                  <td className={`px-3 py-2 ${row.cashOutstanding > 0 ? "font-bold text-red-600" : "text-gray-400"}`}>
+                    {formatMoney(row.cashOutstanding)}
+                  </td>
+                  <td className="px-3 py-2 text-gray-600">
+                    {row.unitsHeld}
+                    {row.unitsUnaccounted > 0 && <span className="ml-1 text-[11px] font-bold text-red-600">+{row.unitsUnaccounted} unaccounted</span>}
+                  </td>
+                  <td className="px-3 py-2">
+                    {row.openIncidents > 0
+                      ? <span className="font-bold text-red-600">{row.openIncidents}{row.amountAtRisk > 0 ? ` · ${formatMoney(row.amountAtRisk)}` : ""}</span>
+                      : <span className="text-gray-300">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+
+  // Settings. Trust levels only mean something if the limits behind them are
+  // real, so they live here rather than as constants in the code.
+  const renderPdaSettings = () => {
+    const draft = pdaSettingsDraft;
+    if (!draft) return <p className="text-sm text-gray-400">Loading settings…</p>;
+    const field = (label: string, key: keyof PdaSettings, hint?: string) => (
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-bold text-gray-600">{label}</span>
+        <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
+          value={String(draft[key] ?? "")}
+          onChange={(e) => setPdaSettingsDraft((v) => v ? { ...v, [key]: e.target.value } as any : v)} />
+        {hint && <span className="text-[11px] text-gray-400">{hint}</span>}
+      </label>
+    );
+
+    return (
+      <div className="space-y-4">
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+          <h2 className="m-0 text-base font-bold text-gray-900">Trust levels</h2>
+          <p className="m-0 mt-0.5 text-xs text-gray-500">
+            How much of your stock and cash an agent may hold at each level. New agents start on probation, so keep these tight — they are the cap on what a stranger can walk away with.
+          </p>
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            {[
+              { title: "Probation", keys: ["probationMaxStock", "probationMaxCod", "probationMaxActiveOrders"] as const },
+              { title: "Verified", keys: ["verifiedMaxStock", "verifiedMaxCod", "verifiedMaxActiveOrders"] as const },
+              { title: "Trusted", keys: ["trustedMaxStock", "trustedMaxCod", "trustedMaxActiveOrders"] as const }
+            ].map((group) => (
+              <div key={group.title} className="rounded-lg border border-gray-200 p-3">
+                <div className="mb-2 text-sm font-black text-gray-900">{group.title}</div>
+                <div className="space-y-2">
+                  {field("Max stock units", group.keys[0])}
+                  {field("Max cash held", group.keys[1])}
+                  {field("Max active orders", group.keys[2])}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+          <h2 className="m-0 text-base font-bold text-gray-900">Timings</h2>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {field("Probation length (days)", "probationDays")}
+            {field("Flag an order with no update after (hours)", "staleOrderHours", "The quiet failure mode - nobody complains, the customer just waits.")}
+            {field("Cash grace period (days)", "remittanceGraceDays")}
+            {field("KYC valid for (months)", "kycValidMonths")}
+            {field("Working hours start", "workingHoursStart")}
+            {field("Working hours end", "workingHoursEnd")}
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button type="button" disabled={pdaSaving} onClick={pdaSaveSettings}
+              className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-bold text-white disabled:opacity-60">
+              {pdaSaving ? "Saving…" : "Save settings"}
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  };
+
   // Orders & Dispatch. Management sees the whole fleet; a Sales Rep sees only
   // the deliveries on their own customers' orders, with cash figures already
   // stripped server-side.
@@ -47705,6 +48151,14 @@ ${waybillLineItems(w).length > 1
           renderPdaCod()
         ) : pdaSubPage === "Orders & Dispatch" ? (
           renderPdaDispatch()
+        ) : pdaSubPage === "Fees & Earnings" ? (
+          renderPdaFees()
+        ) : pdaSubPage === "Incidents" ? (
+          renderPdaIncidents()
+        ) : pdaSubPage === "Reports" ? (
+          renderPdaReports()
+        ) : pdaSubPage === "Settings" ? (
+          renderPdaSettings()
         ) : (
           <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-12 text-center">
             <h2 className="text-base font-bold text-gray-900">{pdaSubPage}</h2>
@@ -76292,6 +76746,8 @@ ${waybillLineItems(w).length > 1
                 {modal === "pdaSendStock" && "Send stock to agent"}
                 {modal === "pdaRemittance" && "Record cash received"}
                 {modal === "pdaAssignOrder" && "Who can take this order?"}
+                {modal === "pdaFeeRule" && "Add a delivery rate"}
+                {modal === "pdaIncident" && "Report an incident"}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -81798,6 +82254,119 @@ ${waybillLineItems(w).length > 1
                 </div>
               );
             })()}
+
+	            {modal === "pdaFeeRule" && (
+	              <div className="space-y-4">
+	                <p className="m-0 text-xs text-gray-500">
+	                  The most specific matching rate wins. A city rate beats its state rate, which beats the default — so adding one city never changes the rest of that state.
+	                </p>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Applies to</span>
+	                  <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.scope}
+	                    onChange={(e) => setPdaFeeDraft((v) => ({ ...v, scope: e.target.value }))}>
+	                    <option value="default">Everything (default rate)</option>
+	                    <option value="state">A state</option>
+	                    <option value="city">A city</option>
+	                    <option value="zone">A zone</option>
+	                    <option value="distance">A distance band</option>
+	                  </select>
+	                </label>
+	                {["state", "city", "zone"].includes(pdaFeeDraft.scope) && (
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Which {pdaFeeDraft.scope} *</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.matchValue}
+	                      onChange={(e) => setPdaFeeDraft((v) => ({ ...v, matchValue: e.target.value }))} placeholder="Rivers" />
+	                  </label>
+	                )}
+	                {pdaFeeDraft.scope === "distance" && (
+	                  <div className="grid grid-cols-2 gap-3">
+	                    <label className="flex flex-col gap-1">
+	                      <span className="text-xs font-bold text-gray-600">From (km)</span>
+	                      <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.distanceMinKm}
+	                        onChange={(e) => setPdaFeeDraft((v) => ({ ...v, distanceMinKm: e.target.value }))} />
+	                    </label>
+	                    <label className="flex flex-col gap-1">
+	                      <span className="text-xs font-bold text-gray-600">To (km)</span>
+	                      <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.distanceMaxKm}
+	                        onChange={(e) => setPdaFeeDraft((v) => ({ ...v, distanceMaxKm: e.target.value }))} />
+	                    </label>
+	                  </div>
+	                )}
+	                <div className="grid grid-cols-2 gap-3">
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Fee *</span>
+	                    <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.fee}
+	                      onChange={(e) => setPdaFeeDraft((v) => ({ ...v, fee: e.target.value }))} />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Same-day surcharge</span>
+	                    <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFeeDraft.sameDaySurcharge}
+	                      onChange={(e) => setPdaFeeDraft((v) => ({ ...v, sameDaySurcharge: e.target.value }))} />
+	                  </label>
+	                </div>
+	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
+	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={pdaCreateFeeRule}>
+	                    {pdaSaving ? "Saving…" : "Save rate"}
+	                  </button>
+	                </div>
+	              </div>
+	            )}
+
+	            {modal === "pdaIncident" && (
+	              <div className="space-y-4">
+	                <p className="m-0 text-xs text-gray-500">
+	                  A <strong>High</strong> or <strong>Critical</strong> incident suspends the agent from new work immediately, while it is investigated. That is what raising one is for.
+	                </p>
+	                <div className="grid gap-3 sm:grid-cols-2">
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Agent *</span>
+	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.agentId}
+	                      onChange={(e) => setPdaIncidentDraft((v) => ({ ...v, agentId: e.target.value }))}>
+	                      <option value="">Choose…</option>
+	                      {pdaAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.fullName}</option>)}
+	                    </select>
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Order (if any)</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.orderId}
+	                      onChange={(e) => setPdaIncidentDraft((v) => ({ ...v, orderId: e.target.value }))} />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">What happened *</span>
+	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.incidentType}
+	                      onChange={(e) => setPdaIncidentDraft((v) => ({ ...v, incidentType: e.target.value }))}>
+	                      {["Missing inventory", "Damaged product", "Missing COD", "Customer complaint", "Agent misconduct", "Delivery accident", "Theft", "Wrong product delivered", "False delivery claim", "Unsafe delivery location", "Other"].map((o) => (
+	                        <option key={o} value={o}>{o}</option>
+	                      ))}
+	                    </select>
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Severity *</span>
+	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.severity}
+	                      onChange={(e) => setPdaIncidentDraft((v) => ({ ...v, severity: e.target.value }))}>
+	                      {["Low", "Medium", "High", "Critical"].map((o) => <option key={o} value={o}>{o}</option>)}
+	                    </select>
+	                  </label>
+	                  <label className="flex flex-col gap-1 sm:col-span-2">
+	                    <span className="text-xs font-bold text-gray-600">Money at risk</span>
+	                    <input inputMode="numeric" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.amountAtRisk}
+	                      onChange={(e) => setPdaIncidentDraft((v) => ({ ...v, amountAtRisk: e.target.value }))} />
+	                  </label>
+	                  <label className="flex flex-col gap-1 sm:col-span-2">
+	                    <span className="text-xs font-bold text-gray-600">Describe it *</span>
+	                    <textarea rows={3} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaIncidentDraft.description}
+	                      onChange={(e) => setPdaIncidentDraft((v) => ({ ...v, description: e.target.value }))} />
+	                  </label>
+	                </div>
+	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
+	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={pdaCreateIncident}>
+	                    {pdaSaving ? "Saving…" : "Record incident"}
+	                  </button>
+	                </div>
+	              </div>
+	            )}
 
 	            {modal === "pdaAssignOrder" && pdaCandidates && (
 	              <div className="space-y-4">
