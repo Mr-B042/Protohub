@@ -11158,7 +11158,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaAgents, setPdaAgents] = useState<PersonalDeliveryAgentRow[]>([]);
   const [pdaOverview, setPdaOverview] = useState<PersonalDeliveryAgentOverview | null>(null);
   const [pdaLoading, setPdaLoading] = useState(false);
-  const [pdaNewAgent, setPdaNewAgent] = useState({ fullName: "", phone: "", whatsappPhone: "", state: "", city: "", transportMethod: "" });
+  // Intake is deliberately light: identity and how to reach them. Documents,
+  // guarantors and agreements are collected and approved during KYC review,
+  // where each one can be judged on its own.
+  const PDA_NEW_AGENT_BLANK = {
+    fullName: "", phone: "", whatsappPhone: "", email: "", dateOfBirth: "", gender: "",
+    state: "", city: "", transportMethod: "", preferredPickupLocation: ""
+  };
+  const [pdaNewAgent, setPdaNewAgent] = useState(PDA_NEW_AGENT_BLANK);
   const [pdaSaving, setPdaSaving] = useState(false);
   const [pdaDetail, setPdaDetail] = useState<PdaAgentDetail | null>(null);
   const [pdaPortalTab, setPdaPortalTab] = useState<PdaPortalTab>("Home");
@@ -41302,24 +41309,37 @@ ${waybillLineItems(w).length > 1
   };
 
   const createPersonalDeliveryAgent = async () => {
-    if (!pdaNewAgent.fullName.trim() || !pdaNewAgent.phone.trim()) {
-      showToast("Name and phone are required to start an application.");
+    const d = pdaNewAgent;
+    if (!d.fullName.trim() || !d.phone.trim()) {
+      showToast("A name and phone number are required to start an application.");
       return;
     }
     setPdaSaving(true);
     try {
-      await personalDeliveryAgentsApi.create({
-        fullName: pdaNewAgent.fullName.trim(),
-        phone: pdaNewAgent.phone.trim(),
-        whatsappPhone: pdaNewAgent.whatsappPhone.trim() || undefined,
-        state: pdaNewAgent.state.trim() || undefined,
-        city: pdaNewAgent.city.trim() || undefined,
-        transportMethod: pdaNewAgent.transportMethod || undefined
+      const created = await personalDeliveryAgentsApi.create({
+        fullName: d.fullName.trim(),
+        phone: d.phone.trim(),
+        whatsappPhone: d.whatsappPhone.trim() || undefined,
+        email: d.email.trim() || undefined,
+        dateOfBirth: d.dateOfBirth || undefined,
+        gender: d.gender || undefined,
+        state: d.state.trim() || undefined,
+        city: d.city.trim() || undefined,
+        transportMethod: d.transportMethod || undefined,
+        preferredPickupLocation: d.preferredPickupLocation || undefined
       });
-      showToast(`Application started for ${pdaNewAgent.fullName.trim()}.`);
-      setPdaNewAgent({ fullName: "", phone: "", whatsappPhone: "", state: "", city: "", transportMethod: "" });
+      showToast(`Application started for ${d.fullName.trim()}. No stock or orders until KYC passes.`);
+      const newAgentId = created?.row?.id;
+      setPdaNewAgent(PDA_NEW_AGENT_BLANK);
       setModal(null);
-      await loadPersonalDeliveryAgents();
+      await Promise.all([loadPersonalDeliveryAgents(), loadPdaApplications()]);
+      // Straight into the review, because that is where the actual work is -
+      // the application is useless until its checklist gets worked through.
+      if (newAgentId) {
+        setPdaSubPage("Applications & KYC");
+        setPdaAppTab("KYC Review");
+        await openPdaReview(newAgentId);
+      }
     } catch (err: any) {
       showToast(err?.message ?? "Could not start the application.");
     } finally {
@@ -81562,7 +81582,7 @@ ${waybillLineItems(w).length > 1
         return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section
-            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" ? "max-w-4xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
+            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
             role="dialog" aria-modal="true" aria-labelledby="modal-title"
           >
@@ -87600,57 +87620,121 @@ ${waybillLineItems(w).length > 1
 	              </div>
 	            )}
 
-	            {modal === "addPersonalDeliveryAgent" && (
-	              <div className="space-y-4">
-	                <p className="m-0 text-xs text-gray-500">
-	                  This only opens the application. The agent receives no stock and no orders until every KYC item, both guarantors and all signed agreements have been approved individually.
-	                </p>
-	                <div className="grid gap-3 sm:grid-cols-2">
-	                  <label className="flex flex-col gap-1">
-	                    <span className="text-xs font-bold text-gray-600">Full legal name *</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.fullName}
-	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, fullName: e.target.value }))} placeholder="As written on their ID" />
-	                  </label>
-	                  <label className="flex flex-col gap-1">
-	                    <span className="text-xs font-bold text-gray-600">Phone *</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.phone}
-	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, phone: e.target.value }))} placeholder="0803 123 4567" />
-	                  </label>
-	                  <label className="flex flex-col gap-1">
-	                    <span className="text-xs font-bold text-gray-600">WhatsApp</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.whatsappPhone}
-	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, whatsappPhone: e.target.value }))} />
-	                  </label>
-	                  <label className="flex flex-col gap-1">
-	                    <span className="text-xs font-bold text-gray-600">Transport method</span>
-	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.transportMethod}
-	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, transportMethod: e.target.value }))}>
-	                      <option value="">Not stated yet</option>
-	                      {["Motorcycle", "Car", "Public transport", "Bicycle", "Walking", "Hired dispatch", "Other"].map((option) => (
-	                        <option key={option} value={option}>{option}</option>
+	            {modal === "addPersonalDeliveryAgent" && (() => {
+	              const d = pdaNewAgent;
+	              const set = (patch: Partial<typeof pdaNewAgent>) => setPdaNewAgent((v) => ({ ...v, ...patch }));
+	              const input = "rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm placeholder:text-gray-400";
+	              const field = (label: string, required: boolean, node: ReactNode) => (
+	                <label className="flex flex-col gap-1.5">
+	                  <span className="text-[13px] font-semibold normal-case tracking-normal text-gray-700">
+	                    {label}{required && <span className="ml-0.5 text-rose-500">*</span>}
+	                  </span>
+	                  {node}
+	                </label>
+	              );
+	              const sectionHead = (title: string, icon: typeof Users, tint: string) => (
+	                <div className="flex items-center gap-2.5">
+	                  <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${tint}`}>
+	                    {(() => { const I = icon; return <I className="h-4 w-4" />; })()}
+	                  </span>
+	                  <h3 className="m-0 text-[15px] font-bold text-gray-900">{title}</h3>
+	                </div>
+	              );
+
+	              return (
+	                <div className="space-y-6">
+	                  {/* The single most important thing on this form: opening an
+	                      application is not onboarding anyone. */}
+	                  <div className="flex items-start gap-3 rounded-xl bg-blue-50/70 px-4 py-3">
+	                    <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#1F8FE0]" />
+	                    <p className="m-0 text-[13px] leading-relaxed text-gray-700">
+	                      This only opens the application. The agent receives <strong>no stock and no orders</strong> until every KYC item, both guarantors and all signed agreements have been approved individually.
+	                    </p>
+	                  </div>
+
+	                  <section className="space-y-4">
+	                    {sectionHead("Personal Information", Users, "bg-blue-50 text-blue-600")}
+	                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+	                      {field("Full legal name", true,
+	                        <input className={input} value={d.fullName} onChange={(e) => set({ fullName: e.target.value })}
+	                          placeholder="As written on their ID" />)}
+	                      {field("Phone number", true,
+	                        <input className={input} value={d.phone} onChange={(e) => set({ phone: e.target.value })}
+	                          placeholder="+234 801 234 5678" inputMode="tel" />)}
+	                      {field("WhatsApp number", false,
+	                        <input className={input} value={d.whatsappPhone} onChange={(e) => set({ whatsappPhone: e.target.value })}
+	                          placeholder="+234 801 234 5678" inputMode="tel" />)}
+	                      {field("Email address", false,
+	                        <input className={input} value={d.email} onChange={(e) => set({ email: e.target.value })}
+	                          placeholder="example@gmail.com" inputMode="email" />)}
+	                      {field("Transport method", false,
+	                        <select className={input} value={d.transportMethod} onChange={(e) => set({ transportMethod: e.target.value })}>
+	                          {/* Never assume a motorcycle. */}
+	                          <option value="">Not stated yet</option>
+	                          {["Motorcycle", "Car", "Public transport", "Bicycle", "Walking", "Hired dispatch", "Other"].map((t) => (
+	                            <option key={t} value={t}>{t}</option>
+	                          ))}
+	                        </select>)}
+	                      <div className="hidden lg:block" />
+	                      {field("State", false,
+	                        <input className={input} value={d.state} onChange={(e) => set({ state: e.target.value })}
+	                          placeholder="Select state" list="pda-state-options" />)}
+	                      {field("City", false,
+	                        <input className={input} value={d.city} onChange={(e) => set({ city: e.target.value })}
+	                          placeholder="Select city" />)}
+	                    </div>
+	                    <datalist id="pda-state-options">
+	                      {[...new Set(agents.map((agent) => agentPrimaryBaseState(agent)).filter(Boolean))].map((state) => (
+	                        <option key={state} value={state} />
 	                      ))}
-	                    </select>
-	                  </label>
-	                  <label className="flex flex-col gap-1">
-	                    <span className="text-xs font-bold text-gray-600">State</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.state}
-	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, state: e.target.value }))} />
-	                  </label>
-	                  <label className="flex flex-col gap-1">
-	                    <span className="text-xs font-bold text-gray-600">City</span>
-	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.city}
-	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, city: e.target.value }))} />
-	                  </label>
+	                    </datalist>
+	                  </section>
+
+	                  <section className="space-y-4 border-t border-gray-100 pt-6">
+	                    {sectionHead("Additional Details", ClipboardCheck, "bg-violet-50 text-violet-600")}
+	                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+	                      {field("Date of birth", false,
+	                        <input type="date" className={input} value={d.dateOfBirth}
+	                          onChange={(e) => set({ dateOfBirth: e.target.value })} />)}
+	                      {field("Gender", false,
+	                        <select className={input} value={d.gender} onChange={(e) => set({ gender: e.target.value })}>
+	                          <option value="">Select gender</option>
+	                          {["Male", "Female", "Prefer not to say"].map((g) => <option key={g} value={g}>{g}</option>)}
+	                        </select>)}
+	                      {field("Preferred pickup location (optional)", false,
+	                        <select className={input} value={d.preferredPickupLocation}
+	                          onChange={(e) => set({ preferredPickupLocation: e.target.value })}>
+	                          <option value="">Select location</option>
+	                          {/* Real hubs, so a stock transfer later has somewhere to come from. */}
+	                          {[...new Set(agents.flatMap((agent) => agentLocationRows(agent).map((location) => location.name)).filter(Boolean))]
+	                            .map((name) => <option key={name} value={name}>{name}</option>)}
+	                        </select>)}
+	                    </div>
+	                  </section>
+
+	                  <section className="space-y-3 border-t border-gray-100 pt-6">
+	                    {sectionHead("Verification & Agreement Note", CheckCircle2, "bg-emerald-50 text-emerald-600")}
+	                    <div className="flex items-start gap-3 rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3">
+	                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+	                      <p className="m-0 text-[13px] leading-relaxed text-gray-700">
+	                        The agent will be required to complete KYC, provide guarantors and sign agreements. These are reviewed and approved one by one before the agent becomes active.
+	                      </p>
+	                    </div>
+	                  </section>
+
+	                  <div className="flex flex-col-reverse gap-3 border-t border-gray-100 pt-5 sm:flex-row sm:justify-end">
+	                    <button className="!min-h-0 inline-flex w-full items-center justify-center rounded-xl border border-gray-200 px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 sm:w-auto"
+	                      onClick={closeModal}>Cancel</button>
+	                    <button disabled={pdaSaving}
+	                      className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1F8FE0] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#1560a8] disabled:opacity-60 sm:w-auto"
+	                      onClick={createPersonalDeliveryAgent}>
+	                      {pdaSaving ? "Starting…" : "Start application"}
+	                      {!pdaSaving && <ChevronRight className="h-4 w-4" />}
+	                    </button>
+	                  </div>
 	                </div>
-	                <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
-	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={closeModal}>Cancel</button>
-	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white hover:bg-[#1560a8] disabled:opacity-60"
-	                    onClick={createPersonalDeliveryAgent}>
-	                    {pdaSaving ? "Starting..." : "Start application"}
-	                  </button>
-	                </div>
-	              </div>
-	            )}
+	              );
+	            })()}
 
 	            {modal === "addAgent" && (() => {
                 const phoneClean = agentPhone.replace(/\D/g, "");
