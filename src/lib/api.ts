@@ -1036,9 +1036,20 @@ export type PdaSettingsOverview = {
   lastUpdatedAt: string | null;
 };
 
+export type PdaApplicationLink = {
+  id: string; token: string; label?: string | null; active: boolean;
+  expiresAt?: string | null; maxSubmissions?: number | null; submissionCount: number;
+  createdByName?: string | null; createdAt: string; revokedAt?: string | null;
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),
+  applicationLinks: () => get<{ rows: PdaApplicationLink[] }>("/api/personal-delivery-agents/application-links"),
+  createApplicationLink: (body: unknown) =>
+    post<{ row: { id: string; token: string; label?: string | null; expiresAt?: string | null } }>("/api/personal-delivery-agents/application-links", body),
+  revokeApplicationLink: (id: string) =>
+    post<{ ok: boolean }>(`/api/personal-delivery-agents/application-links/${id}/revoke`, {}),
   activeAgents: () => get<PdaActiveAgentsView>("/api/personal-delivery-agents/active-agents"),
   inventoryOverview: () => get<PdaInventoryOverview>("/api/personal-delivery-agents/inventory-overview"),
   codOverview: () => get<PdaCodOverview>("/api/personal-delivery-agents/cod-overview"),
