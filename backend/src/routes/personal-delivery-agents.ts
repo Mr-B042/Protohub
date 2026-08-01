@@ -1753,6 +1753,63 @@ router.post("/application-links/:linkId/revoke", requireRole(...MANAGEMENT_ROLES
   }
 });
 
+// ── POST /api/personal-delivery-agents/:id/link-login ─────
+// Connects an approved agent to a Delivery Agent login so they can use the
+// portal. Kept separate from user creation because the two are different
+// decisions: creating an account is IT, granting an outsider access to stock
+// and cash is an approval.
+router.post("/:id/link-login", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const agentId = paramOf(req.params.id);
+    const userId = typeof req.body?.userId === "string" ? req.body.userId : "";
+
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, full_name, account_status").eq("org_id", orgId).eq("id", agentId).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+
+    // Unlinking is always allowed - revoking access must never be blocked by
+    // the same checks that gate granting it.
+    if (!userId) {
+      await supabase.from(AGENTS).update({ user_id: null, updated_at: new Date().toISOString() }).eq("id", agentId);
+      res.json({ ok: true, unlinked: true });
+      return;
+    }
+
+    if (!OPERATIONAL_STATUSES.includes(String(agent.account_status))) {
+      res.status(409).json({
+        error: `${agent.full_name} is ${agent.account_status}. Approve the application before giving portal access.`
+      });
+      return;
+    }
+
+    const { data: user } = await supabase.from("users")
+      .select("id, name, role").eq("org_id", orgId).eq("id", userId).maybeSingle();
+    if (!user) { res.status(404).json({ error: "That login was not found." }); return; }
+    if (String(user.role) !== "Delivery Agent") {
+      res.status(409).json({ error: `${user.name} is a ${user.role}. Only a Delivery Agent login can use the agent portal.` });
+      return;
+    }
+
+    // One login, one agent. A shared login would make every delivery, every
+    // cash figure and every stock movement untraceable to a person.
+    const { data: alreadyLinked } = await supabase.from(AGENTS)
+      .select("id, full_name").eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+    if (alreadyLinked && alreadyLinked.id !== agentId) {
+      res.status(409).json({ error: `That login is already linked to ${alreadyLinked.full_name}.` });
+      return;
+    }
+
+    const { error } = await supabase.from(AGENTS)
+      .update({ user_id: userId, updated_at: new Date().toISOString() })
+      .eq("org_id", orgId).eq("id", agentId);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true, linkedTo: user.name });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not link that login." });
+  }
+});
+
 // ── GET /api/personal-delivery-agents/:id ─────────────────
 // Management only: this returns KYC documents, guarantors and bank details.
 router.get("/:id", requireRole(...MANAGEMENT_ROLES), async (req, res) => {

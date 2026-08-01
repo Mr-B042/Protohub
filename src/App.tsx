@@ -327,7 +327,7 @@ const RETENTION_TASK_TYPES: Array<{ key: RetentionTaskTypeKey; label: string; ic
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Stock Loss" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
-type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer" | "Recovery Rep";
+type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent";
 type UserStatus = "All Status" | "Active" | "Inactive";
 type RoundRobinTab = "Active Sequence" | "Temporarily Excluded" | "Dedicated Products";
 type EmbedTab = "Create Order Form" | "Extra Offers" | "Generate" | "Meta & Ads" | "Links & Tracking";
@@ -2162,8 +2162,8 @@ const financeLensToneClasses: Record<FinanceLens, string> = {
 };
 const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Failed Delivery", "Salary", "Clearing & Shipping", "Waybill", "Airtime & Data", "Stock Loss", "Other"];
 const expenseFilters: ExpenseFilter[] = ["All Types", ...expenseTypes];
-const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep"];
-const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep"];
+const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent"];
+const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent"];
 const userStatuses: UserStatus[] = ["All Status", "Active", "Inactive"];
 const roundRobinTabs: RoundRobinTab[] = ["Active Sequence", "Temporarily Excluded", "Dedicated Products"];
 const embedTabs: EmbedTab[] = ["Create Order Form", "Extra Offers", "Generate", "Meta & Ads", "Links & Tracking"];
@@ -40995,6 +40995,34 @@ ${waybillLineItems(w).length > 1
     } catch (err: any) { showToast(err?.message ?? "Could not load agent inventory."); }
   };
 
+  const pdaLinkPortalLogin = async (agentId: string, agentName: string, currentlyLinked: boolean) => {
+    if (currentlyLinked) {
+      if (!window.confirm(`Remove portal access for ${agentName}? They will not be able to sign in or update deliveries.`)) return;
+      try {
+        await personalDeliveryAgentsApi.linkPortalLogin(agentId, null);
+        showToast("Portal access removed.");
+        await loadPdaActiveAgents();
+      } catch (err: any) { showToast(err?.message ?? "Could not remove that access."); }
+      return;
+    }
+    // Only Delivery Agent logins can use the portal, so only those are offered.
+    const candidates = users.filter((user) => user.role === "Delivery Agent");
+    if (candidates.length === 0) {
+      showToast("Create a login with the Delivery Agent role in User Management first.");
+      return;
+    }
+    const choice = window.prompt(
+      `Which login belongs to ${agentName}?\n\n${candidates.map((user, index) => `${index + 1}. ${user.name} (${user.email})`).join("\n")}\n\nEnter a number:`
+    );
+    const index = Number(choice) - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= candidates.length) return;
+    try {
+      const result = await personalDeliveryAgentsApi.linkPortalLogin(agentId, candidates[index].id);
+      showToast(`${agentName} can now sign in as ${result.linkedTo ?? candidates[index].name}.`);
+      await loadPdaActiveAgents();
+    } catch (err: any) { showToast(err?.message ?? "Could not link that login."); }
+  };
+
   const loadPdaActiveAgents = async () => {
     try {
       setPdaActiveAgents(await personalDeliveryAgentsApi.activeAgents());
@@ -48698,6 +48726,15 @@ ${waybillLineItems(w).length > 1
                         <button type="button" title="Open stock" onClick={() => { setPdaSubPage("Inventory"); void openPdaStock(row.id); }}
                           className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
                           <Eye className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button"
+                          title={row.hasPortalLogin ? "Remove portal access" : "Give this agent portal access"}
+                          onClick={() => void pdaLinkPortalLogin(row.id, row.fullName, Boolean(row.hasPortalLogin))}
+                          className={`!min-h-0 inline-flex h-8 items-center gap-1 rounded-lg border px-2 text-[10px] font-bold ${
+                            row.hasPortalLogin
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>
+                          {row.hasPortalLogin ? "Portal on" : "Give access"}
                         </button>
                       </div>
                     </td>
@@ -87054,6 +87091,7 @@ ${waybillLineItems(w).length > 1
               const roleHelper: Partial<Record<EditableUserRole, string>> = {
                 "Sales Rep": "Receives orders via round-robin and confirms them with customers.",
                 "Recovery Rep": "Works only recovered/returning-customer orders transferred to them - no fresh round-robin leads.",
+                "Delivery Agent": "An outside individual who holds stock and collects cash. Sees only their own deliveries - no customer list, no company figures. After creating the login, link it to their approved agent record from Active Agents.",
                 "Admin": "Full access except billing - can manage users, products, payroll.",
                 "Inventory Manager": "Manages products, stock movements, and waybills."
               };
@@ -88799,6 +88837,7 @@ ${waybillLineItems(w).length > 1
                 "Manager": "Manage day-to-day operations across orders and team.",
                 "Sales Rep": "Receives orders via round-robin and confirms them with customers.",
                 "Recovery Rep": "Works only recovered/returning-customer orders transferred to them - no fresh round-robin leads.",
+                "Delivery Agent": "An outside individual who holds stock and collects cash. Sees only their own deliveries - no customer list, no company figures. After creating the login, link it to their approved agent record from Active Agents.",
                 "Inventory Manager": "Manages products, stock movements, and waybills.",
                 "Marketer": "Sees their attributed orders, campaign performance, and personal tracked embed links.",
                 "Viewer": "Read-only - can see dashboards but not change anything."
@@ -89003,6 +89042,7 @@ ${waybillLineItems(w).length > 1
                 "Manager": "Manage day-to-day operations across orders and team.",
                 "Sales Rep": "Receives orders via round-robin and confirms them with customers.",
                 "Recovery Rep": "Works only recovered/returning-customer orders transferred to them - no fresh round-robin leads.",
+                "Delivery Agent": "An outside individual who holds stock and collects cash. Sees only their own deliveries - no customer list, no company figures. After creating the login, link it to their approved agent record from Active Agents.",
                 "Inventory Manager": "Manages products, stock movements, and waybills.",
                 "Marketer": "Sees their attributed orders, campaign performance, and personal tracked embed links.",
                 "Viewer": "Read-only - can see dashboards but not change anything."

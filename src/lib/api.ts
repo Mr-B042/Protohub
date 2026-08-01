@@ -852,7 +852,8 @@ export type PdaGuarantorDetail = {
 export type PdaActiveAgentRow = {
   id: string; agentCode: string; fullName: string; phone: string; location: string;
   accountStatus: string; availability: string; trustLevel: string;
-  transportMethod?: string | null; vehicleModel?: string | null; vehiclePlate?: string | null;
+  transportMethod?: string | null; hasPortalLogin?: boolean;
+  vehicleModel?: string | null; vehiclePlate?: string | null;
   joinedAt: string; deliveries: number; deliveriesThisMonth: number;
   /** Delivery success out of 5. NOT a customer rating - none are collected. Null until they close an order. */
   performanceScore: number | null;
@@ -1051,6 +1052,8 @@ export const personalDeliveryAgentsApi = {
   revokeApplicationLink: (id: string) =>
     post<{ ok: boolean }>(`/api/personal-delivery-agents/application-links/${id}/revoke`, {}),
   activeAgents: () => get<PdaActiveAgentsView>("/api/personal-delivery-agents/active-agents"),
+  linkPortalLogin: (id: string, userId: string | null) =>
+    post<{ ok: boolean; linkedTo?: string; unlinked?: boolean }>(`/api/personal-delivery-agents/${id}/link-login`, { userId: userId ?? "" }),
   inventoryOverview: () => get<PdaInventoryOverview>("/api/personal-delivery-agents/inventory-overview"),
   codOverview: () => get<PdaCodOverview>("/api/personal-delivery-agents/cod-overview"),
   incidentsOverview: () => get<PdaIncidentsOverview>("/api/personal-delivery-agents/incidents-overview"),
