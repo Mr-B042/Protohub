@@ -587,6 +587,17 @@ export type PersonalDeliveryAgentRow = {
   updatedAt: string;
 };
 
+export type PdaOverviewAgent = {
+  id: string; agentCode: string; fullName: string; phone: string; photoUrl?: string | null;
+  accountStatus: string; kycStatus: string; availability: string;
+  serviceArea: string; serviceRadiusKm: number | null;
+  activeOrders: number; inProgress: number;
+  inventoryUnits: number; inventoryValue: number;
+  codHeld: number; codOrders: number;
+  /** null = no closed orders yet, which is not the same as a 0% rate. */
+  performancePct: number | null;
+};
+
 export type PersonalDeliveryAgentOverview = {
   pendingMigration?: boolean;
   totals: {
@@ -620,6 +631,18 @@ export type PersonalDeliveryAgentOverview = {
     staleOpenOrders: number;
   } | null;
   byStatus?: Record<string, number>;
+  /** Real day-over-day deltas; null where yesterday had nothing to compare to. */
+  comparisons?: {
+    ordersAssignedDeltaPct: number | null;
+    deliveredDeltaPct: number | null;
+    codCollectedDeltaPct: number | null;
+    successRatePct: number | null;
+  };
+  kycBreakdown?: { verified: number; pending: number; incomplete: number; rejected: number };
+  ordersToday?: { inProgress: number; awaitingCustomer: number; readyForPickup: number; delivered: number; failed: number };
+  inventory?: { totalUnits: number; totalValue: number; unaccounted: number };
+  codOverview?: { collectedToday: number; outstanding: number; overdue: number };
+  agents?: PdaOverviewAgent[];
   // Capabilities that do not exist yet, named so the UI can say so rather than
   // showing a zero that would read as "nothing outstanding".
   unavailable?: Record<string, string>;
