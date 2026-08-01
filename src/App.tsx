@@ -993,6 +993,8 @@ type TrackedOrder = {
   deliveryWindow?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** When the order was assigned/claimed (migration 186). Undefined = assigned before this was tracked. */
+  assignedAt?: string;
   scheduledDate?: string;
   scheduledAt?: string;
   deliveredDate?: string;
@@ -6182,6 +6184,7 @@ const normalizeTrackedOrder = (value: any): TrackedOrder => {
     geoAccuracy: value?.geoAccuracy ?? value?.geo_accuracy ?? null,
     geoSource: value?.geoSource ?? value?.geo_source ?? null,
     updatedAt: value?.updatedAt ?? value?.updated_at ?? undefined,
+    assignedAt: value?.assignedAt ?? value?.assigned_at ?? undefined,
     fullUpfrontPaid: value?.fullUpfrontPaid ?? value?.full_upfront_paid ?? false,
     fullUpfrontPaidAt: value?.fullUpfrontPaidAt ?? value?.full_upfront_paid_at ?? null,
     fullUpfrontMarkedBy: value?.fullUpfrontMarkedBy ?? value?.full_upfront_marked_by ?? null,
@@ -11080,6 +11083,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [recoveryRepKpiError, setRecoveryRepKpiError] = useState("");
   const [recoveryRepPeriod, setRecoveryRepPeriod] = useState<Period>("This Month");
   const [recoveryRepDateRange, setRecoveryRepDateRange] = useState<DateRange>({ start: "", end: "" });
+  // When each dead order actually died, keyed by order id. Derived from
+  // order_audit server-side because orders.updated_at is not the closure date.
+  const [orderClosureDates, setOrderClosureDates] = useState<Record<string, string>>({});
   const [showRecoveryRepDateRange, setShowRecoveryRepDateRange] = useState(false);
   const [recoveryRepSettingsOpen, setRecoveryRepSettingsOpen] = useState(false);
   const [recoveryRepSettingsDraft, setRecoveryRepSettingsDraft] = useState<{
@@ -40096,6 +40102,19 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, recoveryRepViewingId, recoveryRepPeriod, recoveryRepDateRange]);
 
+  // Closure dates don't move with the period filter, so they load once per
+  // visit rather than on every period change. A failure here only costs the
+  // candidate list its sort order, so it stays silent instead of throwing a
+  // banner over a working page.
+  useEffect(() => {
+    if (activePage !== "Recovery Rep Dashboard") return;
+    let cancelled = false;
+    ordersApi.closureDates()
+      .then((res) => { if (!cancelled) setOrderClosureDates(res?.closedAt ?? {}); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activePage]);
+
   // Fetch the complete 90-day lifecycle. Tasks still derives only actionable
   // rows, while Pipeline can also show newly delivered customers whose first
   // satisfaction check is not due yet.
@@ -45993,6 +46012,52 @@ ${waybillLineItems(w).length > 1
     const myOrders = recoveryRepViewingId
       ? trackedOrders.filter((order) => order.assignedRepId === recoveryRepViewingId)
       : [];
+    // Picked orders grouped by the DAY they were picked, newest day first, so
+    // a rep (and their manager) can see exactly what was taken on each day
+    // rather than one flat 50-row list with no sense of when.
+    //
+    // assigned_at only exists from migration 186 onward. Orders claimed before
+    // that have no pick date and it is not recoverable - order_audit records
+    // status changes, not reassignments - so they are NOT given an invented
+    // date. They sit in their own group at the bottom, labelled honestly, and
+    // are exempt from the date filter so filtering can never hide work that
+    // exists.
+    const myPickBounds = periodBoundsForQuery(recoveryRepPeriod, recoveryRepDateRange);
+    const pickDayKey = (order: TrackedOrder): string | null =>
+      order.assignedAt ? String(order.assignedAt).slice(0, 10) : null;
+    const myOrdersInPeriod = myOrders.filter((order) => {
+      const key = pickDayKey(order);
+      if (!key) return true;
+      if (!myPickBounds) return true;
+      return key >= myPickBounds.dateFrom && key <= myPickBounds.dateTo;
+    });
+    const myPickGroups = (() => {
+      const byDay = new Map<string, TrackedOrder[]>();
+      const undated: TrackedOrder[] = [];
+      for (const order of myOrdersInPeriod) {
+        const key = pickDayKey(order);
+        if (!key) { undated.push(order); continue; }
+        if (!byDay.has(key)) byDay.set(key, []);
+        byDay.get(key)!.push(order);
+      }
+      const today = formatDateKey(new Date());
+      const yesterday = formatDateKey(new Date(Date.now() - 86400000));
+      const dayLabel = (key: string) => {
+        if (key === today) return "Today";
+        if (key === yesterday) return "Yesterday";
+        const d = new Date(`${key}T00:00:00`);
+        return Number.isFinite(d.getTime())
+          ? d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" })
+          : key;
+      };
+      const groups = [...byDay.entries()]
+        .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
+        .map(([key, orders]) => ({ key, label: dayLabel(key), sublabel: key, orders }));
+      if (undated.length > 0) {
+        groups.push({ key: "undated", label: "Picked earlier", sublabel: "pick date not recorded", orders: undated });
+      }
+      return groups;
+    })();
     // Recovery Candidates. Each candidate carries its own `reason` (why it
     // surfaced) so the card can show it, matching the Customers page's
     // "Customer Status" badge convention.
@@ -46042,8 +46107,23 @@ ${waybillLineItems(w).length > 1
     // No arbitrary cap: the count must be the REAL number of recoverable
     // orders, otherwise "Total Candidates" silently under-reports the backlog.
     // The list itself is paginated instead.
+    // Most recently closed first. A customer who cancelled yesterday is far
+    // more recoverable than one who cancelled in March, so the freshest deaths
+    // have to be at the top - the list is 500+ long and nobody reaches page 20.
+    // orders.updated_at is NOT the closure date (any later edit bumps it; on
+    // production it was off by more than a day on 491 of 564 dead orders), so
+    // the real date comes from order_audit via /closure-dates. Orders with no
+    // audit row fall back to updated_at, then created_at, so an unknown date
+    // sorts sensibly rather than jumping to the top.
+    const closedAtMs = (order: TrackedOrder): number => {
+      const source = orderClosureDates[order.id] ?? order.updatedAt ?? order.createdAt ?? "";
+      const ms = source ? new Date(source).getTime() : NaN;
+      return Number.isFinite(ms) ? ms : 0;
+    };
     const recoveryCandidates = trackedOrders
-      .filter((order) => order.assignedRepId !== recoveryRepViewingId && candidateReason(order));
+      .filter((order) => order.assignedRepId !== recoveryRepViewingId && candidateReason(order))
+      .slice()
+      .sort((a, b) => closedAtMs(b) - closedAtMs(a));
     // Cheap per-phone order-history summary (total / delivered / cancelled),
     // same "orders / delivered / cancelled" shape as the Customers page's
     // "Order History" column, computed only for the candidates on screen.
@@ -46644,13 +46724,32 @@ ${waybillLineItems(w).length > 1
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-200">
             <h2 className="text-base font-bold text-gray-900">My Recovered Orders</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Keep logging follow-ups until the customer buys or tells you no.</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Grouped by the day each order was picked, newest first. Keep logging follow-ups until the customer buys or tells you no.
+            </p>
           </div>
           {myOrders.length === 0 ? (
             <div className="px-5 py-10 text-sm text-gray-400 text-center">No orders assigned yet. Claim one from Recovery Candidates below.</div>
+          ) : myOrdersInPeriod.length === 0 ? (
+            <div className="px-5 py-10 text-center text-sm text-gray-400">
+              No orders were picked in this period.
+              <span className="mt-1 block text-xs">{myOrders.length} assigned order{myOrders.length === 1 ? "" : "s"} fall outside it - widen the date range above to see them.</span>
+            </div>
           ) : (
             <div className="divide-y divide-gray-100">
-              {myOrders.slice(0, 50).map((order) => {
+              {myPickGroups.map((group) => (
+                <div key={group.key}>
+                  <div className="sticky top-0 z-10 flex items-baseline justify-between gap-3 border-b border-gray-100 bg-gray-50/95 px-5 py-2 backdrop-blur">
+                    <span className="text-xs font-black uppercase tracking-wide text-gray-600">
+                      {group.label}
+                      <span className="ml-2 font-semibold normal-case tracking-normal text-gray-400">{group.sublabel}</span>
+                    </span>
+                    <span className="shrink-0 text-[11px] font-bold text-gray-500">
+                      {group.orders.length} order{group.orders.length === 1 ? "" : "s"} picked
+                    </span>
+                  </div>
+                  <div className="divide-y divide-gray-100">
+              {group.orders.map((order) => {
                 // A claimed order is worked as a loop: log an attempt, set the
                 // next one, repeat until it converts or the customer closes it
                 // out. Surfacing where each order sits in that loop is what
@@ -46731,6 +46830,9 @@ ${waybillLineItems(w).length > 1
                   </div>
                 );
               })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </section>
@@ -46901,6 +47003,21 @@ ${waybillLineItems(w).length > 1
                           </td>
                           <td className="px-4 py-4">
                             <span className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black ${tone.class}`}><span className={`h-2 w-2 rounded-full ${tone.dot}`} /> {reason}</span>
+                            {(() => {
+                              // Makes the newest-first ordering legible, and
+                              // tells the rep how cold the trail is before
+                              // they dial. Only shown when the real closure
+                              // date is known - never guessed from updated_at.
+                              const closedIso = orderClosureDates[order.id];
+                              if (!closedIso) return null;
+                              const days = Math.floor((Date.now() - new Date(closedIso).getTime()) / 86400000);
+                              const label = days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+                              return (
+                                <div className={`mt-1 text-[10px] font-bold ${days <= 7 ? "text-rose-600" : "text-gray-400"}`}>
+                                  Closed {label}
+                                </div>
+                              );
+                            })()}
                             {(() => {
                               const why = candidateCustomerNote(order);
                               if (!why) return null;

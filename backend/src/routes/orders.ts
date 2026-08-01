@@ -2102,6 +2102,33 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
   res.json(data);
 });
 
+// ── GET /api/orders/closure-dates ─────────────────────────
+// When each dead order actually died, for "most recently closed first".
+//
+// orders.updated_at is NOT this date - any later edit (a note, a correction)
+// bumps it. Measured on production: it differed from the true closure by more
+// than a day on 491 of 564 dead orders, so sorting by it produced a "recently
+// closed" list that was nothing of the sort. order_audit records the real
+// status transition, so the date is derived from there instead of stored and
+// kept in sync - one source of truth, nothing to drift.
+router.get("/closure-dates", async (req, res) => {
+  const { data, error } = await supabase
+    .from("order_audit")
+    .select("order_id, created_at")
+    .eq("org_id", req.user!.orgId)
+    .in("to_status", ["Failed", "Cancelled"])
+    .order("created_at", { ascending: false })
+    .limit(5000);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  // Rows arrive newest-first, so the first sighting of an order is its most
+  // recent closure - a reopened-then-reclosed order dates from the last one.
+  const closedAt: Record<string, string> = {};
+  for (const row of (data ?? []) as Array<{ order_id: string; created_at: string }>) {
+    if (!closedAt[row.order_id]) closedAt[row.order_id] = row.created_at;
+  }
+  res.json({ closedAt });
+});
+
 // ── GET /api/orders/:id/audit ─────────────────────────────
 router.get("/:id/audit", async (req, res) => {
   const { data, error } = await supabase
@@ -2644,10 +2671,14 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
       if (nextAssignedRepId) {
         updates.assigned_by_user_id = req.user!.id;
         updates.assigned_by_name_snapshot = req.user!.name;
+        // WHEN it was picked (migration 186). Stamped only on a real change of
+        // rep, so an unrelated edit to a claimed order never re-dates the pick.
+        updates.assigned_at = new Date().toISOString();
         if (nextAssignedRepId !== req.user!.id) newlyAssignedRepId = nextAssignedRepId;
       } else {
         updates.assigned_by_user_id = null;
         updates.assigned_by_name_snapshot = null;
+        updates.assigned_at = null;
       }
     }
   }

@@ -569,6 +569,8 @@ export const ordersApi = {
   openRemittanceForEdit: (orderIds: string[]) => post<{ opened: number }>("/api/orders/open-remittance", { orderIds }),
   delete: (id: string) => del<void>(`/api/orders/${id}`),
   audit: (id: string) => get<any[]>(`/api/orders/${id}/audit`),
+  // { [orderId]: ISO date the order was Failed/Cancelled }, from order_audit.
+  closureDates: () => get<{ closedAt: Record<string, string> }>("/api/orders/closure-dates"),
   fieldEdits: (id: string) => get<any[]>(`/api/orders/${id}/field-edits`),
   followUpTasks: (id: string) => get<any[]>(`/api/orders/${id}/follow-up-tasks`),
   contactAttempts: (id: string) => get<any[]>(`/api/orders/${id}/contact-attempts`),
