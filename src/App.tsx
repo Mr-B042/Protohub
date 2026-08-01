@@ -123,10 +123,10 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -195,8 +195,8 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | null;
-type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | null;
+type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -222,6 +222,35 @@ type RetentionSubPage = "Overview" | "Pipeline" | "Customers" | "Tasks" | "Calls
 // Rendered as a contextual sub-section in the MAIN app sidebar, directly
 // under "Recovery Rep Dashboard" - not a second/nested sidebar. Static
 // metadata only; the Tasks badge count is computed where it's rendered.
+// Personal Delivery Agents is its own module with ten surfaces. Same pattern as
+// the retention sub-nav: the sub-items live in the REAL sidebar under their
+// parent, never a second sidebar, and never ten more top-level nav entries.
+type PdaSubPage =
+  | "Overview" | "Applications & KYC" | "Active Agents" | "Orders & Dispatch"
+  | "Inventory" | "COD & Reconciliation" | "Fees & Earnings" | "Incidents"
+  | "Reports" | "Settings";
+
+const PDA_SUBNAV_ITEMS: Array<{ key: PdaSubPage; label: string; icon: typeof LayoutPanelTop; ownerOnly?: boolean }> = [
+  { key: "Overview", label: "Overview", icon: LayoutPanelTop },
+  { key: "Applications & KYC", label: "Applications & KYC", icon: ClipboardCheck },
+  { key: "Active Agents", label: "Active Agents", icon: Users },
+  { key: "Orders & Dispatch", label: "Orders & Dispatch", icon: PackageCheck },
+  { key: "Inventory", label: "Inventory", icon: Box },
+  { key: "COD & Reconciliation", label: "COD & Reconciliation", icon: Banknote },
+  { key: "Fees & Earnings", label: "Fees & Earnings", icon: HandCoins },
+  { key: "Incidents", label: "Incidents", icon: AlertTriangle },
+  { key: "Reports", label: "Reports", icon: BarChart3 },
+  { key: "Settings", label: "Settings", icon: Settings, ownerOnly: true }
+];
+
+// Mirrors the same groups in backend/src/routes/personal-delivery-agents.ts.
+// Only these statuses mean an agent may actually hold stock and take orders.
+const PDA_OPERATIONAL_STATUSES = ["Approved", "Probation", "Active"];
+const PDA_RESTRICTED_STATUSES = [
+  "Restricted", "Temporarily Suspended", "KYC Expired",
+  "Cash Remittance Overdue", "Inventory Discrepancy"
+];
+
 const RETENTION_SUBNAV_ITEMS: Array<{ key: RetentionSubPage; label: string; icon: typeof LayoutPanelTop; ownerOnly?: boolean }> = [
   { key: "Overview", label: "Overview", icon: LayoutPanelTop },
   { key: "Pipeline", label: "Pipeline", icon: Repeat2 },
@@ -2434,21 +2463,21 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
     "Dashboard", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
-    "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
+    "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Marketing", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Admin": [
     "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
     "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
-    "Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
+    "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Manager": [
     "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Round-Robin", "Notifications", "Settings", "WhatsApp"
+    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
   ],
   "Sales Rep": [
-    "Sales Rep Workspace", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Notifications", "Settings", "WhatsApp"
+    "Sales Rep Workspace", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
   ],
   "Inventory Manager": [
     "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings", "WhatsApp"
@@ -2499,6 +2528,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Call Rep Console": "#/dashboard/admin/call-rep-console",
   "Weekend Stock Summary": "#/dashboard/admin/weekend-stock-summary",
   Agents: "#/dashboard/admin/agents",
+  "Personal Delivery Agents": "#/dashboard/admin/personal-delivery-agents",
   Waybill: "#/dashboard/admin/waybill",
   Payroll: "#/dashboard/admin/payroll",
   Customers: "#/dashboard/admin/customers",
@@ -11091,6 +11121,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // When each dead order actually died, keyed by order id. Derived from
   // order_audit server-side because orders.updated_at is not the closure date.
   const [orderClosureDates, setOrderClosureDates] = useState<Record<string, string>>({});
+  const [pdaSubPage, setPdaSubPage] = useState<PdaSubPage>("Overview");
+  const [pdaAgents, setPdaAgents] = useState<PersonalDeliveryAgentRow[]>([]);
+  const [pdaOverview, setPdaOverview] = useState<PersonalDeliveryAgentOverview | null>(null);
+  const [pdaLoading, setPdaLoading] = useState(false);
+  const [pdaNewAgent, setPdaNewAgent] = useState({ fullName: "", phone: "", whatsappPhone: "", state: "", city: "", transportMethod: "" });
+  const [pdaSaving, setPdaSaving] = useState(false);
   const [showRecoveryRepDateRange, setShowRecoveryRepDateRange] = useState(false);
   const [recoveryRepSettingsOpen, setRecoveryRepSettingsOpen] = useState(false);
   const [recoveryRepSettingsDraft, setRecoveryRepSettingsDraft] = useState<{
@@ -22727,6 +22763,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "sales-rep-bonuses": "Sales Reps",
       "weekend-stock-summary": "Weekend Stock Summary",
       agents: "Agents",
+      "personal-delivery-agents": "Personal Delivery Agents",
       waybill: "Waybill",
       payroll: "Payroll",
       customers: "Customers",
@@ -28977,6 +29014,7 @@ ${waybillLineItems(w).length > 1
       "Sales Rep Bonuses": "#/dashboard/admin/sales-reps/bonuses",
       "Weekend Stock Summary": "#/dashboard/admin/weekend-stock-summary",
       Agents: "#/dashboard/admin/agents",
+  "Personal Delivery Agents": "#/dashboard/admin/personal-delivery-agents",
       Waybill: "#/dashboard/admin/waybill",
       Payroll: "#/dashboard/admin/payroll",
       Customers: "#/dashboard/admin/customers",
@@ -40252,6 +40290,57 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, recoveryRepViewingId, recoveryRepPeriod, recoveryRepDateRange]);
 
+  const loadPersonalDeliveryAgents = async () => {
+    setPdaLoading(true);
+    try {
+      const isManagement = ["Owner", "Admin", "Manager"].includes(currentRole);
+      // The overview endpoint is management-only, so a Sales Rep loads just the
+      // (already sensitive-stripped) list rather than being shown an error.
+      const [list, overview] = await Promise.all([
+        personalDeliveryAgentsApi.list(),
+        isManagement ? personalDeliveryAgentsApi.overview() : Promise.resolve(null)
+      ]);
+      setPdaAgents(list?.rows ?? []);
+      if (overview) setPdaOverview(overview);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not load personal delivery agents.");
+    } finally {
+      setPdaLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activePage !== "Personal Delivery Agents") return;
+    void loadPersonalDeliveryAgents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, currentRole]);
+
+  const createPersonalDeliveryAgent = async () => {
+    if (!pdaNewAgent.fullName.trim() || !pdaNewAgent.phone.trim()) {
+      showToast("Name and phone are required to start an application.");
+      return;
+    }
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.create({
+        fullName: pdaNewAgent.fullName.trim(),
+        phone: pdaNewAgent.phone.trim(),
+        whatsappPhone: pdaNewAgent.whatsappPhone.trim() || undefined,
+        state: pdaNewAgent.state.trim() || undefined,
+        city: pdaNewAgent.city.trim() || undefined,
+        transportMethod: pdaNewAgent.transportMethod || undefined
+      });
+      showToast(`Application started for ${pdaNewAgent.fullName.trim()}.`);
+      setPdaNewAgent({ fullName: "", phone: "", whatsappPhone: "", state: "", city: "", transportMethod: "" });
+      setModal(null);
+      await loadPersonalDeliveryAgents();
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not start the application.");
+    } finally {
+      setPdaSaving(false);
+    }
+  };
+
   // Closure dates don't move with the period filter, so they load once per
   // visit rather than on every period change. A failure here only costs the
   // candidate list its sort order, so it stays silent instead of throwing a
@@ -46156,6 +46245,150 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // ===== Personal Delivery Agents =====
+  // A Personal Delivery Agent holds Protohub stock AND collects customer cash,
+  // which is why this module is separate from `agents` (registered logistics
+  // companies): different risk, permissions, verification and cash duties.
+  const renderPersonalDeliveryAgents = () => {
+    const isManagement = ["Owner", "Admin", "Manager"].includes(currentRole);
+    const totals = pdaOverview?.totals ?? null;
+    const pending = Boolean(pdaOverview?.pendingMigration);
+
+    const statusTone = (status: string) =>
+      PDA_OPERATIONAL_STATUSES.includes(status) ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+      : PDA_RESTRICTED_STATUSES.includes(status) ? "bg-amber-50 text-amber-700 border-amber-100"
+      : status === "Terminated" || status === "Rejected" ? "bg-red-50 text-red-700 border-red-100"
+      : "bg-sky-50 text-sky-700 border-sky-100";
+
+    // Counted from real rows only. Where the capability does not exist yet the
+    // tile says so - a zero would read as "nothing outstanding", which is a
+    // false reassurance about money and stock.
+    const kpiTiles: Array<{ label: string; value: string; hint?: string; tone?: string; notBuilt?: boolean }> = [
+      { label: "Total Agents", value: String(totals?.totalAgents ?? 0), hint: `${totals?.operational ?? 0} can take work` },
+      { label: "Pending Applications", value: String(totals?.pendingApplications ?? 0), hint: "Awaiting KYC review", tone: "text-amber-600" },
+      { label: "Available Now", value: String(totals?.availableNow ?? 0), hint: "Approved and online", tone: "text-emerald-600" },
+      { label: "On Probation", value: String(totals?.onProbation ?? 0), hint: "Reduced stock and COD limits" },
+      { label: "Restricted", value: String(totals?.restricted ?? 0), hint: "Blocked from new assignments", tone: "text-red-600" },
+      { label: "KYC Items Outstanding", value: String(totals?.kycItemsOutstanding ?? 0), hint: `${totals?.guarantorsOutstanding ?? 0} guarantors unverified`, tone: "text-amber-600" }
+    ];
+
+    return (
+      <div className="space-y-6">
+        <header className="flex flex-col gap-1">
+          <h1 className="text-2xl font-bold text-[#1F8FE0]">Personal Delivery Agents</h1>
+          <p className="text-sm font-medium text-gray-500">
+            Individuals who hold Protohub stock and collect customer payment. Separate from the logistics companies on the Agents page, because they carry both our inventory and our cash.
+          </p>
+        </header>
+
+        {pending && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Personal Delivery Agents is still being activated on this environment.
+          </div>
+        )}
+
+        {pdaSubPage === "Overview" ? (
+          <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+              {kpiTiles.map((tile) => (
+                <div key={tile.label} className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{tile.label}</div>
+                  <div className={`mt-1 text-xl font-black ${tile.tone ?? "text-gray-900"}`}>{tile.value}</div>
+                  {tile.hint && <div className="mt-0.5 text-[11px] text-gray-400">{tile.hint}</div>}
+                </div>
+              ))}
+            </div>
+
+            {/* The operational figures (orders, COD, inventory held) genuinely do
+                not exist yet. Saying so beats printing zeros that look like a
+                clean bill of health on money and stock. */}
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+              <h2 className="text-sm font-bold text-gray-900">Not measurable yet</h2>
+              <p className="mt-1 text-xs text-gray-500">
+                Orders assigned, dispatches in progress, COD outstanding and inventory held by agents are shown as soon as Orders &amp; Dispatch, COD &amp; Reconciliation and Inventory are built. They are left blank rather than shown as ₦0 - a zero here would look like nothing is outstanding.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {["Orders Assigned Today", "Dispatches In Progress", "Delivered Today", "COD Outstanding", "Inventory Held", "Overdue Remittances"].map((label) => (
+                  <span key={label} className="rounded-lg border border-dashed border-gray-300 px-2.5 py-1 text-[11px] font-semibold text-gray-400">{label}</span>
+                ))}
+              </div>
+            </section>
+
+            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-200">
+                <div>
+                  <h2 className="text-base font-bold text-gray-900">Agents</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {isManagement
+                      ? "Every application and active agent. An agent cannot hold stock or take orders until they are Approved."
+                      : "Agents connected to your orders. Bank details, KYC documents, guarantors and home addresses are not shown to Sales Reps."}
+                  </p>
+                </div>
+                {isManagement && (
+                  <button type="button" onClick={() => setModal("addPersonalDeliveryAgent")}
+                    className="!min-h-0 inline-flex items-center gap-2 rounded-lg bg-[#1F8FE0] px-3 py-2 text-sm font-bold text-white hover:bg-[#1560a8]">
+                    <Plus className="h-4 w-4" /> Start an application
+                  </button>
+                )}
+              </div>
+              {pdaAgents.length === 0 ? (
+                <div className="px-5 py-12 text-center">
+                  <p className="m-0 text-sm font-semibold text-gray-500">No personal delivery agents yet.</p>
+                  <p className="m-0 mt-1 text-xs text-gray-400">
+                    Start an application to begin onboarding. Nobody receives stock or orders until every KYC item, both guarantors and all signed agreements are approved one by one.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs font-bold uppercase tracking-wide text-gray-400">
+                        <th className="px-5 py-2">Agent</th>
+                        <th className="px-4 py-2">Account status</th>
+                        <th className="px-4 py-2">Trust</th>
+                        <th className="px-4 py-2">Availability</th>
+                        <th className="px-4 py-2">Service area</th>
+                        <th className="px-4 py-2">Transport</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pdaAgents.map((agent) => (
+                        <tr key={agent.id} className="border-t border-gray-100 hover:bg-gray-50">
+                          <td className="px-5 py-3">
+                            <div className="font-bold text-gray-900">{agent.fullName}</div>
+                            <div className="text-xs text-gray-400">{agent.agentCode} · {agent.phone}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-black ${statusTone(agent.accountStatus)}`}>
+                              {agent.accountStatus}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-gray-600">{agent.trustLevel}</td>
+                          <td className="px-4 py-3 text-gray-600">{agent.availability}</td>
+                          <td className="px-4 py-3 text-gray-600">
+                            {[agent.city, agent.state].filter(Boolean).join(", ") || "-"}
+                          </td>
+                          <td className="px-4 py-3 text-gray-600">{agent.transportMethod ?? "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </>
+        ) : (
+          <section className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-12 text-center">
+            <h2 className="text-base font-bold text-gray-900">{pdaSubPage}</h2>
+            <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
+              Not built yet. The foundation for this module is in place - agents, the item-by-item KYC checklist, guarantors and signed agreements - and {pdaSubPage} is next in the build order.
+            </p>
+          </section>
+        )}
+      </div>
+    );
+  };
+
   const renderRecoveryRepConsole = () => {
     const summary = recoveryRepKpiSummary;
     const viewingUser = recoveryRepUsers.find((user) => user.id === recoveryRepViewingId) ?? currentManagedUser;
@@ -50325,6 +50558,12 @@ ${waybillLineItems(w).length > 1
               && activePage === "Recovery Rep Dashboard"
               && recoveryRepDashboardTab === "Customer Retention"
               && !collapsed;
+            // Same rule for the Personal Delivery Agents module's ten surfaces:
+            // they nest under their own parent in the real sidebar rather than
+            // becoming ten more top-level entries.
+            const showPdaSubnav = item.label === "Personal Delivery Agents"
+              && activePage === "Personal Delivery Agents"
+              && !collapsed;
             return (
               <Fragment key={item.label}>
                 <button
@@ -50346,6 +50585,27 @@ ${waybillLineItems(w).length > 1
                   <item.icon className={`w-5 h-5 shrink-0 ${isActive ? "text-[#1F8FE0]" : "text-gray-400"}`} />
                   {!collapsed && <span className="truncate">{item.label}</span>}
                 </button>
+                {showPdaSubnav && (
+                  <div className="ml-4 mt-1 mb-1.5 pl-3.5 border-l border-white/10 space-y-1">
+                    {PDA_SUBNAV_ITEMS.filter((sub) => !sub.ownerOnly || currentRole === "Owner").map((sub) => {
+                      const subActive = pdaSubPage === sub.key;
+                      return (
+                        <button
+                          key={sub.key}
+                          type="button"
+                          onClick={() => {
+                            setPdaSubPage(sub.key);
+                            if (window.matchMedia("(max-width: 1024px)").matches) setMobileMenuOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition-colors ${subActive ? "bg-[#1F8FE0]/15 text-[#1F8FE0] font-bold" : "text-gray-400 font-medium hover:bg-white/5 hover:text-white"}`}
+                        >
+                          <sub.icon className="w-4 h-4 shrink-0" />
+                          <span className="flex-1 truncate text-left">{sub.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 {showRetentionSubnav && (
                   <div className="ml-4 mt-1 mb-1.5 pl-3.5 border-l border-white/10 space-y-1">
                     {RETENTION_SUBNAV_ITEMS.filter((sub) => !sub.ownerOnly || currentRole === "Owner").map((sub) => {
@@ -58708,6 +58968,8 @@ ${waybillLineItems(w).length > 1
                 </div>
               );
             })()
+          ) : activePage === "Personal Delivery Agents" ? (
+            renderPersonalDeliveryAgents()
           ) : activePage === "Agents" ? (
             <div className="space-y-6">
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -74691,6 +74953,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "updateStock" && "Update Stock"}
                 {modal === "addSalesRep" && "Add New Sales Representative"}
                 {modal === "addAgent" && "Add New Agent"}
+                {modal === "addPersonalDeliveryAgent" && "Start Agent Application"}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -80197,6 +80460,58 @@ ${waybillLineItems(w).length > 1
                 </div>
               );
             })()}
+
+	            {modal === "addPersonalDeliveryAgent" && (
+	              <div className="space-y-4">
+	                <p className="m-0 text-xs text-gray-500">
+	                  This only opens the application. The agent receives no stock and no orders until every KYC item, both guarantors and all signed agreements have been approved individually.
+	                </p>
+	                <div className="grid gap-3 sm:grid-cols-2">
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Full legal name *</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.fullName}
+	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, fullName: e.target.value }))} placeholder="As written on their ID" />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Phone *</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.phone}
+	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, phone: e.target.value }))} placeholder="0803 123 4567" />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">WhatsApp</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.whatsappPhone}
+	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, whatsappPhone: e.target.value }))} />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">Transport method</span>
+	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.transportMethod}
+	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, transportMethod: e.target.value }))}>
+	                      <option value="">Not stated yet</option>
+	                      {["Motorcycle", "Car", "Public transport", "Bicycle", "Walking", "Hired dispatch", "Other"].map((option) => (
+	                        <option key={option} value={option}>{option}</option>
+	                      ))}
+	                    </select>
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">State</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.state}
+	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, state: e.target.value }))} />
+	                  </label>
+	                  <label className="flex flex-col gap-1">
+	                    <span className="text-xs font-bold text-gray-600">City</span>
+	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaNewAgent.city}
+	                      onChange={(e) => setPdaNewAgent((v) => ({ ...v, city: e.target.value }))} />
+	                  </label>
+	                </div>
+	                <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={closeModal}>Cancel</button>
+	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white hover:bg-[#1560a8] disabled:opacity-60"
+	                    onClick={createPersonalDeliveryAgent}>
+	                    {pdaSaving ? "Starting..." : "Start application"}
+	                  </button>
+	                </div>
+	              </div>
+	            )}
 
 	            {modal === "addAgent" && (() => {
                 const phoneClean = agentPhone.replace(/\D/g, "");
