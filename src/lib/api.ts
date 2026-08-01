@@ -607,6 +607,11 @@ export type PersonalDeliveryAgentOverview = {
     inventoryUnaccounted: number;
     stockInTransit: number;
     openStockReports: number;
+    codOutstanding: number;
+    agentsHoldingCash: number;
+    ordersWithCashOutstanding: number;
+    earningsAvailable: number;
+    earningsPending: number;
   } | null;
   byStatus?: Record<string, number>;
   // Capabilities that do not exist yet, named so the UI can say so rather than
@@ -672,6 +677,31 @@ export type PdaMySummary = {
   wallet: { available: number | null; pending: number | null; codToRemit: number | null; note?: string };
 };
 
+export type PdaCodRow = {
+  assignmentId: string; orderId: string; customer?: string | null; orderValue: number;
+  amountCollected: number; paymentMethod?: string | null; deliveryFee: number;
+  /** Always the FULL collected amount - never reduced by the agent's fee. */
+  amountDue: number; amountRemitted: number; difference: number;
+  reconciliationStatus: string; earningStatus: string; deliveredAt?: string | null;
+};
+
+export type PdaCodView = {
+  position: {
+    outstanding: number; pendingEarnings: number; availableEarnings: number;
+    deliveredOrders: number; ordersWithCashOutstanding: number;
+  };
+  rows: PdaCodRow[];
+  remittances: any[];
+  payouts: any[];
+};
+
+export type PdaWallet = {
+  codToRemit: number; ordersWithCashOutstanding: number;
+  availableEarnings: number; pendingEarnings: number;
+  recentPayouts: Array<{ amount: number; paid_at: string; reference?: string | null }>;
+  codLimit: number | null;
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   reviewKycItem: (itemId: string, body: unknown) =>
@@ -722,6 +752,13 @@ export const personalDeliveryAgentsApi = {
     post<{ row: any; note: string }>("/api/personal-delivery-agents/my/stock/discrepancy", body),
   reviewDiscrepancy: (discrepancyId: string, body: unknown) =>
     post<{ row: any }>(`/api/personal-delivery-agents/stock/discrepancies/${discrepancyId}/review`, body),
+  // COD & Reconciliation
+  agentCod: (id: string) => get<PdaCodView>(`/api/personal-delivery-agents/${id}/cod`),
+  recordRemittance: (id: string, body: unknown) =>
+    post<{ row: any; applied: number; unallocated: number; note?: string }>(`/api/personal-delivery-agents/${id}/remittances`, body),
+  payEarnings: (id: string, body: unknown) =>
+    post<{ row: any; orders: number; amount: number }>(`/api/personal-delivery-agents/${id}/earnings/pay`, body),
+  myWallet: () => get<PdaWallet>("/api/personal-delivery-agents/my/wallet"),
   list: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
     return get<{ rows: PersonalDeliveryAgentRow[]; pendingMigration?: boolean }>(`/api/personal-delivery-agents${qs}`);

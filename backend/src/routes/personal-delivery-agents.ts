@@ -21,6 +21,10 @@ import {
   failureReasonBlockers, CUSTOMER_READY
 } from "../lib/pda-delivery-flow.js";
 import { applyStockMovement } from "../lib/pda-stock.js";
+import {
+  reconciliationStatusFor, earningStatusFor, cashPositionFor,
+  outstandingForAssignment, allocateRemittance, codAssignmentBlockers
+} from "../lib/pda-cod.js";
 import { recordStockLossExpense } from "../lib/stock-loss-expense.js";
 
 const router = Router();
@@ -192,6 +196,27 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
       supabase.from("pda_stock_discrepancies").select("id", { count: "exact", head: true })
         .eq("org_id", req.user!.orgId).in("status", ["Reported", "Under Investigation"])
     ]);
+    const { data: cashRows } = await supabase.from("pda_order_assignments")
+      .select("delivery_status, amount_collected, amount_remitted, delivery_fee, agent_id, earning_status")
+      .eq("org_id", req.user!.orgId);
+    const cash = cashPositionFor(
+      (cashRows ?? []).map((row: any) => ({
+        deliveryStatus: row.delivery_status,
+        amountCollected: row.amount_collected,
+        amountRemitted: row.amount_remitted,
+        deliveryFee: row.delivery_fee
+      })),
+      (cashRows ?? []).map((row: any) => row.earning_status)
+    );
+    // Agents personally holding company money, not orders - one agent sitting
+    // on five unremitted deliveries is one problem, not five.
+    const agentsHoldingCash = new Set(
+      (cashRows ?? [])
+        .filter((row: any) => row.delivery_status === "Delivered"
+          && Number(row.amount_collected ?? 0) > Number(row.amount_remitted ?? 0))
+        .map((row: any) => row.agent_id)
+    ).size;
+
     const inventory = (stockRows ?? []).reduce((acc: any, row: any) => ({
       available: acc.available + Number(row.available ?? 0),
       reserved: acc.reserved + Number(row.reserved ?? 0),
@@ -224,7 +249,12 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
         inventoryOutForDelivery: inventory.outForDelivery,
         inventoryUnaccounted: inventory.unaccounted,
         stockInTransit: inTransitCount ?? 0,
-        openStockReports: openDiscrepancies ?? 0
+        openStockReports: openDiscrepancies ?? 0,
+        codOutstanding: cash.outstanding,
+        agentsHoldingCash,
+        ordersWithCashOutstanding: cash.ordersWithCashOutstanding,
+        earningsAvailable: cash.availableEarnings,
+        earningsPending: cash.pendingEarnings
       },
       byStatus,
       // Named explicitly so the UI can say "not built yet" instead of showing
@@ -232,9 +262,7 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
       unavailable: {
         ordersAssignedToday: "Orders & Dispatch is not built yet",
         dispatchesInProgress: "Orders & Dispatch is not built yet",
-        deliveredToday: "Orders & Dispatch is not built yet",
-        codOutstanding: "COD & Reconciliation is not built yet",
-        overdueRemittances: "COD & Reconciliation is not built yet"
+        deliveredToday: "Orders & Dispatch is not built yet"
       }
     });
   } catch (error: any) {
@@ -815,7 +843,7 @@ router.post("/:id/assign", requireRole(...MANAGEMENT_ROLES), async (req, res) =>
   try {
     const orgId = req.user!.orgId;
     const { data: agent } = await supabase.from(AGENTS)
-      .select("id, account_status, availability, max_active_orders")
+      .select("id, account_status, availability, max_active_orders, max_cod_exposure")
       .eq("org_id", orgId).eq("id", req.params.id).single();
     if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
 
@@ -837,6 +865,28 @@ router.post("/:id/assign", requireRole(...MANAGEMENT_ROLES), async (req, res) =>
         res.status(409).json({ error: `This agent is already at their limit of ${agent.max_active_orders} active orders.` });
         return;
       }
+    }
+
+    // An agent already holding more of our money than their approved limit must
+    // not be given another cash order - the exposure compounds silently.
+    const { data: agentCash } = await supabase.from(ASSIGNMENTS)
+      .select("delivery_status, amount_collected, amount_remitted, delivery_fee")
+      .eq("agent_id", agent.id);
+    const { data: incomingOrder } = await supabase.from("orders")
+      .select("amount").eq("org_id", orgId).eq("id", parsed.data.orderId).maybeSingle();
+    const cashBlockers = codAssignmentBlockers(
+      cashPositionFor((agentCash ?? []).map((row: any) => ({
+        deliveryStatus: row.delivery_status,
+        amountCollected: row.amount_collected,
+        amountRemitted: row.amount_remitted,
+        deliveryFee: row.delivery_fee
+      }))),
+      (agent as any).max_cod_exposure,
+      Number(incomingOrder?.amount ?? 0)
+    );
+    if (cashBlockers.length > 0) {
+      res.status(409).json({ error: cashBlockers[0], blockers: cashBlockers });
+      return;
     }
 
     const { data, error } = await supabase.from(ASSIGNMENTS).insert({
@@ -1092,6 +1142,9 @@ router.post("/my/orders/:assignmentId/delivered", requireRole(AGENT_ROLE), async
     updated_at: new Date().toISOString()
   }).eq("id", req.params.assignmentId).select("*").single();
   if (error) { res.status(500).json({ error: error.message }); return; }
+  // The agent is now holding company cash, so say so immediately rather than
+  // waiting for someone to run a reconciliation.
+  await refreshAssignmentCash(String(data.id));
   res.json({ row: mapAssignment(data) });
 });
 
@@ -1450,6 +1503,238 @@ router.post("/stock/discrepancies/:discrepancyId/review", requireRole(...MANAGEM
     res.json({ row: data });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not review that report." });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────
+// COD & Reconciliation (migration 192)
+//
+// Agents remit the FULL customer payment and are paid their fee separately.
+// See backend/src/lib/pda-cod.ts for why netting is not allowed.
+// ─────────────────────────────────────────────────────────
+
+const REMITTANCES = "pda_remittances";
+const ALLOCATIONS = "pda_remittance_allocations";
+const PAYOUTS = "pda_earning_payouts";
+
+const cashShape = (row: any) => ({
+  deliveryStatus: row.delivery_status,
+  amountCollected: row.amount_collected,
+  amountRemitted: row.amount_remitted,
+  deliveryFee: row.delivery_fee
+});
+
+/** Recomputes reconciliation + earning status for one assignment and saves it. */
+async function refreshAssignmentCash(assignmentId: string) {
+  const { data: row } = await supabase.from(ASSIGNMENTS).select("*").eq("id", assignmentId).maybeSingle();
+  if (!row) return;
+  const shape = cashShape(row);
+  const reconciliation = reconciliationStatusFor(shape);
+  const earning = earningStatusFor(shape, row.earning_status);
+  await supabase.from(ASSIGNMENTS).update({
+    reconciliation_status: reconciliation,
+    earning_status: earning,
+    earning_available_at: earning === "Available" && !row.earning_available_at
+      ? new Date().toISOString() : row.earning_available_at,
+    updated_at: new Date().toISOString()
+  }).eq("id", assignmentId);
+}
+
+// ── GET /:id/cod ──────────────────────────────────────────
+router.get("/:id/cod", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const agentId = paramOf(req.params.id);
+    const [assignRes, remitRes, payoutRes] = await Promise.all([
+      supabase.from(ASSIGNMENTS).select("*").eq("org_id", orgId).eq("agent_id", agentId)
+        .order("delivered_at", { ascending: false }),
+      supabase.from(REMITTANCES).select("*").eq("org_id", orgId).eq("agent_id", agentId)
+        .order("received_at", { ascending: false }).limit(50),
+      supabase.from(PAYOUTS).select("*").eq("org_id", orgId).eq("agent_id", agentId)
+        .order("paid_at", { ascending: false }).limit(50)
+    ]);
+    const assignments = assignRes.data ?? [];
+    const position = cashPositionFor(
+      assignments.map(cashShape),
+      assignments.map((row: any) => row.earning_status)
+    );
+
+    const orderIds = [...new Set(assignments.map((row: any) => row.order_id))];
+    const { data: orders } = orderIds.length
+      ? await supabase.from("orders").select("id, customer, amount").eq("org_id", orgId).in("id", orderIds)
+      : { data: [] as any[] };
+    const orderById = new Map((orders ?? []).map((o: any) => [o.id, o]));
+
+    res.json({
+      position,
+      rows: assignments
+        .filter((row: any) => row.delivery_status === "Delivered")
+        .map((row: any) => ({
+          assignmentId: row.id,
+          orderId: row.order_id,
+          customer: orderById.get(row.order_id)?.customer ?? null,
+          orderValue: Number(orderById.get(row.order_id)?.amount ?? 0),
+          amountCollected: Number(row.amount_collected ?? 0),
+          paymentMethod: row.payment_method,
+          deliveryFee: Number(row.delivery_fee ?? 0),
+          // Always the full collected amount - never reduced by the fee.
+          amountDue: Number(row.amount_collected ?? 0),
+          amountRemitted: Number(row.amount_remitted ?? 0),
+          difference: Number(row.amount_collected ?? 0) - Number(row.amount_remitted ?? 0),
+          reconciliationStatus: row.reconciliation_status,
+          earningStatus: row.earning_status,
+          deliveredAt: row.delivered_at
+        })),
+      remittances: remitRes.data ?? [],
+      payouts: payoutRes.data ?? []
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the cash position." });
+  }
+});
+
+// ── POST /:id/remittances ─────────────────────────────────
+// Logged by the office when the money is actually in hand. "The agent says
+// they sent it" and "we have it" are different facts, so only the second one
+// reduces what they owe.
+const RemittanceSchema = z.object({
+  amount: z.number().min(1),
+  method: z.enum(["Cash", "Transfer", "POS", "Other"]).default("Cash"),
+  reference: z.string().trim().max(200).optional(),
+  note: z.string().trim().max(500).optional()
+});
+
+router.post("/:id/remittances", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = RemittanceSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const orgId = orgIdOf(req);
+    const agentId = paramOf(req.params.id);
+
+    const { data: assignments } = await supabase.from(ASSIGNMENTS)
+      .select("*").eq("org_id", orgId).eq("agent_id", agentId).eq("delivery_status", "Delivered")
+      .order("delivered_at", { ascending: true });
+
+    const debts = (assignments ?? []).map((row: any) => ({
+      assignmentId: row.id,
+      outstanding: outstandingForAssignment(cashShape(row))
+    })).filter((debt) => debt.outstanding > 0);
+
+    const { allocations, unallocated } = allocateRemittance(parsed.data.amount, debts);
+    if (allocations.length === 0) {
+      res.status(409).json({ error: "This agent has no outstanding cash to apply a payment to." });
+      return;
+    }
+
+    const { data: remittance, error } = await supabase.from(REMITTANCES).insert({
+      org_id: orgId, agent_id: agentId,
+      amount: parsed.data.amount,
+      method: parsed.data.method,
+      reference: parsed.data.reference ?? null,
+      note: parsed.data.note ?? null,
+      received_by: req.user!.id,
+      received_by_name: req.user!.name
+    }).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    await supabase.from(ALLOCATIONS).insert(allocations.map((allocation) => ({
+      org_id: orgId,
+      remittance_id: remittance.id,
+      assignment_id: allocation.assignmentId,
+      amount: allocation.amount
+    })));
+
+    // Apply to each order, then recompute its status so the fee becomes
+    // payable at exactly the moment the cash is fully in.
+    for (const allocation of allocations) {
+      const row = (assignments ?? []).find((a: any) => a.id === allocation.assignmentId);
+      const next = Number(row?.amount_remitted ?? 0) + allocation.amount;
+      await supabase.from(ASSIGNMENTS)
+        .update({ amount_remitted: next, updated_at: new Date().toISOString() })
+        .eq("id", allocation.assignmentId);
+      await refreshAssignmentCash(allocation.assignmentId);
+    }
+
+    // If the agent handed over more than they owed, say so rather than quietly
+    // keeping it - an unexplained surplus is as much a red flag as a shortfall.
+    res.status(201).json({
+      row: remittance,
+      applied: allocations.length,
+      unallocated,
+      note: unallocated > 0
+        ? `${unallocated} more than this agent owed. Confirm where it came from before treating it as settled.`
+        : undefined
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not record that payment." });
+  }
+});
+
+// ── POST /:id/earnings/pay ────────────────────────────────
+// Pays out fees that have become available. Only orders whose customer cash is
+// fully in are eligible - paying earlier means paying for money we do not have.
+router.post("/:id/earnings/pay", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const agentId = paramOf(req.params.id);
+    const { data: assignments } = await supabase.from(ASSIGNMENTS)
+      .select("*").eq("org_id", orgId).eq("agent_id", agentId).eq("earning_status", "Available");
+
+    const eligible = assignments ?? [];
+    const total = eligible.reduce((sum: number, row: any) => sum + Number(row.delivery_fee ?? 0), 0);
+    if (total <= 0) { res.status(409).json({ error: "This agent has no earnings available to pay." }); return; }
+
+    const { data: payout, error } = await supabase.from(PAYOUTS).insert({
+      org_id: orgId, agent_id: agentId,
+      amount: total,
+      method: typeof req.body?.method === "string" ? req.body.method : null,
+      reference: typeof req.body?.reference === "string" ? req.body.reference : null,
+      paid_by: req.user!.id, paid_by_name: req.user!.name
+    }).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    await supabase.from(ASSIGNMENTS).update({
+      earning_status: "Paid",
+      earning_paid_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }).in("id", eligible.map((row: any) => row.id));
+
+    res.status(201).json({ row: payout, orders: eligible.length, amount: total });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not pay those earnings." });
+  }
+});
+
+// ── GET /my/wallet ────────────────────────────────────────
+// The agent's own money. Company cash and their earnings are kept visibly
+// apart so "what I owe" is never confused with "what I am owed".
+router.get("/my/wallet", requireRole(AGENT_ROLE), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const agent = await agentForUser(orgId, req.user!.id);
+    if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
+
+    const { data: assignments } = await supabase.from(ASSIGNMENTS)
+      .select("*").eq("agent_id", agent.id);
+    const rows = assignments ?? [];
+    const position = cashPositionFor(rows.map(cashShape), rows.map((row: any) => row.earning_status));
+
+    const { data: payouts } = await supabase.from(PAYOUTS)
+      .select("amount, paid_at, reference").eq("agent_id", agent.id)
+      .order("paid_at", { ascending: false }).limit(20);
+
+    res.json({
+      codToRemit: position.outstanding,
+      ordersWithCashOutstanding: position.ordersWithCashOutstanding,
+      availableEarnings: position.availableEarnings,
+      pendingEarnings: position.pendingEarnings,
+      recentPayouts: payouts ?? [],
+      codLimit: agent.max_cod_exposure === null || agent.max_cod_exposure === undefined
+        ? null : Number(agent.max_cod_exposure)
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load your wallet." });
   }
 });
 
