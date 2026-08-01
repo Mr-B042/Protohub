@@ -2335,10 +2335,25 @@ router.get("/my/summary", requireRole(AGENT_ROLE), async (req, res) => {
         rescheduled: open.filter((r: any) => r.delivery_status === "Rescheduled").length,
         deliveredToday: rows.filter((r: any) => String(r.delivered_at ?? "").slice(0, 10) === new Date().toISOString().slice(0, 10)).length
       },
-      // Earnings and cash owed arrive with COD & Reconciliation. Reported as
-      // unavailable rather than as zero: an agent seeing "₦0 to remit" when
-      // they are holding our cash is the worst possible wrong answer.
-      wallet: { available: null, pending: null, codToRemit: null, note: "COD & Reconciliation is not built yet" }
+      // The agent's OWN money position - what they are holding for us and what
+      // we owe them. Never any company-wide figure: an agent has no business
+      // seeing revenue, cost or margin, and none of it is loaded here.
+      wallet: (() => {
+        const position = cashPositionFor(
+          rows.map((r: any) => ({
+            deliveryStatus: r.delivery_status,
+            amountCollected: r.amount_collected,
+            amountRemitted: r.amount_remitted,
+            deliveryFee: r.delivery_fee
+          })),
+          rows.map((r: any) => r.earning_status)
+        );
+        return {
+          codToRemit: position.outstanding,
+          available: position.availableEarnings,
+          pending: position.pendingEarnings
+        };
+      })()
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load your dashboard." });

@@ -705,7 +705,8 @@ export type PdaMySummary = {
     inProgress: number; rescheduled: number; deliveredToday: number;
   };
   /** null values mean "not built yet", never "zero" - see the route comment. */
-  wallet: { available: number | null; pending: number | null; codToRemit: number | null; note?: string };
+  /** The agent's OWN money only - never any company-wide figure. */
+  wallet: { available: number; pending: number; codToRemit: number };
 };
 
 export type PdaCodRow = {

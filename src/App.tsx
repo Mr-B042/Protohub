@@ -258,10 +258,12 @@ const PDA_APP_TABS: Array<{ key: PdaAppTab; icon: typeof LayoutPanelTop }> = [
   { key: "Pending Approval", icon: CheckCircle2 }
 ];
 
-type PdaPortalTab = "Home" | "Orders" | "Profile";
+type PdaPortalTab = "Home" | "Orders" | "Inventory" | "Wallet" | "Profile";
 const PDA_PORTAL_TABS: Array<{ key: PdaPortalTab; label: string; icon: typeof LayoutPanelTop }> = [
   { key: "Home", label: "Home", icon: LayoutPanelTop },
   { key: "Orders", label: "Orders", icon: PackageCheck },
+  { key: "Inventory", label: "Stock", icon: Box },
+  { key: "Wallet", label: "Wallet", icon: Banknote },
   { key: "Profile", label: "Profile", icon: Users }
 ];
 
@@ -11262,6 +11264,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaMySummary, setPdaMySummary] = useState<PdaMySummary | null>(null);
   const [pdaMyOrders, setPdaMyOrders] = useState<PdaAssignment[]>([]);
   const [pdaWallet, setPdaWallet] = useState<PdaWallet | null>(null);
+  const [pdaMyStock, setPdaMyStock] = useState<{ stock: any[]; incoming: any[]; ledger: any[] } | null>(null);
   const [pdaActiveAssignment, setPdaActiveAssignment] = useState<PdaAssignment | null>(null);
   const [pdaDeliveredDraft, setPdaDeliveredDraft] = useState({ amountCollected: "", paymentMethod: "Cash", proofType: "Customer OTP", proofReference: "" });
   const [pdaFailedDraft, setPdaFailedDraft] = useState({ outcome: "Failed", failureReason: "", failureNote: "" });
@@ -40519,17 +40522,64 @@ ${waybillLineItems(w).length > 1
   // ── Agent portal actions ───────────────────────────────
   const loadPdaPortal = async () => {
     try {
-      const [summary, orders, wallet] = await Promise.all([
+      const [summary, orders, wallet, stock] = await Promise.all([
         personalDeliveryAgentsApi.mySummary(),
         personalDeliveryAgentsApi.myOrders(),
-        personalDeliveryAgentsApi.myWallet()
+        personalDeliveryAgentsApi.myWallet(),
+        personalDeliveryAgentsApi.myStock()
       ]);
       setPdaMySummary(summary);
       setPdaMyOrders(orders?.rows ?? []);
       setPdaWallet(wallet);
+      setPdaMyStock(stock);
     } catch (err: any) {
       showToast(err?.message ?? "Could not load your dashboard.");
     }
+  };
+
+  const pdaConfirmTransfer = async (transferId: string, sent: number) => {
+    const answer = window.prompt(`How many actually arrived? (${sent} were sent)`, String(sent));
+    if (answer === null) return;
+    const received = Number(answer);
+    if (!Number.isInteger(received) || received < 0 || received > sent) {
+      showToast(`Enter a whole number between 0 and ${sent}.`);
+      return;
+    }
+    let conditionNote: string | undefined;
+    if (received < sent) {
+      // A shortfall is a fact worth explaining while it is fresh, not a
+      // number to quietly accept.
+      const note = window.prompt(`${sent - received} missing. What happened?`);
+      conditionNote = (note ?? "").trim() || undefined;
+    }
+    try {
+      const result = await personalDeliveryAgentsApi.confirmTransfer(transferId, { quantityReceived: received, conditionNote });
+      showToast(result.short
+        ? "Recorded. The office can see the shortfall."
+        : "Confirmed. The stock is now yours to sell.");
+      await loadPdaPortal();
+    } catch (err: any) { showToast(err?.message ?? "Could not confirm that."); }
+  };
+
+  const pdaReportStockIssue = async (productId: string, available: number) => {
+    const answer = window.prompt(`How many do you actually have? (our records say ${available})`, String(available));
+    if (answer === null) return;
+    const reported = Number(answer);
+    if (!Number.isInteger(reported) || reported < 0) { showToast("Enter a whole number."); return; }
+    const reason = window.prompt("What happened? (Damaged / Missing / Never arrived / Miscounted / Stolen / Other)");
+    const allowed = ["Damaged", "Missing", "Never arrived", "Miscounted", "Stolen", "Other"];
+    const chosen = allowed.find((option) => option.toLowerCase() === (reason ?? "").trim().toLowerCase());
+    if (!chosen) { showToast(`Choose one of: ${allowed.join(", ")}.`); return; }
+    const note = window.prompt("Anything else the office should know? (optional)") ?? "";
+    try {
+      const result = await personalDeliveryAgentsApi.reportDiscrepancy({
+        productId, reportedQuantity: reported, reason: chosen, agentNote: note.trim() || undefined
+      });
+      // Reporting changes nothing on its own - say so, so nobody assumes it
+      // has been written off.
+      showToast(result.note ?? "Reported. Your stock has not changed until the office reviews it.");
+      await loadPdaPortal();
+    } catch (err: any) { showToast(err?.message ?? "Could not report that."); }
   };
 
   const pdaSetAvailability = async (availability: string) => {
@@ -47340,6 +47390,7 @@ ${waybillLineItems(w).length > 1
     const openRows = pdaMyOrders.filter((row) => !["Delivered", "Failed", "Rejected", "Cancelled"].includes(row.deliveryStatus));
     const doneRows = pdaMyOrders.filter((row) => ["Delivered", "Failed", "Rejected", "Cancelled"].includes(row.deliveryStatus));
     const visibleRows = pdaPortalTab === "Orders" ? pdaMyOrders : openRows;
+    const showOrderList = pdaPortalTab === "Home" || pdaPortalTab === "Orders";
 
     return (
       <div className="mx-auto w-full max-w-xl pb-24">
@@ -47416,6 +47467,7 @@ ${waybillLineItems(w).length > 1
           </>
         )}
 
+        {showOrderList && (
         <section className="mt-4 space-y-3">
           <h2 className="m-0 px-1 text-sm font-black text-gray-900">
             {pdaPortalTab === "Home" ? "What needs you now" : "All your orders"}
@@ -47511,6 +47563,188 @@ ${waybillLineItems(w).length > 1
             <p className="m-0 px-1 text-[11px] text-gray-400">{doneRows.length} finished order{doneRows.length === 1 ? "" : "s"} — see the Orders tab.</p>
           )}
         </section>
+        )}
+
+
+        {pdaPortalTab === "Inventory" && (
+          <section className="mt-4 space-y-3">
+            <h2 className="m-0 px-1 text-sm font-black text-gray-900">Stock you are holding</h2>
+
+            {(pdaMyStock?.incoming ?? []).length > 0 && (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50/60 p-4">
+                <div className="text-sm font-black text-gray-900">Stock on its way to you</div>
+                <p className="m-0 mt-0.5 text-[11px] text-gray-600">
+                  Confirm what actually arrived. Only the quantity you confirm becomes your stock — if some is missing, say so.
+                </p>
+                <div className="mt-3 space-y-2">
+                  {pdaMyStock!.incoming.map((transfer: any) => (
+                    <div key={transfer.id} className="rounded-xl bg-white p-3">
+                      <div className="text-[13px] font-bold text-gray-900">
+                        {productNameById(transfer.product_id)} × {transfer.quantity_sent}
+                      </div>
+                      <div className="text-[11px] text-gray-400">
+                        Sent {new Date(transfer.sent_at).toLocaleDateString([], { dateStyle: "medium" })}
+                        {transfer.waybill_reference ? ` · ${transfer.waybill_reference}` : ""}
+                      </div>
+                      <button type="button" onClick={() => void pdaConfirmTransfer(transfer.id, Number(transfer.quantity_sent))}
+                        className="!min-h-0 mt-2 w-full rounded-xl bg-[#1F8FE0] px-4 py-2.5 text-sm font-black text-white">
+                        Confirm what arrived
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(pdaMyStock?.stock ?? []).length === 0 ? (
+              <p className="m-0 rounded-2xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-400">
+                You are not holding any stock yet.
+              </p>
+            ) : pdaMyStock!.stock.map((row: any) => {
+              const held = Number(row.available ?? 0) + Number(row.reserved ?? 0) + Number(row.out_for_delivery ?? 0);
+              return (
+                <article key={row.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-base font-black text-gray-900">{productNameById(row.product_id)}</div>
+                      <div className="text-[11px] text-gray-400">{held} unit{held === 1 ? "" : "s"} with you</div>
+                    </div>
+                    <button type="button" onClick={() => void pdaReportStockIssue(row.product_id, Number(row.available ?? 0))}
+                      className="!min-h-0 shrink-0 rounded-xl border border-amber-200 px-3 py-2 text-[11px] font-black text-amber-700">
+                      Report a problem
+                    </button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                    {[
+                      { label: "Ready to sell", value: row.available, tone: "text-emerald-600" },
+                      { label: "Held for orders", value: row.reserved, tone: "text-amber-600" },
+                      { label: "Out with you", value: row.out_for_delivery, tone: "text-[#1F8FE0]" }
+                    ].map((cell) => (
+                      <div key={cell.label} className="rounded-xl bg-gray-50 py-2">
+                        <div className={`text-lg font-black ${cell.tone}`}>{cell.value}</div>
+                        <div className="text-[10px] text-gray-500">{cell.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {(Number(row.damaged ?? 0) + Number(row.missing ?? 0)) > 0 && (
+                    <p className="m-0 mt-2 rounded-xl bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-700">
+                      {Number(row.damaged ?? 0) + Number(row.missing ?? 0)} unit(s) written off as damaged or missing.
+                    </p>
+                  )}
+                </article>
+              );
+            })}
+
+            <p className="m-0 px-1 text-[11px] text-gray-400">
+              You cannot change these numbers yourself — report a problem and the office will check it. That protects you as much as the company.
+            </p>
+          </section>
+        )}
+
+        {pdaPortalTab === "Wallet" && (
+          <section className="mt-4 space-y-3">
+            <h2 className="m-0 px-1 text-sm font-black text-gray-900">Your money</h2>
+
+            <article className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Company money you are holding</div>
+              <div className={`mt-1 text-3xl font-black ${(pdaWallet?.codToRemit ?? 0) > 0 ? "text-red-600" : "text-gray-900"}`}>
+                {formatMoney(pdaWallet?.codToRemit ?? 0)}
+              </div>
+              <p className="m-0 mt-1 text-[12px] text-gray-600">
+                {(pdaWallet?.ordersWithCashOutstanding ?? 0) > 0
+                  ? `From ${pdaWallet?.ordersWithCashOutstanding} delivered order${pdaWallet?.ordersWithCashOutstanding === 1 ? "" : "s"}. Hand over the full amount — your fee is paid to you separately.`
+                  : "Nothing to hand over right now."}
+              </p>
+              {pdaWallet?.codLimit ? (
+                <p className="m-0 mt-2 rounded-xl bg-gray-50 px-3 py-2 text-[11px] text-gray-500">
+                  Your limit is {formatMoney(pdaWallet.codLimit)}. New orders pause once you go over it, until you remit.
+                </p>
+              ) : null}
+            </article>
+
+            <article className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Your earnings</div>
+              <div className="mt-1 text-3xl font-black text-emerald-600">{formatMoney(pdaWallet?.availableEarnings ?? 0)}</div>
+              <p className="m-0 mt-1 text-[12px] text-gray-600">
+                Ready to be paid to you.
+                {(pdaWallet?.pendingEarnings ?? 0) > 0
+                  ? ` A further ${formatMoney(pdaWallet?.pendingEarnings ?? 0)} is waiting for that order's cash to reach the office.`
+                  : ""}
+              </p>
+            </article>
+
+            <article className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div className="text-sm font-black text-gray-900">Paid to you</div>
+              {(pdaWallet?.recentPayouts ?? []).length === 0 ? (
+                <p className="m-0 mt-2 text-[12px] text-gray-400">No payments yet.</p>
+              ) : (
+                <ul className="m-0 mt-2 list-none space-y-2 p-0">
+                  {pdaWallet!.recentPayouts.map((payout, index) => (
+                    <li key={`${payout.paid_at}-${index}`} className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 px-3 py-2">
+                      <span className="text-[13px] font-black text-gray-900">{formatMoney(payout.amount)}</span>
+                      <span className="text-[11px] text-gray-500">
+                        {new Date(payout.paid_at).toLocaleDateString([], { dateStyle: "medium" })}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </article>
+          </section>
+        )}
+
+        {pdaPortalTab === "Profile" && (
+          <section className="mt-4 space-y-3">
+            <h2 className="m-0 px-1 text-sm font-black text-gray-900">Your account</h2>
+
+            <article className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <span className={`flex h-14 w-14 items-center justify-center rounded-full text-lg font-black ${customerAvatarTone(agent?.id ?? "x")}`}>
+                  {customerInitial(agent?.fullName ?? "?")}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-base font-black text-gray-900">{agent?.fullName ?? "—"}</div>
+                  <div className="text-[11px] text-gray-400">{agent?.agentCode}</div>
+                </div>
+              </div>
+              <dl className="m-0 mt-4 space-y-2 text-[12px]">
+                {[
+                  ["Account status", agent?.accountStatus ?? "—"],
+                  ["Level", agent?.trustLevel ?? "—"],
+                  ["Availability", agent?.availability ?? "—"],
+                  ["Probation ends", agent?.probationEndsAt
+                    ? new Date(agent.probationEndsAt).toLocaleDateString([], { dateStyle: "medium" })
+                    : "Not on probation"]
+                ].map(([label, value]) => (
+                  <div key={label} className="flex items-center justify-between gap-3">
+                    <dt className="m-0 text-gray-500">{label}</dt>
+                    <dd className="m-0 font-bold text-gray-800">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </article>
+
+            <article className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div className="text-sm font-black text-gray-900">What you agreed</div>
+              <ul className="m-0 mt-2 list-none space-y-1.5 p-0 text-[12px] text-gray-600">
+                {[
+                  "Call the customer and confirm they are ready before you set off.",
+                  "Collect the full amount and hand over the full amount — your fee is paid separately.",
+                  "Record proof on every delivery.",
+                  "Report damaged or missing stock instead of adjusting it yourself."
+                ].map((line) => (
+                  <li key={line} className="flex items-start gap-2">
+                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" /> {line}
+                  </li>
+                ))}
+              </ul>
+            </article>
+
+            <p className="m-0 px-1 text-[11px] text-gray-400">
+              Something wrong here? Call the office — you cannot change your own account details, limits or stock.
+            </p>
+          </section>
+        )}
 
         {/* Bottom bar: thumb-reachable, the way a phone is actually held. */}
         <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 backdrop-blur">
