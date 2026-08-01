@@ -651,7 +651,7 @@ export type PersonalDeliveryAgentOverview = {
 export type PdaKycItem = {
   id: string; itemKey: string; label: string; mandatory: boolean; status: string;
   filePath?: string | null; reviewedAt?: string | null; reviewNote?: string | null;
-  rejectionReason?: string | null;
+  rejectionReason?: string | null; fileName?: string | null; fileSizeBytes?: number | null;
 };
 
 export type PdaGuarantor = {
@@ -814,6 +814,18 @@ export type PdaGuarantorQueueRow = PdaGuarantorFull & {
   agentId: string; applicantName?: string | null; applicationId: string;
 };
 
+export type PdaDocumentViewRow = {
+  key: string; kind: "kyc" | "agreement"; id: string;
+  label: string; subtitle: string;
+  fileName?: string | null; fileSizeBytes?: number | null; path?: string | null;
+  status: string; reviewedByName?: string | null; reviewedAt?: string | null;
+};
+
+export type PdaVerificationCategory = {
+  category: string; detail: string; status: string;
+  reviewedByName?: string | null; reviewedAt?: string | null;
+};
+
 export type PdaReviewView = {
   agent: PersonalDeliveryAgentRow & { verificationPhrase?: string | null; applicationId: string };
   progress: { approved: number; total: number; pct: number };
@@ -822,6 +834,8 @@ export type PdaReviewView = {
   documents: PdaDocument[];
   notes: PdaNote[];
   activity: PdaActivityEntry[];
+  documentsView: PdaDocumentViewRow[];
+  verificationSummary: PdaVerificationCategory[];
   blockers: string[];
   summary: { submittedOn: string; lastUpdated: string; source: string };
 };
