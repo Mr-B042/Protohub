@@ -801,9 +801,48 @@ export type PdaApplicationsView = {
   };
 };
 
+export type PdaNote = { id: string; body: string; authorName?: string | null; createdAt: string };
+export type PdaActivityEntry = { label: string; at: string; by?: string | null; tone: "done" | "pending" };
+
+export type PdaGuarantorFull = PdaGuarantor & {
+  email?: string | null; workplace?: string | null; yearsKnown?: string | null;
+  referenceStatement?: string | null; preferredContactTime?: string | null;
+  callAttempts: number; lastAttemptAt?: string | null; assignedToName?: string | null;
+};
+
+export type PdaGuarantorQueueRow = PdaGuarantorFull & {
+  agentId: string; applicantName?: string | null; applicationId: string;
+};
+
+export type PdaReviewView = {
+  agent: PersonalDeliveryAgentRow & { verificationPhrase?: string | null; applicationId: string };
+  progress: { approved: number; total: number; pct: number };
+  kycItems: PdaKycItem[];
+  guarantors: PdaGuarantorFull[];
+  documents: PdaDocument[];
+  notes: PdaNote[];
+  activity: PdaActivityEntry[];
+  blockers: string[];
+  summary: { submittedOn: string; lastUpdated: string; source: string };
+};
+
+export type PdaGuarantorDetail = {
+  guarantor: PdaGuarantorFull;
+  applicant: { id: string; fullName: string; phone: string; applicationId: string } | null;
+  notes: PdaNote[];
+  activity: PdaActivityEntry[];
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),
+  applicationReview: (id: string) => get<PdaReviewView>(`/api/personal-delivery-agents/applications/${id}/review`),
+  guarantorQueue: () => get<{ rows: PdaGuarantorQueueRow[]; counts: { total: number; outstanding: number } }>("/api/personal-delivery-agents/guarantors/queue"),
+  guarantorDetail: (id: string) => get<PdaGuarantorDetail>(`/api/personal-delivery-agents/guarantors/${id}/detail`),
+  logGuarantorCall: (id: string, reached: boolean) =>
+    post<{ row: PdaGuarantorQueueRow }>(`/api/personal-delivery-agents/guarantors/${id}/call-attempt`, { reached }),
+  addNote: (body: { agentId?: string; guarantorId?: string; body: string }) =>
+    post<{ row: PdaNote }>("/api/personal-delivery-agents/notes", body),
   reviewKycItem: (itemId: string, body: unknown) =>
     patch<{ row: PdaKycItem }>(`/api/personal-delivery-agents/kyc-items/${itemId}`, body),
   issueVerificationPhrase: (id: string) =>
