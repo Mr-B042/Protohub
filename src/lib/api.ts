@@ -1003,6 +1003,39 @@ export type PdaIncidentsOverview = {
   recentActivity: Array<{ code: string; label: string; agentName: string; at: string; resolved: boolean }>;
 };
 
+export type PdaGeneratedReport = {
+  id: string; code: string; name: string; category: string; description?: string | null;
+  dateFrom?: string | null; dateTo?: string | null; status: string; rowCount?: number | null;
+  generatedByName: string; generatedByRole: string; generatedAt: string;
+  downloadedCount: number; isScheduled: boolean;
+};
+
+export type PdaReportsView = {
+  rows: PdaGeneratedReport[];
+  counts: {
+    total: number; generated: number; scheduled: number; downloaded: number; failed: number;
+    totalDeltaPct: number | null; generatedDeltaPct: number | null; scheduledDeltaPct: number | null;
+    downloadedDeltaPct: number | null; failedDeltaPct: number | null;
+  };
+  byCategory: Array<{ label: string; count: number }>;
+};
+
+export type PdaSettingsGroup = {
+  key: string; title: string; description: string; bullets: string[];
+  /** The number of settings that ACTUALLY exist in this group. */
+  settings: number;
+  configurable: boolean; note?: string; managedOn?: string;
+};
+
+export type PdaSettingsOverview = {
+  groups: PdaSettingsGroup[];
+  counts: {
+    configurableTotal: number; groupsConfigurable: number; groupsFixed: number;
+    feeRules: number; agents: number; graceDays: number; probationDays: number;
+  };
+  lastUpdatedAt: string | null;
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),
@@ -1010,6 +1043,10 @@ export const personalDeliveryAgentsApi = {
   inventoryOverview: () => get<PdaInventoryOverview>("/api/personal-delivery-agents/inventory-overview"),
   codOverview: () => get<PdaCodOverview>("/api/personal-delivery-agents/cod-overview"),
   incidentsOverview: () => get<PdaIncidentsOverview>("/api/personal-delivery-agents/incidents-overview"),
+  reportsList: () => get<PdaReportsView>("/api/personal-delivery-agents/reports-list"),
+  createReport: (body: unknown) => post<{ row: any }>("/api/personal-delivery-agents/reports-list", body),
+  markReportDownloaded: (id: string) => post<{ ok: boolean }>(`/api/personal-delivery-agents/reports-list/${id}/downloaded`, {}),
+  settingsOverview: () => get<PdaSettingsOverview>("/api/personal-delivery-agents/settings-overview"),
   agentRemittance: (agentId: string) => get<PdaAgentRemittance>(`/api/personal-delivery-agents/cod/agent/${agentId}/remittance`),
   codPayments: () => get<PdaPaymentsView>("/api/personal-delivery-agents/cod/payments"),
   setPaymentStatus: (paymentId: string, body: unknown) =>
