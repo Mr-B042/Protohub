@@ -45993,21 +45993,16 @@ ${waybillLineItems(w).length > 1
     const myOrders = recoveryRepViewingId
       ? trackedOrders.filter((order) => order.assignedRepId === recoveryRepViewingId)
       : [];
-    const todayMs = Date.now();
-    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-    // Recovery Candidates - orders matching the eligibility categories that
-    // are cheaply computable from already-loaded order data (per-order
-    // contact-attempt history isn't bulk-loaded client-side, so "7+ days no
-    // response" is approximated as "still open 7+ days after creation"
-    // rather than an exact last-contact-attempt date diff). Each candidate
-    // carries its own `reason` (why it surfaced) so the card can show it,
-    // matching the Customers page's "Customer Status" badge convention.
-    // Postponed is deliberately NOT a recovery candidate: a postponed order is
-    // rescheduled, not lost - the original rep still owns it and it will come
-    // back around on its own date. Recovery works orders that actually died:
-    // Failed, Cancelled, and rejections (which Protohub records as free-text
-    // call outcomes like "Customer rejected the item" rather than a status of
-    // their own), plus orders left open with no closure.
+    // Recovery Candidates. Each candidate carries its own `reason` (why it
+    // surfaced) so the card can show it, matching the Customers page's
+    // "Customer Status" badge convention.
+    // Recovery works orders that actually DIED: Failed, Cancelled, and
+    // rejections (which Protohub records as free-text call outcomes like
+    // "Customer rejected the item" rather than a status of their own), plus
+    // "Product Unavailable".
+    // Anything still open is deliberately excluded - Postponed, and orders
+    // sitting in New/Confirmed - because the rep who owns them is still
+    // working them. Two reps on one order is the bug both exclusions prevent.
     const REJECTION_OUTCOME_PATTERN = /reject|refus|denied|not interested|returned/i;
     const candidateReason = (order: TrackedOrder): string | null => {
       const status = order.status ?? "New";
@@ -46019,10 +46014,13 @@ ${waybillLineItems(w).length > 1
         return status;
       }
       if (outcome === "Product Unavailable") return "Product Unavailable";
-      if (["New", "Confirmed"].includes(status) && order.createdAt) {
-        const createdMs = new Date(order.createdAt).getTime();
-        if (Number.isFinite(createdMs) && todayMs - createdMs >= sevenDaysMs) return "7+ days, no closure";
-      }
+      // "Open 7+ days" is deliberately NOT a recovery candidate. Bright:
+      // these are still live orders. Checked against production - all 49 were
+      // status Confirmed, every one had a call outcome, 39 were scheduled and
+      // 37 had a next follow-up booked. They are being actively worked by the
+      // sales rep who owns them, so surfacing them here put two reps on the
+      // same order, the same problem Postponed had. Recovery works orders that
+      // actually died.
       return null;
     };
 
@@ -46755,8 +46753,8 @@ ${waybillLineItems(w).length > 1
             <div className="text-xl font-black text-violet-600 mt-1">{candidateReasonCounts["Product Unavailable"] ?? 0}</div>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3 col-span-2 sm:col-span-1">
-            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">7+ Days, No Closure</div>
-            <div className="text-xl font-black text-sky-600 mt-1">{candidateReasonCounts["7+ days, no closure"] ?? 0}</div>
+            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Failed</div>
+            <div className="text-xl font-black text-sky-600 mt-1">{candidateReasonCounts["Failed"] ?? 0}</div>
           </div>
         </div>
 
@@ -46764,7 +46762,7 @@ ${waybillLineItems(w).length > 1
           <div className="px-5 py-4 border-b border-gray-200">
             <h2 className="text-base font-bold text-gray-900">Recovery Candidates</h2>
             <p className="text-xs text-gray-500 mt-0.5">
-              Failed, Cancelled and rejected orders; orders open 7+ days with no closure; and orders logged "Product Unavailable" - not yet assigned to this rep. Postponed orders are excluded: they are rescheduled, not lost.
+              Failed, Cancelled and rejected orders, plus orders logged "Product Unavailable" - not yet assigned to this rep. Postponed and still-open orders are excluded: they are being worked by the rep who owns them, not lost.
               Reassign a candidate using its order's existing "Reassign Sales Rep" action.
             </p>
           </div>
