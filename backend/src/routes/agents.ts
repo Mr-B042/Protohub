@@ -4,6 +4,7 @@ import { z } from "zod";
 import { buildCoverageRows } from "../lib/agent-coverage.js";
 import { loadAgentLocations, syncAgentLocationsFromCoverage, syncAgentStockAggregate } from "../lib/agent-locations.js";
 import { supabase } from "../lib/supabase.js";
+import { recordStockLossExpense } from "../lib/stock-loss-expense.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
@@ -531,8 +532,9 @@ router.post("/:id/reconcile",
       const parts: string[] = [];
       if (defective > 0) parts.push(`${defective} defective`);
       if (missing > 0) parts.push(`${missing} missing`);
+      const movementId = `MOV-${randomUUID()}`;
       await supabase.from("stock_movements").insert({
-          id: `MOV-${randomUUID()}`, org_id: orgId,
+          id: movementId, org_id: orgId,
         product_id: productId, product_name: product?.name ?? productId,
         type: "Correction", qty: -(defective + missing),
         balance_after: nextQty, agent_id: agentId,
@@ -540,6 +542,20 @@ router.post("/:id/reconcile",
         from_location: targetLocation.name,
         by_name: req.user!.name, by_user_id: req.user!.id,
         note: `${parts.join(", ")} written off at ${targetLocation.name}${notes ? ` — ${notes}` : ""}`
+      });
+      // These units are gone and were never sold, so their cost has never been
+      // recognised anywhere. Booking it here is what makes shrinkage show up in
+      // the P&L instead of quietly flattering net profit. `returned` is excluded
+      // above - those units came back and are still ours.
+      await recordStockLossExpense({
+        orgId,
+        reference: movementId,
+        productId,
+        productName: product?.name ?? productId,
+        units: defective + missing,
+        reason: defective > 0 && missing > 0 ? "Damaged and missing"
+          : defective > 0 ? "Damaged" : "Missing",
+        context: `Agent reconcile — ${targetLocation.name}`
       });
     }
 

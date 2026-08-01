@@ -273,7 +273,7 @@ const RETENTION_TASK_TYPES: Array<{ key: RetentionTaskTypeKey; label: string; ic
   { key: "general_check_in", label: "General Check-in", icon: MessageCircle, tone: "text-teal-600" }
 ];
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
-type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
+type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Stock Loss" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
 type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer" | "Recovery Rep";
 type UserStatus = "All Status" | "Active" | "Inactive";
@@ -2108,7 +2108,7 @@ const financeLensToneClasses: Record<FinanceLens, string> = {
   "Cash Flow": "bg-emerald-50 text-emerald-700 border-emerald-200",
   Operational: "bg-amber-50 text-amber-700 border-amber-200"
 };
-const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Salary", "Clearing & Shipping", "Waybill", "Airtime & Data", "Other"];
+const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Failed Delivery", "Salary", "Clearing & Shipping", "Waybill", "Airtime & Data", "Stock Loss", "Other"];
 const expenseFilters: ExpenseFilter[] = ["All Types", ...expenseTypes];
 const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep"];
 const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep"];
@@ -6439,6 +6439,7 @@ const normalizeExpenseRecord = (value: any): ExpenseRecord => {
     "Clearing & Shipping",
     "Waybill",
     "Airtime & Data",
+    "Stock Loss",
     "Other"
   ];
   return {
@@ -15394,6 +15395,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       cogs,
       recognizedLogistics,
       recordedDeliveryExpense,
+      // Delivery expense entries that are NOT in the figure above. The two are
+      // deliberately either/or (counting both would double every delivery), but
+      // dropping one silently means a bulk courier payment logged only as an
+      // expense would never reach profit. Surfaced so it is a visible choice.
+      deliveryExpenseNotRecognized: logisticsFromOrders > 0 ? recordedDeliveryExpense : 0,
       recordedOperatingExpense,
       bonusEstimate,
       legacyBonusEstimate,
@@ -18299,6 +18305,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // How much of the figure above is accrued rather than billed. An adjusted
   // number is never shown without saying how much of it is an estimate.
   const financeProvisionalLogistics = provisionalLogisticsSummary(financeDeliveredRows);
+  const financeDeliveryExpenseNotCounted = financeProfitSummary.deliveryExpenseNotRecognized;
   const financeBonusEstimate = financeProfitSummary.totalBonusExpense;
   const financeSalesBonusEstimate = financeProfitSummary.bonusEstimate;
   const financeManagerBonusExpense = financeProfitSummary.managerBonusExpense;
@@ -63346,6 +63353,11 @@ ${waybillLineItems(w).length > 1
                               {financeProvisionalLogistics.orders > 0 && (
                                 <span className="mt-0.5 block text-[11px] font-semibold normal-case text-amber-700">
                                   Includes {formatMoney(financeProvisionalLogistics.total)} estimated across {financeProvisionalLogistics.orders} delivery{financeProvisionalLogistics.orders === 1 ? "" : "s"} not yet billed by monthly-remit agents. Replaced automatically once they send the real breakdown.
+                                </span>
+                              )}
+                              {financeDeliveryExpenseNotCounted > 0 && (
+                                <span className="mt-0.5 block text-[11px] font-semibold normal-case text-gray-500">
+                                  This is the per-order fee total. A further {formatMoney(financeDeliveryExpenseNotCounted)} is logged under the Delivery expense category and is NOT added here, because those entries normally duplicate the same deliveries - adding both would double every delivery. If any of it is separate money (a bulk courier payment, say), it needs its own category to be counted.
                                 </span>
                               )}
                             </td>
