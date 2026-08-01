@@ -3832,4 +3832,230 @@ router.post("/cod/discrepancies/:discrepancyId/resolve", requireRole(...MANAGEME
   }
 });
 
+const REPORTS = "pda_reports";
+
+// ── GET /api/personal-delivery-agents/reports-list ────────
+router.get("/reports-list", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const lastMonthKey = lastMonth.toISOString().slice(0, 7);
+    const monthOf = (value: any) => String(value ?? "").slice(0, 7);
+
+    const { data: reports } = await supabase.from(REPORTS)
+      .select("*").eq("org_id", orgId).order("generated_at", { ascending: false }).limit(300);
+    const rows = (reports ?? []) as any[];
+    const bucket = (source: any[]) => ({
+      total: source.length,
+      generated: source.filter((r) => r.status === "Completed").length,
+      scheduled: source.filter((r) => r.is_scheduled).length,
+      downloaded: source.filter((r) => Number(r.downloaded_count ?? 0) > 0).length,
+      failed: source.filter((r) => r.status === "Failed").length
+    });
+    const now = bucket(rows.filter((r) => monthOf(r.generated_at) === monthKey));
+    const before = bucket(rows.filter((r) => monthOf(r.generated_at) === lastMonthKey));
+    const pct = (a: number, b: number) => b <= 0 ? null : Math.round(((a - b) / b) * 1000) / 10;
+
+    const byCategory = new Map<string, number>();
+    for (const row of rows) byCategory.set(row.category, (byCategory.get(row.category) ?? 0) + 1);
+
+    res.json({
+      rows: rows.map((row: any) => ({
+        id: row.id,
+        code: row.report_code ?? row.id.slice(0, 8),
+        name: row.name,
+        category: row.category,
+        description: row.description ?? null,
+        dateFrom: row.date_from ?? null,
+        dateTo: row.date_to ?? null,
+        status: row.status,
+        rowCount: row.row_count ?? null,
+        generatedByName: row.generated_by_name ?? "Unknown",
+        generatedByRole: row.generated_by_role ?? "",
+        generatedAt: row.generated_at,
+        downloadedCount: Number(row.downloaded_count ?? 0),
+        isScheduled: row.is_scheduled
+      })),
+      counts: {
+        ...now,
+        totalDeltaPct: pct(now.total, before.total),
+        generatedDeltaPct: pct(now.generated, before.generated),
+        scheduledDeltaPct: pct(now.scheduled, before.scheduled),
+        downloadedDeltaPct: pct(now.downloaded, before.downloaded),
+        failedDeltaPct: pct(now.failed, before.failed)
+      },
+      byCategory: [...byCategory.entries()].sort((a, b) => b[1] - a[1]).map(([label, count]) => ({ label, count }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load reports." });
+  }
+});
+
+const ReportSchema = z.object({
+  name: z.string().trim().min(2).max(160),
+  category: z.enum(["Collections", "Remittance", "Payments", "Earnings", "Performance",
+    "Incidents", "Deliveries", "Inventory", "Discrepancies", "Other"]),
+  description: z.string().trim().max(500).optional(),
+  dateFrom: z.string().trim().max(20).optional(),
+  dateTo: z.string().trim().max(20).optional(),
+  rowCount: z.number().int().min(0).optional(),
+  isScheduled: z.boolean().optional(),
+  scheduleNote: z.string().trim().max(200).optional()
+});
+
+router.post("/reports-list", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = ReportSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const orgId = orgIdOf(req);
+    const { count } = await supabase.from(REPORTS).select("id", { count: "exact", head: true }).eq("org_id", orgId);
+    const code = `RPT-${new Date().toISOString().slice(0, 7)}-${String((count ?? 0) + 1).padStart(3, "0")}`;
+    const { data, error } = await supabase.from(REPORTS).insert({
+      org_id: orgId,
+      report_code: code,
+      name: parsed.data.name,
+      category: parsed.data.category,
+      description: parsed.data.description ?? null,
+      date_from: parsed.data.dateFrom || null,
+      date_to: parsed.data.dateTo || null,
+      row_count: parsed.data.rowCount ?? null,
+      // A scheduled report is RECORDED, not run - nothing fires it yet, and
+      // saying "Scheduled" is honest where "Completed" would not be.
+      status: parsed.data.isScheduled ? "Scheduled" : "Completed",
+      is_scheduled: parsed.data.isScheduled ?? false,
+      schedule_note: parsed.data.scheduleNote ?? null,
+      generated_by: req.user!.id,
+      generated_by_name: req.user!.name,
+      generated_by_role: req.user!.role
+    }).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(201).json({ row: data });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not record that report." });
+  }
+});
+
+router.post("/reports-list/:reportId/downloaded", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const reportId = paramOf(req.params.reportId);
+    const { data: current } = await supabase.from(REPORTS)
+      .select("downloaded_count").eq("org_id", orgId).eq("id", reportId).maybeSingle();
+    if (!current) { res.status(404).json({ error: "Report not found." }); return; }
+    await supabase.from(REPORTS).update({
+      downloaded_count: Number(current.downloaded_count ?? 0) + 1,
+      last_downloaded_at: new Date().toISOString()
+    }).eq("id", reportId);
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not record that download." });
+  }
+});
+
+// ── GET /api/personal-delivery-agents/settings-overview ───
+// The Settings screen's group cards. Each count is the number of settings that
+// ACTUALLY exist in that group - not a decorative figure. A group with nothing
+// configurable yet says so rather than showing a number nobody can act on.
+router.get("/settings-overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const [{ data: settingsRow }, { count: feeRuleCount }, { count: agentCount }] = await Promise.all([
+      supabase.from(SETTINGS).select("*").eq("org_id", orgId).maybeSingle(),
+      supabase.from(FEE_RULES).select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("active", true),
+      supabase.from(AGENTS).select("id", { count: "exact", head: true }).eq("org_id", orgId)
+    ]);
+
+    const groups = [
+      {
+        key: "onboarding", title: "Agent Onboarding & KYC",
+        description: "Configure KYC requirements, guarantors, agreements and approval rules.",
+        bullets: ["Required documents", "Guarantor rules", "KYC expiry period", "Approval & probation settings"],
+        // KYC validity + probation length are configurable; the checklist and
+        // agreement set are fixed in code today.
+        settings: 2, configurable: true
+      },
+      {
+        key: "limits", title: "Agent Limits",
+        description: "Set limits for stock holding, COD exposure, active orders and service area.",
+        bullets: ["Max stock an agent can hold", "Max COD exposure", "Max active orders", "Per trust level"],
+        settings: 9, configurable: true
+      },
+      {
+        key: "assignment", title: "Order Assignment",
+        description: "How orders are matched and offered to agents.",
+        bullets: ["Approval required", "Stock required", "Coverage matching", "Limit checks"],
+        settings: 0, configurable: false,
+        note: "These rules are enforced in code and are not adjustable yet."
+      },
+      {
+        key: "delivery", title: "Delivery Status Rules",
+        description: "Statuses, proof of delivery and reschedule handling.",
+        bullets: ["Customer readiness gate", "Proof of delivery required", "Failure reasons", "Reschedule stock rules"],
+        settings: 0, configurable: false,
+        note: "Enforced in code and in the database; not adjustable yet."
+      },
+      {
+        key: "inventory", title: "Inventory Rules",
+        description: "Stock counting, adjustments and discrepancy handling.",
+        bullets: ["Agents cannot self-adjust", "Manager approval required", "Write-offs book a cost", "Low stock floor"],
+        settings: 0, configurable: false,
+        note: "Enforced in code; the low-stock floor is fixed at 25 units."
+      },
+      {
+        key: "cod", title: "COD & Remittance",
+        description: "Remittance deadlines and cash rules.",
+        bullets: ["Remittance grace period", "Max COD balance per trust level", "Overdue restrictions", "Full-amount remittance rule"],
+        settings: 4, configurable: true
+      },
+      {
+        key: "fees", title: "Delivery Fees",
+        description: "Delivery fee rates, surcharges and earning rules.",
+        bullets: ["Default rate", "Rates by state / city / zone", "Distance bands", "Same-day surcharge"],
+        settings: feeRuleCount ?? 0, configurable: true, managedOn: "Fees & Earnings"
+      },
+      {
+        key: "notifications", title: "Notifications",
+        description: "In-app, SMS and other notifications for agents.",
+        bullets: ["New order assigned", "Remittance due", "Stock count due", "KYC expiring"],
+        settings: 0, configurable: false,
+        note: "Agent notifications are not built yet."
+      },
+      {
+        key: "roles", title: "Roles & Permissions",
+        description: "Access levels for each role touching this module.",
+        bullets: ["Delivery Agent: own portal only", "Sales Rep: own orders, no cash figures", "Manager / Admin / Owner: full"],
+        settings: 0, configurable: false,
+        note: "Set in the app's role rules, not here."
+      },
+      {
+        key: "portal", title: "Mobile Agent Portal",
+        description: "The agent's own mobile experience.",
+        bullets: ["Availability toggle", "Required delivery proof", "Order actions", "Wallet visibility"],
+        settings: 2, configurable: true, managedOn: "Settings"
+      }
+    ];
+
+    const configurableTotal = groups.reduce((sum, g) => sum + g.settings, 0);
+
+    res.json({
+      groups,
+      counts: {
+        // The REAL number of adjustable settings, not a decorative total.
+        configurableTotal,
+        groupsConfigurable: groups.filter((g) => g.configurable).length,
+        groupsFixed: groups.filter((g) => !g.configurable).length,
+        feeRules: feeRuleCount ?? 0,
+        agents: agentCount ?? 0,
+        graceDays: Number(settingsRow?.remittance_grace_days ?? 3),
+        probationDays: Number(settingsRow?.probation_days ?? 30)
+      },
+      lastUpdatedAt: settingsRow?.updated_at ?? null
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load settings." });
+  }
+});
+
 export default router;

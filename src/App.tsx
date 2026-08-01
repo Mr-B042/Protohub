@@ -128,7 +128,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -197,7 +197,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -11210,6 +11210,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaIncStatus, setPdaIncStatus] = useState("All");
   const [pdaIncAgent, setPdaIncAgent] = useState("All");
   const [pdaIncPage, setPdaIncPage] = useState(1);
+  const [pdaReportsView, setPdaReportsView] = useState<PdaReportsView | null>(null);
+  const [pdaReportSearch, setPdaReportSearch] = useState("");
+  const [pdaReportCategory, setPdaReportCategory] = useState("All");
+  const [pdaReportStatus, setPdaReportStatus] = useState("All");
+  const [pdaReportPage, setPdaReportPage] = useState(1);
+  const [pdaReportDraft, setPdaReportDraft] = useState({ name: "", category: "Collections", description: "" });
+  const [pdaSettingsOverview, setPdaSettingsOverview] = useState<PdaSettingsOverview | null>(null);
+  const [pdaSettingsSearch, setPdaSettingsSearch] = useState("");
+  const [pdaSettingsOpen, setPdaSettingsOpen] = useState(false);
   const [pdaDiscDraft, setPdaDiscDraft] = useState({ agentId: "", orderId: "", customerName: "", discrepancyType: "Underpayment", expected: "", actual: "", note: "" });
   const [pdaFeeRules, setPdaFeeRules] = useState<PdaFeeRule[]>([]);
   const [pdaNegotiations, setPdaNegotiations] = useState<any[]>([]);
@@ -40477,8 +40486,14 @@ ${waybillLineItems(w).length > 1
       void loadPdaIncidents();
       void loadPdaIncidentsOverview();
     }
-    if (pdaSubPage === "Reports") void loadPdaReports();
-    if (pdaSubPage === "Settings") void loadPdaSettings();
+    if (pdaSubPage === "Reports") {
+      void loadPdaReports();
+      void loadPdaAgentPerformance();
+    }
+    if (pdaSubPage === "Settings") {
+      void loadPdaSettings();
+      void loadPdaSettingsOverview();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, pdaSubPage]);
 
@@ -40690,6 +40705,102 @@ ${waybillLineItems(w).length > 1
     } catch (err: any) { showToast(err?.message ?? "Could not record that decision."); }
   };
 
+  const loadPdaReports = async () => {
+    try {
+      setPdaReportsView(await personalDeliveryAgentsApi.reportsList());
+    } catch (err: any) { showToast(err?.message ?? "Could not load reports."); }
+  };
+
+  const loadPdaSettingsOverview = async () => {
+    try {
+      setPdaSettingsOverview(await personalDeliveryAgentsApi.settingsOverview());
+    } catch (err: any) { showToast(err?.message ?? "Could not load settings."); }
+  };
+
+  /** Runs a report against LIVE data - a report is never a stale stored file. */
+  const pdaReportDataFor = (category: string): { header: string[]; body: string[][] } => {
+    if (category === "Remittance" || category === "Collections") {
+      return {
+        header: ["Agent", "Orders delivered", "COD collected", "Remitted", "Pending", "Status"],
+        body: (pdaCodOverview?.agents ?? []).map((row) => [
+          row.fullName, String(row.ordersDelivered), String(row.codCollected),
+          String(row.remitted), String(row.pending), row.status
+        ])
+      };
+    }
+    if (category === "Payments") {
+      return {
+        header: ["Payment", "Agent", "Date", "Amount", "Method", "Status"],
+        body: (pdaPayments?.rows ?? []).map((row) => [
+          row.paymentCode, row.agentName, row.receivedAt, String(row.amount), row.method, row.status
+        ])
+      };
+    }
+    if (category === "Incidents") {
+      return {
+        header: ["Incident", "Agent", "Type", "Priority", "Status", "Summary"],
+        body: (pdaIncidentsOverview?.rows ?? []).map((row) => [
+          row.code, row.agentName, row.incidentType, row.severity, row.status, row.description
+        ])
+      };
+    }
+    if (category === "Inventory") {
+      return {
+        header: ["Agent", "Products", "Total units", "Available", "Stock value"],
+        body: (pdaInventoryOverview?.agents ?? []).map((row) => [
+          row.fullName, String(row.productsHeld), String(row.totalUnits), String(row.available), String(row.stockValue)
+        ])
+      };
+    }
+    return {
+      header: ["Agent", "Offered", "Delivered", "Delivery rate %", "Cash held", "Open issues"],
+      body: pdaReports.map((row) => [
+        row.fullName, String(row.ordersOffered), String(row.delivered),
+        row.deliveryRatePct === null ? "" : String(row.deliveryRatePct),
+        String(row.cashOutstanding), String(row.openIncidents)
+      ])
+    };
+  };
+
+  const pdaQuickReport = async (name: string, category: string) => {
+    const data = pdaReportDataFor(category);
+    pdaCsvDownload(name.toLowerCase().replace(/\s+/g, "-"), data.header, data.body);
+    try {
+      await personalDeliveryAgentsApi.createReport({
+        name, category, description: `${data.body.length} rows, generated from live data.`,
+        rowCount: data.body.length
+      });
+      await loadPdaReports();
+    } catch (err: any) { showToast(err?.message ?? "Report downloaded but could not be recorded."); }
+  };
+
+  const pdaRunReport = async (report: { id: string; name: string; category: string }) => {
+    const data = pdaReportDataFor(report.category);
+    pdaCsvDownload(report.name.toLowerCase().replace(/\s+/g, "-"), data.header, data.body);
+    try {
+      await personalDeliveryAgentsApi.markReportDownloaded(report.id);
+      await loadPdaReports();
+    } catch { /* the file is already downloaded; the counter is not worth an error */ }
+  };
+
+  const pdaCreateReport = async () => {
+    if (!pdaReportDraft.name.trim()) { showToast("Give the report a name."); return; }
+    setPdaSaving(true);
+    try {
+      const data = pdaReportDataFor(pdaReportDraft.category);
+      await personalDeliveryAgentsApi.createReport({
+        name: pdaReportDraft.name.trim(),
+        category: pdaReportDraft.category,
+        description: pdaReportDraft.description.trim() || undefined,
+        rowCount: data.body.length
+      });
+      setModal(null);
+      showToast("Report recorded. Download re-runs it against live data.");
+      await loadPdaReports();
+    } catch (err: any) { showToast(err?.message ?? "Could not create that report."); }
+    finally { setPdaSaving(false); }
+  };
+
   const loadPdaIncidentsOverview = async () => {
     try {
       setPdaIncidentsOverview(await personalDeliveryAgentsApi.incidentsOverview());
@@ -40741,7 +40852,8 @@ ${waybillLineItems(w).length > 1
     } catch (err: any) { showToast(err?.message ?? "Could not update that incident."); }
   };
 
-  const loadPdaReports = async () => {
+  /** Per-agent performance rows. Feeds the Performance report and the old table. */
+  const loadPdaAgentPerformance = async () => {
     try {
       const result = await personalDeliveryAgentsApi.reports();
       setPdaReports(result?.rows ?? []);
@@ -47803,6 +47915,384 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // Reports. A row is a record that someone generated a report - downloading
+  // re-runs it against live data, so an old report can never hand back figures
+  // that quietly disagree with the system.
+  const renderPdaReportsPage = () => {
+    const view = pdaReportsView;
+    const counts = view?.counts ?? null;
+
+    const catChip = (category: string) =>
+      category === "Collections" ? "bg-blue-50 text-blue-700"
+      : category === "Remittance" ? "bg-emerald-50 text-emerald-700"
+      : category === "Payments" ? "bg-violet-50 text-violet-700"
+      : category === "Discrepancies" ? "bg-rose-50 text-rose-700"
+      : category === "Earnings" ? "bg-amber-50 text-amber-700"
+      : category === "Performance" ? "bg-sky-50 text-sky-700"
+      : category === "Incidents" ? "bg-orange-50 text-orange-700"
+      : "bg-gray-100 text-gray-600";
+
+    const rows = (view?.rows ?? []).filter((row) => {
+      if (pdaReportCategory !== "All" && row.category !== pdaReportCategory) return false;
+      if (pdaReportStatus !== "All" && row.status !== pdaReportStatus) return false;
+      if (!pdaReportSearch.trim()) return true;
+      const q = pdaReportSearch.trim().toLowerCase();
+      return row.name.toLowerCase().includes(q) || (row.description ?? "").toLowerCase().includes(q) || row.code.toLowerCase().includes(q);
+    });
+    const PAGE = 8;
+    const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+    const page = Math.min(pdaReportPage, pages);
+    const pageRows = rows.slice((page - 1) * PAGE, page * PAGE);
+
+    const palette = ["#1F8FE0", "#10B981", "#8B5CF6", "#F59E0B", "#EF4444", "#0EA5E9", "#6366F1", "#9CA3AF"];
+    const slices = (view?.byCategory ?? []).map((entry, index) => ({
+      label: entry.label, count: entry.count, colour: palette[index % palette.length]
+    }));
+    const sliceTotal = slices.reduce((sum, s) => sum + s.count, 0);
+    const CIRC = 2 * Math.PI * 42;
+    let offset = 0;
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-xl font-bold text-gray-900">Reports</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Generate and download detailed reports on agents, collections, remittances and performance.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => pdaCsvDownload("pda-reports-log",
+              ["Report", "Code", "Category", "Generated by", "Generated on", "Status", "Downloads"],
+              (view?.rows ?? []).map((row) => [
+                row.name, row.code, row.category, row.generatedByName, row.generatedAt, row.status, String(row.downloadedCount)
+              ]))}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+              <Download className="h-4 w-4" /> Download Reports
+            </button>
+            <button type="button" onClick={() => { setPdaReportDraft({ name: "", category: "Collections", description: "" }); setModal("pdaReport"); }}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg bg-[#1F8FE0] px-3.5 py-2 text-sm font-semibold text-white hover:bg-[#1560a8]">
+              <Plus className="h-4 w-4" /> Create Custom Report
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
+          {pdaKpiCard({ label: "Total Reports", value: String(counts?.total ?? 0), icon: FileText, tint: "bg-blue-50 text-blue-600", foot: "This month", delta: counts?.totalDeltaPct ?? null })}
+          {pdaKpiCard({ label: "Generated Reports", value: String(counts?.generated ?? 0), icon: CheckCircle2, tint: "bg-emerald-50 text-emerald-600", foot: "This month", delta: counts?.generatedDeltaPct ?? null })}
+          {pdaKpiCard({ label: "Scheduled Reports", value: String(counts?.scheduled ?? 0), icon: CalendarClock, tint: "bg-violet-50 text-violet-600", foot: "Recorded, not auto-run yet" })}
+          {pdaKpiCard({ label: "Downloaded Reports", value: String(counts?.downloaded ?? 0), icon: Download, tint: "bg-amber-50 text-amber-600", foot: "This month", delta: counts?.downloadedDeltaPct ?? null })}
+          {pdaKpiCard({ label: "Failed Reports", value: String(counts?.failed ?? 0), icon: AlertTriangle, tint: "bg-rose-50 text-rose-600", foot: "This month", delta: counts?.failedDeltaPct ?? null })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[240px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+              placeholder="Search by report name or description..." value={pdaReportSearch}
+              onChange={(e) => { setPdaReportSearch(e.target.value); setPdaReportPage(1); }} />
+          </div>
+          <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+            value={pdaReportCategory} onChange={(e) => { setPdaReportCategory(e.target.value); setPdaReportPage(1); }}>
+            <option value="All">Category: All</option>
+            {["Collections", "Remittance", "Payments", "Earnings", "Performance", "Incidents", "Deliveries", "Inventory", "Discrepancies", "Other"].map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+            value={pdaReportStatus} onChange={(e) => { setPdaReportStatus(e.target.value); setPdaReportPage(1); }}>
+            <option value="All">Status: All</option>
+            {["Completed", "Scheduled", "Failed"].map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button type="button" onClick={() => { setPdaReportSearch(""); setPdaReportCategory("All"); setPdaReportStatus("All"); setPdaReportPage(1); }}
+            className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+            <RefreshCw className="h-4 w-4" /> Reset
+          </button>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr),300px]">
+          <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="px-5 py-4">
+              <h3 className="m-0 text-base font-bold text-gray-900">Reports List</h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-y border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                    <th className="px-5 py-2.5">Report Name</th>
+                    <th className="px-3 py-2.5">Category</th>
+                    <th className="px-3 py-2.5">Description</th>
+                    <th className="px-3 py-2.5">Generated By</th>
+                    <th className="px-3 py-2.5">Generated On</th>
+                    <th className="px-3 py-2.5">Status</th>
+                    <th className="px-3 py-2.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-5 py-14 text-center">
+                        <p className="m-0 text-sm font-semibold text-gray-500">
+                          {(view?.rows ?? []).length === 0 ? "No reports generated yet." : "Nothing matches those filters."}
+                        </p>
+                        {(view?.rows ?? []).length === 0 && (
+                          <p className="m-0 mt-1 text-xs text-gray-400">
+                            Create one to record what was run and by whom. Downloading always re-runs it against live data.
+                          </p>
+                        )}
+                      </td>
+                    </tr>
+                  ) : pageRows.map((row) => (
+                    <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                      <td className="px-5 py-3">
+                        <div className="flex items-start gap-2.5">
+                          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />
+                          <div>
+                            <div className="text-[13px] font-bold text-gray-900">{row.name}</div>
+                            <div className="text-[11px] text-gray-400">{row.code}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${catChip(row.category)}`}>{row.category}</span>
+                      </td>
+                      <td className="px-3 py-3 max-w-[220px] text-[12px] text-gray-600">{row.description ?? "—"}</td>
+                      <td className="px-3 py-3">
+                        <div className="text-[12px] font-semibold text-gray-800">{row.generatedByName}</div>
+                        <div className="text-[11px] text-gray-400">{row.generatedByRole}</div>
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <div className="text-[12px] text-gray-700">{new Date(row.generatedAt).toLocaleDateString([], { dateStyle: "medium" })}</div>
+                        <div className="text-[10px] text-gray-400">{new Date(row.generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${
+                          row.status === "Completed" ? "bg-emerald-50 text-emerald-700"
+                          : row.status === "Failed" ? "bg-rose-50 text-rose-700"
+                          : "bg-violet-50 text-violet-700"}`}>{row.status}</span>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button type="button" title="Run and download now" onClick={() => void pdaRunReport(row)}
+                            className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                            <Download className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {rows.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-5 py-3">
+                <span className="text-xs text-gray-500">
+                  Showing {(page - 1) * PAGE + 1} to {Math.min(page * PAGE, rows.length)} of {rows.length} reports
+                </span>
+                <div className="flex items-center gap-1">
+                  <button type="button" disabled={page <= 1} onClick={() => setPdaReportPage(page - 1)}
+                    className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="px-2 text-xs font-bold text-gray-600">{page} / {pages}</span>
+                  <button type="button" disabled={page >= pages} onClick={() => setPdaReportPage(page + 1)}
+                    className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <div className="space-y-4">
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Reports by Category</h3>
+              {slices.length === 0 ? (
+                <p className="m-0 mt-3 text-xs text-gray-400">No reports yet.</p>
+              ) : (
+                <div className="mt-4 flex items-center gap-4">
+                  <div className="relative h-[104px] w-[104px] shrink-0">
+                    <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+                      <circle cx="50" cy="50" r="42" fill="none" stroke="#F3F4F6" strokeWidth="12" />
+                      {slices.map((slice) => {
+                        const length = (slice.count / Math.max(1, sliceTotal)) * CIRC;
+                        const start = offset;
+                        offset += length;
+                        return (
+                          <circle key={slice.label} cx="50" cy="50" r="42" fill="none" stroke={slice.colour}
+                            strokeWidth="12" strokeDasharray={`${length} ${CIRC - length}`} strokeDashoffset={-start} />
+                        );
+                      })}
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                      <span className="text-lg font-black leading-none text-gray-900">{sliceTotal}</span>
+                      <span className="text-[10px] text-gray-400">Reports</span>
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    {slices.map((slice) => (
+                      <div key={slice.label} className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="flex items-center gap-1.5 truncate text-gray-600">
+                          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: slice.colour }} />{slice.label}
+                        </span>
+                        <span className="shrink-0 font-semibold text-gray-700">{slice.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Quick Reports</h3>
+              <p className="m-0 mt-1 text-[11px] text-gray-500">Runs against live data and records who ran it.</p>
+              <div className="mt-3 grid gap-2">
+                {[
+                  { label: "Collections Summary", category: "Collections" },
+                  { label: "Agent Remittance", category: "Remittance" },
+                  { label: "Payment History", category: "Payments" },
+                  { label: "Agent Performance", category: "Performance" },
+                  { label: "Incidents Summary", category: "Incidents" }
+                ].map((quick) => (
+                  <button key={quick.label} type="button"
+                    onClick={() => void pdaQuickReport(quick.label + " Report", quick.category)}
+                    className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-left text-[12px] font-bold text-gray-700 hover:bg-gray-50">
+                    {quick.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Settings. Each group shows the number of settings that ACTUALLY exist -
+  // a group with nothing adjustable says so rather than showing a figure
+  // nobody can act on.
+  const renderPdaSettingsPage = () => {
+    const view = pdaSettingsOverview;
+    const counts = view?.counts ?? null;
+    const groups = (view?.groups ?? []).filter((group) => {
+      if (!pdaSettingsSearch.trim()) return true;
+      const q = pdaSettingsSearch.trim().toLowerCase();
+      return group.title.toLowerCase().includes(q) || group.description.toLowerCase().includes(q);
+    });
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-xl font-bold text-gray-900">Personal Delivery Agent Settings</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Configure verification, order assignment, inventory, COD, delivery fees and agent operating rules.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => pdaSettingsDraft && pdaCsvDownload("pda-settings",
+              ["Setting", "Value"],
+              Object.entries(pdaSettingsDraft).map(([key, value]) => [key, String(value)]))}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+              <Download className="h-4 w-4" /> Download Settings
+            </button>
+            <button type="button" disabled={pdaSaving} onClick={pdaSaveSettings}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg bg-[#1F8FE0] px-3.5 py-2 text-sm font-semibold text-white hover:bg-[#1560a8] disabled:opacity-60">
+              <CheckCircle2 className="h-4 w-4" /> {pdaSaving ? "Saving…" : "Save Changes"}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
+          {pdaKpiCard({ label: "Adjustable Settings", value: String(counts?.configurableTotal ?? 0), icon: Settings, tint: "bg-blue-50 text-blue-600", foot: "You can change these" })}
+          {pdaKpiCard({ label: "Groups You Configure", value: String(counts?.groupsConfigurable ?? 0), icon: CheckCircle2, tint: "bg-emerald-50 text-emerald-600", foot: "Of 10 areas" })}
+          {pdaKpiCard({ label: "Fixed In Code", value: String(counts?.groupsFixed ?? 0), icon: AlertTriangle, tint: "bg-amber-50 text-amber-600", foot: "Safety rules, not adjustable" })}
+          {pdaKpiCard({ label: "Delivery Rates", value: String(counts?.feeRules ?? 0), icon: Banknote, tint: "bg-violet-50 text-violet-600", foot: "Active fee rules" })}
+          {pdaKpiCard({ label: "Cash Grace Period", value: `${counts?.graceDays ?? 3} days`, icon: CalendarClock, tint: "bg-rose-50 text-rose-600", foot: "Before cash is overdue" })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[240px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+              placeholder="Search settings..." value={pdaSettingsSearch}
+              onChange={(e) => setPdaSettingsSearch(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr),300px]">
+          <div className="grid min-w-0 gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+            {groups.map((group) => (
+              <section key={group.key} className="flex flex-col rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <h3 className="m-0 text-sm font-bold text-gray-900">{group.title}</h3>
+                <p className="m-0 mt-1 text-[11px] text-gray-500">{group.description}</p>
+                <ul className="m-0 mt-3 flex-1 list-none space-y-1 p-0">
+                  {group.bullets.map((bullet) => (
+                    <li key={bullet} className="flex items-start gap-1.5 text-[11px] text-gray-600">
+                      <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-gray-300" /> {bullet}
+                    </li>
+                  ))}
+                </ul>
+                {group.note && (
+                  <p className="m-0 mt-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] font-semibold text-amber-800">{group.note}</p>
+                )}
+                <div className="mt-3 flex items-center justify-between gap-2 border-t border-gray-100 pt-3">
+                  <span className={`text-[11px] font-bold ${group.configurable ? "text-[#1F8FE0]" : "text-gray-400"}`}>
+                    {group.configurable ? `${group.settings} setting${group.settings === 1 ? "" : "s"}` : "Fixed"}
+                  </span>
+                  {group.configurable && (
+                    <button type="button"
+                      onClick={() => group.managedOn === "Fees & Earnings" ? setPdaSubPage("Fees & Earnings") : setPdaSettingsOpen(true)}
+                      className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50">
+                      Manage <ChevronRight className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              </section>
+            ))}
+          </div>
+
+          <div className="space-y-4">
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Settings Overview</h3>
+              <p className="m-0 mt-2 text-[11px] text-gray-500">
+                {counts?.configurableTotal ?? 0} settings across {counts?.groupsConfigurable ?? 0} areas are adjustable here.
+                The other {counts?.groupsFixed ?? 0} areas are enforced in code and the database — dispatch gates, proof of delivery
+                and stock rules are deliberately not switch-offable.
+              </p>
+              {view?.lastUpdatedAt && (
+                <p className="m-0 mt-2 text-[11px] text-gray-400">
+                  Last changed {new Date(view.lastUpdatedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+                </p>
+              )}
+            </section>
+
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Quick Actions</h3>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setPdaSettingsOpen((open) => !open)}
+                  className="!min-h-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100">
+                  {pdaSettingsOpen ? "Hide Editor" : "Open Editor"}
+                </button>
+                <button type="button" onClick={() => pdaSettingsDraft && pdaCsvDownload("pda-settings-backup",
+                  ["Setting", "Value"], Object.entries(pdaSettingsDraft).map(([key, value]) => [key, String(value)]))}
+                  className="!min-h-0 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-2 text-[11px] font-bold text-blue-700 hover:bg-blue-100">
+                  Export Settings
+                </button>
+                <button type="button" onClick={() => void loadPdaSettings()}
+                  className="!min-h-0 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
+                  Reload Saved
+                </button>
+                <button type="button" onClick={() => setPdaSubPage("Fees & Earnings")}
+                  className="!min-h-0 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-2 text-[11px] font-bold text-violet-700 hover:bg-violet-100">
+                  Delivery Rates
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        {pdaSettingsOpen && renderPdaSettings()}
+      </div>
+    );
+  };
+
   // Reports. A rate with no deliveries behind it shows a dash, never 0% -
   // "no data" and "never delivers" are different facts about a person.
   const renderPdaReports = () => (
@@ -52505,9 +52995,9 @@ ${waybillLineItems(w).length > 1
         ) : pdaSubPage === "Incidents" ? (
           renderPdaIncidentsPage()
         ) : pdaSubPage === "Reports" ? (
-          renderPdaReports()
+          renderPdaReportsPage()
         ) : pdaSubPage === "Settings" ? (
-          renderPdaSettings()
+          renderPdaSettingsPage()
         ) : (
           <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
             <h2 className="text-base font-bold text-gray-900">{pdaSubPage}</h2>
@@ -81098,6 +81588,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "pdaFeeRule" && "Add a delivery rate"}
                 {modal === "pdaIncident" && "Report an incident"}
                 {modal === "pdaCodDiscrepancy" && "Log a cash discrepancy"}
+                {modal === "pdaReport" && "Create a report"}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -86658,6 +87149,40 @@ ${waybillLineItems(w).length > 1
 	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
 	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={pdaCreateFeeRule}>
 	                    {pdaSaving ? "Saving…" : "Save rate"}
+	                  </button>
+	                </div>
+	              </div>
+	            )}
+
+	            {modal === "pdaReport" && (
+	              <div className="space-y-4">
+	                <p className="m-0 text-xs text-gray-500">
+	                  This records what was run and by whom. Downloading it later always <strong>re-runs it against live data</strong> — a saved file could quietly disagree with the system it came from.
+	                </p>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Report name *</span>
+	                  <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaReportDraft.name}
+	                    onChange={(e) => setPdaReportDraft((v) => ({ ...v, name: e.target.value }))}
+	                    placeholder="Collections Summary Report" />
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Category *</span>
+	                  <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaReportDraft.category}
+	                    onChange={(e) => setPdaReportDraft((v) => ({ ...v, category: e.target.value }))}>
+	                    {["Collections", "Remittance", "Payments", "Earnings", "Performance", "Incidents", "Deliveries", "Inventory", "Discrepancies", "Other"].map((c) => (
+	                      <option key={c} value={c}>{c}</option>
+	                    ))}
+	                  </select>
+	                </label>
+	                <label className="flex flex-col gap-1">
+	                  <span className="text-xs font-bold text-gray-600">Description</span>
+	                  <textarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaReportDraft.description}
+	                    onChange={(e) => setPdaReportDraft((v) => ({ ...v, description: e.target.value }))} />
+	                </label>
+	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
+	                  <button disabled={pdaSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" onClick={pdaCreateReport}>
+	                    {pdaSaving ? "Saving…" : "Create report"}
 	                  </button>
 	                </div>
 	              </div>
