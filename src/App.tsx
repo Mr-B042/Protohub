@@ -1227,6 +1227,8 @@ type DeliveryAgentRecord = {
   active: boolean;
   created: string;
   stockCapacity?: number;
+  /** Settles delivery fees monthly, not per delivery (migration 187). */
+  monthlyRemittance?: boolean;
 };
 type DeliveryDistanceAuditRecord = {
   id: string;
@@ -3184,6 +3186,7 @@ const hydrateAgentFromApi = (saved: any, fallback?: DeliveryAgentRecord): Delive
     address: saved.address ?? fallback?.address ?? "",
     active: typeof saved.active === "boolean" ? saved.active : (saved.status ?? (fallback?.active ? "Active" : "Inactive")) === "Active",
     stockCapacity: Number(saved.stockCapacity ?? saved.stock_capacity ?? fallback?.stockCapacity ?? 1000),
+    monthlyRemittance: Boolean(saved.monthlyRemittance ?? saved.monthly_remittance ?? fallback?.monthlyRemittance ?? false),
     created: saved.created ?? saved.createdAt ?? saved.created_at ?? fallback?.created ?? nowIso()
   };
 };
@@ -8059,6 +8062,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [agentCoverageStatesInput, setAgentCoverageStatesInput] = useState<string[]>([]);
   const [agentAddress, setAgentAddress] = useState("");
   const [agentActive, setAgentActive] = useState(true);
+  const [agentMonthlyRemittance, setAgentMonthlyRemittance] = useState(false);
   const [agentStockCapacity, setAgentStockCapacity] = useState<number | "">(1000);
   const [assignStockLocationId, setAssignStockLocationId] = useState("");
   const [reconcileLocationId, setReconcileLocationId] = useState("");
@@ -12089,6 +12093,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setAgentCoverageStatesInput(agentCoverageStates(agent));
     setAgentAddress(agent.address ?? "");
     setAgentActive(agent.active);
+    setAgentMonthlyRemittance(Boolean(agent.monthlyRemittance));
     setAgentStockCapacity(agent.stockCapacity ?? 1000);
   }, [modal, selectedAgentId, agents, agentStock, products]);
   useEffect(() => {
@@ -13630,6 +13635,76 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // math matches what's actually deducted on delivery. The previous version
   // only costed the main/attributed product and ignored combo parts, add-ons
   // and gifts - which understated COGS (overstated profit) for combos.
+  // ===== Provisional delivery fee (Owner-only accrual) =====
+  // Toolbox Rivers and 9jadoorstep Abia settle logistics monthly, so their
+  // delivered orders carry no logistics_cost until the breakdown arrives at
+  // month end. Cost incurred but not yet billed makes net profit look better
+  // than it is - measured 2026-08-01, 38 delivered orders across those two
+  // agents had no fee, spanning all of July.
+  //
+  // This accrues an estimate so the Owner's profit figures are not flattered
+  // while waiting. Three deliberate constraints:
+  //   1. NEVER stored on the order. Computed at display time, so when the real
+  //      fee lands via Batch Remittance the estimate stops applying by itself -
+  //      nothing to reverse, and a placeholder cannot harden into "real" data.
+  //   2. NEVER touches remittance. orderLogisticsCost / orderAmountToRemit stay
+  //      on recorded fees only: what an agent owes must never move because of
+  //      an estimate we invented.
+  //   3. Starts 2026-08-01 (Bright: "let the last month be at its be"). July's
+  //      numbers are already reported and stay exactly as they were.
+  const PROVISIONAL_LOGISTICS_START = "2026-08-01";
+  // The agent's OWN median from the fees they have actually charged, rather
+  // than one flat figure. Their real medians are both around N5,000 while a
+  // flat N4,000 guess would have left roughly N1,000 per order still hidden.
+  // Median, not mean, so one N8,000 outlier does not drag the estimate up.
+  const monthlyRemitAgentMedians = useMemo(() => {
+    const feesByAgent = new Map<string, number[]>();
+    for (const agent of agents) {
+      if (agent.monthlyRemittance) feesByAgent.set(agent.id, []);
+    }
+    if (feesByAgent.size === 0) return new Map<string, number>();
+    for (const order of trackedOrders) {
+      if ((order.status ?? "New") !== "Delivered") continue;
+      const fee = order.logisticsCost ?? 0;
+      if (fee <= 0 || !order.agentId) continue;
+      feesByAgent.get(order.agentId)?.push(fee);
+    }
+    const medians = new Map<string, number>();
+    for (const [agentId, fees] of feesByAgent) {
+      if (fees.length === 0) continue;   // no priced delivery yet - do not invent one
+      const sorted = [...fees].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      medians.set(agentId, sorted.length % 2 === 0
+        ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+        : sorted[mid]);
+    }
+    return medians;
+  }, [agents, trackedOrders]);
+
+  const provisionalLogisticsFor = (order: TrackedOrder): number => {
+    if (currentRole !== "Owner") return 0;
+    if ((order.status ?? "New") !== "Delivered") return 0;
+    if ((order.logisticsCost ?? 0) > 0) return 0;
+    if (!order.agentId) return 0;
+    const deliveredKey = orderDeliveredKey(order);
+    if (!deliveredKey || deliveredKey < PROVISIONAL_LOGISTICS_START) return 0;
+    return monthlyRemitAgentMedians.get(order.agentId) ?? 0;
+  };
+  // What every PROFIT calculation should use. Remittance deliberately does not.
+  const effectiveLogisticsCost = (order: TrackedOrder): number =>
+    (order.logisticsCost ?? 0) > 0 ? (order.logisticsCost ?? 0) : provisionalLogisticsFor(order);
+  // Powers the "includes N estimated fees" disclosure, so an adjusted figure is
+  // never shown without saying how much of it is an estimate.
+  const provisionalLogisticsSummary = (rows: TrackedOrder[]) => {
+    let orders = 0;
+    let total = 0;
+    for (const row of rows) {
+      const provisional = provisionalLogisticsFor(row);
+      if (provisional > 0) { orders += 1; total += provisional; }
+    }
+    return { orders, total };
+  };
+
   const costForOrder = (order: TrackedOrder) => {
     let total = 0;
     const packageComponents = order.packageComponentsSnapshot ?? [];
@@ -14773,7 +14848,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const failed = orders.filter((order) => ["Failed", "Cancelled"].includes(order.status ?? "New"));
     const deliveredRevenue = delivered.reduce((sum, order) => sum + order.amount, 0);
     const cogs = delivered.reduce((sum, order) => sum + costForOrder(order), 0);
-    const logistics = delivered.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+    const logistics = delivered.reduce((sum, order) => sum + effectiveLogisticsCost(order), 0);
     const bonus = 0;
     return {
       orders: orders.length,
@@ -15295,7 +15370,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   ) => {
     const revenue = deliveredRows.reduce((sum, order) => sum + order.amount, 0);
     const cogs = deliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
-    const logisticsFromOrders = deliveredRows.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+    const logisticsFromOrders = deliveredRows.reduce((sum, order) => sum + effectiveLogisticsCost(order), 0);
     const recordedDeliveryExpense = periodExpenses
       .filter((expense) => expense.type === "Delivery")
       .reduce((sum, expense) => sum + expense.amount, 0);
@@ -15681,7 +15756,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const deliveriesOrderNet = (order: TrackedOrder) => {
     const revenue = order.amount;
     const cogs = costForOrder(order);
-    const delivery = order.logisticsCost ?? 0;            // the order's OWN recorded delivery fee
+    const delivery = effectiveLogisticsCost(order);       // recorded fee, or the Owner-only accrual while unbilled
     const bonus = recognizedBonusTotalForRows([order]);   // the order's own rep commission
     const ownNet = revenue - cogs - delivery - bonus;
     const overheadShare = deliveriesWeekOverheadShare(order);
@@ -18221,6 +18296,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const financeRevenue = financeProfitSummary.revenue;
   const financeCogs = financeProfitSummary.cogs;
   const financeLogisticsCost = financeProfitSummary.recognizedLogistics;
+  // How much of the figure above is accrued rather than billed. An adjusted
+  // number is never shown without saying how much of it is an estimate.
+  const financeProvisionalLogistics = provisionalLogisticsSummary(financeDeliveredRows);
   const financeBonusEstimate = financeProfitSummary.totalBonusExpense;
   const financeSalesBonusEstimate = financeProfitSummary.bonusEstimate;
   const financeManagerBonusExpense = financeProfitSummary.managerBonusExpense;
@@ -18253,7 +18331,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const delivered = financeDeliveredRows.filter((order) => order.assignedRepId === user.id);
     const revenue = delivered.reduce((sum, order) => sum + order.amount, 0);
     const cogs = delivered.reduce((sum, order) => sum + costForOrder(order), 0);
-    const logistics = delivered.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+    const logistics = delivered.reduce((sum, order) => sum + effectiveLogisticsCost(order), 0);
     const commission = recognizedBonusTotalForRows(delivered);
     const contribution = revenue - cogs - logistics - commission;
     const directCost = cogs + logistics + commission;
@@ -18277,7 +18355,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const delivered = financeDeliveredRows.filter((order) => order.agentId === row.agent.id);
     const revenue = delivered.reduce((sum, order) => sum + order.amount, 0);
     const cogs = delivered.reduce((sum, order) => sum + costForOrder(order), 0);
-    const logistics = delivered.reduce((sum, order) => sum + (order.logisticsCost ?? 0), 0);
+    const logistics = delivered.reduce((sum, order) => sum + effectiveLogisticsCost(order), 0);
     return { ...row, deliveries: delivered.length, profitContribution: revenue - cogs - logistics };
   });
   const financeAgentDeliveredCount = financeAgentRows.reduce((sum, row) => sum + row.deliveries, 0);
@@ -34254,6 +34332,7 @@ ${waybillLineItems(w).length > 1
     setAgentCoverageStatesInput([]);
     setAgentAddress("");
     setAgentActive(true);
+    setAgentMonthlyRemittance(false);
     setAgentStockCapacity(1000);
     setAssignStockLocationId("");
     setReconcileLocationId("");
@@ -34385,6 +34464,7 @@ ${waybillLineItems(w).length > 1
     setAgentCoverageStatesInput(agentCoverageStates(agent));
     setAgentAddress(agent.address ?? "");
     setAgentActive(agent.active);
+    setAgentMonthlyRemittance(Boolean(agent.monthlyRemittance));
     setAgentStockCapacity(agent.stockCapacity ?? 1000);
     setModal(nextModal);
   };
@@ -34734,7 +34814,8 @@ ${waybillLineItems(w).length > 1
               })),
               address: (agentAddress ?? "").trim(),
               active: agentActive,
-              stockCapacity: capacityVal
+              stockCapacity: capacityVal,
+              monthlyRemittance: agentMonthlyRemittance
             }
           : agent
       )
@@ -34757,7 +34838,8 @@ ${waybillLineItems(w).length > 1
         slaDays: 1
       })),
       status: agentActive ? "Active" : "Inactive",
-      stock_capacity: capacityVal
+      stock_capacity: capacityVal,
+      monthlyRemittance: agentMonthlyRemittance
     })
       .then((saved: any) => {
         setAgents((value) => value.map((a) => a.id === _uaId ? hydrateAgentFromApi(saved, a) : a));
@@ -63258,7 +63340,19 @@ ${waybillLineItems(w).length > 1
                           <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-gray-700">Delivered Orders</td><td className="px-4 py-3 font-semibold text-gray-900">{formatMoney(financeRevenue)}</td><td className="px-4 py-3 text-gray-400">{formatMoney(prevRevenue)}</td><td className="px-4 py-3">{chg(financeRevenue, prevRevenue)}</td></tr>
                           <tr className="bg-red-50"><td className="px-4 py-2 font-bold text-red-600 text-xs uppercase tracking-wide" colSpan={4}>Cost of Goods Sold (COGS)</td></tr>
                           <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-red-500">Product Sourcing Costs</td><td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(financeCogs)})</td><td className="px-4 py-3 text-gray-400">({formatMoney(prevCogs)})</td><td className="px-4 py-3">{chg(financeCogs, prevCogs)}</td></tr>
-                          <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-red-500">Logistics / Delivery Fees</td><td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(financeLogisticsCost)})</td><td className="px-4 py-3 text-gray-400">({formatMoney(prevLogistics)})</td><td className="px-4 py-3">{chg(financeLogisticsCost, prevLogistics)}</td></tr>
+                          <tr className="hover:bg-gray-50">
+                            <td className="px-4 py-3 text-red-500">
+                              Logistics / Delivery Fees
+                              {financeProvisionalLogistics.orders > 0 && (
+                                <span className="mt-0.5 block text-[11px] font-semibold normal-case text-amber-700">
+                                  Includes {formatMoney(financeProvisionalLogistics.total)} estimated across {financeProvisionalLogistics.orders} delivery{financeProvisionalLogistics.orders === 1 ? "" : "s"} not yet billed by monthly-remit agents. Replaced automatically once they send the real breakdown.
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(financeLogisticsCost)})</td>
+                            <td className="px-4 py-3 text-gray-400">({formatMoney(prevLogistics)})</td>
+                            <td className="px-4 py-3">{chg(financeLogisticsCost, prevLogistics)}</td>
+                          </tr>
                           <tr className="bg-green-50"><td className="px-4 py-3 font-bold text-green-700">Gross Profit</td><td className="px-4 py-3 font-bold text-green-700">{formatMoney(financeGrossProfit)}</td><td className="px-4 py-3 text-gray-400">{formatMoney(prevGross)}</td><td className="px-4 py-3">{chg(financeGrossProfit, prevGross)}</td></tr>
                           <tr className="bg-red-50"><td className="px-4 py-2 font-bold text-red-600 text-xs uppercase tracking-wide" colSpan={4}>Operating Expenses</td></tr>
                           <tr className="hover:bg-gray-50"><td className="px-4 py-3 text-red-500">Expenses</td><td className="px-4 py-3 font-semibold text-gray-900">({formatMoney(financeOpex)})</td><td className="px-4 py-3 text-gray-400">({formatMoney(prevOpex)})</td><td className="px-4 py-3">{chg(financeOpex, prevOpex)}</td></tr>
@@ -80651,6 +80745,21 @@ ${waybillLineItems(w).length > 1
                     <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${agentActive ? "left-5" : "left-0.5"}`} />
                   </button>
                 </div>
+                {realRole === "Owner" && (
+                  <div className="flex items-start justify-between gap-3 py-1">
+                    <div>
+                      <span className="text-sm font-medium text-gray-700">Settles delivery fees monthly</span>
+                      <p className="m-0 mt-0.5 max-w-md text-xs text-gray-500">
+                        For agents who send their fee breakdown at month end instead of per delivery. Their unbilled deliveries get an estimated fee (this agent's own median) in your profit figures only, so net profit is not flattered while you wait. It never changes what the agent owes you, and the real fee replaces it automatically.
+                      </p>
+                    </div>
+                    <button type="button" role="switch" aria-checked={agentMonthlyRemittance}
+                      className={`relative w-11 h-6 !min-h-0 p-0 rounded-full transition-colors shrink-0 mt-0.5 ${agentMonthlyRemittance ? "bg-[#1F8FE0]" : "bg-gray-200"}`}
+                      onClick={() => setAgentMonthlyRemittance(!agentMonthlyRemittance)}>
+                      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${agentMonthlyRemittance ? "left-5" : "left-0.5"}`} />
+                    </button>
+                  </div>
+                )}
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={updateSelectedAgent}>Save Agent</button></div>
 	              </div>
 	            )}

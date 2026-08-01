@@ -114,7 +114,8 @@ const AgentPatchSchema = z.object({
   address:        z.string().max(500).optional(),
   coverage:       z.array(CoverageSchema).optional(),
   status:         z.enum(["Active", "Inactive", "Suspended"]).optional(),
-  stock_capacity: z.number().int().min(1).max(100_000).optional()
+  stock_capacity: z.number().int().min(1).max(100_000).optional(),
+  monthlyRemittance: z.boolean().optional()
 }).strict();
 
 router.patch("/:id", requireRole("Owner", "Admin"), async (req, res) => {
@@ -135,6 +136,7 @@ router.patch("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   if (parsed.data.address !== undefined)        updates.address        = parsed.data.address || null;
   if (parsed.data.status !== undefined)         updates.status         = parsed.data.status;
   if (parsed.data.stock_capacity !== undefined) updates.stock_capacity = parsed.data.stock_capacity;
+  if (parsed.data.monthlyRemittance !== undefined) updates.monthly_remittance = parsed.data.monthlyRemittance;
 
   if (Object.keys(updates).length === 0 && parsed.data.coverage === undefined) {
     res.status(400).json({ error: "No fields to update." });
