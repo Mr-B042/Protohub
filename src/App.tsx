@@ -16660,7 +16660,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               : cartConversionFilter === "Recovered Failed / Cancelled"
                 ? conversionKind === "manual_recovery" && abandonedCartIsBadRecoveredOutcome(linkedOrderStatus)
                 : conversionKind === "customer_self_completed";
-    const matchesPeriod = isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange);
+    // A cart is in the period if it was CREATED then OR last worked then.
+    // Filtering on creation alone made assigned carts vanish: assigning a
+    // three-week-old cart is today's work, but the cart still reads as three
+    // weeks old, so it fell outside every recent period and looked deleted.
+    const matchesPeriod = isInPeriod(cart.createdAt, cartsPeriod, cartsDateRange)
+      || (Boolean(cart.lastActivity) && isInPeriod(cart.lastActivity, cartsPeriod, cartsDateRange));
     const matchesProduct = matchesProductFilter(cart.productId, cart.productName, cartProductIds);
     const matchesViewer = viewerScopeRepId === null || cart.assignedRepId === viewerScopeRepId;
     const matchesSource = cartSourceFilter === "All sources" || (cart.source ?? "Website") === cartSourceFilter;
@@ -22050,6 +22055,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const repAssignedCarts = effectiveRepScopeId === "all"
     ? abandonedCarts
     : abandonedCarts.filter((cart) => cart.assignedRepId === effectiveRepScopeId);
+  // Assigned work is never hidden by a date window - see the note on
+  // matchesPeriod above.
   const repCartMatches = (cart: AbandonedCartRecord) => `${cart.customer} ${cart.phone} ${cart.city ?? ""}`.toLowerCase().includes(repCartSearch.trim().toLowerCase());
   const filteredRepCarts = repAssignedCarts.filter(repCartMatches);
   const repCartStats = {
