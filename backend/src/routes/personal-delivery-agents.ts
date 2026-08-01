@@ -63,6 +63,7 @@ const SELECT = `
   id, agent_code, full_name, phone, whatsapp_phone, email, state, city,
   residential_address, photo_url, service_areas, service_radius_km, transport_method,
   account_status, kyc_status, trust_level, availability, vehicle_model, vehicle_plate,
+  gender, id_type, id_number, guarantors_required, preferred_pickup_location,
   max_stock_units, max_cod_exposure, max_active_orders,
   bank_name, bank_account_number, bank_account_name,
   approved_at, probation_ends_at, kyc_expires_at, restriction_reason,
@@ -94,6 +95,11 @@ const mapAgent = (row: any) => ({
   maxCodExposure: row.max_cod_exposure === null || row.max_cod_exposure === undefined
     ? null : Number(row.max_cod_exposure),
   maxActiveOrders: row.max_active_orders ?? null,
+  gender: row.gender ?? null,
+  preferredPickupLocation: row.preferred_pickup_location ?? null,
+  idType: row.id_type ?? null,
+  idNumber: row.id_number ?? null,
+  guarantorsRequired: row.guarantors_required ?? 2,
   bankName: row.bank_name ?? null,
   bankAccountNumber: row.bank_account_number ?? null,
   bankAccountName: row.bank_account_name ?? null,
@@ -112,10 +118,14 @@ type MappedAgent = ReturnType<typeof mapAgent>;
  * values are never sent, rather than merely hidden by the UI.
  */
 function stripSensitive(agent: MappedAgent, role: string): MappedAgent | Omit<MappedAgent,
-  "bankName" | "bankAccountNumber" | "bankAccountName" | "residentialAddress" | "email"> {
+  "bankName" | "bankAccountNumber" | "bankAccountName" | "residentialAddress" | "email"
+  | "idNumber" | "gender"> {
   if ((MANAGEMENT_ROLES as readonly string[]).includes(role)) return agent;
   const {
     bankName, bankAccountNumber, bankAccountName, residentialAddress, email,
+    // An ID number identifies a person outside this system entirely; a rep
+    // monitoring a delivery has no reason to hold one.
+    idNumber, gender,
     ...safe
   } = agent;
   return safe;
@@ -440,17 +450,41 @@ const CreateSchema = z.object({
   phone: z.string().trim().min(7, "Phone number is required.").max(40),
   whatsappPhone: z.string().trim().max(40).optional(),
   email: z.string().trim().email("Enter a valid email.").max(160).optional().or(z.literal("")),
+  dateOfBirth: z.string().trim().max(20).optional(),
+  gender: z.enum(["Male", "Female", "Prefer not to say"]).optional(),
   state: z.string().trim().max(80).optional(),
   city: z.string().trim().max(80).optional(),
+  residentialAddress: z.string().trim().max(500).optional(),
+  preferredPickupLocation: z.string().trim().max(160).optional(),
+  idType: z.enum(["NIN", "Driver's Licence", "Voter's Card", "International Passport"]).optional(),
+  idNumber: z.string().trim().max(60).optional(),
+  idFrontPath: z.string().trim().max(500).optional(),
+  idFrontName: z.string().trim().max(300).optional(),
+  idBackPath: z.string().trim().max(500).optional(),
+  idBackName: z.string().trim().max(300).optional(),
   transportMethod: z.enum([
     "Motorcycle", "Car", "Public transport", "Bicycle", "Walking", "Hired dispatch", "Other"
-  ]).optional()
+  ]).optional(),
+  vehicleModel: z.string().trim().max(120).optional(),
+  vehiclePlate: z.string().trim().max(40).optional(),
+  serviceRadiusKm: z.number().min(0).max(500).optional(),
+  serviceAreas: z.array(z.string().trim().max(80)).max(20).optional(),
+  guarantorsRequired: z.number().int().min(1).max(4).optional(),
+  agreementPath: z.string().trim().max(500).optional(),
+  agreementName: z.string().trim().max(300).optional()
+}).superRefine((value, ctx) => {
+  // An ID number with no type (or the reverse) cannot be verified against
+  // anything, so the pair is required together or not at all.
+  if (Boolean(value.idNumber) !== Boolean(value.idType)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["idType"], message: "Give both the ID type and its number, or neither." });
+  }
 });
 
 /** The checklist every application starts with - see the KYC section of the spec. */
 const DEFAULT_KYC_ITEMS: Array<{ key: string; label: string; mandatory?: boolean }> = [
   { key: "personal_information", label: "Personal Information" },
-  { key: "government_id", label: "Government-issued ID" },
+  { key: "government_id", label: "Government-issued ID (front)" },
+  { key: "government_id_back", label: "Government-issued ID (back)" },
   { key: "proof_of_address", label: "Proof of Address" },
   { key: "selfie_with_id", label: "Selfie holding ID" },
   { key: "live_verification_video", label: "Live Verification Video" },
@@ -482,9 +516,20 @@ router.post("/", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
       phone: parsed.data.phone,
       whatsapp_phone: parsed.data.whatsappPhone || null,
       email: parsed.data.email || null,
+      date_of_birth: parsed.data.dateOfBirth || null,
+      gender: parsed.data.gender || null,
       state: parsed.data.state || null,
       city: parsed.data.city || null,
+      residential_address: parsed.data.residentialAddress || null,
+      preferred_pickup_location: parsed.data.preferredPickupLocation || null,
+      id_type: parsed.data.idType || null,
+      id_number: parsed.data.idNumber || null,
       transport_method: parsed.data.transportMethod || null,
+      vehicle_model: parsed.data.vehicleModel || null,
+      vehicle_plate: parsed.data.vehiclePlate || null,
+      service_radius_km: parsed.data.serviceRadiusKm ?? null,
+      service_areas: parsed.data.serviceAreas ?? [],
+      guarantors_required: parsed.data.guarantorsRequired ?? 2,
       account_status: "Application Started",
       kyc_status: "KYC Incomplete",
       trust_level: "Probation",
@@ -498,14 +543,37 @@ router.post("/", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
     }
 
     // Seed the checklist so review is item-by-item from the very first screen.
-    await supabase.from(KYC).insert(DEFAULT_KYC_ITEMS.map((item) => ({
-      org_id: orgId,
-      agent_id: data.id,
-      item_key: item.key,
-      label: item.label,
-      mandatory: item.mandatory ?? true,
-      status: "Pending"
-    })));
+    // Anything uploaded during intake lands on its item as SUBMITTED, never
+    // approved - collecting a document and verifying it are different acts.
+    const uploadedByKey: Record<string, { path?: string; name?: string }> = {
+      government_id: { path: parsed.data.idFrontPath, name: parsed.data.idFrontName },
+      government_id_back: { path: parsed.data.idBackPath, name: parsed.data.idBackName }
+    };
+    await supabase.from(KYC).insert(DEFAULT_KYC_ITEMS.map((item) => {
+      const uploaded = uploadedByKey[item.key];
+      return {
+        org_id: orgId,
+        agent_id: data.id,
+        item_key: item.key,
+        label: item.label,
+        mandatory: item.mandatory ?? true,
+        status: uploaded?.path ? "Submitted" : "Pending",
+        file_url: uploaded?.path ?? null,
+        file_name: uploaded?.name ?? null
+      };
+    }));
+
+    if (parsed.data.agreementPath) {
+      await supabase.from(DOCS).insert({
+        org_id: orgId, agent_id: data.id,
+        document_key: "agent_agreement", label: "Personal Delivery Agent Agreement",
+        version: "v1", issued_at: new Date().toISOString().slice(0, 10),
+        signed_file_url: parsed.data.agreementPath,
+        file_name: parsed.data.agreementName ?? null,
+        uploaded_at: new Date().toISOString(),
+        status: "Uploaded"
+      });
+    }
 
     res.status(201).json({ row: mapAgent(data) });
   } catch (error: any) {
