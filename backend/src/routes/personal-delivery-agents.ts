@@ -14,6 +14,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { randomUUID } from "node:crypto";
+import { approvalBlockers } from "../lib/pda-approval.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -288,6 +290,426 @@ router.post("/", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
     res.status(201).json({ row: mapAgent(data) });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not start the application." });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────
+// Applications & KYC
+//
+// The governing rule: nobody is approved as a whole person in one click.
+// Every mandatory checklist item, both guarantors and every mandatory
+// agreement must pass individually before /approve will do anything.
+// ─────────────────────────────────────────────────────────
+
+const DOCS = "pda_documents";
+const KYC_BUCKET = "pda-kyc";
+
+/** The agreements every agent must sign before handling stock or cash. */
+const DEFAULT_DOCUMENTS: Array<{ key: string; label: string }> = [
+  { key: "agent_agreement", label: "Personal Delivery Agent Agreement" },
+  { key: "inventory_agreement", label: "Inventory Custody Agreement" },
+  { key: "cod_agreement", label: "COD Collection & Remittance Agreement" },
+  { key: "loss_damage_form", label: "Loss & Damage Responsibility Form" },
+  { key: "confidentiality_agreement", label: "Data & Customer Confidentiality Agreement" },
+  { key: "guarantor_form", label: "Guarantor Responsibility Form" },
+  { key: "termination_agreement", label: "Termination & Stock Recovery Agreement" }
+];
+
+const mapKycItem = (row: any) => ({
+  id: row.id,
+  itemKey: row.item_key,
+  label: row.label,
+  mandatory: row.mandatory,
+  status: row.status,
+  filePath: row.file_url ?? null,
+  reviewedAt: row.reviewed_at ?? null,
+  reviewNote: row.review_note ?? null,
+  rejectionReason: row.rejection_reason ?? null
+});
+
+const mapGuarantor = (row: any) => ({
+  id: row.id,
+  slot: row.slot,
+  guarantorType: row.guarantor_type ?? null,
+  fullName: row.full_name,
+  relationship: row.relationship ?? null,
+  phone: row.phone,
+  whatsappPhone: row.whatsapp_phone ?? null,
+  address: row.address ?? null,
+  occupation: row.occupation ?? null,
+  idDocumentPath: row.id_document_url ?? null,
+  photoPath: row.photo_url ?? null,
+  signedFormPath: row.signed_form_url ?? null,
+  consentGiven: row.consent_given,
+  verificationStatus: row.verification_status,
+  verificationNotes: row.verification_notes ?? null,
+  verifiedAt: row.verified_at ?? null,
+  callScheduledAt: row.call_scheduled_at ?? null
+});
+
+const mapDocument = (row: any) => ({
+  id: row.id,
+  documentKey: row.document_key,
+  label: row.label,
+  version: row.version,
+  signedFilePath: row.signed_file_url ?? null,
+  uploadedAt: row.uploaded_at ?? null,
+  status: row.status,
+  approvedAt: row.approved_at ?? null,
+  rejectionReason: row.rejection_reason ?? null
+});
+
+// ── GET /api/personal-delivery-agents/:id ─────────────────
+// Management only: this returns KYC documents, guarantors and bank details.
+router.get("/:id", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { data: agent, error } = await supabase
+      .from(AGENTS).select("*").eq("org_id", orgId).eq("id", req.params.id).single();
+    if (error || !agent) { res.status(404).json({ error: "Agent not found." }); return; }
+
+    const [kycRes, guarantorRes, docRes] = await Promise.all([
+      supabase.from(KYC).select("*").eq("agent_id", agent.id).order("created_at"),
+      supabase.from(GUARANTORS).select("*").eq("agent_id", agent.id).order("slot"),
+      supabase.from(DOCS).select("*").eq("agent_id", agent.id).order("created_at")
+    ]);
+    const kycItems = kycRes.data ?? [];
+    const guarantors = guarantorRes.data ?? [];
+    const documents = docRes.data ?? [];
+
+    res.json({
+      agent: { ...mapAgent(agent), verificationPhrase: agent.verification_phrase ?? null,
+        verificationPhraseIssuedAt: agent.verification_phrase_issued_at ?? null },
+      kycItems: kycItems.map(mapKycItem),
+      guarantors: guarantors.map(mapGuarantor),
+      documents: documents.map(mapDocument),
+      blockers: approvalBlockers(kycItems as any, guarantors as any, documents as any)
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the application." });
+  }
+});
+
+// ── POST /api/personal-delivery-agents/media/upload ───────
+// Uploads to the PRIVATE pda-kyc bucket and returns the object path, never a
+// public URL. Viewing requires a signed URL from the endpoint below.
+const KYC_MIME_EXT: Record<string, string> = {
+  "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/webp": "webp",
+  "application/pdf": "pdf",
+  "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov"
+};
+
+router.post("/media/upload", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const dataUrl = typeof req.body?.dataUrl === "string" ? req.body.dataUrl : "";
+  const match = dataUrl.match(/^data:((?:image|video|application)\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
+  if (!match) { res.status(400).json({ error: "Invalid file data." }); return; }
+  const mime = match[1].toLowerCase();
+  const ext = KYC_MIME_EXT[mime];
+  if (!ext) { res.status(400).json({ error: `Unsupported file type: ${mime}.` }); return; }
+  const buffer = Buffer.from(match[2], "base64");
+  if (buffer.length > 50 * 1024 * 1024) { res.status(413).json({ error: "File exceeds the 50MB limit." }); return; }
+  const objectName = `${req.user!.orgId}/${randomUUID()}.${ext}`;
+  const { error } = await supabase.storage.from(KYC_BUCKET)
+    .upload(objectName, buffer, { contentType: mime, upsert: false });
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.status(201).json({ path: objectName });
+});
+
+// ── GET /api/personal-delivery-agents/media/signed ────────
+// Short-lived link so an ID or bank document is never reachable by URL alone.
+router.get("/media/signed", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const path = typeof req.query.path === "string" ? req.query.path : "";
+  // Path traversal guard, and an org can only ever reach its own prefix.
+  if (!path || path.includes("..") || !path.startsWith(`${req.user!.orgId}/`)) {
+    res.status(400).json({ error: "Invalid file path." });
+    return;
+  }
+  const { data, error } = await supabase.storage.from(KYC_BUCKET).createSignedUrl(path, 300);
+  if (error || !data) { res.status(500).json({ error: error?.message ?? "Could not open the file." }); return; }
+  res.json({ url: data.signedUrl, expiresInSeconds: 300 });
+});
+
+// ── PATCH /api/personal-delivery-agents/kyc-items/:itemId ─
+const KycReviewSchema = z.object({
+  status: z.enum(["Pending", "Submitted", "Approved", "Rejected", "Replacement Requested", "Not Applicable"]),
+  reviewNote: z.string().trim().max(1000).optional(),
+  rejectionReason: z.string().trim().max(500).optional(),
+  filePath: z.string().trim().max(500).optional()
+}).superRefine((value, ctx) => {
+  // A rejection with no reason gives the applicant nothing to fix and leaves
+  // no record of why a reviewer said no.
+  if ((value.status === "Rejected" || value.status === "Replacement Requested") && !value.rejectionReason?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["rejectionReason"], message: "Say what is wrong with it." });
+  }
+});
+
+router.patch("/kyc-items/:itemId", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = KycReviewSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const patch: Record<string, unknown> = {
+      status: parsed.data.status,
+      reviewed_by: req.user!.id,
+      reviewed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    if (parsed.data.reviewNote !== undefined) patch.review_note = parsed.data.reviewNote;
+    if (parsed.data.rejectionReason !== undefined) patch.rejection_reason = parsed.data.rejectionReason;
+    if (parsed.data.filePath !== undefined) patch.file_url = parsed.data.filePath;
+
+    const { data, error } = await supabase.from(KYC).update(patch)
+      .eq("org_id", req.user!.orgId).eq("id", req.params.itemId).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (!data) { res.status(404).json({ error: "Checklist item not found." }); return; }
+    res.json({ row: mapKycItem(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update the item." });
+  }
+});
+
+// ── POST /api/personal-delivery-agents/:id/verification-phrase
+// Issues (or re-issues) the phrase for the live video. Re-issuing deliberately
+// resets the video item: an older recording cannot satisfy a newer phrase.
+const VERIFICATION_SUBJECTS = ["blue", "green", "silver", "golden", "quiet", "bright", "steady", "clear"];
+const VERIFICATION_NOUNS = ["harbour", "lantern", "compass", "market", "river", "anchor", "garden", "signal"];
+
+router.post("/:id/verification-phrase", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const pick = <T,>(list: T[]) => list[Math.floor(Math.random() * list.length)];
+    const phrase = `${pick(VERIFICATION_SUBJECTS)} ${pick(VERIFICATION_NOUNS)} ${Math.floor(1000 + Math.random() * 9000)}`;
+    const { data, error } = await supabase.from(AGENTS).update({
+      verification_phrase: phrase,
+      verification_phrase_issued_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }).eq("org_id", req.user!.orgId).eq("id", req.params.id).select("id").single();
+    if (error || !data) { res.status(404).json({ error: "Agent not found." }); return; }
+
+    await supabase.from(KYC).update({
+      status: "Pending", file_url: null,
+      review_note: "Phrase re-issued - a new recording is required.",
+      updated_at: new Date().toISOString()
+    }).eq("org_id", req.user!.orgId).eq("agent_id", req.params.id).eq("item_key", "live_verification_video");
+
+    res.json({ phrase });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not issue a phrase." });
+  }
+});
+
+// ── Guarantors ────────────────────────────────────────────
+const GuarantorSchema = z.object({
+  slot: z.number().int().min(1).max(2),
+  guarantorType: z.enum(["Family", "Independent"]).optional(),
+  fullName: z.string().trim().min(2).max(160),
+  relationship: z.string().trim().max(120).optional(),
+  phone: z.string().trim().min(7).max(40),
+  whatsappPhone: z.string().trim().max(40).optional(),
+  address: z.string().trim().max(500).optional(),
+  occupation: z.string().trim().max(160).optional(),
+  idDocumentPath: z.string().trim().max(500).optional(),
+  photoPath: z.string().trim().max(500).optional(),
+  signedFormPath: z.string().trim().max(500).optional(),
+  consentGiven: z.boolean().optional()
+});
+
+router.post("/:id/guarantors", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = GuarantorSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const payload = {
+      org_id: req.user!.orgId,
+      agent_id: req.params.id,
+      slot: parsed.data.slot,
+      guarantor_type: parsed.data.guarantorType ?? null,
+      full_name: parsed.data.fullName,
+      relationship: parsed.data.relationship ?? null,
+      phone: parsed.data.phone,
+      whatsapp_phone: parsed.data.whatsappPhone ?? null,
+      address: parsed.data.address ?? null,
+      occupation: parsed.data.occupation ?? null,
+      id_document_url: parsed.data.idDocumentPath ?? null,
+      photo_url: parsed.data.photoPath ?? null,
+      signed_form_url: parsed.data.signedFormPath ?? null,
+      consent_given: parsed.data.consentGiven ?? false,
+      updated_at: new Date().toISOString()
+    };
+    const { data, error } = await supabase.from(GUARANTORS)
+      .upsert(payload, { onConflict: "agent_id,slot" }).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(201).json({ row: mapGuarantor(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not save the guarantor." });
+  }
+});
+
+const GuarantorVerifySchema = z.object({
+  verificationStatus: z.enum([
+    "Not Contacted", "Call Scheduled", "Reached", "Confirmed", "Information Mismatch",
+    "Declined Responsibility", "Unable to Verify", "Approved", "Rejected"
+  ]),
+  verificationNotes: z.string().trim().max(1000).optional(),
+  callScheduledAt: z.string().trim().max(40).optional()
+});
+
+router.patch("/guarantors/:guarantorId", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = GuarantorVerifySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const patch: Record<string, unknown> = {
+      verification_status: parsed.data.verificationStatus,
+      verified_by: req.user!.id,
+      updated_at: new Date().toISOString()
+    };
+    if (parsed.data.verificationNotes !== undefined) patch.verification_notes = parsed.data.verificationNotes;
+    if (parsed.data.callScheduledAt) patch.call_scheduled_at = parsed.data.callScheduledAt;
+    if (parsed.data.verificationStatus === "Approved" || parsed.data.verificationStatus === "Rejected") {
+      patch.verified_at = new Date().toISOString();
+    }
+    const { data, error } = await supabase.from(GUARANTORS).update(patch)
+      .eq("org_id", req.user!.orgId).eq("id", req.params.guarantorId).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (!data) { res.status(404).json({ error: "Guarantor not found." }); return; }
+    res.json({ row: mapGuarantor(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update the guarantor." });
+  }
+});
+
+// ── Signed agreements ─────────────────────────────────────
+router.post("/:id/documents/seed", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { data: existing } = await supabase.from(DOCS)
+      .select("document_key").eq("org_id", orgId).eq("agent_id", req.params.id);
+    const have = new Set((existing ?? []).map((row: any) => row.document_key));
+    const missing = DEFAULT_DOCUMENTS.filter((doc) => !have.has(doc.key));
+    if (missing.length > 0) {
+      await supabase.from(DOCS).insert(missing.map((doc) => ({
+        org_id: orgId, agent_id: req.params.id,
+        document_key: doc.key, label: doc.label,
+        version: "v1", issued_at: new Date().toISOString().slice(0, 10),
+        status: "Not Uploaded"
+      })));
+    }
+    res.json({ seeded: missing.length });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not prepare the agreements." });
+  }
+});
+
+const DocumentReviewSchema = z.object({
+  status: z.enum(["Not Uploaded", "Uploaded", "Approved", "Rejected", "Replacement Requested"]),
+  signedFilePath: z.string().trim().max(500).optional(),
+  rejectionReason: z.string().trim().max(500).optional()
+}).superRefine((value, ctx) => {
+  if ((value.status === "Rejected" || value.status === "Replacement Requested") && !value.rejectionReason?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["rejectionReason"], message: "Say what is wrong with it." });
+  }
+});
+
+router.patch("/documents/:documentId", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = DocumentReviewSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const patch: Record<string, unknown> = { status: parsed.data.status, updated_at: new Date().toISOString() };
+    if (parsed.data.signedFilePath !== undefined) {
+      patch.signed_file_url = parsed.data.signedFilePath;
+      patch.uploaded_at = new Date().toISOString();
+    }
+    if (parsed.data.rejectionReason !== undefined) patch.rejection_reason = parsed.data.rejectionReason;
+    if (parsed.data.status === "Approved") {
+      patch.approved_by = req.user!.id;
+      patch.approved_at = new Date().toISOString();
+    }
+    const { data, error } = await supabase.from(DOCS).update(patch)
+      .eq("org_id", req.user!.orgId).eq("id", req.params.documentId).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (!data) { res.status(404).json({ error: "Document not found." }); return; }
+    res.json({ row: mapDocument(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update the document." });
+  }
+});
+
+// ── POST /api/personal-delivery-agents/:id/approve ────────
+// Owner/Admin only, and refuses unless every blocker is clear. The gate lives
+// HERE, not only in the UI - a disabled button is a hint, a server check is a
+// rule. Approval lands the agent on Probation, never straight to full trust.
+router.post("/:id/approve", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, account_status").eq("org_id", orgId).eq("id", req.params.id).single();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+
+    const [kycRes, guarantorRes, docRes] = await Promise.all([
+      supabase.from(KYC).select("mandatory, status, label").eq("agent_id", req.params.id),
+      supabase.from(GUARANTORS).select("slot, verification_status, guarantor_type").eq("agent_id", req.params.id),
+      supabase.from(DOCS).select("status, label").eq("agent_id", req.params.id)
+    ]);
+    const blockers = approvalBlockers(
+      (kycRes.data ?? []) as any, (guarantorRes.data ?? []) as any, (docRes.data ?? []) as any
+    );
+    if (blockers.length > 0) {
+      res.status(409).json({ error: "This application is not ready for approval.", blockers });
+      return;
+    }
+
+    const probationEnds = new Date();
+    probationEnds.setDate(probationEnds.getDate() + 30);
+    const { data, error } = await supabase.from(AGENTS).update({
+      account_status: "Probation",
+      kyc_status: "Approved",
+      trust_level: "Probation",
+      approved_at: new Date().toISOString(),
+      approved_by: req.user!.id,
+      probation_ends_at: probationEnds.toISOString().slice(0, 10),
+      updated_at: new Date().toISOString()
+    }).eq("org_id", orgId).eq("id", req.params.id).select(SELECT).single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ row: mapAgent(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not approve the application." });
+  }
+});
+
+// ── POST /api/personal-delivery-agents/:id/status ─────────
+// Reject, suspend, restrict or terminate - always with a reason on record.
+const StatusSchema = z.object({
+  accountStatus: z.enum([
+    "Application Started", "KYC Incomplete", "KYC Submitted", "Guarantor Verification Pending",
+    "Management Review", "Approved", "Probation", "Active", "Rejected", "Restricted",
+    "Temporarily Suspended", "KYC Expired", "Cash Remittance Overdue", "Inventory Discrepancy", "Terminated"
+  ]),
+  reason: z.string().trim().max(1000).optional()
+}).superRefine((value, ctx) => {
+  const needsReason = ["Rejected", "Restricted", "Temporarily Suspended", "Terminated"];
+  if (needsReason.includes(value.accountStatus) && !value.reason?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reason"], message: "A reason is required for this status." });
+  }
+});
+
+router.post("/:id/status", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = StatusSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    const patch: Record<string, unknown> = {
+      account_status: parsed.data.accountStatus,
+      updated_at: new Date().toISOString()
+    };
+    if (parsed.data.accountStatus === "Terminated") patch.termination_reason = parsed.data.reason ?? null;
+    else patch.restriction_reason = parsed.data.reason ?? null;
+    // Going offline matters: a restricted agent must not look assignable.
+    if (!OPERATIONAL_STATUSES.includes(parsed.data.accountStatus)) patch.availability = "Offline";
+
+    const { data, error } = await supabase.from(AGENTS).update(patch)
+      .eq("org_id", req.user!.orgId).eq("id", req.params.id).select(SELECT).single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (!data) { res.status(404).json({ error: "Agent not found." }); return; }
+    res.json({ row: mapAgent(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update the status." });
   }
 });
 
