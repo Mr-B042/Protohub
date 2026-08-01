@@ -7921,6 +7921,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     readPref<CartConversionFilter>("protohub.carts.conversionFilter", "All conversion paths", (raw) => raw as CartConversionFilter)
   );
   const [cartSourceFilter, setCartSourceFilter] = useState<string>("All sources");
+  // "Unassigned" is its own option: the carts nobody owns are the ones that go
+  // cold, and they are invisible in a plain per-rep list.
+  const [cartRepFilter, setCartRepFilter] = useState<string>("All reps");
   const [cartEmbedFilter, setCartEmbedFilter] = useState<string>("All forms");
   const [scheduleRange, setScheduleRange] = useState<ScheduleRange>(() =>
     readPref<ScheduleRange>("protohub.schedule.range", "Today", (raw) => raw as ScheduleRange)
@@ -16669,11 +16672,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const matchesProduct = matchesProductFilter(cart.productId, cart.productName, cartProductIds);
     const matchesViewer = viewerScopeRepId === null || cart.assignedRepId === viewerScopeRepId;
     const matchesSource = cartSourceFilter === "All sources" || (cart.source ?? "Website") === cartSourceFilter;
+    const matchesRep =
+      cartRepFilter === "All reps" ? true
+      : cartRepFilter === "Unassigned" ? !cart.assignedRepId
+      : cart.assignedRepId === cartRepFilter;
     const matchesEmbed =
       cartEmbedFilter === "All forms" ? true
       : cartEmbedFilter === "No embed label" ? !embedLabel
       : embedLabel === cartEmbedFilter;
-    return matchesSearch && matchesStatus && matchesConversion && matchesPeriod && matchesProduct && matchesViewer && matchesSource && matchesEmbed;
+    return matchesSearch && matchesStatus && matchesConversion && matchesPeriod && matchesProduct && matchesViewer && matchesSource && matchesEmbed && matchesRep;
   });
   // Distinct source + embed-label options, built from the carts that actually exist.
   const cartSourceOptions = ["All sources", ...Array.from(new Set(abandonedCarts.map((c) => c.source ?? "Website"))).sort()];
@@ -61640,6 +61647,21 @@ ${waybillLineItems(w).length > 1
                       >
                         Clear
                       </button>
+                    )}
+                    {/* Owner/Admin/Manager only - a rep's list is already their own. */}
+                    {viewerScopeRepId === null && (
+                      <select
+                        className="!min-h-0 w-full sm:min-w-[10rem] sm:flex-[0_1_12rem] h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                        aria-label="Assigned sales rep"
+                        value={cartRepFilter}
+                        onChange={(event) => setCartRepFilter(event.target.value)}
+                      >
+                        <option value="All reps">All reps</option>
+                        <option value="Unassigned">Unassigned</option>
+                        {activeSalesRepUsers.map((user) => (
+                          <option key={user.id} value={user.id}>{user.name}</option>
+                        ))}
+                      </select>
                     )}
                     <select
                       className="!min-h-0 w-full sm:min-w-[10rem] sm:flex-[0_1_12rem] h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
