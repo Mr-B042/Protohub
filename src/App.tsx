@@ -128,7 +128,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11189,6 +11189,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaLedgerMovement, setPdaLedgerMovement] = useState("All");
   const [pdaLedgerAgent, setPdaLedgerAgent] = useState("All");
   const [pdaLedgerPage, setPdaLedgerPage] = useState(1);
+  const [pdaCodOverview, setPdaCodOverview] = useState<PdaCodOverview | null>(null);
+  const [pdaCodTab, setPdaCodTab] = useState<"Collections Overview" | "Agent Remittance" | "Payment History" | "Discrepancies">("Collections Overview");
+  const [pdaCodSearch, setPdaCodSearch] = useState("");
+  const [pdaCodStatus, setPdaCodStatus] = useState("All");
+  const [pdaCodPage, setPdaCodPage] = useState(1);
   const [pdaFeeRules, setPdaFeeRules] = useState<PdaFeeRule[]>([]);
   const [pdaNegotiations, setPdaNegotiations] = useState<any[]>([]);
   const [pdaFeeDraft, setPdaFeeDraft] = useState({ scope: "state", matchValue: "", fee: "", sameDaySurcharge: "", distanceMinKm: "", distanceMaxKm: "" });
@@ -40441,6 +40446,7 @@ ${waybillLineItems(w).length > 1
     }
     if (pdaSubPage === "Active Agents") void loadPdaActiveAgents();
     if (pdaSubPage === "Inventory") void loadPdaInventory();
+    if (pdaSubPage === "COD & Reconciliation") void loadPdaCodOverview();
     if (pdaSubPage === "Orders & Dispatch") {
       void loadPdaActiveAgents();
       void loadPdaDispatchSummary();
@@ -40747,6 +40753,12 @@ ${waybillLineItems(w).length > 1
       // never accidentally increase someone's exposure.
       showToast(err?.message ?? "Could not save those settings.");
     } finally { setPdaSaving(false); }
+  };
+
+  const loadPdaCodOverview = async () => {
+    try {
+      setPdaCodOverview(await personalDeliveryAgentsApi.codOverview());
+    } catch (err: any) { showToast(err?.message ?? "Could not load the COD overview."); }
   };
 
   const loadPdaInventory = async () => {
@@ -48235,6 +48247,382 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // COD & Reconciliation. Company cash and agent earnings stay visibly apart
+  // throughout - an agent never nets their fee off the customer's payment.
+  const renderPdaCodPage = () => {
+    const view = pdaCodOverview;
+    const counts = view?.counts ?? null;
+
+    const statusChip = (status: string) =>
+      status === "Remitted" ? "bg-emerald-50 text-emerald-700"
+      : status === "Partial" ? "bg-amber-50 text-amber-700"
+      : status === "Overdue" ? "bg-rose-50 text-rose-700"
+      : "bg-gray-100 text-gray-600";
+
+    const agentRows = (view?.agents ?? []).filter((row) => {
+      if (pdaCodStatus !== "All" && row.status !== pdaCodStatus) return false;
+      if (!pdaCodSearch.trim()) return true;
+      const q = pdaCodSearch.trim().toLowerCase();
+      return row.fullName.toLowerCase().includes(q) || row.agentCode.toLowerCase().includes(q);
+    });
+    const PAGE = 8;
+    const totalPages = Math.max(1, Math.ceil(agentRows.length / PAGE));
+    const page = Math.min(pdaCodPage, totalPages);
+    const pageRows = agentRows.slice((page - 1) * PAGE, page * PAGE);
+
+    const donut = [
+      { label: "Remitted", value: counts?.remitted ?? 0, colour: "#10B981" },
+      { label: "Pending", value: Math.max(0, (counts?.pending ?? 0) - (counts?.overdue ?? 0)), colour: "#F59E0B" },
+      { label: "Overdue", value: counts?.overdue ?? 0, colour: "#EF4444" }
+    ];
+    const donutTotal = Math.max(1, donut.reduce((sum, slice) => sum + slice.value, 0));
+    const CIRC = 2 * Math.PI * 42;
+    let offset = 0;
+    const share = (value: number) => donutTotal > 0 ? `${Math.round((value / donutTotal) * 1000) / 10}%` : "—";
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-xl font-bold text-gray-900">COD &amp; Reconciliation</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Track cash-on-delivery collections and reconcile with orders.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => pdaCsvDownload("cod-reconciliation",
+              ["Agent", "Code", "Orders delivered", "COD collected", "Remitted", "Pending", "Status"],
+              (view?.agents ?? []).map((row) => [
+                row.fullName, row.agentCode, String(row.ordersDelivered),
+                String(row.codCollected), String(row.remitted), String(row.pending), row.status
+              ]))}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+              <Download className="h-4 w-4" /> Download COD Report
+            </button>
+            <button type="button" disabled={!pdaCodAgentId}
+              title={pdaCodAgentId ? undefined : "Pick an agent in the table first"}
+              onClick={() => { setPdaRemittanceDraft({ amount: "", method: "Cash", reference: "" }); setModal("pdaRemittance"); }}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg bg-[#1F8FE0] px-3.5 py-2 text-sm font-semibold text-white hover:bg-[#1560a8] disabled:opacity-40">
+              <Plus className="h-4 w-4" /> Record Payment
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
+          {pdaKpiCard({ label: "Total COD Collected", value: formatMoney(counts?.collected ?? 0), icon: Banknote, tint: "bg-emerald-50 text-emerald-600", foot: "This month", delta: counts?.collectedDeltaPct ?? null })}
+          {pdaKpiCard({ label: "Total to be Remitted", value: formatMoney(counts?.toRemit ?? 0), icon: CreditCard, tint: "bg-blue-50 text-blue-600", foot: "Full amount collected" })}
+          {pdaKpiCard({ label: "Total Remitted", value: formatMoney(counts?.remitted ?? 0), icon: CheckCircle2, tint: "bg-violet-50 text-violet-600", foot: "This month", delta: counts?.remittedDeltaPct ?? null })}
+          {pdaKpiCard({ label: "Pending Remittance", value: formatMoney(counts?.pending ?? 0), icon: CalendarClock, tint: "bg-amber-50 text-amber-600", foot: `${counts?.graceDays ?? 3}-day grace period` })}
+          {pdaKpiCard({ label: "Discrepancies", value: formatMoney(counts?.discrepancyAmount ?? 0), icon: AlertTriangle, tint: "bg-rose-50 text-rose-600", foot: `${counts?.discrepancyCases ?? 0} case${(counts?.discrepancyCases ?? 0) === 1 ? "" : "s"}` })}
+          {pdaKpiCard({
+            label: "Collection Rate",
+            // A rate needs a denominator. No deliveries means no rate, not 0%.
+            value: counts?.collectionRatePct === null || counts?.collectionRatePct === undefined ? "—" : `${counts.collectionRatePct}%`,
+            icon: Star, tint: "bg-orange-50 text-orange-600",
+            foot: counts?.collectionRatePct === null || counts?.collectionRatePct === undefined
+              ? "No deliveries this month" : "Cash collected vs order value"
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[240px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm"
+              placeholder="Search by agent name, order ID, reference..." value={pdaCodSearch}
+              onChange={(e) => { setPdaCodSearch(e.target.value); setPdaCodPage(1); }} />
+          </div>
+          <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+            value={pdaCodStatus} onChange={(e) => { setPdaCodStatus(e.target.value); setPdaCodPage(1); }}>
+            <option value="All">Status: All</option>
+            {["Remitted", "Partial", "Overdue", "Cash Held"].map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button type="button" onClick={() => { setPdaCodSearch(""); setPdaCodStatus("All"); setPdaCodPage(1); }}
+            className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+            <RefreshCw className="h-4 w-4" /> Reset
+          </button>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr),300px]">
+          <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="flex gap-1 overflow-x-auto border-b border-gray-200 px-3">
+              {(["Collections Overview", "Agent Remittance", "Payment History", "Discrepancies"] as const).map((tab) => (
+                <button key={tab} type="button" onClick={() => setPdaCodTab(tab)}
+                  className={`!min-h-0 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px] font-semibold ${
+                    pdaCodTab === tab ? "border-[#1F8FE0] text-[#1F8FE0]" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            {pdaCodTab === "Collections Overview" && (
+              <>
+                <div className="px-5 py-4">
+                  <h3 className="m-0 text-base font-bold text-gray-900">Collections Overview</h3>
+                  <p className="m-0 mt-0.5 text-xs text-gray-500">
+                    An agent remits the <strong>full</strong> amount collected — their fee is paid separately, so a shortfall is always visible.
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-y border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                        <th className="px-5 py-2.5">Agent</th>
+                        <th className="px-3 py-2.5">Orders Delivered</th>
+                        <th className="px-3 py-2.5">COD Collected</th>
+                        <th className="px-3 py-2.5" title="Protohub does not record refunds, so this is blank rather than zero.">Refunds</th>
+                        <th className="px-3 py-2.5">Net Collected</th>
+                        <th className="px-3 py-2.5">Remitted</th>
+                        <th className="px-3 py-2.5">Pending</th>
+                        <th className="px-3 py-2.5">Status</th>
+                        <th className="px-3 py-2.5 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="px-5 py-14 text-center">
+                            <p className="m-0 text-sm font-semibold text-gray-500">
+                              {(view?.agents ?? []).length === 0 ? "No cash has been collected yet." : "No agents match those filters."}
+                            </p>
+                            {(view?.agents ?? []).length === 0 && (
+                              <p className="m-0 mt-1 text-xs text-gray-400">
+                                Collections appear here as soon as an agent marks a delivery complete with the amount collected.
+                              </p>
+                            )}
+                          </td>
+                        </tr>
+                      ) : pageRows.map((row) => (
+                        <tr key={row.agentId}
+                          className={`border-b border-gray-100 last:border-0 hover:bg-gray-50 ${pdaCodAgentId === row.agentId ? "bg-blue-50/60" : ""}`}>
+                          <td className="px-5 py-3">
+                            <div className="flex items-center gap-3">
+                              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-black ${customerAvatarTone(row.agentId)}`}>
+                                {customerInitial(row.fullName)}
+                              </span>
+                              <div className="min-w-0">
+                                <div className="font-bold text-gray-900">{row.fullName}</div>
+                                <div className="text-[11px] text-gray-400">{row.agentCode}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 text-gray-700">{row.ordersDelivered}</td>
+                          <td className="px-3 py-3 font-bold text-gray-900">{formatMoney(row.codCollected)}</td>
+                          <td className="px-3 py-3 text-gray-300" title="Refunds are not recorded in Protohub.">—</td>
+                          <td className="px-3 py-3 font-bold text-gray-900">{formatMoney(row.netCollected)}</td>
+                          <td className="px-3 py-3 text-emerald-700">{formatMoney(row.remitted)}</td>
+                          <td className={`px-3 py-3 font-bold ${row.pending > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                            {formatMoney(row.pending)}
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${statusChip(row.status)}`}>{row.status}</span>
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button type="button" title="Open this agent's cash position" onClick={() => void openPdaCod(row.agentId)}
+                                className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                                <Eye className="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" title="Record a payment from this agent"
+                                onClick={() => { setPdaCodAgentId(row.agentId); setPdaRemittanceDraft({ amount: "", method: "Cash", reference: "" }); setModal("pdaRemittance"); }}
+                                className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                                <Banknote className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {agentRows.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-5 py-3">
+                    <span className="text-xs text-gray-500">
+                      Showing {(page - 1) * PAGE + 1} to {Math.min(page * PAGE, agentRows.length)} of {agentRows.length} agents
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button type="button" disabled={page <= 1} onClick={() => setPdaCodPage(page - 1)}
+                        className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      {Array.from({ length: totalPages }).slice(0, 3).map((_, index) => (
+                        <button key={index} type="button" onClick={() => setPdaCodPage(index + 1)}
+                          className={`!min-h-0 inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-xs font-bold ${
+                            page === index + 1 ? "bg-[#1F8FE0] text-white" : "border border-gray-200 text-gray-600"}`}>
+                          {index + 1}
+                        </button>
+                      ))}
+                      <button type="button" disabled={page >= totalPages} onClick={() => setPdaCodPage(page + 1)}
+                        className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 disabled:opacity-40">
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {pdaCodTab === "Agent Remittance" && (
+              <div className="p-5">
+                {pdaCod && pdaCodAgentId ? renderPdaCod() : (
+                  <p className="m-0 py-10 text-center text-sm text-gray-500">
+                    Pick an agent from Collections Overview to see their full reconciliation.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {pdaCodTab === "Payment History" && (
+              <div className="divide-y divide-gray-100">
+                {(view?.remittances ?? []).length === 0 ? (
+                  <p className="m-0 px-5 py-14 text-center text-sm text-gray-400">No payments recorded yet.</p>
+                ) : view!.remittances.map((row) => (
+                  <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-bold text-gray-900">{formatMoney(row.amount)}</div>
+                      <div className="text-[11px] text-gray-500">
+                        {row.agentName} · {row.method}{row.reference ? ` · ${row.reference}` : ""}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right text-[11px] text-gray-400">
+                      <div>{new Date(row.receivedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</div>
+                      <div>received by {row.receivedByName ?? "office"}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {pdaCodTab === "Discrepancies" && (
+              <div className="divide-y divide-gray-100">
+                {(view?.discrepancies ?? []).length === 0 ? (
+                  <p className="m-0 px-5 py-14 text-center text-sm text-gray-400">
+                    No cash discrepancies. Short payments, overpayments and Missing COD reports all appear here.
+                  </p>
+                ) : view!.discrepancies.map((row) => (
+                  <div key={`${row.kind}-${row.id}`} className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-bold text-gray-900">
+                        {row.agentName}
+                        {row.orderId && <span className="ml-2 text-[11px] font-semibold text-gray-400">order {row.orderId}</span>}
+                      </div>
+                      <p className="m-0 text-[11px] text-gray-600">{row.detail}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-[13px] font-black text-rose-600">{formatMoney(row.amount)}</span>
+                      <span className="rounded-md bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700">{row.status}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <div className="space-y-4">
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Collections Summary</h3>
+              <div className="mt-4 flex items-center gap-4">
+                <div className="relative h-[104px] w-[104px] shrink-0">
+                  <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+                    <circle cx="50" cy="50" r="42" fill="none" stroke="#F3F4F6" strokeWidth="12" />
+                    {donut.map((slice) => {
+                      if (slice.value <= 0) return null;
+                      const length = (slice.value / donutTotal) * CIRC;
+                      const start = offset;
+                      offset += length;
+                      return (
+                        <circle key={slice.label} cx="50" cy="50" r="42" fill="none"
+                          stroke={slice.colour} strokeWidth="12"
+                          strokeDasharray={`${length} ${CIRC - length}`} strokeDashoffset={-start} />
+                      );
+                    })}
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-sm font-black leading-none text-gray-900">{formatMoney(counts?.collected ?? 0)}</span>
+                    <span className="text-[9px] text-gray-400">Collected</span>
+                  </div>
+                </div>
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  {donut.map((slice) => (
+                    <div key={slice.label} className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="flex items-center gap-1.5 text-gray-600">
+                        <span className="h-2 w-2 rounded-full" style={{ background: slice.colour }} />
+                        {slice.label}
+                      </span>
+                      <span className="font-semibold text-gray-700">
+                        {formatMoney(slice.value)} <span className="text-gray-400">({share(slice.value)})</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Top Agents by Collections</h3>
+              {(view?.topAgents ?? []).length === 0 ? (
+                <p className="m-0 mt-3 text-xs text-gray-400">Nothing collected yet.</p>
+              ) : (
+                <ul className="m-0 mt-3 list-none space-y-2.5 p-0">
+                  {view!.topAgents.map((agent) => (
+                    <li key={agent.agentId} className="flex items-center gap-2.5">
+                      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-black ${customerAvatarTone(agent.agentId)}`}>
+                        {customerInitial(agent.fullName)}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-gray-800">{agent.fullName}</span>
+                      <span className="shrink-0 text-[11px] font-bold text-gray-700">{formatMoney(agent.amount)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Recent Activity</h3>
+              {(view?.recentActivity ?? []).length === 0 ? (
+                <p className="m-0 mt-3 text-xs text-gray-400">Nothing has happened yet.</p>
+              ) : (
+                <ul className="m-0 mt-3 list-none space-y-2.5 p-0">
+                  {view!.recentActivity.map((event, index) => (
+                    <li key={`${event.label}-${index}`} className="flex items-start gap-2.5">
+                      <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${event.kind === "discrepancy" ? "bg-rose-500" : "bg-emerald-500"}`} />
+                      <div className="min-w-0">
+                        <div className="text-[12px] font-semibold text-gray-800">{event.label}</div>
+                        <div className="text-[11px] text-gray-400">
+                          {new Date(event.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Quick Actions</h3>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button type="button" disabled={!pdaCodAgentId}
+                  onClick={() => { setPdaRemittanceDraft({ amount: "", method: "Cash", reference: "" }); setModal("pdaRemittance"); }}
+                  className="!min-h-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-40">
+                  Record Remittance
+                </button>
+                <button type="button" onClick={() => { setPdaSubPage("Incidents"); setPdaIncidentDraft({ agentId: pdaCodAgentId, orderId: "", incidentType: "Missing COD", severity: "High", description: "", amountAtRisk: "" }); setModal("pdaIncident"); }}
+                  className="!min-h-0 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] font-bold text-rose-700 hover:bg-rose-100">
+                  Log Discrepancy
+                </button>
+                <button type="button" disabled={!pdaCodAgentId} onClick={() => setPdaCodTab("Agent Remittance")}
+                  className="!min-h-0 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-2 text-[11px] font-bold text-blue-700 hover:bg-blue-100 disabled:opacity-40">
+                  Agent Statement
+                </button>
+                <button type="button" onClick={() => setPdaSubPage("Settings")}
+                  className="!min-h-0 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
+                  Grace Period
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // COD & Reconciliation. Company cash and agent earnings are shown as two
   // separate columns of money throughout - an agent never nets their fee off
   // the customer's payment, so the books must not imply that they can.
@@ -51133,7 +51521,7 @@ ${waybillLineItems(w).length > 1
         ) : pdaSubPage === "Inventory" ? (
           renderPdaInventoryPage()
         ) : pdaSubPage === "COD & Reconciliation" ? (
-          renderPdaCod()
+          renderPdaCodPage()
         ) : pdaSubPage === "Active Agents" ? (
           renderPdaActiveAgents()
         ) : pdaSubPage === "Orders & Dispatch" ? (

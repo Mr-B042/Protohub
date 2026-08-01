@@ -1388,6 +1388,152 @@ router.get("/stock-ledger", requireRole(...MANAGEMENT_ROLES), async (req, res) =
   }
 });
 
+// ── GET /api/personal-delivery-agents/cod-overview ────────
+// Company cash across every agent: what was collected, what has come in, and
+// what is late.
+router.get("/cod-overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const lastMonthKey = lastMonth.toISOString().slice(0, 7);
+    const monthOf = (value: any) => String(value ?? "").slice(0, 7);
+    const dayOf = (value: any) => String(value ?? "").slice(0, 10);
+
+    const [{ data: assignments }, { data: agentRows }, { data: remittances }, { data: incidents }, { data: settingsRow }] =
+      await Promise.all([
+        supabase.from(ASSIGNMENTS).select("*").eq("org_id", orgId),
+        supabase.from(AGENTS).select("id, agent_code, full_name, phone").eq("org_id", orgId),
+        supabase.from(REMITTANCES).select("*").eq("org_id", orgId).order("received_at", { ascending: false }).limit(200),
+        supabase.from(INCIDENTS).select("*").eq("org_id", orgId).eq("incident_type", "Missing COD"),
+        supabase.from(SETTINGS).select("remittance_grace_days").eq("org_id", orgId).maybeSingle()
+      ]);
+
+    const rows = (assignments ?? []) as any[];
+    const agentById = new Map((agentRows ?? []).map((a: any) => [a.id, a]));
+    const graceDays = Number(settingsRow?.remittance_grace_days ?? 3);
+    const overdueCutoff = new Date(Date.now() - graceDays * 86400000).toISOString().slice(0, 10);
+
+    const delivered = rows.filter((r) => r.delivery_status === "Delivered");
+    const inMonth = (source: any[], key: string) => source.filter((r) => monthOf(r.delivered_at) === key);
+    const sum = (source: any[], field: string) => source.reduce((total, r) => total + Number(r[field] ?? 0), 0);
+
+    const thisMonth = inMonth(delivered, monthKey);
+    const priorMonth = inMonth(delivered, lastMonthKey);
+    const pct = (now: number, before: number) => before <= 0 ? null : Math.round(((now - before) / before) * 1000) / 10;
+
+    const collected = sum(thisMonth, "amount_collected");
+    const remitted = sum(thisMonth, "amount_remitted");
+    const outstanding = thisMonth.reduce((total, r) =>
+      total + Math.max(0, Number(r.amount_collected ?? 0) - Number(r.amount_remitted ?? 0)), 0);
+    const overdue = delivered
+      .filter((r) => dayOf(r.delivered_at) && dayOf(r.delivered_at) < overdueCutoff)
+      .reduce((total, r) => total + Math.max(0, Number(r.amount_collected ?? 0) - Number(r.amount_remitted ?? 0)), 0);
+
+    // Collection rate: cash actually collected against the value of what was
+    // delivered. A delivered order that collected nothing is the leak this
+    // number exists to expose.
+    const deliveredValue = thisMonth.reduce((total, r) => total + Number(r.delivery_fee ?? 0) * 0, 0);
+    const { data: orderValues } = thisMonth.length
+      ? await supabase.from("orders").select("id, amount").eq("org_id", orgId)
+          .in("id", [...new Set(thisMonth.map((r) => r.order_id))])
+      : { data: [] as any[] };
+    const valueById = new Map((orderValues ?? []).map((o: any) => [o.id, Number(o.amount ?? 0)]));
+    const expected = thisMonth.reduce((total, r) => total + (valueById.get(r.order_id) ?? 0), 0);
+    void deliveredValue;
+
+    // Discrepancies: cash short or over against what the customer paid, plus
+    // any Missing COD incident already raised.
+    const shortOrOver = delivered.filter((r) =>
+      ["Short Payment", "Overpayment", "Under Review"].includes(String(r.reconciliation_status)));
+    const openIncidents = (incidents ?? []).filter((i: any) => !["Resolved", "Closed - No Action"].includes(i.status));
+    const discrepancyAmount = openIncidents.reduce((total: number, i: any) => total + Number(i.amount_at_risk ?? 0), 0)
+      + shortOrOver.reduce((total, r) => total + Math.abs(Number(r.amount_collected ?? 0) - Number(r.amount_remitted ?? 0)), 0);
+
+    const agents = [...new Set(delivered.map((r) => r.agent_id))].map((agentId) => {
+      const mine = delivered.filter((r) => r.agent_id === agentId);
+      const agent = agentById.get(agentId);
+      const agentCollected = sum(mine, "amount_collected");
+      const agentRemitted = sum(mine, "amount_remitted");
+      const pending = mine.reduce((total, r) =>
+        total + Math.max(0, Number(r.amount_collected ?? 0) - Number(r.amount_remitted ?? 0)), 0);
+      const isOverdue = mine.some((r) => dayOf(r.delivered_at) && dayOf(r.delivered_at) < overdueCutoff
+        && Number(r.amount_collected ?? 0) > Number(r.amount_remitted ?? 0));
+      return {
+        agentId,
+        agentCode: agent?.agent_code ?? "",
+        fullName: agent?.full_name ?? "Unknown agent",
+        ordersDelivered: mine.length,
+        codCollected: agentCollected,
+        // Refunds are NOT tracked anywhere in Protohub, so this is null rather
+        // than 0 - "no refunds happened" and "we do not record refunds" are
+        // different claims, and only one of them is true.
+        refunds: null as number | null,
+        netCollected: agentCollected,
+        remitted: agentRemitted,
+        pending,
+        status: pending <= 0 ? "Remitted" : isOverdue ? "Overdue" : agentRemitted > 0 ? "Partial" : "Cash Held"
+      };
+    }).sort((a, b) => b.codCollected - a.codCollected);
+
+    const events = [
+      ...(remittances ?? []).map((r: any) => ({
+        label: `${Math.round(Number(r.amount ?? 0))} remitted by ${agentById.get(r.agent_id)?.full_name ?? "an agent"}`,
+        at: r.received_at, kind: "remittance" as const
+      })),
+      ...openIncidents.map((i: any) => ({
+        label: `Missing COD logged for ${agentById.get(i.agent_id)?.full_name ?? "an agent"}`,
+        at: i.created_at, kind: "discrepancy" as const
+      }))
+    ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()).slice(0, 6);
+
+    res.json({
+      counts: {
+        collected,
+        collectedDeltaPct: pct(collected, sum(priorMonth, "amount_collected")),
+        toRemit: collected,
+        remitted,
+        remittedDeltaPct: pct(remitted, sum(priorMonth, "amount_remitted")),
+        pending: outstanding,
+        overdue,
+        discrepancyAmount: Math.round(discrepancyAmount),
+        discrepancyCases: openIncidents.length + shortOrOver.length,
+        // Null when nothing was delivered - a rate needs a denominator.
+        collectionRatePct: expected > 0 ? Math.round((collected / expected) * 1000) / 10 : null,
+        graceDays
+      },
+      agents,
+      topAgents: agents.slice(0, 3).map((a) => ({ agentId: a.agentId, fullName: a.fullName, amount: a.codCollected })),
+      remittances: (remittances ?? []).map((r: any) => ({
+        id: r.id, agentId: r.agent_id,
+        agentName: agentById.get(r.agent_id)?.full_name ?? "Unknown agent",
+        amount: Number(r.amount ?? 0), method: r.method, reference: r.reference ?? null,
+        receivedAt: r.received_at, receivedByName: r.received_by_name ?? null
+      })),
+      discrepancies: [
+        ...openIncidents.map((i: any) => ({
+          id: i.id, kind: "incident" as const,
+          agentName: agentById.get(i.agent_id)?.full_name ?? "Unknown agent",
+          orderId: i.order_id ?? null, amount: Number(i.amount_at_risk ?? 0),
+          detail: i.description, status: i.status, at: i.created_at
+        })),
+        ...shortOrOver.map((r: any) => ({
+          id: r.id, kind: "reconciliation" as const,
+          agentName: agentById.get(r.agent_id)?.full_name ?? "Unknown agent",
+          orderId: r.order_id,
+          amount: Math.abs(Number(r.amount_collected ?? 0) - Number(r.amount_remitted ?? 0)),
+          detail: `Collected ${Math.round(Number(r.amount_collected ?? 0))}, remitted ${Math.round(Number(r.amount_remitted ?? 0))}`,
+          status: r.reconciliation_status, at: r.delivered_at
+        }))
+      ],
+      recentActivity: events
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the COD overview." });
+  }
+});
+
 // ── GET /api/personal-delivery-agents/:id ─────────────────
 // Management only: this returns KYC documents, guarantors and bank details.
 router.get("/:id", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
