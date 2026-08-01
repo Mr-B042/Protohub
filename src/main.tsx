@@ -8,6 +8,7 @@ import { ensureServiceWorkerRegistration } from "./lib/push-client";
 import { LoginScreen } from "./components/LoginScreen";
 import { ResetPasswordScreen } from "./components/ResetPasswordScreen";
 import PublicOrderFormPage from "./pages/PublicOrderFormPage";
+import PublicAgentApplicationPage from "./PublicAgentApplicationPage";
 import "./styles.css";
 
 function RouteFallback({ message }: { message: string }) {
@@ -215,6 +216,12 @@ function Root() {
   // and avoid booting the full admin dashboard bundle.
   if (hash.startsWith("#/order-form/embed")) {
     return <PublicOrderFormPage />;
+  }
+
+  // Agent self-application. Reached by a shared link with no login, so it must
+  // sit ahead of the auth gate like the public order form.
+  if (hash.startsWith("#/agent-application/")) {
+    return <PublicAgentApplicationPage />;
   }
 
   if (!loggedIn) {

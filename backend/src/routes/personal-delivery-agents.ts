@@ -1684,6 +1684,75 @@ router.get("/incidents-overview", requireRole(...MANAGEMENT_ROLES), async (req, 
   }
 });
 
+// ── Application links ─────────────────────────────────────
+// Shareable links so a prospective agent fills in their own details. The token
+// is random and the link is revocable: a link forwarded around WhatsApp cannot
+// be un-forwarded, only switched off.
+const APP_LINKS = "pda_application_links";
+
+router.get("/application-links", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from(APP_LINKS).select("*")
+      .eq("org_id", orgIdOf(req)).order("created_at", { ascending: false }).limit(50);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({
+      rows: (data ?? []).map((row: any) => ({
+        id: row.id, token: row.token, label: row.label ?? null,
+        active: row.active, expiresAt: row.expires_at ?? null,
+        maxSubmissions: row.max_submissions ?? null,
+        submissionCount: Number(row.submission_count ?? 0),
+        createdByName: row.created_by_name ?? null,
+        createdAt: row.created_at, revokedAt: row.revoked_at ?? null
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load application links." });
+  }
+});
+
+const AppLinkSchema = z.object({
+  label: z.string().trim().max(120).optional(),
+  expiresInDays: z.number().int().min(1).max(365).optional(),
+  maxSubmissions: z.number().int().min(1).max(1000).optional()
+});
+
+router.post("/application-links", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  const parsed = AppLinkSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  try {
+    // 32 hex chars of real randomness - long enough that guessing is not a
+    // realistic way in.
+    const token = `${randomUUID()}${randomUUID()}`.replace(/-/g, "").slice(0, 32);
+    const expiresAt = parsed.data.expiresInDays
+      ? new Date(Date.now() + parsed.data.expiresInDays * 86400000).toISOString() : null;
+    const { data, error } = await supabase.from(APP_LINKS).insert({
+      org_id: orgIdOf(req),
+      token,
+      label: parsed.data.label ?? null,
+      expires_at: expiresAt,
+      max_submissions: parsed.data.maxSubmissions ?? null,
+      created_by: req.user!.id,
+      created_by_name: req.user!.name
+    }).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(201).json({ row: { id: data.id, token: data.token, label: data.label, expiresAt: data.expires_at } });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not create that link." });
+  }
+});
+
+router.post("/application-links/:linkId/revoke", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const { error } = await supabase.from(APP_LINKS).update({
+      active: false, revoked_at: new Date().toISOString(), revoked_by: req.user!.id
+    }).eq("org_id", orgIdOf(req)).eq("id", paramOf(req.params.linkId));
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not revoke that link." });
+  }
+});
+
 // ── GET /api/personal-delivery-agents/:id ─────────────────
 // Management only: this returns KYC documents, guarantors and bank details.
 router.get("/:id", requireRole(...MANAGEMENT_ROLES), async (req, res) => {

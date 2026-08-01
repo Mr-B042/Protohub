@@ -128,7 +128,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11244,6 +11244,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaAppStatusFilter, setPdaAppStatusFilter] = useState("All");
   const [pdaAppGuarantorFilter, setPdaAppGuarantorFilter] = useState("All");
   const [pdaAppPage, setPdaAppPage] = useState(1);
+  const [pdaAppLinks, setPdaAppLinks] = useState<PdaApplicationLink[]>([]);
   const [pdaReview, setPdaReview] = useState<PdaReviewView | null>(null);
   const [pdaReviewSearch, setPdaReviewSearch] = useState("");
   const [pdaReviewSort, setPdaReviewSort] = useState("Newest First");
@@ -40476,6 +40477,7 @@ ${waybillLineItems(w).length > 1
     if (pdaSubPage === "Applications & KYC") {
       void loadPdaApplications();
       void loadPdaGuarantorQueue();
+      void loadPdaAppLinks();
     }
     if (pdaSubPage === "Active Agents") void loadPdaActiveAgents();
     if (pdaSubPage === "Inventory") void loadPdaInventory();
@@ -41203,6 +41205,38 @@ ${waybillLineItems(w).length > 1
         row.fullName, row.relationship ?? "", row.guarantorType ?? "", row.applicantName ?? "",
         row.applicationId, row.verificationStatus, String(row.callAttempts), row.assignedToName ?? ""
       ]));
+  };
+
+  const loadPdaAppLinks = async () => {
+    try {
+      const result = await personalDeliveryAgentsApi.applicationLinks();
+      setPdaAppLinks(result?.rows ?? []);
+    } catch (err: any) { showToast(err?.message ?? "Could not load application links."); }
+  };
+
+  /** The shareable URL for a link token, built from wherever the app is served. */
+  const pdaApplicationUrl = (token: string) =>
+    `${window.location.origin}${window.location.pathname}#/agent-application/${token}`;
+
+  const pdaCreateAppLink = async () => {
+    const label = window.prompt("What is this link for? (e.g. \"Rivers recruitment drive\")") ?? "";
+    try {
+      const { row } = await personalDeliveryAgentsApi.createApplicationLink({
+        label: label.trim() || undefined,
+        expiresInDays: 30
+      });
+      await loadPdaAppLinks();
+      copyText(pdaApplicationUrl(row.token), "Application link");
+      showToast("Link created and copied. It expires in 30 days and can be revoked any time.");
+    } catch (err: any) { showToast(err?.message ?? "Could not create that link."); }
+  };
+
+  const pdaRevokeAppLink = async (id: string) => {
+    try {
+      await personalDeliveryAgentsApi.revokeApplicationLink(id);
+      showToast("Link revoked. Anyone opening it now sees that it has been closed.");
+      await loadPdaAppLinks();
+    } catch (err: any) { showToast(err?.message ?? "Could not revoke that link."); }
   };
 
   const loadPdaApplications = async () => {
@@ -52428,6 +52462,53 @@ ${waybillLineItems(w).length > 1
             <RefreshCw className="h-4 w-4" /> Reset
           </button>
         </div>
+
+        <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="m-0 text-sm font-bold text-gray-900">Share an application link</h3>
+              <p className="m-0 mt-0.5 max-w-2xl text-xs text-gray-500">
+                Send this to anyone who wants to become a delivery agent. They fill in their own details, upload their ID and give their guarantors, then wait for your approval. A link can be revoked at any time — once it is out on WhatsApp you cannot un-send it, only switch it off.
+              </p>
+            </div>
+            <button type="button" onClick={() => void pdaCreateAppLink()}
+              className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50">
+              <Plus className="h-3.5 w-3.5" /> Create link
+            </button>
+          </div>
+          {pdaAppLinks.length > 0 && (
+            <div className="mt-3 divide-y divide-gray-100 border-t border-gray-100">
+              {pdaAppLinks.slice(0, 4).map((link) => (
+                <div key={link.id} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="text-[12px] font-bold text-gray-900">
+                      {link.label || "Application link"}
+                      {!link.active && <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-black text-gray-500">Revoked</span>}
+                      {link.active && link.expiresAt && new Date(link.expiresAt).getTime() < Date.now() && (
+                        <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">Expired</span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-gray-400">
+                      {link.submissionCount} application{link.submissionCount === 1 ? "" : "s"} received
+                      {link.expiresAt ? ` · expires ${new Date(link.expiresAt).toLocaleDateString([], { dateStyle: "medium" })}` : ""}
+                      {link.createdByName ? ` · by ${link.createdByName}` : ""}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {link.active && (
+                      <>
+                        <button type="button" onClick={() => copyText(pdaApplicationUrl(link.token), "Application link")}
+                          className="!min-h-0 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50">Copy link</button>
+                        <button type="button" onClick={() => void pdaRevokeAppLink(link.id)}
+                          className="!min-h-0 rounded-md border border-rose-200 px-2.5 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-50">Revoke</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
