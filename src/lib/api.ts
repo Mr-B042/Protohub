@@ -1101,8 +1101,11 @@ export const personalDeliveryAgentsApi = {
     get<{ url: string }>(`/api/personal-delivery-agents/media/signed?path=${encodeURIComponent(path)}`),
   assign: (id: string, body: unknown) => post<{ row: PdaAssignment }>(`/api/personal-delivery-agents/${id}/assign`, body),
   // The agent's own portal
-  mySummary: () => get<PdaMySummary>("/api/personal-delivery-agents/my/summary"),
-  myOrders: () => get<{ rows: PdaAssignment[] }>("/api/personal-delivery-agents/my/orders"),
+  // agentId previews another agent's portal (management only, read-only).
+  mySummary: (agentId?: string) =>
+    get<PdaMySummary>(`/api/personal-delivery-agents/my/summary${agentId ? `?agentId=${agentId}` : ""}`),
+  myOrders: (agentId?: string) =>
+    get<{ rows: PdaAssignment[] }>(`/api/personal-delivery-agents/my/orders${agentId ? `?agentId=${agentId}` : ""}`),
   respond: (assignmentId: string, body: unknown) =>
     post<{ row: PdaAssignment }>(`/api/personal-delivery-agents/my/orders/${assignmentId}/respond`, body),
   setContact: (assignmentId: string, body: unknown) =>
@@ -1120,7 +1123,8 @@ export const personalDeliveryAgentsApi = {
   // Inventory
   sendStock: (id: string, body: unknown) => post<{ row: any }>(`/api/personal-delivery-agents/${id}/stock/send`, body),
   agentStock: (id: string) => get<{ stock: any[]; ledger: any[]; transfers: any[] }>(`/api/personal-delivery-agents/${id}/stock`),
-  myStock: () => get<{ stock: any[]; incoming: any[]; ledger: any[] }>("/api/personal-delivery-agents/my/stock"),
+  myStock: (agentId?: string) =>
+    get<{ stock: any[]; incoming: any[]; ledger: any[] }>(`/api/personal-delivery-agents/my/stock${agentId ? `?agentId=${agentId}` : ""}`),
   confirmTransfer: (transferId: string, body: unknown) =>
     post<{ received: number; short: boolean }>(`/api/personal-delivery-agents/my/transfers/${transferId}/confirm`, body),
   reportDiscrepancy: (body: unknown) =>
@@ -1133,7 +1137,8 @@ export const personalDeliveryAgentsApi = {
     post<{ row: any; applied: number; unallocated: number; note?: string }>(`/api/personal-delivery-agents/${id}/remittances`, body),
   payEarnings: (id: string, body: unknown) =>
     post<{ row: any; orders: number; amount: number }>(`/api/personal-delivery-agents/${id}/earnings/pay`, body),
-  myWallet: () => get<PdaWallet>("/api/personal-delivery-agents/my/wallet"),
+  myWallet: (agentId?: string) =>
+    get<PdaWallet>(`/api/personal-delivery-agents/my/wallet${agentId ? `?agentId=${agentId}` : ""}`),
   // Orders & Dispatch
   assignments: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";

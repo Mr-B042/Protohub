@@ -2230,6 +2230,9 @@ function requireAgentPortal(req: any, res: any, next: any) {
   const viewedRole = String(req.user?.effectiveUserRole ?? "");
   if (realRole === AGENT_ROLE) return next();
   if (viewedRole === AGENT_ROLE && ["Owner", "Admin", "Manager"].includes(realRole)) return next();
+  // Previewing a named agent's portal, which is read-only.
+  if (["Owner", "Admin", "Manager"].includes(realRole)
+      && typeof req.query?.agentId === "string" && req.query.agentId) return next();
   res.status(403).json({ error: "Requires the Delivery Agent portal." });
 }
 
@@ -2239,7 +2242,7 @@ const isViewingAsAgent = (req: any) =>
 
 /** Refuses an action that would be recorded as the agent's own. */
 function assertNotSpying(req: any, res: any): boolean {
-  if (!isViewingAsAgent(req)) return false;
+  if (!isPortalReadOnly(req)) return false;
   res.status(403).json({
     error: "You are viewing as this agent. Actions are disabled so nothing is recorded as if they did it."
   });
@@ -2248,6 +2251,33 @@ function assertNotSpying(req: any, res: any): boolean {
 
 /** Which login the portal should resolve - the viewed agent when viewing as. */
 const portalUserId = (req: any): string => String(req.user?.effectiveUserId ?? req.user?.id ?? "");
+
+/**
+ * The agent whose portal we are showing.
+ *
+ * Management can pass ?agentId= to PREVIEW any agent's portal without that
+ * agent having a login at all - otherwise the only way to see what an agent
+ * sees would be to create and link an account first, which is a lot of setup
+ * just to look at a screen. Previewing is read-only exactly like viewing-as.
+ */
+async function resolvePortalAgent(req: any) {
+  const orgId = orgIdOf(req);
+  const requestedId = typeof req.query?.agentId === "string" ? req.query.agentId : "";
+  const isManagement = ["Owner", "Admin", "Manager"].includes(String(req.user?.role ?? ""));
+  if (requestedId && isManagement) {
+    const { data } = await supabase.from(AGENTS)
+      .select("id, full_name, agent_code, account_status, trust_level, availability, max_active_orders, max_cod_exposure, probation_ends_at")
+      .eq("org_id", orgId).eq("id", requestedId).maybeSingle();
+    return { agent: data ?? null, preview: true };
+  }
+  return { agent: await agentForUser(orgId, portalUserId(req)), preview: false };
+}
+
+/** True when management is previewing or viewing-as, rather than being the agent. */
+const isPortalReadOnly = (req: any) =>
+  isViewingAsAgent(req)
+  || (typeof req.query?.agentId === "string" && Boolean(req.query.agentId)
+      && ["Owner", "Admin", "Manager"].includes(String(req.user?.role ?? "")));
 
 /**
  * The personal delivery agent record behind the signed-in user.
@@ -2345,7 +2375,8 @@ router.post("/:id/assign", requireRole(...MANAGEMENT_ROLES), async (req, res) =>
 router.get("/my/summary", requireAgentPortal, async (req, res) => {
   try {
     const orgId = req.user!.orgId;
-    const agent = await agentForUser(orgId, portalUserId(req));
+    const resolved = await resolvePortalAgent(req);
+    const agent = resolved.agent;
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
 
     const { data: assignments } = await supabase.from(ASSIGNMENTS)
@@ -2397,7 +2428,8 @@ router.get("/my/summary", requireAgentPortal, async (req, res) => {
 router.get("/my/orders", requireAgentPortal, async (req, res) => {
   try {
     const orgId = req.user!.orgId;
-    const agent = await agentForUser(orgId, portalUserId(req));
+    const resolved = await resolvePortalAgent(req);
+    const agent = resolved.agent;
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
 
     const { data: assignments, error } = await supabase.from(ASSIGNMENTS)
@@ -2780,7 +2812,8 @@ router.post("/my/transfers/:transferId/confirm", requireAgentPortal, async (req,
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
   try {
     const orgId = orgIdOf(req);
-    const agent = await agentForUser(orgId, portalUserId(req));
+    const resolved = await resolvePortalAgent(req);
+    const agent = resolved.agent;
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
 
     const transferId = paramOf(req.params.transferId);
@@ -2850,7 +2883,8 @@ router.get("/:id/stock", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
 router.get("/my/stock", requireAgentPortal, async (req, res) => {
   try {
     const orgId = orgIdOf(req);
-    const agent = await agentForUser(orgId, portalUserId(req));
+    const resolved = await resolvePortalAgent(req);
+    const agent = resolved.agent;
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
     const [stockRes, transferRes, ledgerRes] = await Promise.all([
       supabase.from(STOCK).select("*").eq("agent_id", agent.id),
@@ -2883,7 +2917,8 @@ router.post("/my/stock/discrepancy", requireAgentPortal, async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
   try {
     const orgId = orgIdOf(req);
-    const agent = await agentForUser(orgId, portalUserId(req));
+    const resolved = await resolvePortalAgent(req);
+    const agent = resolved.agent;
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
 
     const { data: stockRow } = await supabase.from(STOCK)
@@ -3169,7 +3204,8 @@ router.post("/:id/earnings/pay", requireRole("Owner", "Admin"), async (req, res)
 router.get("/my/wallet", requireAgentPortal, async (req, res) => {
   try {
     const orgId = orgIdOf(req);
-    const agent = await agentForUser(orgId, portalUserId(req));
+    const resolved = await resolvePortalAgent(req);
+    const agent = resolved.agent;
     if (!agent) { res.status(404).json({ error: "No delivery agent profile is linked to this login." }); return; }
 
     const { data: assignments } = await supabase.from(ASSIGNMENTS)

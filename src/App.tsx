@@ -267,6 +267,9 @@ const PDA_PORTAL_TABS: Array<{ key: PdaPortalTab; label: string; icon: typeof La
   { key: "Profile", label: "Profile", icon: Users }
 ];
 
+/** Sentinel for previewing the portal before any agent exists. */
+const PDA_EMPTY_PREVIEW = "__empty_preview__";
+
 const PDA_PENDING_STATUSES = [
   "Application Started", "KYC Incomplete", "KYC Submitted",
   "Guarantor Verification Pending", "Management Review"
@@ -11265,6 +11268,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaMyOrders, setPdaMyOrders] = useState<PdaAssignment[]>([]);
   const [pdaWallet, setPdaWallet] = useState<PdaWallet | null>(null);
   const [pdaMyStock, setPdaMyStock] = useState<{ stock: any[]; incoming: any[]; ledger: any[] } | null>(null);
+  // Set when management is previewing an agent's portal from Active Agents.
+  const [pdaPreviewAgentId, setPdaPreviewAgentId] = useState("");
   const [pdaActiveAssignment, setPdaActiveAssignment] = useState<PdaAssignment | null>(null);
   const [pdaDeliveredDraft, setPdaDeliveredDraft] = useState({ amountCollected: "", paymentMethod: "Cash", proofType: "Customer OTP", proofReference: "" });
   const [pdaFailedDraft, setPdaFailedDraft] = useState({ outcome: "Failed", failureReason: "", failureNote: "" });
@@ -40520,13 +40525,15 @@ ${waybillLineItems(w).length > 1
   }, [activePage, currentRole]);
 
   // ── Agent portal actions ───────────────────────────────
-  const loadPdaPortal = async () => {
+  const loadPdaPortal = async (previewAgentId?: string) => {
+    const agentId = previewAgentId ?? pdaPreviewAgentId ?? "";
+    if (agentId === PDA_EMPTY_PREVIEW) return;
     try {
       const [summary, orders, wallet, stock] = await Promise.all([
-        personalDeliveryAgentsApi.mySummary(),
-        personalDeliveryAgentsApi.myOrders(),
-        personalDeliveryAgentsApi.myWallet(),
-        personalDeliveryAgentsApi.myStock()
+        personalDeliveryAgentsApi.mySummary(agentId || undefined),
+        personalDeliveryAgentsApi.myOrders(agentId || undefined),
+        personalDeliveryAgentsApi.myWallet(agentId || undefined),
+        personalDeliveryAgentsApi.myStock(agentId || undefined)
       ]);
       setPdaMySummary(summary);
       setPdaMyOrders(orders?.rows ?? []);
@@ -41043,6 +41050,26 @@ ${waybillLineItems(w).length > 1
       setPdaInventoryOverview(overview);
       setPdaStockLedger(ledger);
     } catch (err: any) { showToast(err?.message ?? "Could not load agent inventory."); }
+  };
+
+  const pdaPreviewPortal = async (agentId: string) => {
+    setPdaPreviewAgentId(agentId);
+    setPdaPortalTab("Home");
+    await loadPdaPortal(agentId);
+  };
+
+  /**
+   * Opens the portal with nothing in it, for when no agent exists yet.
+   * Shows the real screens with real empty states rather than inventing a
+   * demo agent - a fake portal would teach the wrong thing about the product.
+   */
+  const pdaPreviewEmptyPortal = () => {
+    setPdaMySummary(null);
+    setPdaMyOrders([]);
+    setPdaWallet(null);
+    setPdaMyStock(null);
+    setPdaPreviewAgentId(PDA_EMPTY_PREVIEW);
+    setPdaPortalTab("Home");
   };
 
   const pdaLinkPortalLogin = async (agentId: string, agentName: string, currentlyLinked: boolean) => {
@@ -47373,7 +47400,7 @@ ${waybillLineItems(w).length > 1
     // An owner viewing as an agent sees exactly what the agent sees, but cannot
     // act: a delivery marked complete from here would be indistinguishable from
     // the agent doing it, and this module exists to keep that traceable.
-    const readOnly = isSpying;
+    const readOnly = isSpying || Boolean(pdaPreviewAgentId);
 
     const contactLabel = (status: string) =>
       status === "Customer Ready" ? "Customer is ready" : status;
@@ -47400,15 +47427,30 @@ ${waybillLineItems(w).length > 1
       <div className="mx-auto w-full max-w-xl pb-24">
         {readOnly && (
           <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-            <p className="m-0 text-[13px] font-black text-amber-900">You are viewing this agent's portal</p>
-            <p className="m-0 mt-0.5 text-[11px] text-amber-800">
-              This is exactly what they see. Actions are switched off so nothing is recorded as if they did it.
+            <p className="m-0 text-[13px] font-black text-amber-900">
+              {pdaPreviewAgentId === PDA_EMPTY_PREVIEW
+                ? "Empty preview of the agent portal"
+                : pdaPreviewAgentId ? "Preview of this agent's portal" : "You are viewing this agent's portal"}
             </p>
+            <p className="m-0 mt-0.5 text-[11px] text-amber-800">
+              {pdaPreviewAgentId === PDA_EMPTY_PREVIEW
+                ? "No agent is onboarded yet, so every figure is empty. This is the real screen, not a mock-up - it fills in as agents are approved and given work."
+                : "This is exactly what they see. Actions are switched off so nothing is recorded as if they did it."}
+            </p>
+            {pdaPreviewAgentId && (
+              <button type="button" onClick={() => { setPdaPreviewAgentId(""); }}
+                className="!min-h-0 mt-2 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-black text-amber-800">
+                Close preview
+              </button>
+            )}
           </div>
         )}
         <header className="px-1 pt-1">
           <h1 className="m-0 text-xl font-black text-gray-900">Hello{agent ? `, ${agent.fullName.split(" ")[0]}` : ""}</h1>
-          <p className="m-0 text-xs text-gray-500">{agent ? `${agent.agentCode} · ${agent.accountStatus}` : "Loading your profile…"}</p>
+          <p className="m-0 text-xs text-gray-500">
+            {agent ? `${agent.agentCode} · ${agent.accountStatus}`
+              : pdaPreviewAgentId === PDA_EMPTY_PREVIEW ? "No agent selected" : "Loading your profile…"}
+          </p>
         </header>
 
         {agent && !PDA_OPERATIONAL_STATUSES.includes(agent.accountStatus) && (
@@ -48794,6 +48836,9 @@ ${waybillLineItems(w).length > 1
 
   // Active Agents: everyone who can actually take work, with their live state.
   const renderPdaActiveAgents = () => {
+    // Previewing takes over the page, because the point is to see the agent's
+    // screen as they see it, not a thumbnail of it.
+    if (pdaPreviewAgentId) return renderPdaPortal();
     const view = pdaActiveAgents;
     const counts = view?.counts ?? null;
 
@@ -48922,9 +48967,15 @@ ${waybillLineItems(w).length > 1
                         {(view?.rows ?? []).length === 0 ? "No approved agents yet." : "No agents match those filters."}
                       </p>
                       {(view?.rows ?? []).length === 0 && (
-                        <p className="m-0 mt-1 text-xs text-gray-400">
-                          Agents appear here once their application passes every KYC check and is approved.
-                        </p>
+                        <>
+                          <p className="m-0 mt-1 text-xs text-gray-400">
+                            Agents appear here once their application passes every KYC check and is approved.
+                          </p>
+                          <button type="button" onClick={pdaPreviewEmptyPortal}
+                            className="!min-h-0 mt-3 rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50">
+                            Preview the agent portal
+                          </button>
+                        </>
                       )}
                     </td>
                   </tr>
@@ -48972,6 +49023,11 @@ ${waybillLineItems(w).length > 1
                         <button type="button" title="Open stock" onClick={() => { setPdaSubPage("Inventory"); void openPdaStock(row.id); }}
                           className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
                           <Eye className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button" title="See what this agent sees"
+                          onClick={() => void pdaPreviewPortal(row.id)}
+                          className="!min-h-0 inline-flex h-8 items-center rounded-lg border border-gray-200 px-2 text-[10px] font-bold text-gray-600 hover:bg-gray-50">
+                          Preview
                         </button>
                         <button type="button"
                           title={row.hasPortalLogin ? "Remove portal access" : "Give this agent portal access"}
