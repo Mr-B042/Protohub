@@ -229,7 +229,7 @@ type RetentionSubPage = "Overview" | "Pipeline" | "Customers" | "Tasks" | "Calls
 // parent, never a second sidebar, and never ten more top-level nav entries.
 type PdaSubPage =
   | "Overview" | "Applications & KYC" | "Active Agents" | "Orders & Dispatch"
-  | "Inventory" | "COD & Reconciliation" | "Fees & Earnings" | "Incidents"
+  | "Inventory" | "COD & Reconciliation" | "Incidents"
   | "Reports" | "Settings";
 
 const PDA_SUBNAV_ITEMS: Array<{ key: PdaSubPage; label: string; icon: typeof LayoutPanelTop; ownerOnly?: boolean }> = [
@@ -239,7 +239,6 @@ const PDA_SUBNAV_ITEMS: Array<{ key: PdaSubPage; label: string; icon: typeof Lay
   { key: "Orders & Dispatch", label: "Orders & Dispatch", icon: PackageCheck },
   { key: "Inventory", label: "Inventory", icon: Box },
   { key: "COD & Reconciliation", label: "COD & Reconciliation", icon: Banknote },
-  { key: "Fees & Earnings", label: "Fees & Earnings", icon: HandCoins },
   { key: "Incidents", label: "Incidents", icon: AlertTriangle },
   { key: "Reports", label: "Reports", icon: BarChart3 },
   { key: "Settings", label: "Settings", icon: Settings, ownerOnly: true }
@@ -11219,6 +11218,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaSettingsOverview, setPdaSettingsOverview] = useState<PdaSettingsOverview | null>(null);
   const [pdaSettingsSearch, setPdaSettingsSearch] = useState("");
   const [pdaSettingsOpen, setPdaSettingsOpen] = useState(false);
+  const [pdaFeesOpen, setPdaFeesOpen] = useState(false);
   const [pdaDiscDraft, setPdaDiscDraft] = useState({ agentId: "", orderId: "", customerName: "", discrepancyType: "Underpayment", expected: "", actual: "", note: "" });
   const [pdaFeeRules, setPdaFeeRules] = useState<PdaFeeRule[]>([]);
   const [pdaNegotiations, setPdaNegotiations] = useState<any[]>([]);
@@ -40481,7 +40481,7 @@ ${waybillLineItems(w).length > 1
       void loadPdaActiveAgents();
       void loadPdaDispatchSummary();
     }
-    if (pdaSubPage === "Fees & Earnings") void loadPdaFees();
+
     if (pdaSubPage === "Incidents") {
       void loadPdaIncidents();
       void loadPdaIncidentsOverview();
@@ -40493,6 +40493,10 @@ ${waybillLineItems(w).length > 1
     if (pdaSubPage === "Settings") {
       void loadPdaSettings();
       void loadPdaSettingsOverview();
+      // Delivery rates and rate requests are managed from Settings now that
+      // Fees & Earnings is gone - dispatch still requires a locked fee, so
+      // they must stay reachable.
+      void loadPdaFees();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, pdaSubPage]);
@@ -47442,8 +47446,10 @@ ${waybillLineItems(w).length > 1
     );
   };
 
-  // Fees & Earnings. Rules are data, not code, so a state can be repriced
-  // without a deploy - and the most specific rule always wins.
+  // Delivery rates and rate requests. Lives inside Settings (the standalone
+  // Fees & Earnings page was removed); still reachable because dispatch will
+  // not start without a locked fee. Rules are data, not code, so a state can be
+  // repriced without a deploy - and the most specific rule always wins.
   const renderPdaFees = () => (
     <div className="space-y-4">
       <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -48238,7 +48244,7 @@ ${waybillLineItems(w).length > 1
                   </span>
                   {group.configurable && (
                     <button type="button"
-                      onClick={() => group.managedOn === "Fees & Earnings" ? setPdaSubPage("Fees & Earnings") : setPdaSettingsOpen(true)}
+                      onClick={() => group.key === "fees" ? setPdaFeesOpen(true) : setPdaSettingsOpen(true)}
                       className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50">
                       Manage <ChevronRight className="h-3 w-3" />
                     </button>
@@ -48279,9 +48285,9 @@ ${waybillLineItems(w).length > 1
                   className="!min-h-0 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
                   Reload Saved
                 </button>
-                <button type="button" onClick={() => setPdaSubPage("Fees & Earnings")}
+                <button type="button" onClick={() => setPdaFeesOpen((open) => !open)}
                   className="!min-h-0 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-2 text-[11px] font-bold text-violet-700 hover:bg-violet-100">
-                  Delivery Rates
+                  {pdaFeesOpen ? "Hide Rates" : "Delivery Rates"}
                 </button>
               </div>
             </section>
@@ -48289,6 +48295,7 @@ ${waybillLineItems(w).length > 1
         </div>
 
         {pdaSettingsOpen && renderPdaSettings()}
+        {pdaFeesOpen && renderPdaFees()}
       </div>
     );
   };
@@ -52990,8 +52997,6 @@ ${waybillLineItems(w).length > 1
           renderPdaActiveAgents()
         ) : pdaSubPage === "Orders & Dispatch" ? (
           renderPdaDispatchBoard()
-        ) : pdaSubPage === "Fees & Earnings" ? (
-          renderPdaFees()
         ) : pdaSubPage === "Incidents" ? (
           renderPdaIncidentsPage()
         ) : pdaSubPage === "Reports" ? (

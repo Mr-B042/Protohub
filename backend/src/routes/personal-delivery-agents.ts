@@ -3115,7 +3115,7 @@ router.get("/assignments", requireRole(...READ_ROLES), async (req, res) => {
 
 
 // ─────────────────────────────────────────────────────────
-// Fees & Earnings, Incidents, Reports, Settings (migration 193)
+// Delivery fees, Incidents, Reports, Settings (migration 193)
 // ─────────────────────────────────────────────────────────
 
 const FEE_RULES = "pda_fee_rules";
@@ -4013,7 +4013,7 @@ router.get("/settings-overview", requireRole(...MANAGEMENT_ROLES), async (req, r
         key: "fees", title: "Delivery Fees",
         description: "Delivery fee rates, surcharges and earning rules.",
         bullets: ["Default rate", "Rates by state / city / zone", "Distance bands", "Same-day surcharge"],
-        settings: feeRuleCount ?? 0, configurable: true, managedOn: "Fees & Earnings"
+        settings: feeRuleCount ?? 0, configurable: true
       },
       {
         key: "notifications", title: "Notifications",
