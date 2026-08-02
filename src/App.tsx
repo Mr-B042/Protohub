@@ -128,7 +128,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, CartFollowUpRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, CartFollowUpRow, CartAttemptRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -7928,7 +7928,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartFollowUps, setCartFollowUps] = useState<CartFollowUpRow[]>([]);
   const [cartFollowUpRep, setCartFollowUpRep] = useState<string>("All reps");
   const [cartFollowUpFilter, setCartFollowUpFilter] = useState<string>("All");
-  const [cartAttemptCart, setCartAttemptCart] = useState<{ id: string; customer: string } | null>(null);
+  // The whole cart, not just its id: the rep making the call needs the number,
+  // the product and the amount in front of them, not in another tab.
+  const [cartAttemptCart, setCartAttemptCart] = useState<CartFollowUpRow | null>(null);
+  const [cartAttemptHistory, setCartAttemptHistory] = useState<CartAttemptRow[]>([]);
+  const [cartAttemptHistoryLoading, setCartAttemptHistoryLoading] = useState(false);
   const [cartAttemptDraft, setCartAttemptDraft] = useState({
     channel: "Call", outcomeCode: "Interested", customOutcome: "", outcomeNote: "",
     customerReached: false, nextActionAt: ""
@@ -35793,13 +35797,21 @@ ${waybillLineItems(w).length > 1
     } catch (err: any) { showToast(err?.message ?? "Could not load cart follow-ups."); }
   };
 
-  const openCartFollowUpModal = (cartId: string, customer: string) => {
-    setCartAttemptCart({ id: cartId, customer });
+  const openCartFollowUpModal = (cart: CartFollowUpRow) => {
+    setCartAttemptCart(cart);
     setCartAttemptDraft({
       channel: "Call", outcomeCode: "Interested", customOutcome: "", outcomeNote: "",
       customerReached: false, nextActionAt: ""
     });
+    // Every previous call, so nobody repeats a conversation the customer has
+    // already had - and so a supervisor can read the whole thread in one place.
+    setCartAttemptHistory([]);
+    setCartAttemptHistoryLoading(true);
     setModal("cartFollowUp");
+    void cartsApi.contactAttempts(cart.id)
+      .then((result) => setCartAttemptHistory(result?.rows ?? []))
+      .catch(() => setCartAttemptHistory([]))
+      .finally(() => setCartAttemptHistoryLoading(false));
   };
 
   const saveCartFollowUp = async () => {
@@ -53057,144 +53069,255 @@ ${waybillLineItems(w).length > 1
   // Supervisor view of assigned-cart follow-up: who owns each cart, what the
   // last call said, and how long it has been quiet. Answers "is this rep
   // actually working their own carts" without opening them one by one.
+  // Formats a cart's money in the currency the cart was actually captured in.
+  // A cart taken in USD must not be read as naira just because the page's
+  // currency switcher happens to say NGN.
+  const cartRowMoney = (amount: number, code?: string | null) =>
+    formatProductMoney(amount, (code || "NGN") as CurrencyCode);
+
+  // Only show WhatsApp when it is genuinely a second line to try. Comparing the
+  // raw strings called 07033521434 and 7033521434 two different numbers, which
+  // would have reps dialling the same person twice.
+  const otherWhatsappLine = (phone: string, whatsapp?: string | null) => {
+    const last10 = (value?: string | null) => (value ?? "").replace(/\D/g, "").slice(-10);
+    if (!whatsapp) return null;
+    return last10(whatsapp) === last10(phone) ? null : whatsapp;
+  };
+
   const renderCartFollowUpTab = () => {
-    const rows = cartFollowUps.filter((row) => {
+    // The same period rule the carts table uses, plus the last follow-up:
+    // logging a call today on a three-week-old cart is today's work, so the
+    // cart must not drop out of "This Week" and look deleted.
+    const inPeriod = (row: CartFollowUpRow) =>
+      isInPeriod(row.createdAt, cartsPeriod, cartsDateRange)
+      || (Boolean(row.lastActivity) && isInPeriod(row.lastActivity, cartsPeriod, cartsDateRange))
+      || (Boolean(row.lastAttemptAt) && isInPeriod(row.lastAttemptAt!, cartsPeriod, cartsDateRange));
+
+    const periodRows = cartFollowUps.filter(inPeriod);
+
+    const isQuiet = (row: CartFollowUpRow) => {
+      const last = row.lastAttemptAt ? new Date(row.lastAttemptAt).getTime() : 0;
+      return row.attempts > 0 && !row.convertedOrderId && (!last || Date.now() - last > 3 * 86400000);
+    };
+
+    const rows = periodRows.filter((row) => {
       if (cartFollowUpRep !== "All reps" && row.repId !== cartFollowUpRep) return false;
       if (cartFollowUpFilter === "Never contacted") return row.attempts === 0;
-      if (cartFollowUpFilter === "Going quiet") {
-        const last = row.lastAttemptAt ? new Date(row.lastAttemptAt).getTime() : 0;
-        return row.attempts > 0 && !row.convertedOrderId && (!last || Date.now() - last > 3 * 86400000);
-      }
+      if (cartFollowUpFilter === "Going quiet") return isQuiet(row);
       if (cartFollowUpFilter === "Converted") return Boolean(row.convertedOrderId);
       if (cartFollowUpFilter === "Still open") return !row.convertedOrderId;
       return true;
     });
 
-    const neverContacted = cartFollowUps.filter((row) => row.attempts === 0).length;
-    const quiet = cartFollowUps.filter((row) => {
-      const last = row.lastAttemptAt ? new Date(row.lastAttemptAt).getTime() : 0;
-      return row.attempts > 0 && !row.convertedOrderId && (!last || Date.now() - last > 3 * 86400000);
-    }).length;
-    const converted = cartFollowUps.filter((row) => Boolean(row.convertedOrderId)).length;
+    const neverContacted = periodRows.filter((row) => row.attempts === 0).length;
+    const quiet = periodRows.filter(isQuiet).length;
+    const converted = periodRows.filter((row) => Boolean(row.convertedOrderId)).length;
+    // A narrow period can hide the oldest untouched carts, which are exactly
+    // the ones worth chasing. Say so rather than let the date filter read as
+    // "nobody is behind".
+    const hiddenNeverContacted = cartFollowUps.filter((row) => row.attempts === 0).length - neverContacted;
 
     const daysSince = (value?: string | null) =>
       value ? Math.floor((Date.now() - new Date(value).getTime()) / 86400000) : null;
+    const ago = (days: number | null) =>
+      days === null ? "" : days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
 
     return (
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[
-            { label: "Assigned carts", value: cartFollowUps.length, tone: "text-gray-900" },
-            { label: "Never contacted", value: neverContacted, tone: neverContacted > 0 ? "text-rose-600" : "text-gray-900" },
-            { label: "No update in 3 days", value: quiet, tone: quiet > 0 ? "text-amber-600" : "text-gray-900" },
-            { label: "Converted to an order", value: converted, tone: "text-emerald-600" }
-          ].map((tile) => (
-            <div key={tile.label} className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{tile.label}</div>
-              <div className={`mt-1 text-xl font-black ${tile.tone}`}>{tile.value}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <select className="h-9 rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-700"
+        {/* Same period controls as the carts table, on the same state, so
+            switching tabs keeps the window you were looking at. */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+            {periods.map((item) => (
+              <button key={item} type="button"
+                className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${cartsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                onClick={() => handleCartsPeriodChange(item)}>{item}</button>
+            ))}
+          </div>
+          <div className="relative w-full sm:w-auto">
+            <button type="button" className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              onClick={() => setShowCartsDateRange((v) => !v)}>
+              <CalendarDays className="w-4 h-4" /> {cartsPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+            </button>
+            {showCartsDateRange && renderDateRangeCalendar("carts-followup-date-range-panel", cartsDateRange, setCartsDateRange, applyCartsDateRange, () => setShowCartsDateRange(false))}
+          </div>
+          <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700"
             value={cartFollowUpRep} onChange={(e) => setCartFollowUpRep(e.target.value)}>
             <option value="All reps">All reps</option>
             {activeSalesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
           </select>
-          <select className="h-9 rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-700"
+          <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700"
             value={cartFollowUpFilter} onChange={(e) => setCartFollowUpFilter(e.target.value)}>
             {["All", "Never contacted", "Going quiet", "Still open", "Converted"].map((option) => (
               <option key={option} value={option}>{option}</option>
             ))}
           </select>
           <button type="button" onClick={() => void loadCartFollowUps()}
-            className="!min-h-0 inline-flex h-9 items-center gap-2 rounded-md border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+            className="!min-h-0 inline-flex h-10 sm:h-9 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
             <RefreshCw className="h-4 w-4" /> Refresh
           </button>
         </div>
 
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            { label: "Assigned carts", value: periodRows.length, tone: "text-gray-900", sub: "in this period" },
+            { label: "Never contacted", value: neverContacted, tone: neverContacted > 0 ? "text-rose-600" : "text-gray-900",
+              sub: hiddenNeverContacted > 0 ? `+${hiddenNeverContacted} older, outside this period` : "nobody has called yet" },
+            { label: "No update in 3 days", value: quiet, tone: quiet > 0 ? "text-amber-600" : "text-gray-900", sub: "going quiet" },
+            { label: "Converted to an order", value: converted, tone: "text-emerald-600", sub: "recovered" }
+          ].map((tile) => (
+            <div key={tile.label} className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{tile.label}</div>
+              <div className={`mt-1 text-2xl font-black ${tile.tone}`}>{tile.value}</div>
+              <div className="mt-0.5 text-[11px] text-gray-400">{tile.sub}</div>
+            </div>
+          ))}
+        </div>
+
         <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[1180px] text-sm">
               <thead>
-                <tr className="border-b border-gray-200 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
-                  <th className="px-5 py-3">Customer</th>
-                  <th className="px-3 py-3">Assigned to</th>
-                  <th className="px-3 py-3">Attempts</th>
-                  <th className="px-3 py-3">Last outcome</th>
-                  <th className="px-3 py-3">Last update</th>
-                  <th className="px-3 py-3">Next action</th>
-                  <th className="px-3 py-3">Result</th>
-                  <th className="px-3 py-3 text-right">Actions</th>
+                <tr className="border-b border-gray-200 bg-gray-50/70 text-left text-[10px] font-black uppercase tracking-[0.12em] text-gray-500">
+                  <th className="px-5 py-3">Customer &amp; contact</th>
+                  <th className="px-4 py-3">What they left behind</th>
+                  <th className="px-4 py-3">Assigned to</th>
+                  <th className="px-4 py-3">Follow-up so far</th>
+                  <th className="px-4 py-3">Next action</th>
+                  <th className="px-4 py-3">Result</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-5 py-12 text-center">
+                    <td colSpan={7} className="px-5 py-12 text-center">
                       <p className="m-0 text-sm font-semibold text-gray-500">
-                        {cartFollowUps.length === 0 ? "No carts are assigned to a rep yet." : "Nothing matches those filters."}
+                        {cartFollowUps.length === 0
+                          ? "No carts are assigned to a rep yet."
+                          : periodRows.length === 0
+                            ? "No assigned carts in this period."
+                            : "Nothing matches those filters."}
                       </p>
-                      {cartFollowUps.length === 0 && (
-                        <p className="m-0 mt-1 text-xs text-gray-400">
-                          Assign a cart to a rep and their follow-up calls will appear here.
-                        </p>
-                      )}
+                      <p className="m-0 mt-1 text-xs text-gray-400">
+                        {cartFollowUps.length === 0
+                          ? "Assign a cart to a rep and their follow-up calls will appear here."
+                          : "Widen the date range or clear the rep filter."}
+                      </p>
                     </td>
                   </tr>
                 ) : rows.map((row) => {
                   const days = daysSince(row.lastAttemptAt);
                   const overdue = row.nextActionAt ? new Date(row.nextActionAt).getTime() < Date.now() : false;
+                  const leftDays = daysSince(row.leftAt || row.createdAt);
+                  const place = [row.city, row.state].filter(Boolean).join(", ");
+                  const altWhatsapp = otherWhatsappLine(row.phone, row.whatsapp);
                   return (
-                    <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                      <td className="px-5 py-3">
-                        <div className="font-bold text-gray-900">{row.customer}</div>
-                        <div className="text-[11px] text-gray-400">{row.phone} · {formatMoney(row.amount)}</div>
+                    <tr key={row.id} className="border-b border-gray-100 align-top last:border-0 hover:bg-gray-50/70">
+                      <td className="px-5 py-4 max-w-[280px]">
+                        <div className="text-[13px] font-bold text-gray-900">{row.customer || "No name given"}</div>
+                        <div className="mt-1 space-y-0.5 text-[11px] text-gray-500">
+                          <div className="flex items-center gap-1.5">
+                            <Phone className="h-3 w-3 shrink-0 text-gray-400" />
+                            <a href={`tel:${row.phone}`} className="font-semibold text-gray-700 hover:text-[#1F8FE0] hover:underline">{row.phone}</a>
+                          </div>
+                          {altWhatsapp && (
+                            <div className="flex items-center gap-1.5">
+                              <MessageCircle className="h-3 w-3 shrink-0 text-emerald-500" />
+                              <span>{altWhatsapp}</span>
+                            </div>
+                          )}
+                          {row.email && (
+                            <div className="flex items-center gap-1.5">
+                              <Mail className="h-3 w-3 shrink-0 text-gray-400" />
+                              <span className="break-all">{row.email}</span>
+                            </div>
+                          )}
+                          {(place || row.address) && (
+                            <div className="flex items-start gap-1.5">
+                              <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-gray-400" />
+                              <span>{place || "—"}{row.address ? ` · ${row.address}` : ""}</span>
+                            </div>
+                          )}
+                        </div>
                       </td>
-                      <td className="px-3 py-3 text-[12px] font-semibold text-gray-700">{row.repName}</td>
-                      <td className="px-3 py-3">
+                      <td className="px-4 py-4">
+                        <div className="text-[12px] font-semibold text-gray-800">{row.productName || "No product captured"}</div>
+                        {row.packageName && row.baseProductName && row.packageName !== row.baseProductName && (
+                          <div className="text-[11px] text-gray-400">{row.baseProductName}</div>
+                        )}
+                        <div className="mt-1 text-[13px] font-black text-gray-900">{cartRowMoney(row.amount, row.currency)}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          {(row.embedLabel || row.source) && (
+                            <span className="inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">
+                              {row.embedLabel || row.source}
+                            </span>
+                          )}
+                          {row.preferredDelivery && (
+                            <span className="inline-flex rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">
+                              {row.preferredDelivery}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-400">Left {ago(leftDays)}</div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="text-[12px] font-bold text-gray-800">{row.repName}</div>
+                        {row.lastAttemptBy && row.lastAttemptBy !== row.repName && (
+                          <div className="text-[11px] text-gray-400">last call by {row.lastAttemptBy}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-4 max-w-[280px]">
                         {/* Zero attempts is the signal that matters most: the cart
                             looks owned but nobody has actually called. */}
-                        <span className={`font-black ${row.attempts === 0 ? "text-rose-600" : "text-gray-900"}`}>{row.attempts}</span>
-                      </td>
-                      <td className="px-3 py-3 max-w-[220px]">
-                        {row.lastOutcome ? (
+                        {row.attempts === 0 ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-md bg-rose-50 px-2 py-1 text-[11px] font-black text-rose-700">
+                            <AlertTriangle className="h-3 w-3" /> Never contacted
+                          </span>
+                        ) : (
                           <>
-                            <div className="text-[12px] font-semibold text-gray-800">{row.lastOutcome}</div>
-                            {row.lastOutcomeNote && <div className="text-[11px] text-gray-500">{row.lastOutcomeNote}</div>}
-                          </>
-                        ) : <span className="text-[12px] text-rose-600">Never contacted</span>}
-                      </td>
-                      <td className="px-3 py-3 whitespace-nowrap text-[12px]">
-                        {row.lastAttemptAt ? (
-                          <>
-                            <div className="text-gray-700">{new Date(row.lastAttemptAt).toLocaleDateString([], { dateStyle: "medium" })}</div>
-                            <div className={`text-[11px] ${days !== null && days >= 3 ? "font-bold text-amber-600" : "text-gray-400"}`}>
-                              {days === 0 ? "today" : `${days}d ago`}
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-black text-gray-700">
+                                {row.attempts} attempt{row.attempts === 1 ? "" : "s"}
+                              </span>
+                              <span className={`text-[11px] font-bold ${days !== null && days >= 3 ? "text-amber-600" : "text-gray-400"}`}>
+                                {ago(days)}
+                              </span>
                             </div>
+                            <div className="mt-1 text-[12px] font-semibold text-gray-800">{row.lastOutcome}</div>
+                            {row.lastOutcomeNote && (
+                              <div className="mt-0.5 text-[11px] italic text-gray-500">&ldquo;{row.lastOutcomeNote}&rdquo;</div>
+                            )}
                           </>
-                        ) : <span className="text-gray-300">—</span>}
+                        )}
                       </td>
-                      <td className="px-3 py-3 whitespace-nowrap text-[12px]">
+                      <td className="px-4 py-4 whitespace-nowrap text-[12px]">
                         {row.nextActionAt ? (
-                          <span className={overdue ? "font-bold text-rose-600" : "text-gray-700"}>
-                            {new Date(row.nextActionAt).toLocaleDateString([], { dateStyle: "medium" })}{overdue ? " · overdue" : ""}
+                          <span className={overdue ? "font-bold text-rose-600" : "font-semibold text-gray-700"}>
+                            {new Date(row.nextActionAt).toLocaleDateString([], { dateStyle: "medium" })}
+                            {overdue ? <span className="block text-[11px]">overdue</span> : null}
                           </span>
                         ) : <span className="text-gray-300">not set</span>}
                       </td>
-                      <td className="px-3 py-3">
+                      <td className="px-4 py-4">
                         {row.convertedOrderId ? (
-                          <span className="inline-flex rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">
-                            Order {row.convertedOrderId}{row.convertedOrderStatus ? ` · ${row.convertedOrderStatus}` : ""}
-                          </span>
+                          <div className="space-y-0.5">
+                            <button type="button" onClick={() => { setSelectedOrderId(row.convertedOrderId!); setModal("orderDetails"); }}
+                              className="!min-h-0 inline-flex rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-black text-emerald-700 hover:bg-emerald-100">
+                              Order #{row.convertedOrderId}
+                            </button>
+                            <div className="text-[11px] font-semibold text-gray-600">
+                              {cartRowMoney(row.convertedOrderAmount ?? 0, row.convertedOrderCurrency)}
+                              {row.convertedOrderStatus ? ` · ${row.convertedOrderStatus}` : ""}
+                            </div>
+                          </div>
                         ) : (
                           <span className="inline-flex rounded-md bg-gray-100 px-2 py-1 text-[11px] font-bold text-gray-600">{row.status}</span>
                         )}
                       </td>
-                      <td className="px-3 py-3">
+                      <td className="px-4 py-4">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button type="button" onClick={() => openCartFollowUpModal(row.id, row.customer)}
+                          <button type="button" onClick={() => openCartFollowUpModal(row)}
                             className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50">
                             Log follow-up
                           </button>
@@ -82281,7 +82404,7 @@ ${waybillLineItems(w).length > 1
         return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section
-            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
+            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
             role="dialog" aria-modal="true" aria-labelledby="modal-title"
           >
@@ -88321,8 +88444,70 @@ ${waybillLineItems(w).length > 1
 	              </div>
 	            )}
 
-	            {modal === "cartFollowUp" && cartAttemptCart && (
-	              <div className="space-y-4">
+	            {modal === "cartFollowUp" && cartAttemptCart && (() => {
+	              const cart = cartAttemptCart;
+	              const place = [cart.city, cart.state].filter(Boolean).join(", ");
+	              const altWhatsapp = otherWhatsappLine(cart.phone, cart.whatsapp);
+	              const detail = (label: string, value: ReactNode) => (
+	                <div className="min-w-0">
+	                  <div className="text-[10px] font-black uppercase tracking-[0.1em] text-gray-400">{label}</div>
+	                  <div className="mt-0.5 break-words text-[13px] font-semibold text-gray-800">{value}</div>
+	                </div>
+	              );
+	              return (
+	              <div className="space-y-5">
+	                {/* Who you are calling and what they left behind - on the same
+	                    screen as the form, so nobody dials from another tab. */}
+	                <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-4">
+	                  <div className="grid gap-x-5 gap-y-3 sm:grid-cols-3">
+	                    {detail("Customer", cart.customer || "No name given")}
+	                    {detail("Phone", <a href={`tel:${cart.phone}`} className="text-[#1F8FE0] hover:underline">{cart.phone}</a>)}
+	                    {detail("WhatsApp", altWhatsapp ?? <span className="font-normal text-gray-400">same as phone</span>)}
+	                    {detail("Product", cart.productName || <span className="font-normal text-gray-400">not captured</span>)}
+	                    {detail("Cart value", <span className="text-[15px] font-black text-gray-900">{cartRowMoney(cart.amount, cart.currency)}</span>)}
+	                    {detail("Location", place || <span className="font-normal text-gray-400">not captured</span>)}
+	                    {cart.email ? detail("Email", cart.email) : null}
+	                    {cart.address ? detail("Address", cart.address) : null}
+	                    {detail("Left the form", new Date(cart.leftAt || cart.createdAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }))}
+	                  </div>
+	                </section>
+
+	                {/* Previous calls first: repeating a conversation the customer
+	                    already had is how a follow-up turns into a nuisance. */}
+	                <section>
+	                  <h3 className="m-0 mb-2 text-[11px] font-black uppercase tracking-[0.1em] text-gray-500">
+	                    Previous follow-ups{cartAttemptHistory.length > 0 ? ` (${cartAttemptHistory.length})` : ""}
+	                  </h3>
+	                  {cartAttemptHistoryLoading ? (
+	                    <p className="m-0 text-xs text-gray-400">Loading the history…</p>
+	                  ) : cartAttemptHistory.length === 0 ? (
+	                    <p className="m-0 rounded-lg border border-dashed border-gray-200 px-3 py-3 text-xs text-gray-500">
+	                      Nobody has logged a follow-up on this cart yet. This will be the first.
+	                    </p>
+	                  ) : (
+	                    <ol className="m-0 max-h-44 list-none space-y-2 overflow-y-auto p-0 pr-1">
+	                      {cartAttemptHistory.map((attempt) => (
+	                        <li key={attempt.id} className="rounded-lg border border-gray-100 bg-white px-3 py-2">
+	                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+	                            <span className="text-[12px] font-bold text-gray-800">
+	                              {attempt.outcomeCode === "Other" ? attempt.customOutcome : attempt.outcomeCode}
+	                            </span>
+	                            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">{attempt.channel}</span>
+	                            {attempt.customerReached && (
+	                              <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">spoke to them</span>
+	                            )}
+	                            <span className="ml-auto text-[11px] text-gray-400">
+	                              {new Date(attempt.attemptedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+	                            </span>
+	                          </div>
+	                          {attempt.outcomeNote && <p className="m-0 mt-1 text-[11px] italic text-gray-600">&ldquo;{attempt.outcomeNote}&rdquo;</p>}
+	                          <p className="m-0 mt-0.5 text-[10px] text-gray-400">by {attempt.repName || "unknown"}</p>
+	                        </li>
+	                      ))}
+	                    </ol>
+	                  )}
+	                </section>
+
 	                <p className="m-0 text-xs text-gray-500">
 	                  Record what actually happened on this call. The cart's status follows the outcome, so the next person can see where it stands without reading every note.
 	                </p>
@@ -88378,7 +88563,8 @@ ${waybillLineItems(w).length > 1
 	                  </button>
 	                </div>
 	              </div>
-	            )}
+	              );
+	            })()}
 
 	            {modal === "addPersonalDeliveryAgent" && (() => {
 	              const d = pdaNewAgent;

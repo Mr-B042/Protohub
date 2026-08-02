@@ -2215,18 +2215,30 @@ export const emailReportsApi = {
 };
 
 // ── Abandoned Carts ──────────────────────────────────────
+// Keys are camelCase: `request()` runs every response through snakeToCamel,
+// so the snake_case column names never reach a component.
 export type CartAttemptRow = {
-  id: string; cart_id: string; rep_name?: string | null; attempted_at: string;
-  channel: string; outcome_code: string; custom_outcome?: string | null;
-  outcome_note?: string | null; customer_reached: boolean; next_action_at?: string | null;
+  id: string; cartId: string; repName?: string | null; attemptedAt: string;
+  channel: string; outcomeCode: string; customOutcome?: string | null;
+  outcomeNote?: string | null; customerReached: boolean; nextActionAt?: string | null;
 };
 
 export type CartFollowUpRow = {
-  id: string; customer: string; phone: string; productName?: string | null; amount: number;
+  id: string; customer: string; phone: string;
+  whatsapp?: string | null; email?: string | null;
+  city?: string | null; state?: string | null; address?: string | null;
+  preferredDelivery?: string | null;
+  productId?: string | null; productName?: string | null;
+  baseProductName?: string | null; packageName?: string | null;
+  amount: number; currency?: string | null;
+  source?: string | null; embedLabel?: string | null;
+  leftAt?: string | null; recoverySentAt?: string | null;
   status: string; repId: string; repName: string; createdAt: string; lastActivity: string;
   attempts: number; lastOutcome?: string | null; lastOutcomeNote?: string | null;
   lastAttemptAt?: string | null; lastAttemptBy?: string | null; nextActionAt?: string | null;
   convertedOrderId?: string | null; convertedOrderStatus?: string | null;
+  convertedOrderAmount?: number | null; convertedOrderCurrency?: string | null;
+  convertedOrderAt?: string | null;
 };
 
 export const cartsApi = {
