@@ -2508,10 +2508,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
   ],
   "Sales Rep": [
-    // Abandoned Carts is here so a rep can work the carts assigned to them.
-    // Everything on that page is already scoped to their own carts by
-    // viewerScopeRepId, and the server scopes the follow-up list again.
-    "Sales Rep Workspace", "Abandoned Carts", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
+    "Sales Rep Workspace", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
   ],
   "Inventory Manager": [
     "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings", "WhatsApp"
@@ -7944,7 +7941,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // "Unassigned" is its own option: the carts nobody owns are the ones that go
   // cold, and they are invisible in a plain per-rep list.
   const [cartRepFilter, setCartRepFilter] = useState<string>("All reps");
-  const [cartsPageTab, setCartsPageTab] = useState<"Carts" | "Follow-ups">("Carts");
   const [cartFollowUps, setCartFollowUps] = useState<CartFollowUpRow[]>([]);
   const [cartFollowUpRep, setCartFollowUpRep] = useState<string>("All reps");
   const [cartFollowUpFilter, setCartFollowUpFilter] = useState<string>("All");
@@ -11132,7 +11128,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [orderFollowUpLoading, setOrderFollowUpLoading] = useState(false);
   const [followUpBoard, setFollowUpBoard] = useState<any | null>(null);
   const [followUpMisses, setFollowUpMisses] = useState<any[]>([]);
-  const [followUpView, setFollowUpView] = useState<"list" | "grid">("grid");
+  const [followUpView, setFollowUpView] = useState<"list" | "grid" | "carts">("grid");
   const [followUpGrid, setFollowUpGrid] = useState<any | null>(null);
   const [followUpWeekStart, setFollowUpWeekStart] = useState<string | null>(null); // null = current week
   const [followUpRepFilter, setFollowUpRepFilter] = useState<string>(""); // "" = all reps
@@ -40582,21 +40578,12 @@ ${waybillLineItems(w).length > 1
   }, [activePage]);
 
   useEffect(() => {
-    // Also on the rep's workspace: that page shows how many carts are waiting
-    // on them, which needs the same list.
-    if (activePage !== "Abandoned Carts" && activePage !== "Sales Rep Workspace") return;
+    // The Follow-up Queue owns the Cart Follow-ups tab; the workspace and the
+    // carts page both show how many are waiting, so all three need the list.
+    if (activePage !== "Follow-up Queue" && activePage !== "Abandoned Carts" && activePage !== "Sales Rep Workspace") return;
     void loadCartFollowUps();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, currentRole]);
-
-  // A rep's job on this page is the follow-up list, so open there rather than
-  // on the browse-all-carts tab. Once only - switching tabs afterwards sticks.
-  const cartsTabDefaulted = useRef(false);
-  useEffect(() => {
-    if (cartsTabDefaulted.current || !cartFollowUpIsOwnWork) return;
-    cartsTabDefaulted.current = true;
-    setCartsPageTab("Follow-ups");
-  }, [cartFollowUpIsOwnWork]);
 
   useEffect(() => {
     if (activePage !== "Personal Delivery Agents") return;
@@ -55477,7 +55464,7 @@ ${waybillLineItems(w).length > 1
                     </p>
                   </div>
                 </div>
-                <button type="button" onClick={() => { setCartsPageTab("Follow-ups"); handleNavClick("Abandoned Carts"); }}
+                <button type="button" onClick={() => { setFollowUpView("carts"); handleNavClick("Follow-up Queue"); }}
                   className="!min-h-0 inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1F8FE0] px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700">
                   Work my cart follow-ups <ArrowRight className="h-4 w-4" />
                 </button>
@@ -59215,10 +59202,36 @@ ${waybillLineItems(w).length > 1
               <DataErrorBanner />
               {/* Follow-up Queue sub-tabs: List ⇄ Daily Log grid */}
               {orderWorkspacePage === "Follow-up Queue" && (
-                <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                  {([["grid", "Daily Log"], ["list", "List"]] as const).map(([key, label]) => (
-                    <button key={key} className={`!min-h-0 px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${followUpView === key ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => setFollowUpView(key)}>{label}</button>
+                <div className="inline-flex max-w-full items-center overflow-x-auto rounded-lg bg-gray-100 p-1">
+                  {([["grid", "Daily Log"], ["list", "List"], ...(canSeeCartFollowUps ? [["carts", "Cart Follow-ups"] as const] : [])] as const).map(([key, label]) => (
+                    <button key={key} className={`!min-h-0 inline-flex items-center gap-1.5 whitespace-nowrap px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${followUpView === key ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`} onClick={() => setFollowUpView(key)}>
+                      {label}
+                      {key === "carts" && cartFollowUps.filter((row) => row.attempts === 0).length > 0 && (
+                        <span className="rounded-full bg-rose-100 px-1.5 text-[10px] font-black text-rose-700">
+                          {cartFollowUps.filter((row) => row.attempts === 0).length}
+                        </span>
+                      )}
+                    </button>
                   ))}
+                </div>
+              )}
+
+              {/* Abandoned carts assigned to a rep - kept as its own tab so it
+                  is never confused with the order follow-up queue beside it. */}
+              {orderWorkspacePage === "Follow-up Queue" && followUpView === "carts" && canSeeCartFollowUps && (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3">
+                    <p className="m-0 text-sm font-bold text-gray-900">
+                      {cartFollowUpIsOwnWork ? "Abandoned carts assigned to you" : "Abandoned carts assigned to a rep"}
+                    </p>
+                    <p className="m-0 mt-0.5 text-xs text-gray-600">
+                      These are not orders. The customer filled the form and left without ordering
+                      {cartFollowUpIsOwnWork
+                        ? " - call them, log what they said, and convert the cart when they are ready."
+                        : " - this is where their assigned rep logs each call."}
+                    </p>
+                  </div>
+                  {renderCartFollowUpTab()}
                 </div>
               )}
               {orderWorkspacePage === "Follow-up Queue" && followUpView === "grid" && (() => {
@@ -59923,8 +59936,8 @@ ${waybillLineItems(w).length > 1
                   </div>
                 );
               })()}
-              {dataLoading && <TableSkeleton cols={8} rows={6} />}
-              <div className={dataLoading || (orderWorkspacePage === "Follow-up Queue" && followUpView === "grid") ? "hidden" : "space-y-6 lg:space-y-8"}>
+              {dataLoading && !(orderWorkspacePage === "Follow-up Queue" && followUpView === "carts") && <TableSkeleton cols={8} rows={6} />}
+              <div className={dataLoading || (orderWorkspacePage === "Follow-up Queue" && followUpView !== "list") ? "hidden" : "space-y-6 lg:space-y-8"}>
               {/* Period + date + currency controls */}
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
@@ -61468,11 +61481,7 @@ ${waybillLineItems(w).length > 1
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
                 <div className="flex flex-col gap-1">
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Abandoned Carts</h1>
-                  <p className="text-sm font-medium text-gray-500">
-                    {cartFollowUpIsOwnWork
-                      ? "Customers who filled the form but never finished. Call the ones assigned to you and log what they said."
-                      : "Track captured carts, monitor rep follow-up, and reassign leads when needed."}
-                  </p>
+                  <p className="text-sm font-medium text-gray-500">Track captured carts, monitor rep follow-up, and reassign leads when needed.</p>
                 </div>
                 {/* Desktop-only action buttons - on mobile these appear below the controls */}
                 <div className="hidden sm:flex flex-wrap items-center gap-2">
@@ -61484,31 +61493,22 @@ ${waybillLineItems(w).length > 1
 
               <DataErrorBanner />
 
-              {/* Supervisors get a second view of the same carts, focused on
-                  whether the assigned rep is actually working them. A rep gets
-                  the same view of their own, which is where they log calls. */}
-              {canSeeCartFollowUps && (
-                <div className="-mx-1 mb-4 overflow-x-auto border-b border-gray-200">
-                  <div className="flex min-w-max gap-1 px-1">
-                    {(["Carts", "Follow-ups"] as const).map((tab) => (
-                      <button key={tab} type="button" onClick={() => setCartsPageTab(tab)}
-                        className={`!min-h-0 inline-flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors ${
-                          cartsPageTab === tab ? "border-[#1F8FE0] text-[#1F8FE0]" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
-                        {tab === "Carts"
-                          ? (cartFollowUpIsOwnWork ? "My carts" : "All carts")
-                          : (cartFollowUpIsOwnWork ? "My follow-ups" : "Assigned follow-ups")}
-                        {tab === "Follow-ups" && cartFollowUps.filter((row) => row.attempts === 0).length > 0 && (
-                          <span className="rounded-full bg-rose-100 px-1.5 text-[10px] font-black text-rose-700">
-                            {cartFollowUps.filter((row) => row.attempts === 0).length}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+              {/* Follow-up logging lives on the Follow-up Queue, not here, so
+                  there is one obvious place a rep works assigned carts. */}
+              {canSeeCartFollowUps && cartFollowUps.filter((row) => row.attempts === 0).length > 0 && (
+                <button type="button" onClick={() => { setFollowUpView("carts"); handleNavClick("Follow-up Queue"); }}
+                  className="!min-h-0 mb-4 flex w-full items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-3 text-left hover:bg-rose-50">
+                  <span className="text-sm font-bold text-gray-900">
+                    {cartFollowUps.filter((row) => row.attempts === 0).length} assigned cart
+                    {cartFollowUps.filter((row) => row.attempts === 0).length === 1 ? " has" : "s have"} never been called
+                  </span>
+                  <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-bold text-[#1F8FE0]">
+                    Open Cart Follow-ups <ArrowRight className="h-3.5 w-3.5" />
+                  </span>
+                </button>
               )}
 
-              {cartsPageTab === "Follow-ups" ? renderCartFollowUpTab() : (<>
+              <>
               {dataLoading && <TableSkeleton cols={7} rows={5} />}
               <div className={dataLoading ? "hidden" : "space-y-6 lg:space-y-8"}>
               <div className="flex flex-col gap-2 mb-4">
@@ -62506,7 +62506,7 @@ ${waybillLineItems(w).length > 1
                 </div>
               </section>
               </div>
-              </>)}
+              </>
             </>
           ) : activePage === "Scheduled Deliveries" ? (
             <div className="space-y-6">
