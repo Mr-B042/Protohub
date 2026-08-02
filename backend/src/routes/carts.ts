@@ -1661,8 +1661,11 @@ router.get("/follow-up-overview",
   async (req, res) => {
     try {
       const orgId = req.user!.orgId;
+      // The whole cart, not a summary. A rep about to call needs the contact
+      // details and what was in the cart in front of them; a supervisor
+      // deciding whether the follow-up was any good needs the same context.
       const { data: carts } = await supabase.from("abandoned_carts")
-        .select("id, customer, phone, status, amount, currency, product_name, package_name, assigned_rep_id, created_at, last_activity")
+        .select("id, customer, phone, whatsapp, email, city, state, address, preferred_delivery, status, amount, currency, product_id, product_name, package_name, source, embed_label, assigned_rep_id, created_at, last_activity, left_at, recovery_sent_at")
         .eq("org_id", orgId)
         .not("assigned_rep_id", "is", null)
         .order("last_activity", { ascending: false })
@@ -1688,7 +1691,9 @@ router.get("/follow-up-overview",
       const nameById = new Map((users ?? []).map((u: any) => [u.id, u.name]));
 
       const { data: linkedOrders } = cartIds.length
-        ? await supabase.from("orders").select("id, source_cart_id, status").eq("org_id", orgId).in("source_cart_id", cartIds)
+        ? await supabase.from("orders")
+            .select("id, source_cart_id, status, amount, currency, created_at")
+            .eq("org_id", orgId).in("source_cart_id", cartIds)
         : { data: [] as any[] };
       const orderByCart = new Map((linkedOrders ?? []).map((o: any) => [o.source_cart_id, o]));
 
@@ -1700,8 +1705,22 @@ router.get("/follow-up-overview",
             id: row.id,
             customer: row.customer,
             phone: row.phone,
+            whatsapp: row.whatsapp ?? null,
+            email: row.email ?? null,
+            city: row.city ?? null,
+            state: row.state ?? null,
+            address: row.address ?? null,
+            preferredDelivery: row.preferred_delivery ?? null,
+            productId: row.product_id ?? null,
             productName: row.package_name || row.product_name,
+            baseProductName: row.product_name ?? null,
+            packageName: row.package_name ?? null,
             amount: Number(row.amount ?? 0),
+            currency: row.currency ?? "NGN",
+            source: row.source ?? null,
+            embedLabel: row.embed_label ?? null,
+            leftAt: row.left_at ?? null,
+            recoverySentAt: row.recovery_sent_at ?? null,
             status: row.status,
             repId: row.assigned_rep_id,
             repName: nameById.get(row.assigned_rep_id) ?? "Unknown rep",
@@ -1716,7 +1735,10 @@ router.get("/follow-up-overview",
             lastAttemptBy: latest?.rep_name ?? null,
             nextActionAt: latest?.next_action_at ?? null,
             convertedOrderId: order?.id ?? null,
-            convertedOrderStatus: order?.status ?? null
+            convertedOrderStatus: order?.status ?? null,
+            convertedOrderAmount: order ? Number(order.amount ?? 0) : null,
+            convertedOrderCurrency: order?.currency ?? null,
+            convertedOrderAt: order?.created_at ?? null
           };
         })
       });
