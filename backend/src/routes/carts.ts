@@ -1653,21 +1653,29 @@ router.post("/:id/contact-attempts",
 );
 
 // ── GET /api/carts/follow-up-overview ─────────────────────
-// Supervisor view: every assigned cart with who owns it, what the last call
-// said and when - so "is this rep updating their own carts" is answerable
-// without opening them one by one.
+// Two audiences, one shape. A supervisor sees every assigned cart, so "is this
+// rep updating their own carts" is answerable without opening them one by one.
+// A Sales Rep sees only their own - this is their work list.
 router.get("/follow-up-overview",
-  requireRole("Owner", "Admin", "Manager"),
+  requireRole("Owner", "Admin", "Manager", "Sales Rep"),
   async (req, res) => {
     try {
       const orgId = req.user!.orgId;
+      // Scoped HERE, not in the browser. A rep's own carts are decided by the
+      // server so no client can ask for somebody else's follow-up record.
+      const scopeRepId = req.user!.role === "Sales Rep"
+        ? (req.user!.effectiveUserId ?? req.user!.id)
+        : null;
+
       // The whole cart, not a summary. A rep about to call needs the contact
       // details and what was in the cart in front of them; a supervisor
       // deciding whether the follow-up was any good needs the same context.
-      const { data: carts } = await supabase.from("abandoned_carts")
+      let cartQuery = supabase.from("abandoned_carts")
         .select("id, customer, phone, whatsapp, email, city, state, address, preferred_delivery, status, amount, currency, product_id, product_name, package_name, source, embed_label, assigned_rep_id, created_at, last_activity, left_at, recovery_sent_at")
         .eq("org_id", orgId)
-        .not("assigned_rep_id", "is", null)
+        .not("assigned_rep_id", "is", null);
+      if (scopeRepId) cartQuery = cartQuery.eq("assigned_rep_id", scopeRepId);
+      const { data: carts } = await cartQuery
         .order("last_activity", { ascending: false })
         .limit(500);
       const rows = carts ?? [];

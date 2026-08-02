@@ -2508,7 +2508,10 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
   ],
   "Sales Rep": [
-    "Sales Rep Workspace", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
+    // Abandoned Carts is here so a rep can work the carts assigned to them.
+    // Everything on that page is already scoped to their own carts by
+    // viewerScopeRepId, and the server scopes the follow-up list again.
+    "Sales Rep Workspace", "Abandoned Carts", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
   ],
   "Inventory Manager": [
     "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings", "WhatsApp"
@@ -6208,6 +6211,23 @@ const abandonedCartConversionMarkerFor = (order: Partial<TrackedOrder> | null | 
   }
   return null;
 };
+// An order a rep won back by chasing an abandoned cart, marked on the order
+// itself - otherwise a recovered sale is indistinguishable from a fresh one
+// and the follow-up work behind it is invisible.
+//
+// Deliberately NOT every order with a source_cart_id. Protohub captures a cart
+// for every form session, so 98% of orders carry one; badging those would put
+// the mark on almost every row and say nothing. Only the manual-recovery path -
+// a rep converted a cart that had been left - is a fact worth showing.
+const cartOriginBadgeFor = (order: Partial<TrackedOrder> | null | undefined) => {
+  if (!sourceCartIdForOrder(order)) return null;
+  if (abandonedCartConversionKindFor(order) !== "manual_recovery") return null;
+  return {
+    label: "🛒 Cart follow-up",
+    title: "The customer left the form without ordering; a rep's follow-up brought them back.",
+    cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200"
+  };
+};
 const abandonedCartIsBadRecoveredOutcome = (status: string) => ["Failed", "Cancelled"].includes(status);
 const abandonedCartIsPendingRecoveredOutcome = (status: string) => status !== "Delivered" && !abandonedCartIsBadRecoveredOutcome(status);
 const abandonedCartRecoveryNoteFor = (order: Partial<TrackedOrder> | null | undefined, cartId: string): OrderNote | null => {
@@ -9152,6 +9172,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     (currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager")
       ? null
       : (currentManagedUser?.id ?? authUser?.id ?? null);
+  // Supervisors see every rep's cart follow-ups; a Sales Rep sees their own.
+  // The server scopes the list either way - this only decides what to render.
+  const canSeeCartFollowUps = ["Owner", "Admin", "Manager", "Sales Rep"].includes(currentRole);
+  const cartFollowUpIsOwnWork = currentRole === "Sales Rep";
   const canMutate = currentRole !== "Viewer" && currentRole !== "Marketer";
   const canUseAdminOrderActions = currentRole !== "Sales Rep" && currentRole !== "Marketer";
   const canContactCustomers = currentRole !== "Marketer";
@@ -35790,7 +35814,7 @@ ${waybillLineItems(w).length > 1
   };
 
   const loadCartFollowUps = async () => {
-    if (!(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager")) return;
+    if (!canSeeCartFollowUps) return;
     try {
       const result = await cartsApi.followUpOverview();
       setCartFollowUps(result?.rows ?? []);
@@ -40558,10 +40582,21 @@ ${waybillLineItems(w).length > 1
   }, [activePage]);
 
   useEffect(() => {
-    if (activePage !== "Abandoned Carts") return;
+    // Also on the rep's workspace: that page shows how many carts are waiting
+    // on them, which needs the same list.
+    if (activePage !== "Abandoned Carts" && activePage !== "Sales Rep Workspace") return;
     void loadCartFollowUps();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, currentRole]);
+
+  // A rep's job on this page is the follow-up list, so open there rather than
+  // on the browse-all-carts tab. Once only - switching tabs afterwards sticks.
+  const cartsTabDefaulted = useRef(false);
+  useEffect(() => {
+    if (cartsTabDefaulted.current || !cartFollowUpIsOwnWork) return;
+    cartsTabDefaulted.current = true;
+    setCartsPageTab("Follow-ups");
+  }, [cartFollowUpIsOwnWork]);
 
   useEffect(() => {
     if (activePage !== "Personal Delivery Agents") return;
@@ -53141,11 +53176,13 @@ ${waybillLineItems(w).length > 1
             </button>
             {showCartsDateRange && renderDateRangeCalendar("carts-followup-date-range-panel", cartsDateRange, setCartsDateRange, applyCartsDateRange, () => setShowCartsDateRange(false))}
           </div>
-          <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700"
-            value={cartFollowUpRep} onChange={(e) => setCartFollowUpRep(e.target.value)}>
-            <option value="All reps">All reps</option>
-            {activeSalesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-          </select>
+          {!cartFollowUpIsOwnWork && (
+            <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700"
+              value={cartFollowUpRep} onChange={(e) => setCartFollowUpRep(e.target.value)}>
+              <option value="All reps">All reps</option>
+              {activeSalesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+            </select>
+          )}
           <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700"
             value={cartFollowUpFilter} onChange={(e) => setCartFollowUpFilter(e.target.value)}>
             {["All", "Never contacted", "Going quiet", "Still open", "Converted"].map((option) => (
@@ -53160,8 +53197,9 @@ ${waybillLineItems(w).length > 1
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
-            { label: "Assigned carts", value: periodRows.length, tone: "text-gray-900", sub: "in this period" },
-            { label: "Never contacted", value: neverContacted, tone: neverContacted > 0 ? "text-rose-600" : "text-gray-900",
+            { label: cartFollowUpIsOwnWork ? "Carts assigned to me" : "Assigned carts", value: periodRows.length, tone: "text-gray-900", sub: "in this period" },
+            { label: cartFollowUpIsOwnWork ? "I have not called yet" : "Never contacted", value: neverContacted,
+              tone: neverContacted > 0 ? "text-rose-600" : "text-gray-900",
               sub: hiddenNeverContacted > 0 ? `+${hiddenNeverContacted} older, outside this period` : "nobody has called yet" },
             { label: "No update in 3 days", value: quiet, tone: quiet > 0 ? "text-amber-600" : "text-gray-900", sub: "going quiet" },
             { label: "Converted to an order", value: converted, tone: "text-emerald-600", sub: "recovered" }
@@ -53181,7 +53219,7 @@ ${waybillLineItems(w).length > 1
                 <tr className="border-b border-gray-200 bg-gray-50/70 text-left text-[10px] font-black uppercase tracking-[0.12em] text-gray-500">
                   <th className="px-5 py-3">Customer &amp; contact</th>
                   <th className="px-4 py-3">What they left behind</th>
-                  <th className="px-4 py-3">Assigned to</th>
+                  {!cartFollowUpIsOwnWork && <th className="px-4 py-3">Assigned to</th>}
                   <th className="px-4 py-3">Follow-up so far</th>
                   <th className="px-4 py-3">Next action</th>
                   <th className="px-4 py-3">Result</th>
@@ -53191,18 +53229,20 @@ ${waybillLineItems(w).length > 1
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-12 text-center">
+                    <td colSpan={cartFollowUpIsOwnWork ? 6 : 7} className="px-5 py-12 text-center">
                       <p className="m-0 text-sm font-semibold text-gray-500">
                         {cartFollowUps.length === 0
-                          ? "No carts are assigned to a rep yet."
+                          ? (cartFollowUpIsOwnWork ? "No carts are assigned to you right now." : "No carts are assigned to a rep yet.")
                           : periodRows.length === 0
                             ? "No assigned carts in this period."
                             : "Nothing matches those filters."}
                       </p>
                       <p className="m-0 mt-1 text-xs text-gray-400">
                         {cartFollowUps.length === 0
-                          ? "Assign a cart to a rep and their follow-up calls will appear here."
-                          : "Widen the date range or clear the rep filter."}
+                          ? (cartFollowUpIsOwnWork
+                              ? "When a cart is assigned to you it shows up here to call."
+                              : "Assign a cart to a rep and their follow-up calls will appear here.")
+                          : "Widen the date range or clear the filters."}
                       </p>
                     </td>
                   </tr>
@@ -53261,12 +53301,14 @@ ${waybillLineItems(w).length > 1
                         </div>
                         <div className="mt-1 text-[11px] text-gray-400">Left {ago(leftDays)}</div>
                       </td>
-                      <td className="px-4 py-4">
-                        <div className="text-[12px] font-bold text-gray-800">{row.repName}</div>
-                        {row.lastAttemptBy && row.lastAttemptBy !== row.repName && (
-                          <div className="text-[11px] text-gray-400">last call by {row.lastAttemptBy}</div>
-                        )}
-                      </td>
+                      {!cartFollowUpIsOwnWork && (
+                        <td className="px-4 py-4">
+                          <div className="text-[12px] font-bold text-gray-800">{row.repName}</div>
+                          {row.lastAttemptBy && row.lastAttemptBy !== row.repName && (
+                            <div className="text-[11px] text-gray-400">last call by {row.lastAttemptBy}</div>
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-4 max-w-[280px]">
                         {/* Zero attempts is the signal that matters most: the cart
                             looks owned but nobody has actually called. */}
@@ -55410,6 +55452,39 @@ ${waybillLineItems(w).length > 1
             </div>
           )}
         </header>
+
+        {/* Carts assigned to this rep are work they would otherwise never know
+            about - the cart list is a different page. Surfacing the count here,
+            on the page they actually land on, is the whole point. */}
+        {(() => {
+          if (!cartFollowUpIsOwnWork || cartFollowUps.length === 0) return null;
+          const open = cartFollowUps.filter((row) => !row.convertedOrderId).length;
+          const uncalled = cartFollowUps.filter((row) => row.attempts === 0).length;
+          if (open === 0 && uncalled === 0) return null;
+          return (
+            <section className={`rounded-2xl border px-5 py-4 ${uncalled > 0 ? "border-rose-200 bg-rose-50/70" : "border-sky-200 bg-sky-50/70"}`}>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <span className="text-xl leading-none">🛒</span>
+                  <div>
+                    <h2 className="m-0 text-[15px] font-black text-gray-900">
+                      {open} cart follow-up{open === 1 ? "" : "s"} assigned to you
+                    </h2>
+                    <p className="m-0 mt-0.5 text-xs font-semibold text-gray-600">
+                      {uncalled > 0
+                        ? `${uncalled} of them you have not called yet. These customers filled the form but never finished.`
+                        : "Customers who filled the form but never finished. Keep the log up to date."}
+                    </p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => { setCartsPageTab("Follow-ups"); handleNavClick("Abandoned Carts"); }}
+                  className="!min-h-0 inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1F8FE0] px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700">
+                  Work my cart follow-ups <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
+            </section>
+          );
+        })()}
 
         <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar max-w-full" aria-label="Sales rep workspace sections">
           {repConsoleTabs.filter((tab) => tab !== "Upsell & Cross-sell Log" || (currentRole === "Sales Rep" && salesExpansionFeatureEnabled)).map((tab) => (
@@ -60250,6 +60325,14 @@ ${waybillLineItems(w).length > 1
                                   title="Recovered after a system outage - the customer submitted while the system was offline. Please verify the order with them."
                                 >⚡ Recovered</span>
                               )}
+                              {(() => {
+                                const cartOrigin = cartOriginBadgeFor(order);
+                                return cartOrigin ? (
+                                  <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${cartOrigin.cls}`} title={cartOrigin.title}>
+                                    {cartOrigin.label}
+                                  </span>
+                                ) : null;
+                              })()}
                             </div>
                           </div>
 
@@ -60470,6 +60553,14 @@ ${waybillLineItems(w).length > 1
                                     title="Recovered after a system outage - the customer submitted while the system was offline. Please verify the order with them."
                                   >⚡ Recovered</span>
                                 )}
+                                {(() => {
+                                  const cartOrigin = cartOriginBadgeFor(order);
+                                  return cartOrigin ? (
+                                    <span className={`mt-1.5 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${cartOrigin.cls}`} title={cartOrigin.title}>
+                                      {cartOrigin.label}
+                                    </span>
+                                  ) : null;
+                                })()}
                                 {scheduleMarker ? (
                                   renderScheduleResultBadge(scheduleMarker, { className: "mt-1.5" })
                                 ) : null}
@@ -61377,7 +61468,11 @@ ${waybillLineItems(w).length > 1
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
                 <div className="flex flex-col gap-1">
                   <h1 className="text-2xl font-bold text-[#1F8FE0]">Abandoned Carts</h1>
-                  <p className="text-sm font-medium text-gray-500">Track captured carts, monitor rep follow-up, and reassign leads when needed.</p>
+                  <p className="text-sm font-medium text-gray-500">
+                    {cartFollowUpIsOwnWork
+                      ? "Customers who filled the form but never finished. Call the ones assigned to you and log what they said."
+                      : "Track captured carts, monitor rep follow-up, and reassign leads when needed."}
+                  </p>
                 </div>
                 {/* Desktop-only action buttons - on mobile these appear below the controls */}
                 <div className="hidden sm:flex flex-wrap items-center gap-2">
@@ -61390,15 +61485,18 @@ ${waybillLineItems(w).length > 1
               <DataErrorBanner />
 
               {/* Supervisors get a second view of the same carts, focused on
-                  whether the assigned rep is actually working them. */}
-              {(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") && (
+                  whether the assigned rep is actually working them. A rep gets
+                  the same view of their own, which is where they log calls. */}
+              {canSeeCartFollowUps && (
                 <div className="-mx-1 mb-4 overflow-x-auto border-b border-gray-200">
                   <div className="flex min-w-max gap-1 px-1">
                     {(["Carts", "Follow-ups"] as const).map((tab) => (
                       <button key={tab} type="button" onClick={() => setCartsPageTab(tab)}
                         className={`!min-h-0 inline-flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors ${
                           cartsPageTab === tab ? "border-[#1F8FE0] text-[#1F8FE0]" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
-                        {tab === "Carts" ? "All carts" : "Assigned follow-ups"}
+                        {tab === "Carts"
+                          ? (cartFollowUpIsOwnWork ? "My carts" : "All carts")
+                          : (cartFollowUpIsOwnWork ? "My follow-ups" : "Assigned follow-ups")}
                         {tab === "Follow-ups" && cartFollowUps.filter((row) => row.attempts === 0).length > 0 && (
                           <span className="rounded-full bg-rose-100 px-1.5 text-[10px] font-black text-rose-700">
                             {cartFollowUps.filter((row) => row.attempts === 0).length}
@@ -83016,6 +83114,26 @@ ${waybillLineItems(w).length > 1
 
 	            {modal === "orderDetails" && selectedOrder && !isMarketerOrderView && (
 	              <div className="px-6 py-5 flex flex-col gap-6">
+	                {/* Where this order came from, stated up front. A recovered
+	                    cart otherwise looks identical to a fresh order. */}
+	                {(() => {
+	                  if (!cartOriginBadgeFor(selectedOrder)) return null;
+	                  const cartId = sourceCartIdForOrder(selectedOrder);
+	                  return (
+	                    <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+	                      <div className="flex items-start gap-2.5">
+	                        <span className="text-lg leading-none">🛒</span>
+	                        <div className="min-w-0 flex-1">
+	                          <p className="m-0 text-sm font-bold text-emerald-900 dark:text-emerald-200">Recovered from a cart follow-up</p>
+	                          <p className="mt-0.5 mb-0 text-xs text-gray-600 dark:text-gray-300">
+	                            The customer left the form without ordering and a rep&apos;s follow-up brought them back.
+	                          </p>
+	                          <p className="mt-1 mb-0 text-[11px] text-gray-400 dark:text-slate-500">Cart {cartId}</p>
+	                        </div>
+	                      </div>
+	                    </div>
+	                  );
+	                })()}
 	                {selectedOrder.remittanceVarianceStatus && selectedOrder.remittanceVarianceStatus !== "approved" && (
 	                  <div className={`rounded-xl border px-4 py-3 ${selectedOrder.remittanceVarianceStatus === "pending" ? "border-amber-300 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10" : "border-rose-300 bg-rose-50 dark:border-rose-500/30 dark:bg-rose-500/10"}`}>
 	                    <div className="flex items-start gap-2.5">
