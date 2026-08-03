@@ -41,6 +41,7 @@ import {
   KeyRound,
   LogOut,
   Menu,
+  Link2,
   MessageCircle,
   Moon,
   Activity,
@@ -198,7 +199,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -11256,6 +11257,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaAppPage, setPdaAppPage] = useState(1);
   const [pdaAppLinks, setPdaAppLinks] = useState<PdaApplicationLink[]>([]);
   const [pdaBlockedApplicants, setPdaBlockedApplicants] = useState<PdaBlockedApplicant[]>([]);
+  const [pdaStatusLink, setPdaStatusLink] = useState<
+    { agentId: string; name: string; phone: string; url: string; loading: boolean; sending: boolean } | null
+  >(null);
   const [pdaReview, setPdaReview] = useState<PdaReviewView | null>(null);
   const [pdaRejectDraft, setPdaRejectDraft] = useState<
     { agentId: string; name: string; phone: string; reason: string; blockApplicant: boolean } | null
@@ -41498,6 +41502,49 @@ ${waybillLineItems(w).length > 1
   const pdaApplicationUrl = (token: string) =>
     `${window.location.origin}${window.location.pathname}#/agent-application/${token}`;
 
+  // Re-issue the applicant's own status link. They are shown it once, on the
+  // screen straight after submitting, and people close that screen. Without
+  // this the link is a single point of failure for both sides.
+  const pdaOpenStatusLink = async (agentId: string, name: string, phone: string) => {
+    setPdaStatusLink({ agentId, name, phone, url: "", loading: true, sending: false });
+    setModal("pdaStatusLink");
+    try {
+      const result = await personalDeliveryAgentsApi.applicantStatusLink(agentId, {
+        origin: `${window.location.origin}${window.location.pathname}`
+      });
+      setPdaStatusLink((v) => v && ({
+        ...v, url: result.url, phone: result.phone ?? v.phone, loading: false
+      }));
+    } catch (err: any) {
+      setModal(null);
+      setPdaStatusLink(null);
+      showToast(err?.message ?? "Could not get that status link.");
+    }
+  };
+
+  const pdaSendStatusLinkWhatsApp = async () => {
+    if (!pdaStatusLink) return;
+    setPdaStatusLink((v) => v && ({ ...v, sending: true }));
+    try {
+      const result = await personalDeliveryAgentsApi.applicantStatusLink(pdaStatusLink.agentId, {
+        origin: `${window.location.origin}${window.location.pathname}`,
+        send: "whatsapp"
+      });
+      // WhatsApp runs on an in-memory session that a deploy drops, so this can
+      // legitimately be unavailable. Say which one failed rather than a generic
+      // error, because the copy button beside it always works.
+      if (result.sent?.ok) {
+        showToast(`Sent to ${pdaStatusLink.phone || "their number"} on WhatsApp.`);
+      } else {
+        showToast(result.sent?.error ?? "Could not send on WhatsApp. Copy the link and send it yourself.");
+      }
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not send that link.");
+    } finally {
+      setPdaStatusLink((v) => v && ({ ...v, sending: false }));
+    }
+  };
+
   const pdaCreateAppLink = async () => {
     const label = window.prompt("What is this link for? (e.g. \"Rivers recruitment drive\")") ?? "";
     try {
@@ -51657,6 +51704,13 @@ ${waybillLineItems(w).length > 1
           <button type="button" disabled={view.blockers.length > 0 || pdaSaving} onClick={() => void pdaApprove(view.agent.id)}
             className="!min-h-0 flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40">
             <CheckCircle2 className="h-4 w-4" /> Approve Agent
+          </button>
+          {/* Their own status link, re-issuable. They see it once on the
+              screen after submitting, and people close that screen. */}
+          <button type="button"
+            onClick={() => void pdaOpenStatusLink(view.agent.id, view.agent.fullName, (view.agent as any).phone ?? "")}
+            className="!min-h-0 flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-[12px] font-bold text-gray-700 hover:bg-gray-50">
+            <Link2 className="h-4 w-4" /> Send Them Their Link
           </button>
           <button type="button" onClick={() => void pdaSetApplicationStatus(view.agent.id, "Rejected")}
             className="!min-h-0 flex w-full items-center justify-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] font-bold text-rose-700 hover:bg-rose-100">
@@ -82810,6 +82864,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "pdaCodDiscrepancy" && "Log a cash discrepancy"}
                 {modal === "pdaReport" && "Create a report"}
 	                {modal === "pdaReject" && "Reject this application"}
+	                {modal === "pdaStatusLink" && "Their application link"}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -88956,6 +89011,66 @@ ${waybillLineItems(w).length > 1
 	                  </button>
 	                </div>
 	              </div>
+	              );
+	            })()}
+
+	            {modal === "pdaStatusLink" && pdaStatusLink && (() => {
+	              const link = pdaStatusLink;
+	              const message = `Hello ${link.name}, here is the link to your delivery agent application. `
+	                + `You can see what has been approved and send anything we still need:\n${link.url}\n\n`
+	                + `Keep this link private - it opens your application without a password.`;
+	              // wa.me opens WhatsApp with the message already typed. It works
+	              // from any phone or desktop and does not depend on our own
+	              // WhatsApp session, which a deploy drops.
+	              const waDigits = link.phone.replace(/\D/g, "").replace(/^0/, "234");
+	              const waUrl = `https://wa.me/${waDigits}?text=${encodeURIComponent(message)}`;
+	              return (
+	                <div className="px-6 py-5 space-y-4">
+	                  <p className="m-0 text-[13px] text-gray-600">
+	                    <strong>{link.name}</strong> was shown this link once, right after applying. Send it again if they
+	                    lost it — it is the only way they can check their progress or send anything still missing.
+	                  </p>
+
+	                  {link.loading ? (
+	                    <p className="m-0 text-sm text-gray-400">Getting their link…</p>
+	                  ) : (
+	                    <>
+	                      <div className="flex items-center gap-2">
+	                        <input readOnly value={link.url} onFocus={(e) => e.currentTarget.select()}
+	                          className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[12px] text-gray-700" />
+	                        <button type="button" onClick={() => copyText(link.url, "Their application link")}
+	                          className="!min-h-0 shrink-0 rounded-lg bg-[#1F8FE0] px-3.5 py-2 text-[12px] font-bold text-white">
+	                          Copy
+	                        </button>
+	                      </div>
+
+	                      <div className="flex flex-col gap-2 sm:flex-row">
+	                        {waDigits.length >= 10 && (
+	                          <a href={waUrl} target="_blank" rel="noreferrer"
+	                            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[13px] font-bold text-emerald-700 hover:bg-emerald-100">
+	                            <MessageCircle className="h-4 w-4" /> Open WhatsApp to {link.phone}
+	                          </a>
+	                        )}
+	                        <button type="button" disabled={link.sending} onClick={pdaSendStatusLinkWhatsApp}
+	                          className="!min-h-0 inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2.5 text-[13px] font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-60">
+	                          {link.sending ? "Sending…" : "Send from Protohub"}
+	                        </button>
+	                      </div>
+
+	                      <p className="m-0 rounded-lg bg-gray-50 px-3 py-2 text-[11px] leading-relaxed text-gray-500">
+	                        <strong>Open WhatsApp</strong> types the message on your own phone and always works.
+	                        <strong> Send from Protohub</strong> uses the connected WhatsApp number, which is unavailable
+	                        after a deploy until it reconnects. Either way the link stays the same — re-sending never
+	                        breaks a copy they already have.
+	                      </p>
+	                    </>
+	                  )}
+
+	                  <div className="flex justify-end pt-1">
+	                    <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700"
+	                      onClick={() => { setModal(null); setPdaStatusLink(null); }}>Close</button>
+	                  </div>
+	                </div>
 	              );
 	            })()}
 
