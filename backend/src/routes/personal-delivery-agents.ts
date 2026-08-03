@@ -16,6 +16,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { randomUUID } from "node:crypto";
 import { approvalBlockers } from "../lib/pda-approval.js";
+import { sendCustomWhatsApp } from "../lib/whatsapp.js";
 import {
   dispatchBlockers, deliveryProofBlockers, rescheduleKeepsStockReserved,
   failureReasonBlockers, CUSTOMER_READY
@@ -1755,6 +1756,64 @@ router.post("/application-links/:linkId/revoke", requireRole(...MANAGEMENT_ROLES
     res.json({ ok: true });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not revoke that link." });
+  }
+});
+
+// ── The applicant's status link, from the office side ─────
+// The applicant is handed this link once, on the screen right after they
+// submit. People close that screen, lose the chat, or change phone. Without a
+// way to re-issue it the link is a single point of failure on both sides: they
+// cannot check their progress, and nobody here can tell them what is missing
+// except by phone.
+//
+// Re-issuing returns the SAME token. Minting a fresh one would silently kill
+// whatever link they might still have saved.
+router.post("/:id/status-link", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const agentId = paramOf(req.params.id);
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, full_name, phone, whatsapp_phone, status_token, account_status")
+      .eq("org_id", orgId).eq("id", agentId).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Application not found." }); return; }
+
+    // Applications typed in by the office, and any submitted before this
+    // existed, have no token yet. Minting one on demand means the status page
+    // works for them too, not only for public self-submissions.
+    let token = agent.status_token as string | null;
+    if (!token) {
+      token = randomUUID().replace(/-/g, "");
+      const { error } = await supabase.from(AGENTS)
+        .update({ status_token: token, updated_at: new Date().toISOString() })
+        .eq("org_id", orgId).eq("id", agentId);
+      if (error) { res.status(500).json({ error: error.message }); return; }
+    }
+
+    const requestedSend = typeof req.body?.send === "string" ? req.body.send : "";
+    const appOrigin = typeof req.body?.origin === "string" ? req.body.origin.replace(/[#?].*$/, "") : "";
+    const url = appOrigin ? `${appOrigin}#/agent-application/status/${token}` : "";
+
+    let sent: { ok: boolean; error?: string } | null = null;
+    if (requestedSend === "whatsapp") {
+      const phone = agent.whatsapp_phone || agent.phone;
+      if (!phone) {
+        sent = { ok: false, error: "No phone number on this application." };
+      } else if (!url) {
+        sent = { ok: false, error: "Could not build the link." };
+      } else {
+        const result = await sendCustomWhatsApp(orgId, phone,
+          `Hello ${agent.full_name}, here is the link to your delivery agent application. `
+          + `You can see what has been approved and send anything we still need:\n${url}\n\n`
+          + `Keep this link private - it opens your application without a password.`,
+          { recipientName: agent.full_name, metadata: { kind: "pda_status_link" } }
+        );
+        sent = result.ok ? { ok: true } : { ok: false, error: result.error };
+      }
+    }
+
+    res.json({ token, url, phone: agent.whatsapp_phone || agent.phone || null, sent });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not get that status link." });
   }
 });
 

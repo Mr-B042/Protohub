@@ -1100,6 +1100,9 @@ export const personalDeliveryAgentsApi = {
     patch<{ row: PdaDocument }>(`/api/personal-delivery-agents/documents/${documentId}`, body),
   approve: (id: string) =>
     post<{ row: PersonalDeliveryAgentRow }>(`/api/personal-delivery-agents/${id}/approve`, {}),
+  applicantStatusLink: (id: string, body: { origin: string; send?: "whatsapp" }) =>
+    post<{ token: string; url: string; phone: string | null; sent: { ok: boolean; error?: string } | null }>(
+      `/api/personal-delivery-agents/${id}/status-link`, body),
   rejectApplication: (id: string, body: { reason: string; blockApplicant: boolean }) =>
     post<{ ok: boolean; blocked: boolean }>(`/api/personal-delivery-agents/${id}/reject`, body),
   blockedApplicants: () =>
