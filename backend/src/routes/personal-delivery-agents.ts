@@ -660,7 +660,7 @@ router.get("/applications", requireRole(...MANAGEMENT_ROLES), async (req, res) =
     const orgId = orgIdOf(req);
     const [{ data: agentRows }, { data: kycRows }, { data: guarantorRows }, { data: docRows }] = await Promise.all([
       supabase.from(AGENTS)
-        .select("id, agent_code, full_name, phone, state, city, photo_url, account_status, kyc_status, created_at, approved_at")
+        .select("id, agent_code, full_name, phone, state, city, photo_url, account_status, kyc_status, created_at, approved_at, submitted_via, application_link_id, status_reason")
         .eq("org_id", orgId).order("created_at", { ascending: false }),
       supabase.from(KYC).select("agent_id, mandatory, status").eq("org_id", orgId),
       supabase.from(GUARANTORS).select("agent_id, slot, verification_status, guarantor_type").eq("org_id", orgId),
@@ -717,6 +717,11 @@ router.get("/applications", requireRole(...MANAGEMENT_ROLES), async (req, res) =
         photoUrl: agent.photo_url ?? null,
         status,
         accountStatus: agent.account_status,
+        // Where this application came in from, so a burst of strangers can be
+        // traced back to the link that let them in.
+        submittedVia: agent.submitted_via ?? "Internal entry",
+        applicationLinkId: agent.application_link_id ?? null,
+        statusReason: agent.status_reason ?? null,
         kycApproved: approved,
         kycTotal: total,
         kycPct: total > 0 ? Math.round((approved / total) * 100) : 0,
@@ -1750,6 +1755,99 @@ router.post("/application-links/:linkId/revoke", requireRole(...MANAGEMENT_ROLES
     res.json({ ok: true });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not revoke that link." });
+  }
+});
+
+// ── Rejecting an application, and blocking the applicant ──
+// The link we shared cannot be un-shared. Someone forwards it, a stranger
+// applies, and revoking that one link only sends the next person to the next
+// link. So refusal follows the PERSON, by phone number, across every link.
+//
+// Rejecting keeps the record rather than erasing it: who applied, through which
+// link, and what they uploaded. A pattern of abuse is only visible if the
+// earlier attempts are still there to compare.
+const BLOCKED_APPLICANTS = "pda_blocked_applicants";
+const applicantPhoneDigits = (value: string) =>
+  String(value ?? "").replace(/\D/g, "").replace(/^234/, "").replace(/^0/, "");
+
+router.post("/:id/reject", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const agentId = paramOf(req.params.id);
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    const alsoBlock = req.body?.blockApplicant === true;
+
+    // A refusal with no reason is unanswerable - for the applicant, and for
+    // whoever reviews the decision later.
+    if (reason.length < 4) { res.status(400).json({ error: "Give a reason for rejecting this application." }); return; }
+
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, full_name, phone, account_status, application_link_id")
+      .eq("org_id", orgId).eq("id", agentId).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Application not found." }); return; }
+
+    // An agent already holding stock or cash is not an "application" any more.
+    // Cutting them off is a different decision with money attached, and it runs
+    // through the suspension/termination flow that settles what they hold.
+    if (["Active", "Probation", "Approved"].includes(agent.account_status)) {
+      res.status(409).json({
+        error: "This agent is already approved. Suspend or terminate them instead, so their stock and cash are settled first."
+      });
+      return;
+    }
+
+    const { error } = await supabase.from(AGENTS).update({
+      account_status: "Rejected",
+      status_reason: reason,
+      availability: "Offline",
+      rejected_at: new Date().toISOString(),
+      rejected_by: req.user!.id,
+      updated_at: new Date().toISOString()
+    }).eq("org_id", orgId).eq("id", agentId);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    let blocked = false;
+    if (alsoBlock && agent.phone) {
+      const { error: blockError } = await supabase.from(BLOCKED_APPLICANTS).upsert({
+        org_id: orgId,
+        phone_digits: applicantPhoneDigits(agent.phone),
+        display_phone: agent.phone,
+        full_name: agent.full_name,
+        reason,
+        agent_id: agent.id,
+        application_link_id: agent.application_link_id ?? null,
+        blocked_by: req.user!.id,
+        blocked_by_name: req.user!.name
+      }, { onConflict: "org_id,phone_digits" });
+      blocked = !blockError;
+    }
+
+    res.json({ ok: true, blocked });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not reject that application." });
+  }
+});
+
+router.get("/blocked-applicants", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const { data } = await supabase.from(BLOCKED_APPLICANTS)
+      .select("*").eq("org_id", orgIdOf(req)).order("created_at", { ascending: false }).limit(200);
+    res.json({ rows: data ?? [] });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the blocked list." });
+  }
+});
+
+// Unblocking is Owner-only and always allowed: a wrong block keeps a real
+// person out of work, so undoing one must never be harder than making one.
+router.delete("/blocked-applicants/:blockId", requireRole("Owner"), async (req, res) => {
+  try {
+    const { error } = await supabase.from(BLOCKED_APPLICANTS)
+      .delete().eq("org_id", orgIdOf(req)).eq("id", paramOf(req.params.blockId));
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not unblock that number." });
   }
 });
 

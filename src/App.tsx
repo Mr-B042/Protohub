@@ -129,7 +129,7 @@ import {
   setApiSpyUserId
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -198,7 +198,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -11255,7 +11255,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaAppGuarantorFilter, setPdaAppGuarantorFilter] = useState("All");
   const [pdaAppPage, setPdaAppPage] = useState(1);
   const [pdaAppLinks, setPdaAppLinks] = useState<PdaApplicationLink[]>([]);
+  const [pdaBlockedApplicants, setPdaBlockedApplicants] = useState<PdaBlockedApplicant[]>([]);
   const [pdaReview, setPdaReview] = useState<PdaReviewView | null>(null);
+  const [pdaRejectDraft, setPdaRejectDraft] = useState<
+    { agentId: string; name: string; phone: string; reason: string; blockApplicant: boolean } | null
+  >(null);
   const [pdaReviewSearch, setPdaReviewSearch] = useState("");
   const [pdaReviewSort, setPdaReviewSort] = useState("Newest First");
   // Pending Approval sorts oldest-first by default: an application that has
@@ -41383,15 +41387,49 @@ ${waybillLineItems(w).length > 1
   };
 
   const pdaSetApplicationStatus = async (agentId: string, accountStatus: string) => {
-    const reason = window.prompt(
-      accountStatus === "Rejected" ? "Why is this rejected? It goes on the record." : "What do you need from them?"
-    );
+    // Rejecting now needs a decision about the person as well as the file, so
+    // it gets a proper form instead of a browser prompt.
+    if (accountStatus === "Rejected") {
+      const target = pdaApplications?.rows?.find((row: any) => row.id === agentId)
+        ?? pdaReview?.agent ?? null;
+      setPdaRejectDraft({
+        agentId,
+        name: (target as any)?.fullName ?? "this applicant",
+        phone: (target as any)?.phone ?? "",
+        reason: "",
+        blockApplicant: false
+      });
+      setModal("pdaReject");
+      return;
+    }
+    const reason = window.prompt("What do you need from them?");
     if (!reason || !reason.trim()) return;
     try {
       await personalDeliveryAgentsApi.setStatus(agentId, { accountStatus, reason: reason.trim() });
-      showToast(accountStatus === "Rejected" ? "Application rejected." : "Update requested.");
+      showToast("Update requested. They can see it on their status link.");
       await Promise.all([openPdaReview(agentId), loadPdaApplications()]);
     } catch (err: any) { showToast(err?.message ?? "Could not update that application."); }
+  };
+
+  const savePdaRejection = async () => {
+    if (!pdaRejectDraft) return;
+    const reason = pdaRejectDraft.reason.trim();
+    if (reason.length < 4) { showToast("Give a reason - it goes on the record and the applicant sees it."); return; }
+    setPdaSaving(true);
+    try {
+      const result = await personalDeliveryAgentsApi.rejectApplication(pdaRejectDraft.agentId, {
+        reason, blockApplicant: pdaRejectDraft.blockApplicant
+      });
+      setModal(null);
+      const agentId = pdaRejectDraft.agentId;
+      setPdaRejectDraft(null);
+      showToast(result.blocked
+        ? "Rejected, and that number can no longer apply on any link."
+        : "Application rejected.");
+      await Promise.all([openPdaReview(agentId), loadPdaApplications()]);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not reject that application.");
+    } finally { setPdaSaving(false); }
   };
 
   const pdaOpenSignedFile = async (path?: string | null) => {
@@ -41439,6 +41477,21 @@ ${waybillLineItems(w).length > 1
       const result = await personalDeliveryAgentsApi.applicationLinks();
       setPdaAppLinks(result?.rows ?? []);
     } catch (err: any) { showToast(err?.message ?? "Could not load application links."); }
+    try {
+      const blocked = await personalDeliveryAgentsApi.blockedApplicants();
+      setPdaBlockedApplicants(blocked?.rows ?? []);
+    } catch { setPdaBlockedApplicants([]); }
+  };
+
+  // Undoing a block is Owner-only but never gated further: a wrong block keeps
+  // a real person out of work, so reversing one must not be harder than making
+  // one.
+  const pdaUnblockApplicant = async (blockId: string, name: string) => {
+    try {
+      await personalDeliveryAgentsApi.unblockApplicant(blockId);
+      showToast(`${name || "That number"} can apply again.`);
+      await loadPdaAppLinks();
+    } catch (err: any) { showToast(err?.message ?? "Could not unblock that number."); }
   };
 
   /** The shareable URL for a link token, built from wherever the app is served. */
@@ -51526,7 +51579,16 @@ ${waybillLineItems(w).length > 1
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13px] font-bold text-gray-900">{row.fullName}</div>
-                  <div className="text-[11px] text-gray-400">{row.applicationId}</div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] text-gray-400">{row.applicationId}</span>
+                    {/* Whether this person typed their own details in from a
+                        shared link, or someone in the office entered them. A
+                        burst of self-submissions is the shape link abuse takes. */}
+                    {row.submittedVia === "Public link" && (
+                      <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-violet-700"
+                        title="Applied themselves through a shared link">Public link</span>
+                    )}
+                  </div>
                   <div className="mt-1 flex items-center justify-between gap-2">
                     <span className="text-[10px] text-gray-400">
                       {new Date(row.submittedOn).toLocaleDateString([], { dateStyle: "medium" })}
@@ -52967,6 +53029,42 @@ ${waybillLineItems(w).length > 1
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Refusal follows the PERSON, not the link. Revoking the one link
+              someone abused just sends the next person to the next link. */}
+          {pdaBlockedApplicants.length > 0 && (
+            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50/60 p-3">
+              <p className="m-0 text-[12px] font-bold text-rose-900">
+                {pdaBlockedApplicants.length} number{pdaBlockedApplicants.length === 1 ? "" : "s"} stopped from applying
+              </p>
+              <p className="m-0 mt-0.5 text-[11px] text-rose-800/80">
+                Refused on every link, not just the one they used.
+              </p>
+              <div className="mt-2 divide-y divide-rose-100">
+                {pdaBlockedApplicants.map((blocked) => (
+                  <div key={blocked.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <div className="min-w-0">
+                      <div className="text-[12px] font-bold text-gray-900">
+                        {blocked.fullName || "Unnamed applicant"}
+                        <span className="ml-2 font-mono text-[11px] font-normal text-gray-500">{blocked.displayPhone}</span>
+                      </div>
+                      <div className="text-[11px] text-gray-500">
+                        {blocked.reason}
+                        {blocked.blockedByName ? ` · by ${blocked.blockedByName}` : ""}
+                        {` · ${new Date(blocked.createdAt).toLocaleDateString([], { dateStyle: "medium" })}`}
+                      </div>
+                    </div>
+                    {currentRole === "Owner" && (
+                      <button type="button" onClick={() => void pdaUnblockApplicant(blocked.id, blocked.fullName ?? "")}
+                        className="!min-h-0 shrink-0 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50">
+                        Allow again
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </section>
@@ -82711,6 +82809,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "pdaIncident" && "Report an incident"}
                 {modal === "pdaCodDiscrepancy" && "Log a cash discrepancy"}
                 {modal === "pdaReport" && "Create a report"}
+	                {modal === "pdaReject" && "Reject this application"}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -88859,6 +88958,50 @@ ${waybillLineItems(w).length > 1
 	              </div>
 	              );
 	            })()}
+
+	            {modal === "pdaReject" && pdaRejectDraft && (
+	              <div className="px-6 py-5 space-y-4">
+	                <p className="m-0 text-[13px] text-gray-600">
+	                  Rejecting <strong>{pdaRejectDraft.name}</strong>. The reason goes on the record and is shown to them
+	                  on their status link, so write it as something they can read.
+	                </p>
+	                <label className="flex flex-col gap-1.5">
+	                  <span className="text-xs font-bold text-gray-600">Reason *</span>
+	                  <textarea rows={3} className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
+	                    value={pdaRejectDraft.reason}
+	                    placeholder="e.g. The ID photo does not match the selfie."
+	                    onChange={(e) => setPdaRejectDraft((v) => v && ({ ...v, reason: e.target.value }))} />
+	                </label>
+
+	                {/* A shared link cannot be un-shared. Revoking the one link they
+	                    used only sends the next person to the next link, so a block
+	                    has to follow the phone number across all of them. */}
+	                <label className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50/70 p-3">
+	                  <input type="checkbox" className="mt-0.5 h-4 w-4" checked={pdaRejectDraft.blockApplicant}
+	                    onChange={(e) => setPdaRejectDraft((v) => v && ({ ...v, blockApplicant: e.target.checked }))} />
+	                  <span className="text-[13px] leading-relaxed text-gray-700">
+	                    <strong className="text-rose-800">Also stop this number applying again</strong>
+	                    {pdaRejectDraft.phone ? <> — <span className="font-mono">{pdaRejectDraft.phone}</span></> : null}.
+	                    Blocks them on <strong>every</strong> application link, not just the one they used.
+	                    Only the Owner can undo it.
+	                  </span>
+	                </label>
+
+	                <p className="m-0 rounded-lg bg-gray-50 px-3 py-2 text-[11px] text-gray-500">
+	                  The application and its documents are kept either way. A pattern of misuse is only
+	                  visible if the earlier attempts are still there to compare.
+	                </p>
+
+	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700"
+	                    onClick={() => { setModal(null); setPdaRejectDraft(null); }}>Cancel</button>
+	                  <button disabled={pdaSaving} onClick={savePdaRejection}
+	                    className="!min-h-0 rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">
+	                    {pdaSaving ? "Rejecting…" : pdaRejectDraft.blockApplicant ? "Reject and block" : "Reject application"}
+	                  </button>
+	                </div>
+	              </div>
+	            )}
 
 	            {modal === "addPersonalDeliveryAgent" && (() => {
 	              const d = pdaNewAgent;

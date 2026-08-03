@@ -24,6 +24,10 @@ const LINKS = "pda_application_links";
 const AGENTS = "personal_delivery_agents";
 const KYC = "pda_kyc_items";
 const GUARANTORS = "pda_guarantors";
+const BLOCKED = "pda_blocked_applicants";
+
+// Digits only, so 0803..., 234803... and +234 803 ... are one person.
+const phoneDigits = (value: string) => value.replace(/\D/g, "").replace(/^234/, "").replace(/^0/, "");
 const KYC_BUCKET = "pda-kyc";
 
 /** Tight limits: this endpoint is open to the internet. */
@@ -58,9 +62,141 @@ async function resolveLink(token: string) {
   return { link: data };
 }
 
+// ── The applicant's own status page ───────────────────────
+// Reached by a private token, not a login. An applicant is not a user of the
+// system - they become one only when a manager approves them and grants access.
+//
+// Nothing here reveals anything about the business: no other applicants, no
+// reviewer names, no internal notes. Only their own application, what has been
+// approved, and what is still wanted from them.
+const STATUS_ITEM_UPLOADABLE = new Set([
+  "government_id", "government_id_back", "proof_of_address", "selfie_with_id", "live_verification_video"
+]);
+
+// Statuses the applicant sees, in their words rather than ours.
+const APPLICANT_STAGE: Record<string, { label: string; tone: string; detail: string }> = {
+  "KYC Submitted":  { label: "Under review", tone: "review", detail: "We have your application and are checking your documents." },
+  "KYC Incomplete": { label: "Something is missing", tone: "action", detail: "We need a few more things from you before we can continue." },
+  "Guarantor Verification Pending": { label: "Calling your guarantors", tone: "review", detail: "We are contacting the two people you listed." },
+  "Management Review": { label: "Final review", tone: "review", detail: "Your file is with a manager for the final decision." },
+  "Approved":  { label: "Approved", tone: "good", detail: "You have been approved. The office will contact you about starting." },
+  "Probation": { label: "Approved", tone: "good", detail: "You have been approved and are on your first 30 days." },
+  "Active":    { label: "Active", tone: "good", detail: "You are an active delivery agent." },
+  "Rejected":  { label: "Not accepted", tone: "bad", detail: "This application was not accepted." }
+};
+
+async function resolveApplicant(token: string) {
+  const clean = String(token ?? "").trim();
+  if (clean.length < 16) return { error: "This status link is not valid." } as const;
+  const { data } = await supabase.from(AGENTS)
+    .select("id, org_id, agent_code, full_name, phone, account_status, status_reason, created_at, application_link_id")
+    .eq("status_token", clean).maybeSingle();
+  if (!data) return { error: "This status link is not valid." } as const;
+  return { agent: data as any } as const;
+}
+
+router.get("/status/:statusToken", readLimiter, async (req, res) => {
+  const found = await resolveApplicant(String(req.params.statusToken ?? ""));
+  if ("error" in found) { res.status(404).json({ error: found.error }); return; }
+  const agent = found.agent;
+
+  const [{ data: org }, { data: items }, { data: guarantors }] = await Promise.all([
+    supabase.from("organizations").select("name").eq("id", agent.org_id).maybeSingle(),
+    supabase.from(KYC).select("item_key, label, status, mandatory, rejection_reason").eq("agent_id", agent.id).order("created_at"),
+    supabase.from(GUARANTORS).select("slot, full_name, verification_status").eq("agent_id", agent.id).order("slot")
+  ]);
+
+  const stage = APPLICANT_STAGE[agent.account_status]
+    ?? { label: "Under review", tone: "review", detail: "Your application is being looked at." };
+
+  res.json({
+    orgName: org?.name ?? "Protohub",
+    reference: `PDA-APP-${String(agent.agent_code ?? "").replace(/^PDA-/, "")}`,
+    fullName: agent.full_name,
+    submittedAt: agent.created_at,
+    stage,
+    // Shown only when it was actually written. An empty reason must not render
+    // as a blank accusation.
+    reason: agent.status_reason || null,
+    items: (items ?? []).map((item: any) => ({
+      key: item.item_key,
+      label: item.label,
+      status: item.status,
+      mandatory: item.mandatory,
+      // Why it was turned down, so they can fix it rather than guess.
+      note: item.status === "Rejected" || item.status === "Replacement Requested" ? item.rejection_reason ?? null : null,
+      canUpload: STATUS_ITEM_UPLOADABLE.has(item.item_key)
+        && ["Pending", "Rejected", "Replacement Requested"].includes(item.status)
+    })),
+    guarantors: (guarantors ?? []).map((g: any) => ({
+      slot: g.slot,
+      fullName: g.full_name,
+      status: g.verification_status
+    }))
+  });
+});
+
+// Replace one outstanding document without redoing the whole application.
+router.post("/status/:statusToken/items/:itemKey", uploadLimiter, async (req, res) => {
+  const found = await resolveApplicant(String(req.params.statusToken ?? ""));
+  if ("error" in found) { res.status(404).json({ error: found.error }); return; }
+  const agent = found.agent;
+
+  // A decided application is closed. Letting a rejected applicant keep
+  // uploading would create a queue of files nobody is going to review.
+  if (["Rejected", "Terminated", "Approved", "Probation", "Active"].includes(agent.account_status)) {
+    res.status(409).json({ error: "This application is already decided. Please contact the office." });
+    return;
+  }
+
+  const itemKey = String(req.params.itemKey ?? "");
+  if (!STATUS_ITEM_UPLOADABLE.has(itemKey)) { res.status(400).json({ error: "That item cannot be uploaded here." }); return; }
+
+  const { data: item } = await supabase.from(KYC)
+    .select("id, status").eq("agent_id", agent.id).eq("item_key", itemKey).maybeSingle();
+  if (!item) { res.status(404).json({ error: "That item is not part of your application." }); return; }
+  // An approved document is not theirs to swap. Replacing one after the fact is
+  // exactly how a verified ID becomes somebody else's.
+  if (item.status === "Approved") { res.status(409).json({ error: "That document has already been approved." }); return; }
+
+  const dataUrl = typeof req.body?.dataUrl === "string" ? req.body.dataUrl : "";
+  const match = dataUrl.match(/^data:((?:image|video|application)\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
+  if (!match) { res.status(400).json({ error: "That file could not be read." }); return; }
+  const mime = match[1].toLowerCase();
+  const ext = UPLOAD_MIME_EXT[mime];
+  if (!ext) { res.status(400).json({ error: "Upload a photo, a PDF or a short video." }); return; }
+  const buffer = Buffer.from(match[2], "base64");
+  if (buffer.length > 25 * 1024 * 1024) { res.status(413).json({ error: "That file is larger than 25MB." }); return; }
+
+  const objectName = `${agent.org_id}/public/${agent.application_link_id ?? "direct"}/${randomUUID()}.${ext}`;
+  const { error: uploadError } = await supabase.storage.from(KYC_BUCKET)
+    .upload(objectName, buffer, { contentType: mime, upsert: false });
+  if (uploadError) { res.status(500).json({ error: "Could not save that file. Please try again." }); return; }
+
+  // Submitted, never approved - the same rule as the first submission.
+  await supabase.from(KYC).update({
+    file_url: objectName, status: "Submitted",
+    rejection_reason: null, reviewed_by: null, reviewed_at: null,
+    updated_at: new Date().toISOString()
+  }).eq("id", item.id);
+
+  // Someone who was told something was missing has now answered, so put the
+  // file back in the review queue rather than leaving it parked.
+  if (agent.account_status === "KYC Incomplete") {
+    await supabase.from(AGENTS).update({ account_status: "KYC Submitted", status_reason: null }).eq("id", agent.id);
+  }
+
+  res.status(201).json({ ok: true });
+});
+
+
 // ── GET /api/public/agent-application/:token ──────────────
 // Confirms the link works and returns only what the form needs to render.
 // Deliberately exposes nothing about the organisation beyond its name.
+//
+// Declared AFTER the /status routes: this pattern is a single segment and
+// would otherwise match /status/<token> first, answering "not a valid link"
+// to every applicant checking their own application.
 router.get("/:token", readLimiter, async (req, res) => {
   const found = await resolveLink(String(req.params.token ?? ""));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
@@ -129,6 +265,19 @@ router.post("/:token", submitLimiter, async (req, res) => {
       return;
     }
 
+    // Blocked people are refused on EVERY link, not just the one they were
+    // given. A link that leaked cannot be un-forwarded, so revoking that single
+    // link would only send them to the next one.
+    //
+    // The message deliberately does not say "you are blocked" - it should not
+    // teach someone which number to stop using.
+    const { data: blocked } = await supabase.from(BLOCKED)
+      .select("id").eq("org_id", orgId).eq("phone_digits", phoneDigits(d.phone)).maybeSingle();
+    if (blocked) {
+      res.status(403).json({ error: "This application cannot be accepted online. Please contact the office." });
+      return;
+    }
+
     const { count } = await supabase.from(AGENTS).select("id", { count: "exact", head: true }).eq("org_id", orgId);
     const agentCode = `PDA-${String((count ?? 0) + 1).padStart(5, "0")}`;
 
@@ -162,8 +311,10 @@ router.post("/:token", submitLimiter, async (req, res) => {
       trust_level: "Probation",
       availability: "Offline",
       application_link_id: found.link.id,
-      submitted_via: "Public link"
-    }).select("id").single();
+      submitted_via: "Public link",
+      // Their way back in. Not a login - see migration 203.
+      status_token: randomUUID().replace(/-/g, "")
+    }).select("id, status_token").single();
     if (error || !agent) { res.status(500).json({ error: "Could not submit your application. Please try again." }); return; }
 
     const DEFAULT_ITEMS: Array<{ key: string; label: string; path?: string }> = [
@@ -229,6 +380,7 @@ router.post("/:token", submitLimiter, async (req, res) => {
     res.status(201).json({
       ok: true,
       reference: `PDA-APP-${agentCode.replace(/^PDA-/, "")}`,
+      statusToken: agent.status_token,
       message: "Your application has been received. Someone will call your guarantors and contact you about the next steps."
     });
   } catch {

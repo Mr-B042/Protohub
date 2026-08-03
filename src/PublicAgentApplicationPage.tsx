@@ -26,6 +26,8 @@ export default function PublicAgentApplicationPage() {
   const [orgName, setOrgName] = useState("Protohub");
   const [error, setError] = useState("");
   const [reference, setReference] = useState("");
+  const [statusUrl, setStatusUrl] = useState("");
+  const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState("");
   // What was uploaded, shown back to them. Built from the picked file with
@@ -194,6 +196,9 @@ export default function PublicAgentApplicationPage() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) { setError(body?.error ?? "Could not submit your application."); return; }
       setReference(body?.reference ?? "");
+      if (body?.statusToken) {
+        setStatusUrl(`${window.location.origin}${window.location.pathname}#/agent-application/status/${body.statusToken}`);
+      }
       setState("done");
       window.scrollTo({ top: 0 });
     } catch {
@@ -284,7 +289,37 @@ export default function PublicAgentApplicationPage() {
           <p className="m-0 mt-3 text-sm leading-relaxed text-gray-600">
             {orgName} will review your documents and call your guarantors. You will be contacted about the next steps.
           </p>
-          <p className="m-0 mt-3 text-[12px] text-gray-400">
+
+          {/* Their way back in. There is no password because they are not a
+              user yet - this link IS the key, so it has to be impossible to
+              miss on the one screen where they still have it. */}
+          {statusUrl && (
+            <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-left">
+              <p className="m-0 text-[13px] font-bold text-gray-900">Save this link</p>
+              <p className="m-0 mt-1 text-[12px] leading-relaxed text-gray-600">
+                It is how you check your progress and send anything else we ask for. There is no password —
+                keep it private, and do not send it to anyone.
+              </p>
+              <div className="mt-2.5 flex items-center gap-2">
+                <input readOnly value={statusUrl} onFocus={(e) => e.currentTarget.select()}
+                  className="min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 py-2 text-[12px] text-gray-700" />
+                <button type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(statusUrl)
+                      .then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 2000); })
+                      .catch(() => setCopied(false));
+                  }}
+                  className="shrink-0 rounded-lg bg-[#1F8FE0] px-3.5 py-2 text-[12px] font-bold text-white">
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <a href={statusUrl} className="mt-2.5 block text-center text-[13px] font-bold text-[#1F8FE0]">
+                Open my application →
+              </a>
+            </div>
+          )}
+
+          <p className="m-0 mt-4 text-[12px] text-gray-400">
             You will not receive stock or orders until every check has been approved.
           </p>
         </div>
