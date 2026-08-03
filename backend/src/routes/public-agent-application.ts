@@ -270,14 +270,18 @@ router.post("/status/:statusToken/agreements/:documentKey/accept", uploadLimiter
     return;
   }
 
-  await supabase.from(DOCUMENTS).update({
+  const { error: documentError } = await supabase.from(DOCUMENTS).update({
     status: "Electronically Accepted",
     uploaded_at: acceptedAt,
     rejection_reason: null,
     approved_by: null,
     approved_at: null,
     updated_at: acceptedAt
-  }).eq("id", document.id).eq("agent_id", agent.id);
+  }).eq("org_id", agent.org_id).eq("id", document.id).eq("agent_id", agent.id);
+  if (documentError) {
+    res.status(500).json({ error: "Your signature was recorded, but the review status could not be updated. Please retry." });
+    return;
+  }
   if (agent.account_status === "KYC Incomplete") {
     await supabase.from(AGENTS).update({ account_status: "KYC Submitted", status_reason: null }).eq("id", agent.id);
   }

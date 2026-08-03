@@ -669,10 +669,36 @@ export type PdaDocument = {
   id: string; documentKey: string; label: string; version: string;
   signedFilePath?: string | null; uploadedAt?: string | null; status: string;
   approvedAt?: string | null; rejectionReason?: string | null;
+  fileName?: string | null; fileSizeBytes?: number | null;
+  acceptance?: PdaAgreementAcceptance | null;
+  content?: PdaAgreementContent | null;
+};
+
+export type PdaAgreementSection = {
+  heading: string;
+  paragraphs: string[];
+  bullets?: string[];
+};
+
+export type PdaAgreementContent = {
+  key: string; title: string; shortTitle: string; purpose: string;
+  summary: string[]; sections: PdaAgreementSection[];
+  version: string; companyName: string; applicantName: string;
+  reference: string; issuedOn: string; opening: string;
+  declaration: string; governingLaw: string; contentHash: string;
+};
+
+export type PdaAgreementAcceptance = {
+  typedName: string; acceptedAt: string; contentHash: string;
+  declaration: string; companyName: string; applicantName: string;
+  applicationReference: string; content: PdaAgreementContent;
 };
 
 export type PdaAgentDetail = {
-  agent: PersonalDeliveryAgentRow & { verificationPhrase?: string | null; verificationPhraseIssuedAt?: string | null };
+  agent: PersonalDeliveryAgentRow & {
+    verificationPhrase?: string | null; verificationPhraseIssuedAt?: string | null;
+    applicantStatusToken?: string | null;
+  };
   kycItems: PdaKycItem[];
   guarantors: PdaGuarantor[];
   documents: PdaDocument[];
@@ -823,6 +849,7 @@ export type PdaDocumentViewRow = {
   label: string; subtitle: string;
   fileName?: string | null; fileSizeBytes?: number | null; path?: string | null;
   status: string; reviewedByName?: string | null; reviewedAt?: string | null;
+  hasElectronicAcceptance?: boolean;
 };
 
 export type PdaVerificationCategory = {
@@ -831,7 +858,9 @@ export type PdaVerificationCategory = {
 };
 
 export type PdaReviewView = {
-  agent: PersonalDeliveryAgentRow & { verificationPhrase?: string | null; applicationId: string };
+  agent: PersonalDeliveryAgentRow & {
+    verificationPhrase?: string | null; applicationId: string; applicantStatusToken?: string | null;
+  };
   progress: { approved: number; total: number; pct: number };
   kycItems: PdaKycItem[];
   guarantors: PdaGuarantorFull[];

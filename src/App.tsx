@@ -130,7 +130,7 @@ import {
   setApiSpyUserId
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -11261,6 +11261,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     { agentId: string; name: string; phone: string; url: string; loading: boolean; sending: boolean } | null
   >(null);
   const [pdaReview, setPdaReview] = useState<PdaReviewView | null>(null);
+  const [pdaAgreementPreview, setPdaAgreementPreview] = useState<PdaDocument | null>(null);
   const [pdaRejectDraft, setPdaRejectDraft] = useState<
     { agentId: string; name: string; phone: string; reason: string; blockApplicant: boolean } | null
   >(null);
@@ -51738,11 +51739,13 @@ ${waybillLineItems(w).length > 1
   const renderPdaDocumentReview = () => {
     const view = pdaReview;
     const docs = view?.documentsView ?? [];
+    const agreementById = new Map((view?.documents ?? []).map((doc) => [doc.id, doc]));
     const verified = docs.filter((doc) => doc.status === "Approved" || doc.status === "Verified").length;
     const pct = docs.length > 0 ? Math.round((verified / docs.length) * 100) : 0;
 
     const docChip = (status: string) =>
       status === "Approved" || status === "Verified" ? "bg-emerald-50 text-emerald-700"
+      : status === "Electronically Accepted" ? "bg-sky-50 text-sky-700"
       : status === "Rejected" ? "bg-rose-50 text-rose-700"
       : status === "Replacement Requested" ? "bg-amber-50 text-amber-700"
       : status === "Not Uploaded" ? "bg-gray-100 text-gray-500"
@@ -51817,7 +51820,7 @@ ${waybillLineItems(w).length > 1
 
               <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
                 <div className="px-5 py-4">
-                  <h3 className="m-0 text-sm font-bold text-gray-900">Uploaded Documents</h3>
+                  <h3 className="m-0 text-sm font-bold text-gray-900">Identity documents and legal agreements</h3>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -51851,6 +51854,13 @@ ${waybillLineItems(w).length > 1
                                 </button>
                                 <div className="text-[11px] text-gray-400">{sizeLabel(doc.fileSizeBytes)}</div>
                               </>
+                            ) : doc.hasElectronicAcceptance ? (
+                              <button type="button" onClick={() => {
+                                const agreement = agreementById.get(doc.id);
+                                if (agreement) setPdaAgreementPreview(agreement);
+                              }} className="!min-h-0 text-left text-[12px] font-semibold text-[#1F8FE0] hover:underline">
+                                Electronic acceptance
+                              </button>
                             ) : <span className="text-[12px] text-gray-400">—</span>}
                           </td>
                           <td className="px-3 py-3">
@@ -51870,9 +51880,15 @@ ${waybillLineItems(w).length > 1
                           </td>
                           <td className="px-3 py-3">
                             <div className="flex items-center justify-end gap-1.5">
-                              {doc.path ? (
+                              {doc.path || doc.hasElectronicAcceptance ? (
                                 <>
-                                  <button type="button" title="Open" onClick={() => void pdaOpenSignedFile(doc.path)}
+                                  <button type="button" title="Open" onClick={() => {
+                                    if (doc.path) void pdaOpenSignedFile(doc.path);
+                                    else {
+                                      const agreement = agreementById.get(doc.id);
+                                      if (agreement) setPdaAgreementPreview(agreement);
+                                    }
+                                  }}
                                     className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
                                     <Eye className="h-3.5 w-3.5" />
                                   </button>
@@ -51886,7 +51902,7 @@ ${waybillLineItems(w).length > 1
                                   )}
                                 </>
                               ) : (
-                                <span className="text-[11px] text-gray-400">Awaiting upload</span>
+                                <span className="text-[11px] text-gray-400">{doc.kind === "agreement" ? "Awaiting acceptance" : "Awaiting upload"}</span>
                               )}
                             </div>
                           </td>
@@ -51908,6 +51924,7 @@ ${waybillLineItems(w).length > 1
 
           {view && pdaRightRail(view, "Document Notes")}
         </div>
+        {pdaAgreementPreviewModal()}
       </div>
     );
   };
@@ -52095,6 +52112,19 @@ ${waybillLineItems(w).length > 1
       } catch (err: any) { showToast(err?.message ?? "Could not update that item."); }
     };
 
+    const reviewAgreement = async (documentId: string, status: string) => {
+      let rejectionReason: string | undefined;
+      if (status === "Rejected" || status === "Replacement Requested") {
+        const reason = window.prompt("What must the applicant review or correct? This reason becomes part of the audit trail.");
+        if (!reason || !reason.trim()) return;
+        rejectionReason = reason.trim();
+      }
+      try {
+        await personalDeliveryAgentsApi.reviewDocument(documentId, { status, rejectionReason });
+        await Promise.all([openPdaReview(view!.agent.id), loadPdaApplications()]);
+      } catch (err: any) { showToast(err?.message ?? "Could not update that agreement."); }
+    };
+
     const openFile = async (path?: string | null) => {
       if (!path) return;
       try {
@@ -52252,6 +52282,12 @@ ${waybillLineItems(w).length > 1
                 </div>
               </section>
 
+              {pdaAgreementReviewPanel(
+                { id: view.agent.id, fullName: view.agent.fullName, phone: view.agent.phone },
+                view.documents,
+                reviewAgreement
+              )}
+
               {view.blockers.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
                   <p className="m-0 flex items-center gap-2 text-sm font-black text-amber-800">
@@ -52310,6 +52346,7 @@ ${waybillLineItems(w).length > 1
             </div>
           )}
         </div>
+        {pdaAgreementPreviewModal()}
       </div>
     );
   };
@@ -52646,6 +52683,160 @@ ${waybillLineItems(w).length > 1
     </div>
   );
 
+  const pdaAgreementReviewPanel = (
+    agent: { id: string; fullName: string; phone?: string | null },
+    documents: PdaDocument[],
+    onReview: (documentId: string, status: string) => Promise<void>
+  ) => {
+    const accepted = documents.filter((doc) => Boolean(doc.acceptance)).length;
+    const approved = documents.filter((doc) => doc.status === "Approved").length;
+    const tone = (status: string) => status === "Approved"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : status === "Electronically Accepted"
+        ? "border-sky-200 bg-sky-50 text-sky-800"
+        : status === "Rejected" || status === "Replacement Requested"
+          ? "border-rose-200 bg-rose-50 text-rose-800"
+          : "border-amber-200 bg-amber-50 text-amber-800";
+
+    return (
+      <section className="overflow-hidden rounded-lg border border-[#D8C18B] bg-white shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#D8C18B] bg-[#111827] px-5 py-4 text-white">
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#C9A54A] text-[#E7C86A]"><Scale className="h-5 w-5" /></span>
+            <div>
+              <h3 className="m-0 text-sm font-bold">Legal agreements</h3>
+              <p className="m-0 mt-0.5 max-w-xl text-[11px] leading-relaxed text-gray-300">
+                Applicants read and sign these in their private application page. Electronic acceptance and management approval are separate audit steps.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-white/20 px-2 py-1 text-[10px] font-bold text-gray-200">{accepted}/{documents.length} accepted</span>
+            <span className="rounded-md border border-[#C9A54A] px-2 py-1 text-[10px] font-bold text-[#E7C86A]">{approved}/{documents.length} approved</span>
+            <button type="button" onClick={() => void pdaOpenStatusLink(agent.id, agent.fullName, agent.phone ?? "")}
+              className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-[#C9A54A] bg-[#211F19] px-3 py-1.5 text-[11px] font-bold text-[#F1D77F] hover:bg-[#2B281F]">
+              <Link2 className="h-3.5 w-3.5" /> Send signing link
+            </button>
+          </div>
+        </div>
+        {documents.length === 0 ? (
+          <div className="px-5 py-8 text-center">
+            <p className="m-0 text-xs text-gray-500">The legal agreement records have not been prepared yet.</p>
+            <button type="button" onClick={() => void pdaSeedDocuments(agent.id)}
+              className="mt-3 !min-h-0 rounded-lg border border-[#C9A54A] px-3 py-2 text-[11px] font-bold text-[#765713]">Prepare agreements</button>
+          </div>
+        ) : (
+          <div className="divide-y divide-[#EEE4CB]">
+            {documents.map((doc, index) => {
+              const evidence = Boolean(doc.acceptance || doc.signedFilePath);
+              return (
+                <article key={doc.id} className="grid gap-3 bg-[#FFFEFB] px-5 py-4 lg:grid-cols-[minmax(0,1fr),auto] lg:items-center">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#F4E8C5] text-[11px] font-black text-[#765713]">{index + 10}</span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="m-0 text-[13px] font-bold text-gray-950">{doc.label}</h4>
+                        <span className="text-[10px] font-semibold text-gray-400">v{doc.version.replace(/^v/i, "")}</span>
+                      </div>
+                      {doc.acceptance ? (
+                        <p className="m-0 mt-1 text-[11px] leading-relaxed text-gray-600">
+                          Signed by <strong className="text-gray-900">{doc.acceptance.typedName}</strong> on {new Date(doc.acceptance.acceptedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+                          <span className="ml-1 font-mono text-[9px] text-gray-400">#{doc.acceptance.contentHash.slice(0, 12)}</span>
+                        </p>
+                      ) : doc.signedFilePath ? (
+                        <p className="m-0 mt-1 text-[11px] text-gray-600">Legacy signed file received.</p>
+                      ) : (
+                        <p className="m-0 mt-1 text-[11px] text-amber-700">Waiting for the applicant to read and sign.</p>
+                      )}
+                      {doc.rejectionReason && <p className="m-0 mt-1 text-[11px] font-semibold text-rose-700">Update requested: {doc.rejectionReason}</p>}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                    <span className={`rounded-md border px-2 py-1 text-[10px] font-black uppercase ${tone(doc.status)}`}>{doc.status}</span>
+                    <button type="button" disabled={!doc.content && !doc.signedFilePath}
+                      onClick={() => doc.content ? setPdaAgreementPreview(doc) : void pdaOpenSignedFile(doc.signedFilePath)}
+                      className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-40">
+                      <Eye className="h-3.5 w-3.5" /> View details
+                    </button>
+                    {doc.status !== "Approved" && (
+                      <button type="button" disabled={!evidence} onClick={() => void onReview(doc.id, "Approved")}
+                        title={!evidence ? "The applicant must accept this agreement first" : undefined}
+                        className="!min-h-0 rounded-lg border border-emerald-200 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40">Approve</button>
+                    )}
+                    <button type="button" disabled={!evidence} onClick={() => void onReview(doc.id, "Replacement Requested")}
+                      className="!min-h-0 rounded-lg border border-amber-200 px-2.5 py-1.5 text-[11px] font-bold text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40">Request update</button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    );
+  };
+
+  const pdaAgreementPreviewModal = () => {
+    const doc = pdaAgreementPreview;
+    const content = doc?.content;
+    if (!doc || !content) return null;
+    return createPortal(
+      <div className="fixed inset-0 z-[300] flex items-end justify-center bg-black/70 sm:items-center sm:p-5" role="dialog" aria-modal="true" aria-label={doc.label}>
+        <div className="flex max-h-[96dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-lg border border-[#C9A54A] bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-lg">
+          <header className="flex shrink-0 items-start justify-between gap-4 border-b border-[#C9A54A] bg-[#111827] px-5 py-4 text-white">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#C9A54A] text-[#E7C86A]"><ShieldCheck className="h-5 w-5" /></span>
+              <div className="min-w-0">
+                <p className="m-0 text-[10px] font-black uppercase tracking-widest text-[#E7C86A]">Agreement review</p>
+                <h2 className="m-0 mt-1 text-[16px] font-bold leading-tight">{content.title}</h2>
+                <p className="m-0 mt-1 text-[11px] text-gray-300">Version {content.version} · {content.reference}</p>
+              </div>
+            </div>
+            <button type="button" onClick={() => setPdaAgreementPreview(null)} aria-label="Close agreement"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/20 hover:bg-white/10"><X className="h-5 w-5" /></button>
+          </header>
+          <div className="overflow-y-auto px-5 py-5 sm:px-7">
+            <div className="grid gap-2 rounded-lg border border-[#E7D9B5] bg-[#FFFCF4] p-4 text-[12px] sm:grid-cols-2">
+              <div><span className="block text-[10px] font-black uppercase text-[#8B6A1D]">Company</span><strong>{content.companyName}</strong></div>
+              <div><span className="block text-[10px] font-black uppercase text-[#8B6A1D]">Applicant</span><strong>{content.applicantName}</strong></div>
+              <div><span className="block text-[10px] font-black uppercase text-[#8B6A1D]">Reference</span><strong>{content.reference}</strong></div>
+              <div><span className="block text-[10px] font-black uppercase text-[#8B6A1D]">Issued</span><strong>{new Date(`${content.issuedOn}T00:00:00`).toLocaleDateString([], { dateStyle: "long" })}</strong></div>
+            </div>
+            {doc.acceptance && (
+              <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <p className="m-0 flex items-center gap-2 text-[12px] font-black text-emerald-900"><CheckCircle2 className="h-4 w-4" /> Electronic acceptance evidence</p>
+                <p className="m-0 mt-1 text-[11px] leading-relaxed text-emerald-800">
+                  {doc.acceptance.typedName} · {new Date(doc.acceptance.acceptedAt).toLocaleString([], { dateStyle: "long", timeStyle: "medium" })}<br />
+                  Exact document SHA-256: <span className="break-all font-mono text-[9px]">{doc.acceptance.contentHash}</span>
+                </p>
+              </div>
+            )}
+            <p className="m-0 mt-5 text-[12px] leading-6 text-gray-700">{content.opening}</p>
+            <section className="mt-5 rounded-lg border border-[#D7BA68] bg-[#FFF8E5] p-4">
+              <h3 className="m-0 text-[13px] font-black text-[#5F450B]">What the applicant agreed to</h3>
+              <ul className="m-0 mt-2 space-y-1.5 pl-5 text-[12px] leading-6 text-gray-700">{content.summary.map((point) => <li key={point}>{point}</li>)}</ul>
+            </section>
+            <div className="mt-6 space-y-6">
+              {content.sections.map((section) => (
+                <section key={section.heading}>
+                  <h3 className="m-0 border-b border-gray-200 pb-2 text-[13px] font-black text-gray-950">{section.heading}</h3>
+                  {section.paragraphs.map((paragraph) => <p key={paragraph} className="m-0 mt-2 text-[12px] leading-6 text-gray-700">{paragraph}</p>)}
+                  {section.bullets && <ul className="m-0 mt-2 space-y-1 pl-5 text-[12px] leading-6 text-gray-700">{section.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>}
+                </section>
+              ))}
+            </div>
+            <section className="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4 text-[12px] leading-6 text-gray-700">
+              <strong className="text-gray-950">Governing law and common terms</strong><br />{content.governingLaw}
+            </section>
+            <section className="mt-4 rounded-lg border-2 border-[#C9A54A] bg-[#FFFCF4] p-4 text-[12px] leading-6 text-gray-800">
+              <strong>Electronic declaration</strong><br />{content.declaration}
+            </section>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  };
+
   const renderPdaApplicationsAndKyc = () => {
     const detail = pdaDetail;
     const view = pdaApplications;
@@ -52800,9 +52991,9 @@ ${waybillLineItems(w).length > 1
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => void pdaSeedDocuments(detail.agent.id)}
-                    className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50">
-                    Prepare agreements
+                  <button type="button" onClick={() => void pdaOpenStatusLink(detail.agent.id, detail.agent.fullName, detail.agent.phone)}
+                    className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-[#D8C18B] bg-[#FFFCF4] px-3 py-1.5 text-xs font-bold text-[#765713] hover:bg-[#FFF7DE]">
+                    <Link2 className="h-3.5 w-3.5" /> Send signing link
                   </button>
                   <button type="button" disabled={detail.blockers.length > 0 || pdaSaving}
                     onClick={() => void pdaApprove(detail.agent.id)}
@@ -52938,40 +53129,12 @@ ${waybillLineItems(w).length > 1
               </div>
             </section>
 
-            <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-200">
-                <h3 className="m-0 text-sm font-bold text-gray-900">Signed agreements</h3>
-                <p className="m-0 text-[11px] text-gray-500">Each is approved on its own and carries its version, so a re-issued agreement never inherits an old approval.</p>
-              </div>
-              {detail.documents.length === 0 ? (
-                <p className="m-0 px-5 py-8 text-center text-xs text-gray-400">
-                  No agreements prepared yet. Use “Prepare agreements” above.
-                </p>
-              ) : (
-                <div className="divide-y divide-gray-100">
-                  {detail.documents.map((doc) => (
-                    <div key={doc.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-gray-900">{doc.label} <span className="text-[10px] text-gray-400">{doc.version}</span></div>
-                        {doc.rejectionReason && <p className="m-0 text-[11px] text-red-600">{doc.rejectionReason}</p>}
-                        {doc.signedFilePath && (
-                          <button type="button" onClick={() => void openFile(doc.signedFilePath)} className="!min-h-0 text-[11px] font-bold text-[#1F8FE0] underline">
-                            View signed copy
-                          </button>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${kycStatusTone(doc.status)}`}>{doc.status}</span>
-                        <button type="button" onClick={() => void reviewDocument(doc.id, "Approved")}
-                          className="!min-h-0 rounded-md border border-emerald-200 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50">Approve</button>
-                        <button type="button" onClick={() => void reviewDocument(doc.id, "Replacement Requested")}
-                          className="!min-h-0 rounded-md border border-amber-200 px-2 py-1 text-[11px] font-bold text-amber-700 hover:bg-amber-50">Ask again</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
+            {pdaAgreementReviewPanel(
+              { id: detail.agent.id, fullName: detail.agent.fullName, phone: detail.agent.phone },
+              detail.documents,
+              reviewDocument
+            )}
+            {pdaAgreementPreviewModal()}
         </div>
       );
     }

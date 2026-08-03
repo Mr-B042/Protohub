@@ -29,6 +29,9 @@ import {
 import { rankCandidates } from "../lib/pda-assignment-match.js";
 import { resolveStandardFee } from "../lib/pda-fees.js";
 import { recordStockLossExpense } from "../lib/stock-loss-expense.js";
+import {
+  agreementTemplateRows, isPdaAgreementKey, PDA_AGREEMENT_VERSION, renderPdaAgreement
+} from "../lib/pda-agreements.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -36,6 +39,7 @@ router.use(requireAuth);
 const AGENTS = "personal_delivery_agents";
 const KYC = "pda_kyc_items";
 const GUARANTORS = "pda_guarantors";
+const AGREEMENT_ACCEPTANCES = "pda_agreement_acceptances";
 
 /** Full internal access to the module. */
 const MANAGEMENT_ROLES = ["Owner", "Admin", "Manager"] as const;
@@ -491,13 +495,7 @@ const DEFAULT_KYC_ITEMS: Array<{ key: string; label: string; mandatory?: boolean
   { key: "live_verification_video", label: "Live Verification Video" },
   { key: "bank_account", label: "Bank Account" },
   { key: "guarantor_one", label: "Guarantor One" },
-  { key: "guarantor_two", label: "Guarantor Two" },
-  { key: "agent_agreement", label: "Personal Delivery Agent Agreement" },
-  { key: "inventory_agreement", label: "Inventory Custody Agreement" },
-  { key: "cod_agreement", label: "COD Collection & Remittance Agreement" },
-  { key: "loss_damage_form", label: "Loss & Damage Responsibility Form" },
-  { key: "confidentiality_agreement", label: "Data & Customer Confidentiality Agreement" },
-  { key: "termination_agreement", label: "Termination & Stock Recovery Agreement" }
+  { key: "guarantor_two", label: "Guarantor Two" }
 ];
 
 router.post("/", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
@@ -531,6 +529,7 @@ router.post("/", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
       service_radius_km: parsed.data.serviceRadiusKm ?? null,
       service_areas: parsed.data.serviceAreas ?? [],
       guarantors_required: parsed.data.guarantorsRequired ?? 2,
+      status_token: randomUUID().replace(/-/g, ""),
       account_status: "Application Started",
       kyc_status: "KYC Incomplete",
       trust_level: "Probation",
@@ -564,17 +563,19 @@ router.post("/", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
       };
     }));
 
-    if (parsed.data.agreementPath) {
-      await supabase.from(DOCS).insert({
+    const issuedAt = new Date().toISOString().slice(0, 10);
+    await supabase.from(DOCS).insert(agreementTemplateRows().map((agreement) => {
+      const legacyUpload = agreement.key === "agent_agreement" && parsed.data.agreementPath;
+      return {
         org_id: orgId, agent_id: data.id,
-        document_key: "agent_agreement", label: "Personal Delivery Agent Agreement",
-        version: "v1", issued_at: new Date().toISOString().slice(0, 10),
-        signed_file_url: parsed.data.agreementPath,
-        file_name: parsed.data.agreementName ?? null,
-        uploaded_at: new Date().toISOString(),
-        status: "Uploaded"
-      });
-    }
+        document_key: agreement.key, label: agreement.label,
+        version: PDA_AGREEMENT_VERSION, issued_at: issuedAt,
+        signed_file_url: legacyUpload ? parsed.data.agreementPath : null,
+        file_name: legacyUpload ? parsed.data.agreementName ?? null : null,
+        uploaded_at: legacyUpload ? new Date().toISOString() : null,
+        status: legacyUpload ? "Uploaded" : "Awaiting Acceptance"
+      };
+    }));
 
     res.status(201).json({ row: mapAgent(data) });
   } catch (error: any) {
@@ -595,15 +596,7 @@ const DOCS = "pda_documents";
 const KYC_BUCKET = "pda-kyc";
 
 /** The agreements every agent must sign before handling stock or cash. */
-const DEFAULT_DOCUMENTS: Array<{ key: string; label: string }> = [
-  { key: "agent_agreement", label: "Personal Delivery Agent Agreement" },
-  { key: "inventory_agreement", label: "Inventory Custody Agreement" },
-  { key: "cod_agreement", label: "COD Collection & Remittance Agreement" },
-  { key: "loss_damage_form", label: "Loss & Damage Responsibility Form" },
-  { key: "confidentiality_agreement", label: "Data & Customer Confidentiality Agreement" },
-  { key: "guarantor_form", label: "Guarantor Responsibility Form" },
-  { key: "termination_agreement", label: "Termination & Stock Recovery Agreement" }
-];
+const DEFAULT_DOCUMENTS: Array<{ key: string; label: string }> = agreementTemplateRows();
 
 const mapKycItem = (row: any) => ({
   id: row.id,
@@ -639,7 +632,7 @@ const mapGuarantor = (row: any) => ({
   callScheduledAt: row.call_scheduled_at ?? null
 });
 
-const mapDocument = (row: any) => ({
+const mapDocument = (row: any, acceptance?: any | null, currentContent?: any | null) => ({
   id: row.id,
   documentKey: row.document_key,
   label: row.label,
@@ -650,8 +643,37 @@ const mapDocument = (row: any) => ({
   approvedAt: row.approved_at ?? null,
   rejectionReason: row.rejection_reason ?? null,
   fileName: row.file_name ?? null,
-  fileSizeBytes: row.file_size_bytes === null || row.file_size_bytes === undefined ? null : Number(row.file_size_bytes)
+  fileSizeBytes: row.file_size_bytes === null || row.file_size_bytes === undefined ? null : Number(row.file_size_bytes),
+  acceptance: acceptance ? {
+    typedName: acceptance.typed_name,
+    acceptedAt: acceptance.accepted_at,
+    contentHash: acceptance.content_hash,
+    declaration: acceptance.declaration_text,
+    companyName: acceptance.company_name_snapshot,
+    applicantName: acceptance.applicant_name_snapshot,
+    applicationReference: acceptance.application_reference,
+    content: acceptance.agreement_snapshot
+  } : null,
+  content: acceptance?.agreement_snapshot ?? currentContent ?? null
 });
+
+const renderCurrentAgreement = (row: any, agent: any, companyName: string) => {
+  if (!isPdaAgreementKey(String(row.document_key))) return null;
+  return renderPdaAgreement({
+    key: row.document_key,
+    companyName,
+    applicantName: agent.full_name,
+    reference: `PDA-APP-${String(agent.agent_code ?? "").replace(/^PDA-/, "")}`,
+    issuedOn: row.issued_at ?? new Date().toISOString().slice(0, 10),
+    version: row.version
+  });
+};
+
+const latestAcceptanceByDocument = (rows: any[]) => {
+  const result = new Map<string, any>();
+  for (const row of rows) if (!result.has(String(row.document_id))) result.set(String(row.document_id), row);
+  return result;
+};
 
 // ── GET /api/personal-delivery-agents/applications ────────
 // The Applications & KYC list: one row per application with its checklist
@@ -793,15 +815,19 @@ router.get("/applications/:id/review", requireRole(...MANAGEMENT_ROLES), async (
     const { data: agent } = await supabase.from(AGENTS).select("*").eq("org_id", orgId).eq("id", agentId).maybeSingle();
     if (!agent) { res.status(404).json({ error: "Application not found." }); return; }
 
-    const [kycRes, guarantorRes, docRes, notesRes] = await Promise.all([
+    const [kycRes, guarantorRes, docRes, acceptanceRes, notesRes, orgRes] = await Promise.all([
       supabase.from(KYC).select("*").eq("agent_id", agentId).order("created_at"),
       supabase.from(GUARANTORS).select("*").eq("agent_id", agentId).order("slot"),
       supabase.from(DOCS).select("*").eq("agent_id", agentId).order("created_at"),
-      supabase.from(NOTES).select("*").eq("agent_id", agentId).is("guarantor_id", null).order("created_at", { ascending: false })
+      supabase.from(AGREEMENT_ACCEPTANCES).select("*").eq("org_id", orgId).eq("agent_id", agentId)
+        .is("superseded_at", null).order("accepted_at", { ascending: false }),
+      supabase.from(NOTES).select("*").eq("agent_id", agentId).is("guarantor_id", null).order("created_at", { ascending: false }),
+      supabase.from("organizations").select("name").eq("id", orgId).maybeSingle()
     ]);
     const kycItems = kycRes.data ?? [];
     const guarantors = guarantorRes.data ?? [];
     const documents = docRes.data ?? [];
+    const acceptanceMap = latestAcceptanceByDocument(acceptanceRes.data ?? []);
 
     const names = await nameLookup(orgId, [
       ...kycItems.map((i: any) => i.reviewed_by),
@@ -832,6 +858,10 @@ router.get("/applications/:id/review", requireRole(...MANAGEMENT_ROLES), async (
       }
     }
     for (const doc of documents) {
+      const acceptance = acceptanceMap.get(String(doc.id));
+      if (acceptance?.accepted_at) {
+        activity.push({ label: `${doc.label} accepted electronically`, at: acceptance.accepted_at, by: agent.full_name, tone: "done" });
+      }
       if (doc.approved_at) {
         activity.push({ label: `${doc.label} approved`, at: doc.approved_at, by: names.get(String(doc.approved_by)) ?? null, tone: "done" });
       }
@@ -889,12 +919,17 @@ router.get("/applications/:id/review", requireRole(...MANAGEMENT_ROLES), async (
       agent: {
         ...mapAgent(agent),
         verificationPhrase: agent.verification_phrase ?? null,
-        applicationId: `PDA-APP-${String(agent.agent_code ?? "").replace(/^PDA-/, "")}`
+        applicationId: `PDA-APP-${String(agent.agent_code ?? "").replace(/^PDA-/, "")}`,
+        applicantStatusToken: agent.status_token ?? null
       },
       progress: { approved, total: mandatory.length, pct: mandatory.length > 0 ? Math.round((approved / mandatory.length) * 100) : 0 },
       kycItems: kycItems.map(mapKycItem),
       guarantors: guarantors.map(mapGuarantorFull),
-      documents: documents.map(mapDocument),
+      documents: documents.map((document: any) => mapDocument(
+        document,
+        acceptanceMap.get(String(document.id)),
+        renderCurrentAgreement(document, agent, orgRes.data?.name ?? "Protohub")
+      )),
       notes: (notesRes.data ?? []).map((row: any) => ({
         id: row.id, body: row.body, authorName: row.author_name ?? null, createdAt: row.created_at
       })),
@@ -914,15 +949,22 @@ router.get("/applications/:id/review", requireRole(...MANAGEMENT_ROLES), async (
             reviewedByName: names.get(String(i.reviewed_by)) ?? null,
             reviewedAt: i.reviewed_at ?? null
           })),
-        ...documents.map((d: any) => ({
+        ...documents.map((d: any) => {
+          const acceptance = acceptanceMap.get(String(d.id));
+          return {
           key: d.document_key, kind: "agreement" as const, id: d.id,
-          label: d.label, subtitle: `Signed document · ${d.version}`,
+          label: d.label,
+          subtitle: acceptance
+            ? `Electronically accepted by ${acceptance.typed_name} · ${d.version}`
+            : `Electronic agreement · ${d.version}`,
           fileName: d.file_name ?? null, fileSizeBytes: d.file_size_bytes === null || d.file_size_bytes === undefined ? null : Number(d.file_size_bytes),
           path: d.signed_file_url ?? null,
-          status: d.signed_file_url ? d.status : "Not Uploaded",
+          status: d.status,
+          hasElectronicAcceptance: Boolean(acceptance),
           reviewedByName: names.get(String(d.approved_by)) ?? null,
           reviewedAt: d.approved_at ?? null
-        }))
+          };
+        })
       ],
       // Pending Approval groups the same checks into the categories a decision
       // is actually made on, rather than fourteen separate lines.
@@ -944,7 +986,7 @@ router.get("/applications/:id/review", requireRole(...MANAGEMENT_ROLES), async (
         },
         {
           category: "Signed Agreements",
-          detail: `${documents.filter((d: any) => d.status === "Approved").length} of ${documents.length} signed`,
+          detail: `${documents.filter((d: any) => d.status === "Approved").length} approved · ${acceptanceMap.size} electronically accepted`,
           status: documents.length > 0 && documents.every((d: any) => d.status === "Approved") ? "Verified" : "Pending",
           reviewedByName: null,
           reviewedAt: documents.map((d: any) => d.approved_at).filter(Boolean).sort().pop() ?? null
@@ -1976,21 +2018,30 @@ router.get("/:id", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
       .from(AGENTS).select("*").eq("org_id", orgId).eq("id", req.params.id).single();
     if (error || !agent) { res.status(404).json({ error: "Agent not found." }); return; }
 
-    const [kycRes, guarantorRes, docRes] = await Promise.all([
+    const [kycRes, guarantorRes, docRes, acceptanceRes, orgRes] = await Promise.all([
       supabase.from(KYC).select("*").eq("agent_id", agent.id).order("created_at"),
       supabase.from(GUARANTORS).select("*").eq("agent_id", agent.id).order("slot"),
-      supabase.from(DOCS).select("*").eq("agent_id", agent.id).order("created_at")
+      supabase.from(DOCS).select("*").eq("agent_id", agent.id).order("created_at"),
+      supabase.from(AGREEMENT_ACCEPTANCES).select("*").eq("org_id", orgId).eq("agent_id", agent.id)
+        .is("superseded_at", null).order("accepted_at", { ascending: false }),
+      supabase.from("organizations").select("name").eq("id", orgId).maybeSingle()
     ]);
     const kycItems = kycRes.data ?? [];
     const guarantors = guarantorRes.data ?? [];
     const documents = docRes.data ?? [];
+    const acceptanceMap = latestAcceptanceByDocument(acceptanceRes.data ?? []);
 
     res.json({
       agent: { ...mapAgent(agent), verificationPhrase: agent.verification_phrase ?? null,
-        verificationPhraseIssuedAt: agent.verification_phrase_issued_at ?? null },
+        verificationPhraseIssuedAt: agent.verification_phrase_issued_at ?? null,
+        applicantStatusToken: agent.status_token ?? null },
       kycItems: kycItems.map(mapKycItem),
       guarantors: guarantors.map(mapGuarantor),
-      documents: documents.map(mapDocument),
+      documents: documents.map((document: any) => mapDocument(
+        document,
+        acceptanceMap.get(String(document.id)),
+        renderCurrentAgreement(document, agent, orgRes.data?.name ?? "Protohub")
+      )),
       blockers: approvalBlockers(kycItems as any, guarantors as any, documents as any)
     });
   } catch (error: any) {
@@ -2199,8 +2250,8 @@ router.post("/:id/documents/seed", requireRole(...MANAGEMENT_ROLES), async (req,
       await supabase.from(DOCS).insert(missing.map((doc) => ({
         org_id: orgId, agent_id: req.params.id,
         document_key: doc.key, label: doc.label,
-        version: "v1", issued_at: new Date().toISOString().slice(0, 10),
-        status: "Not Uploaded"
+        version: PDA_AGREEMENT_VERSION, issued_at: new Date().toISOString().slice(0, 10),
+        status: "Awaiting Acceptance"
       })));
     }
     res.json({ seeded: missing.length });
@@ -2210,7 +2261,7 @@ router.post("/:id/documents/seed", requireRole(...MANAGEMENT_ROLES), async (req,
 });
 
 const DocumentReviewSchema = z.object({
-  status: z.enum(["Not Uploaded", "Uploaded", "Approved", "Rejected", "Replacement Requested"]),
+  status: z.enum(["Awaiting Acceptance", "Electronically Accepted", "Not Uploaded", "Uploaded", "Approved", "Rejected", "Replacement Requested"]),
   signedFilePath: z.string().trim().max(500).optional(),
   fileName: z.string().trim().max(300).optional(),
   fileSizeBytes: z.number().int().min(0).optional(),
@@ -2225,6 +2276,17 @@ router.patch("/documents/:documentId", requireRole(...MANAGEMENT_ROLES), async (
   const parsed = DocumentReviewSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
   try {
+    const { data: current } = await supabase.from(DOCS).select("*")
+      .eq("org_id", req.user!.orgId).eq("id", req.params.documentId).maybeSingle();
+    if (!current) { res.status(404).json({ error: "Document not found." }); return; }
+    const { data: acceptance } = await supabase.from(AGREEMENT_ACCEPTANCES).select("*")
+      .eq("org_id", req.user!.orgId).eq("document_id", current.id)
+      .is("superseded_at", null).order("accepted_at", { ascending: false }).limit(1).maybeSingle();
+    if (parsed.data.status === "Approved" && !current.signed_file_url && !acceptance) {
+      res.status(409).json({ error: "The applicant must electronically accept this agreement before it can be approved." });
+      return;
+    }
+
     const patch: Record<string, unknown> = { status: parsed.data.status, updated_at: new Date().toISOString() };
     if (parsed.data.signedFilePath !== undefined) {
       patch.signed_file_url = parsed.data.signedFilePath;
@@ -2236,12 +2298,21 @@ router.patch("/documents/:documentId", requireRole(...MANAGEMENT_ROLES), async (
     if (parsed.data.status === "Approved") {
       patch.approved_by = req.user!.id;
       patch.approved_at = new Date().toISOString();
+      patch.rejection_reason = null;
+    } else if (parsed.data.status === "Replacement Requested" || parsed.data.status === "Rejected") {
+      patch.approved_by = null;
+      patch.approved_at = null;
+      if (acceptance) {
+        await supabase.from(AGREEMENT_ACCEPTANCES).update({ superseded_at: new Date().toISOString() })
+          .eq("org_id", req.user!.orgId).eq("id", acceptance.id);
+      }
     }
     const { data, error } = await supabase.from(DOCS).update(patch)
       .eq("org_id", req.user!.orgId).eq("id", req.params.documentId).select("*").single();
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!data) { res.status(404).json({ error: "Document not found." }); return; }
-    res.json({ row: mapDocument(data) });
+    const liveAcceptance = parsed.data.status === "Replacement Requested" || parsed.data.status === "Rejected" ? null : acceptance;
+    res.json({ row: mapDocument(data, liveAcceptance) });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not update the document." });
   }

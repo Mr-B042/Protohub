@@ -69,12 +69,20 @@ test("two independent guarantors are acceptable", () => {
   assert.deepEqual(approvalBlockers(app.kyc, guarantors, app.documents), []);
 });
 
-test("an unsigned agreement blocks approval", () => {
+test("an agreement awaiting acceptance blocks approval", () => {
   const app = readyApplication();
-  app.documents.push({ status: "Not Uploaded", label: "COD Collection & Remittance Agreement" });
+  app.documents.push({ status: "Awaiting Acceptance", label: "COD Collection & Remittance Agreement" });
   const blockers = approvalBlockers(app.kyc, app.guarantors, app.documents);
   assert.equal(blockers.length, 1);
   assert.match(blockers[0], /COD Collection & Remittance Agreement/);
+});
+
+test("electronic acceptance remains blocked until management approves it", () => {
+  const app = readyApplication();
+  app.documents.push({ status: "Electronically Accepted", label: "Inventory Custody Agreement" });
+  const blockers = approvalBlockers(app.kyc, app.guarantors, app.documents);
+  assert.equal(blockers.length, 1);
+  assert.match(blockers[0], /electronically accepted/);
 });
 
 test("every outstanding requirement is listed, not just the first", () => {
