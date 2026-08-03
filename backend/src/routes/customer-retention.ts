@@ -1360,9 +1360,9 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     const { start, exclusiveEnd } = resolveDateBounds(req.query as Record<string, unknown>);
     const repId = retentionRepScope(req.user!.role, req.user!.id, req.query.repId);
 
-    // Point-in-time snapshot (NOT date-ranged) - "Due Today"/"Overdue" and
-    // the lifecycle pipeline describe the current state of every order in
-    // the retention window, same rows the worklist itself uses.
+    // "Due Today"/"Overdue" are a point-in-time snapshot of every order in the
+    // retention window - the same rows the worklist itself uses. The lifecycle
+    // pipeline below narrows these to the selected period.
     const allRows = await loadWorklistRows(orgId, settings);
     const scopedRows = repId ? allRows.filter((row) => row.assignedRepId === repId) : allRows;
     const dueToday = scopedRows.filter((r) =>
@@ -1373,18 +1373,29 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
       r.followUpStatus === "overdue"
       || (r.followUpStatus === null && r.overdueBy > 0)
     ).length;
+    // The pipeline answers "of the customers delivered in this period, where
+    // are they now", so it follows the date filter.
+    //
+    // Due Today and Overdue above deliberately do NOT: scoping those to a
+    // period would drop an order delivered in June and never called the moment
+    // you looked at July, which is precisely the work they exist to surface.
+    // The stage a row sits in is still measured from today, not from the end
+    // of the range - a customer's position in the lifecycle is a fact about
+    // now, not about the window you happen to be viewing.
+    const pipelineRows = scopedRows.filter((r) =>
+      r.deliveredDate >= start && r.deliveredDate < exclusiveEnd);
     const lifecyclePipeline = {
-      delivered: scopedRows.length,
-      satisfactionDue: scopedRows.filter((r) => r.dueStage === "satisfaction_check").length,
-      reviewDue: scopedRows.filter((r) => r.dueStage === "review_referral" && !r.reviewCollected).length,
+      delivered: pipelineRows.length,
+      satisfactionDue: pipelineRows.filter((r) => r.dueStage === "satisfaction_check").length,
+      reviewDue: pipelineRows.filter((r) => r.dueStage === "review_referral" && !r.reviewCollected).length,
       // Referral has its own later window (Day 14-30, vs Review's Day 7-14)
       // per the spec's lifecycle model - it only counts as "due" once that
       // window opens, even though both share one underlying touchpoints
       // stage (Decision A).
-      referralDue: scopedRows.filter((r) => r.dueStage === "review_referral" && !r.referralCollected && r.daysSinceDelivery >= 14).length,
-      retentionSaleDue: scopedRows.filter((r) => r.dueStage === "retention_sale").length,
-      winBack: scopedRows.filter((r) => r.dueStage === "win_back").length,
-      needsResolution: scopedRows.filter((r) => r.dueStage === "needs_resolution").length
+      referralDue: pipelineRows.filter((r) => r.dueStage === "review_referral" && !r.referralCollected && r.daysSinceDelivery >= 14).length,
+      retentionSaleDue: pipelineRows.filter((r) => r.dueStage === "retention_sale").length,
+      winBack: pipelineRows.filter((r) => r.dueStage === "win_back").length,
+      needsResolution: pipelineRows.filter((r) => r.dueStage === "needs_resolution").length
     };
 
     // Date-range-scoped activity (what actually happened in the selected
