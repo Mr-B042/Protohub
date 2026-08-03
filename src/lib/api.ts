@@ -1449,7 +1449,23 @@ export const managerDashboardAlertsApi = {
   stockMismatches: () => get<{ rows: any[] }>("/api/manager-dashboard/stock-mismatches")
 };
 
+export type RecoveryCandidateRow = {
+  id: string; customer: string; phone: string; status: string;
+  amount: number; currency: string; productName?: string | null;
+  location?: string | null; callOutcome?: string | null; response?: string | null;
+  closedAt: string; createdAt: string; reason: string;
+};
+export type RecoveryCandidatesView = {
+  rows: RecoveryCandidateRow[];
+  cap: number; held: number; remaining: number; canClaim: boolean;
+};
+
 export const recoveryRepKpiApi = {
+  candidates: (repId?: string) =>
+    get<RecoveryCandidatesView>(`/api/recovery-rep-kpi/candidates${repId ? `?repId=${encodeURIComponent(repId)}` : ""}`),
+  claimCandidate: (orderId: string, repId?: string) =>
+    post<{ ok: boolean; held: number; cap: number; remaining: number }>(
+      "/api/recovery-rep-kpi/claim", { orderId, repId }),
   summary: (params: { repId?: string; month?: string; dateFrom?: string; dateTo?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.repId) qs.set("repId", params.repId);

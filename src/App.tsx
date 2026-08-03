@@ -130,7 +130,7 @@ import {
   setApiSpyUserId
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -8573,6 +8573,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerDashboardTab, setManagerDashboardTab] = useState<ManagerDashboardTab>("Overview");
   const [recoveryRepDashboardTab, setRecoveryRepDashboardTab] = useState<RecoveryRepDashboardTab>("Overview");
   const [recoveryCandidateSearch, setRecoveryCandidateSearch] = useState("");
+  // Served by its own endpoint, not derived from trackedOrders: GET /api/orders
+  // scopes a Recovery Rep to their OWN orders, so a rep with none saw no
+  // candidates and could never claim a first one.
+  const [recoveryCandidatesView, setRecoveryCandidatesView] = useState<RecoveryCandidatesView | null>(null);
   const [recoveryCandidateReasonFilter, setRecoveryCandidateReasonFilter] = useState("All");
   const [recoveryCandidatePage, setRecoveryCandidatePage] = useState(1);
   // Which candidates have their "why it was lost" note expanded. Clamped by
@@ -40710,7 +40714,16 @@ ${waybillLineItems(w).length > 1
     ? (recoveryRepScopeId || recoveryRepUsers[0]?.id || "")
     : (currentManagedUser?.id ?? authUser?.id ?? "");
 
+  const loadRecoveryCandidates = async () => {
+    if (activePage !== "Recovery Rep Dashboard") return;
+    try {
+      const view = await recoveryRepKpiApi.candidates(recoveryRepIsOwnerLike ? recoveryRepViewingId : undefined);
+      setRecoveryCandidatesView(view ?? null);
+    } catch { setRecoveryCandidatesView(null); }
+  };
+
   const loadRecoveryRepKpi = async () => {
+    void loadRecoveryCandidates();
     if (!recoveryRepViewingId) return;
     setRecoveryRepKpiLoading(true);
     setRecoveryRepKpiError("");
@@ -54650,10 +54663,33 @@ ${waybillLineItems(w).length > 1
       const ms = source ? new Date(source).getTime() : NaN;
       return Number.isFinite(ms) ? ms : 0;
     };
-    const recoveryCandidates = trackedOrders
-      .filter((order) => order.assignedRepId !== recoveryRepViewingId && candidateReason(order))
-      .slice()
-      .sort((a, b) => closedAtMs(b) - closedAtMs(a));
+    // From the server, so a Recovery Rep sees the whole pool. Falling back to
+    // trackedOrders keeps management working if the call fails, but for a rep
+    // that fallback is empty by construction - their orders are all they get.
+    const serverCandidates = recoveryCandidatesView?.rows ?? null;
+    const recoveryCandidates: TrackedOrder[] = serverCandidates
+      ? serverCandidates.map((row) => ({
+          ...(trackedOrders.find((order) => order.id === row.id) ?? ({} as TrackedOrder)),
+          id: row.id,
+          customer: row.customer,
+          phone: row.phone,
+          status: row.status as TrackedOrder["status"],
+          amount: row.amount,
+          currency: row.currency as TrackedOrder["currency"],
+          productName: row.productName ?? "",
+          location: row.location ?? "",
+          callOutcome: row.callOutcome ?? undefined,
+          response: row.response ?? undefined,
+          createdAt: row.createdAt
+        }) as TrackedOrder)
+      : trackedOrders
+          .filter((order) => order.assignedRepId !== recoveryRepViewingId && candidateReason(order))
+          .slice()
+          .sort((a, b) => closedAtMs(b) - closedAtMs(a));
+    const claimCap = recoveryCandidatesView?.cap ?? 0;
+    const claimHeld = recoveryCandidatesView?.held ?? 0;
+    const claimRemaining = recoveryCandidatesView?.remaining ?? 0;
+    const canClaimMore = recoveryCandidatesView ? recoveryCandidatesView.canClaim : true;
     // Cheap per-phone order-history summary (total / delivered / cancelled),
     // same "orders / delivered / cancelled" shape as the Customers page's
     // "Order History" column, computed only for the candidates on screen.
@@ -54685,9 +54721,14 @@ ${waybillLineItems(w).length > 1
       setClaimSaving(true);
       setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? { ...item, assignedRepId: targetRepId } : item));
       try {
-        await ordersApi.update(order.id, { assignedRepId: targetRepId });
-        showToast(`${order.id} claimed for ${targetName}.`);
+        // The capped endpoint, not a plain order PATCH - a limit only checked
+        // in the browser is a suggestion.
+        const result = await recoveryRepKpiApi.claimCandidate(order.id, recoveryRepIsOwnerLike ? targetRepId : undefined);
+        showToast(result.remaining > 0
+          ? `${order.id} claimed for ${targetName}. ${result.remaining} more can be claimed.`
+          : `${order.id} claimed for ${targetName}. That is the limit of ${result.cap} open orders.`);
         setClaimCandidateOrder(null);
+        void loadRecoveryCandidates();
       } catch (err: any) {
         setTrackedOrders((prev) => prev.map((item) => item.id === order.id ? previous : item));
         showToast(err?.message ?? "Could not claim that order.");
@@ -55393,6 +55434,16 @@ ${waybillLineItems(w).length > 1
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-200">
             <h2 className="text-base font-bold text-gray-900">Recovery Candidates</h2>
+            {/* The cap, stated where the claiming happens. A rep who hits it
+                needs to know why the buttons went quiet. */}
+            {recoveryCandidatesView && claimCap > 0 && (
+              <span className={`ml-2 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                canClaimMore ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
+                {canClaimMore
+                  ? `Holding ${claimHeld} of ${claimCap} · can claim ${claimRemaining} more`
+                  : `At the limit — holding ${claimHeld} of ${claimCap}. Close some before claiming more.`}
+              </span>
+            )}
             <p className="text-xs text-gray-500 mt-0.5">
               Failed, Cancelled and rejected orders, plus orders logged "Product Unavailable" - not yet assigned to this rep. Postponed and still-open orders are excluded: they are being worked by the rep who owns them, not lost.
               Reassign a candidate using its order's existing "Reassign Sales Rep" action.
@@ -55485,7 +55536,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
-                        <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-md bg-[#1F8FE0] px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-[#1560a8]" onClick={() => claimRecoveryCandidate(order)}>Claim</button>
+                        <button disabled={!canClaimMore} title={canClaimMore ? undefined : `Holding ${claimHeld} of ${claimCap} open orders.`} className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-md bg-[#1F8FE0] px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-[#1560a8] disabled:opacity-40 disabled:cursor-not-allowed" onClick={() => claimRecoveryCandidate(order)}>Claim</button>
                         <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => addRecoveryCandidateNote(order)}>Add Note</button>
                       </div>
                     </article>
@@ -55590,7 +55641,7 @@ ${waybillLineItems(w).length > 1
                           </td>
                           <td className="px-4 py-4">
                             <div className="flex items-center gap-1.5">
-                              <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#1560a8]" onClick={() => claimRecoveryCandidate(order)}>Claim</button>
+                              <button disabled={!canClaimMore} title={canClaimMore ? undefined : `Holding ${claimHeld} of ${claimCap} open orders.`} className="!min-h-0 inline-flex items-center gap-1.5 rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#1560a8] disabled:opacity-40 disabled:cursor-not-allowed" onClick={() => claimRecoveryCandidate(order)}>Claim</button>
                               <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
                               <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => addRecoveryCandidateNote(order)}>Add Note</button>
                             </div>

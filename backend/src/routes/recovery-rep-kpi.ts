@@ -26,7 +26,9 @@ const DEFAULT_KPI_SETTINGS = {
   monthlyRecoveredTarget: 60,
   // Migration 185 - minimum orders to pick up and work each day.
   dailyFollowUpPickTarget: 10,
-  dailyRetentionPickTarget: 10
+  dailyRetentionPickTarget: 10,
+  // Migration 205 - how many unfinished orders one rep may hold at once.
+  maxOpenClaims: 20
 };
 
 async function loadKpiSettings(orgId: string) {
@@ -49,7 +51,8 @@ async function loadKpiSettings(orgId: string) {
     weeklyRecoveredTarget: Number(data.weekly_recovered_target ?? DEFAULT_KPI_SETTINGS.weeklyRecoveredTarget),
     monthlyRecoveredTarget: Number(data.monthly_recovered_target ?? DEFAULT_KPI_SETTINGS.monthlyRecoveredTarget),
     dailyFollowUpPickTarget: Number(data.daily_follow_up_pick_target ?? DEFAULT_KPI_SETTINGS.dailyFollowUpPickTarget),
-    dailyRetentionPickTarget: Number(data.daily_retention_pick_target ?? DEFAULT_KPI_SETTINGS.dailyRetentionPickTarget)
+    dailyRetentionPickTarget: Number(data.daily_retention_pick_target ?? DEFAULT_KPI_SETTINGS.dailyRetentionPickTarget),
+    maxOpenClaims: Number(data.max_open_claims ?? DEFAULT_KPI_SETTINGS.maxOpenClaims)
   };
 }
 
@@ -420,6 +423,148 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Failed to load recovery rep KPI summary." });
+  }
+});
+
+
+// ── Recovery candidates ───────────────────────────────────
+// Orders that actually died and are worth another conversation.
+//
+// This has to be its own endpoint because GET /api/orders scopes a frontline
+// rep to their OWN orders (isFrontlineRepRole covers Recovery Rep). The
+// candidate list was built client-side from that scoped list, so a Recovery Rep
+// with no orders saw no candidates, could claim nothing, and therefore stayed
+// at no orders forever. Management never hit it because they receive
+// everything.
+const CANDIDATE_STATUSES = ["Failed", "Cancelled"];
+const REJECTION_PATTERN = /reject|refus|not interested|no longer/i;
+// Statuses that still count against a rep's open workload. Taken from the
+// order_status enum (New, Confirmed, In Process, Dispatched, Delivered,
+// Cancelled, Postponed, Failed) - everything except the three that mean the
+// order reached a final outcome. Postponed counts: it is still the rep's to
+// chase, which is exactly the kind of holding the cap exists to limit.
+const OPEN_STATUSES = ["New", "Confirmed", "In Process", "Dispatched", "Postponed"];
+
+async function openClaimCount(orgId: string, repId: string) {
+  const { count } = await supabase
+    .from("orders")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .eq("assigned_rep_id", repId)
+    .in("status", OPEN_STATUSES);
+  return count ?? 0;
+}
+
+router.get("/candidates", requireRole("Owner", "Admin", "Manager", "Recovery Rep"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
+    const scopeId = req.user!.effectiveUserId ?? req.user!.id;
+    const repId = scopeRole === "Recovery Rep" ? scopeId : (typeof req.query.repId === "string" ? req.query.repId : "");
+
+    const settings = await loadKpiSettings(orgId);
+    const [{ data, error }, held] = await Promise.all([
+      supabase
+        .from("orders")
+        .select("id, customer, phone, status, amount, currency, product_name, package_name, location, call_outcome, response, created_at, updated_at, delivered_date, assigned_rep_id, review_hold")
+        .eq("org_id", orgId)
+        .or(`status.in.(${CANDIDATE_STATUSES.join(",")}),call_outcome.eq.Product Unavailable`)
+        .neq("review_hold", true)
+        .order("updated_at", { ascending: false })
+        .limit(500),
+      repId ? openClaimCount(orgId, repId) : Promise.resolve(0)
+    ]);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    const rows = (data ?? [])
+      // An order already on this rep is their work, not a candidate.
+      .filter((order: any) => !repId || order.assigned_rep_id !== repId)
+      .map((order: any) => ({
+        id: order.id,
+        customer: order.customer,
+        phone: order.phone,
+        status: order.status,
+        amount: Number(order.amount ?? 0),
+        currency: order.currency ?? "NGN",
+        productName: order.package_name || order.product_name,
+        location: order.location ?? null,
+        callOutcome: order.call_outcome ?? null,
+        response: order.response ?? null,
+        closedAt: order.delivered_date ?? order.updated_at ?? order.created_at,
+        createdAt: order.created_at,
+        reason: CANDIDATE_STATUSES.includes(order.status)
+          ? (REJECTION_PATTERN.test(order.call_outcome ?? "") ? "Rejected" : order.status)
+          : "Product Unavailable"
+      }));
+
+    const cap = Math.max(0, Number(settings.maxOpenClaims ?? 0));
+    res.json({
+      rows,
+      cap,
+      held,
+      // Said plainly so the UI never has to guess why the button is off.
+      remaining: cap === 0 ? 0 : Math.max(0, cap - held),
+      canClaim: cap > 0 && held < cap
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load recovery candidates." });
+  }
+});
+
+// Claiming is its own endpoint rather than a plain order PATCH so the cap is
+// enforced on the server. A cap only checked in the browser is a suggestion.
+router.post("/claim", requireRole("Owner", "Admin", "Manager", "Recovery Rep"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
+    const scopeId = req.user!.effectiveUserId ?? req.user!.id;
+    const orderId = typeof req.body?.orderId === "string" ? req.body.orderId : "";
+    const bodyRepId = typeof req.body?.repId === "string" ? req.body.repId : "";
+    // A rep may only claim for themselves. Management may claim on behalf of a
+    // named rep, which is how a supervisor hands work over.
+    const repId = scopeRole === "Recovery Rep" ? scopeId : bodyRepId;
+    if (!orderId || !repId) { res.status(400).json({ error: "An order and a rep are required." }); return; }
+
+    const { data: rep } = await supabase.from("users")
+      .select("id, name, role, active").eq("org_id", orgId).eq("id", repId).maybeSingle();
+    if (!rep || !rep.active || rep.role !== "Recovery Rep") {
+      res.status(400).json({ error: "Claims can only go to an active Recovery Rep." });
+      return;
+    }
+
+    const { data: order } = await supabase.from("orders")
+      .select("id, status, call_outcome, assigned_rep_id").eq("org_id", orgId).eq("id", orderId).maybeSingle();
+    if (!order) { res.status(404).json({ error: "Order not found." }); return; }
+    if (order.assigned_rep_id === repId) { res.status(409).json({ error: "That order is already theirs." }); return; }
+
+    const isCandidate = CANDIDATE_STATUSES.includes(order.status) || order.call_outcome === "Product Unavailable";
+    if (!isCandidate) {
+      // A live order belongs to the sales rep working it. Claiming it would put
+      // two people on the same customer - the exact thing the candidate rules
+      // were narrowed to prevent.
+      res.status(409).json({ error: "Only failed, cancelled or rejected orders can be claimed for recovery." });
+      return;
+    }
+
+    const settings = await loadKpiSettings(orgId);
+    const cap = Math.max(0, Number(settings.maxOpenClaims ?? 0));
+    const held = await openClaimCount(orgId, repId);
+    if (cap === 0) { res.status(409).json({ error: "Claiming is switched off. Set an open-order limit in Recovery settings." }); return; }
+    if (held >= cap) {
+      res.status(409).json({
+        error: `${rep.name} already holds ${held} open orders, the limit is ${cap}. Close some before claiming more.`
+      });
+      return;
+    }
+
+    const { error } = await supabase.from("orders")
+      .update({ assigned_rep_id: repId, assigned_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq("org_id", orgId).eq("id", orderId);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    res.json({ ok: true, held: held + 1, cap, remaining: Math.max(0, cap - (held + 1)) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not claim that order." });
   }
 });
 
