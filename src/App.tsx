@@ -6689,7 +6689,17 @@ if (typeof window !== "undefined" && !window.localStorage.getItem(MIGRATION_KEY)
 // Source of truth: dd03f30:src/App.tsx (the commit immediately before destruction)
 
 // ── CART_JOURNEY_POLL_MS ────────────────────
-const CART_JOURNEY_POLL_MS = 5_000;
+// This poll refetches the journey events for EVERY cart in view, and
+// cart_journey_events is the fastest-growing table in the system (72k rows and
+// climbing). At 5 seconds a single open Ad Tracking tab was pulling roughly
+// 19MB every 5s - about 13GB an hour - which is most of what Railway was
+// billing for egress.
+//
+// A minute is the right cadence for what this actually feeds: a monitor of
+// what customers did on the form. Nobody acts on a journey event inside five
+// seconds, and the cart-details modal has its own Realtime subscription for
+// the one cart somebody is really watching.
+const CART_JOURNEY_POLL_MS = 60_000;
 // ── CART_DETAIL_FALLBACK_POLL_MS ────────────
 // The cart-details modal subscribes to Realtime for instant updates. This
 // slower interval is a safety net for the rare case where the websocket
@@ -12080,7 +12090,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         });
       }).catch(() => {});
     };
-    const handle = window.setInterval(pull, 12000);
+    // Every tick re-downloads the whole cart list (~6.8MB uncompressed today).
+    // The comparison below only avoids a re-render - the bytes are already
+    // spent by then - so the interval itself is the thing that has to be
+    // sensible. Assigning or converting a cart refreshes the list directly,
+    // so this is a safety net, not the main path.
+    const handle = window.setInterval(pull, 45_000);
     return () => { cancelled = true; window.clearInterval(handle); };
   }, [activePage]);
 

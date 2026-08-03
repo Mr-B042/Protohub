@@ -1,5 +1,6 @@
 import "./lib/load-env.js";
 import express from "express";
+import compression from "compression";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -178,6 +179,23 @@ app.use("/api", (_req, res, next) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   next();
 });
+
+// ── Compression ───────────────────────────────────────────
+// Every response was going out raw. This API returns large JSON lists, which
+// compress by roughly 85-90%, and Railway bills egress by the gigabyte - the
+// bill was 801GB/month for an app with a dozen staff.
+//
+// Declared before the routes so it wraps every response, and before helmet so
+// the security headers it sets are themselves compressed with the body.
+app.use(compression({
+  // Below about a KB the gzip header costs more than it saves.
+  threshold: 1024,
+  filter: (req, res) => {
+    // Lets a client opt out with `x-no-compression` when debugging a payload.
+    if (req.headers["x-no-compression"]) return false;
+    return compression.filter(req, res);
+  }
+}));
 
 // ── Security ──────────────────────────────────────────────
 app.use(helmet());
