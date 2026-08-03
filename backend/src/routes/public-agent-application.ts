@@ -13,6 +13,7 @@
 //     is no path from here to an approved agent
 import { Router } from "express";
 import { z } from "zod";
+import { SubmitSchema } from "../lib/pda-application-schema.js";
 import rateLimit from "express-rate-limit";
 import { randomUUID } from "node:crypto";
 import { supabase } from "../lib/supabase.js";
@@ -100,59 +101,17 @@ router.post("/:token/upload", uploadLimiter, async (req, res) => {
 });
 
 // ── POST /api/public/agent-application/:token ─────────────
-const GuarantorSchema = z.object({
-  fullName: z.string().trim().min(2).max(160),
-  relationship: z.string().trim().max(120).optional(),
-  guarantorType: z.enum(["Family", "Independent"]).optional(),
-  phone: z.string().trim().min(7).max(40),
-  whatsappPhone: z.string().trim().max(40).optional(),
-  email: z.string().trim().max(160).optional(),
-  address: z.string().trim().max(500).optional(),
-  occupation: z.string().trim().max(160).optional(),
-  workplace: z.string().trim().max(160).optional(),
-  yearsKnown: z.string().trim().max(60).optional(),
-  referenceStatement: z.string().trim().max(1000).optional(),
-  idDocumentPath: z.string().trim().max(500).optional()
-});
-
-const SubmitSchema = z.object({
-  fullName: z.string().trim().min(2, "Enter your full name as written on your ID.").max(160),
-  phone: z.string().trim().min(7, "Enter a phone number we can reach you on.").max(40),
-  whatsappPhone: z.string().trim().max(40).optional(),
-  email: z.string().trim().max(160).optional(),
-  dateOfBirth: z.string().trim().max(20).optional(),
-  gender: z.enum(["Male", "Female", "Prefer not to say"]).optional(),
-  state: z.string().trim().max(80).optional(),
-  city: z.string().trim().max(80).optional(),
-  residentialAddress: z.string().trim().max(500).optional(),
-  emergencyContactName: z.string().trim().max(160).optional(),
-  emergencyContactPhone: z.string().trim().max(40).optional(),
-  idType: z.enum(["NIN", "Driver's Licence", "Voter's Card", "International Passport"]).optional(),
-  idNumber: z.string().trim().max(60).optional(),
-  idFrontPath: z.string().trim().max(500).optional(),
-  idBackPath: z.string().trim().max(500).optional(),
-  selfiePath: z.string().trim().max(500).optional(),
-  proofOfAddressPath: z.string().trim().max(500).optional(),
-  transportMethod: z.enum([
-    "Motorcycle", "Car", "Public transport", "Bicycle", "Walking", "Hired dispatch", "Other"
-  ]).optional(),
-  vehicleModel: z.string().trim().max(120).optional(),
-  vehiclePlate: z.string().trim().max(40).optional(),
-  serviceAreas: z.array(z.string().trim().max(80)).max(20).optional(),
-  bankName: z.string().trim().max(120).optional(),
-  bankAccountNumber: z.string().trim().max(40).optional(),
-  bankAccountName: z.string().trim().max(160).optional(),
-  guarantors: z.array(GuarantorSchema).max(4).optional(),
-  consent: z.literal(true, { errorMap: () => ({ message: "Please confirm the details are true before submitting." }) })
-});
-
 router.post("/:token", submitLimiter, async (req, res) => {
   const found = await resolveLink(String(req.params.token ?? ""));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
 
   const parsed = SubmitSchema.safeParse(req.body);
   if (!parsed.success) {
-    const first = Object.values(parsed.error.flatten().fieldErrors).flat()[0];
+    const flat = parsed.error.flatten();
+    // Cross-field rules (the all-family guarantor pair, a duplicated number)
+    // can land in formErrors, so read both or the applicant gets a useless
+    // "Some details are missing" for a problem we can name exactly.
+    const first = Object.values(flat.fieldErrors).flat()[0] ?? flat.formErrors[0];
     res.status(400).json({ error: first ?? "Some details are missing." });
     return;
   }
