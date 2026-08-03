@@ -174,8 +174,12 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
-const CART_JOURNEY_ANALYTICS_POLL_MS = 8_000;
+// These screens monitor trends rather than a single live cart. They load the
+// complete timeline once, then poll incrementally. A one-minute cadence keeps
+// the dashboard fresh without repeatedly moving a large analytics dataset.
+const CART_JOURNEY_ANALYTICS_POLL_MS = 60_000;
 const CART_JOURNEY_BULK_CHUNK_SIZE = 450;
+const WORKSPACE_FULL_RESYNC_MS = 30 * 60_000;
 
 function manifestVersionToken(brandName: string, logoUrl: string): string {
   return `${brandName.trim().length}-${logoUrl.trim().length}`;
@@ -6386,14 +6390,17 @@ const normalizeCartJourneyEvent = (value: any): CartJourneyEvent => {
   };
 };
 
-const loadCartJourneyBulkInChunks = async (cartIds: string[]): Promise<Record<string, CartJourneyEvent[]>> => {
+const loadCartJourneyBulkInChunks = async (
+  cartIds: string[],
+  options?: { createdAfter?: string }
+): Promise<Record<string, CartJourneyEvent[]>> => {
   const uniqueIds = Array.from(new Set(cartIds.map((id) => id.trim()).filter(Boolean)));
   const chunks: string[][] = [];
   for (let i = 0; i < uniqueIds.length; i += CART_JOURNEY_BULK_CHUNK_SIZE) {
     chunks.push(uniqueIds.slice(i, i + CART_JOURNEY_BULK_CHUNK_SIZE));
   }
 
-  const settled = await Promise.allSettled(chunks.map((chunk) => cartsApi.journeyBulk(chunk)));
+  const settled = await Promise.allSettled(chunks.map((chunk) => cartsApi.journeyBulk(chunk, options)));
   const normalized: Record<string, CartJourneyEvent[]> = {};
   let fulfilledCount = 0;
   let firstError: unknown = null;
@@ -6414,6 +6421,34 @@ const loadCartJourneyBulkInChunks = async (cartIds: string[]): Promise<Record<st
   }
 
   return normalized;
+};
+
+const latestCartJourneyTimestamp = (grouped: Record<string, CartJourneyEvent[]>) => {
+  let latest = "";
+  for (const events of Object.values(grouped)) {
+    for (const event of events) {
+      if (event.createdAt && event.createdAt > latest) latest = event.createdAt;
+    }
+  }
+  return latest;
+};
+
+const mergeCartJourneyEvents = (
+  current: Record<string, CartJourneyEvent[]>,
+  incoming: Record<string, CartJourneyEvent[]>
+) => {
+  let changed = false;
+  const next = { ...current };
+  for (const [cartId, events] of Object.entries(incoming)) {
+    if (events.length === 0) continue;
+    const existing = current[cartId] ?? [];
+    const knownIds = new Set(existing.map((event) => event.id));
+    const additions = events.filter((event) => !knownIds.has(event.id));
+    if (additions.length === 0) continue;
+    next[cartId] = [...existing, ...additions].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    changed = true;
+  }
+  return changed ? next : current;
 };
 
 const submittedOrderIdFromCartJourney = (journeyEvents: CartJourneyEvent[] = []): string => {
@@ -15279,15 +15314,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     let cancelled = false;
     let pollingHandle: number | undefined;
+    let latestCreatedAt = "";
     const cartIds = adTrackingJourneyCartIdsKey.split("|").filter(Boolean);
     const loadJourneys = async (silent = false) => {
       if (!silent) {
         setAdTrackingCartJourneyLoading(true);
       }
       try {
-        const normalized = await loadCartJourneyBulkInChunks(cartIds);
+        const normalized = await loadCartJourneyBulkInChunks(
+          cartIds,
+          silent && latestCreatedAt ? { createdAfter: latestCreatedAt } : undefined
+        );
         if (cancelled) return;
-        setAdTrackingCartJourneyMap(normalized);
+        const newestTimestamp = latestCartJourneyTimestamp(normalized);
+        setAdTrackingCartJourneyMap((current) =>
+          silent && latestCreatedAt ? mergeCartJourneyEvents(current, normalized) : normalized
+        );
+        if (newestTimestamp > latestCreatedAt) latestCreatedAt = newestTimestamp;
       } catch {
         if (cancelled) return;
         if (!silent) {
@@ -16863,15 +16906,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     let cancelled = false;
     let pollingHandle: number | undefined;
+    let latestCreatedAt = "";
     const cartIds = abandonedJourneyCartIdsKey.split("|").filter(Boolean);
     const loadJourneys = async (silent = false) => {
       if (!silent) {
         setAbandonedCartJourneyLoading(true);
       }
       try {
-        const normalized = await loadCartJourneyBulkInChunks(cartIds);
+        const normalized = await loadCartJourneyBulkInChunks(
+          cartIds,
+          silent && latestCreatedAt ? { createdAfter: latestCreatedAt } : undefined
+        );
         if (cancelled) return;
-        setAbandonedCartJourneyMap(normalized);
+        const newestTimestamp = latestCartJourneyTimestamp(normalized);
+        setAbandonedCartJourneyMap((current) =>
+          silent && latestCreatedAt ? mergeCartJourneyEvents(current, normalized) : normalized
+        );
+        if (newestTimestamp > latestCreatedAt) latestCreatedAt = newestTimestamp;
       } catch {
         if (cancelled) return;
         if (!silent) {
@@ -22147,15 +22198,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
     let cancelled = false;
     let pollingHandle: number | undefined;
+    let latestCreatedAt = "";
     const cartIds = repJourneyCartIdsKey.split("|").filter(Boolean);
     const loadJourneys = async (silent = false) => {
       if (!silent) {
         setRepCartJourneyLoading(true);
       }
       try {
-        const normalized = await loadCartJourneyBulkInChunks(cartIds);
+        const normalized = await loadCartJourneyBulkInChunks(
+          cartIds,
+          silent && latestCreatedAt ? { createdAfter: latestCreatedAt } : undefined
+        );
         if (cancelled) return;
-        setRepCartJourneyMap(normalized);
+        const newestTimestamp = latestCartJourneyTimestamp(normalized);
+        setRepCartJourneyMap((current) =>
+          silent && latestCreatedAt ? mergeCartJourneyEvents(current, normalized) : normalized
+        );
+        if (newestTimestamp > latestCreatedAt) latestCreatedAt = newestTimestamp;
       } catch {
         if (cancelled) return;
         if (!silent) {
@@ -23589,7 +23648,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // On mount, if the user is authenticated, fetch live data from the API
   // and merge it into state (API data wins over localStorage cache).
   const retryLoadData = useRef<() => void>(() => {});
-  const lastAutoResyncAt = useRef(0);
+  const lastAutoResyncAt = useRef(Date.now());
   useEffect(() => {
     if (!auth.isLoggedIn()) {
       setDataLoading(false);
@@ -24151,7 +24210,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (dataLoading || dataRefreshing) return;
       if (document.visibilityState !== "visible") return;
       const now = Date.now();
-      if (now - lastAutoResyncAt.current < 45_000) return;
+      if (now - lastAutoResyncAt.current < WORKSPACE_FULL_RESYNC_MS) return;
       lastAutoResyncAt.current = now;
       retryLoadData.current();
     };
@@ -24164,7 +24223,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const intervalId = window.setInterval(() => {
       if (!document.hasFocus()) return;
       maybeResync();
-    }, 180_000);
+    }, WORKSPACE_FULL_RESYNC_MS);
 
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onFocus);

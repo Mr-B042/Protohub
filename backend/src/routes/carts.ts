@@ -103,7 +103,8 @@ const CartUpsertSchema = z.object({
 const JourneyBulkSchema = z.object({
   cartIds: z.array(
     z.string().min(1).max(80).regex(/^[A-Za-z0-9\-_]+$/, "Cart ID must be alphanumeric")
-  ).max(500)
+  ).max(500),
+  createdAfter: z.string().datetime({ offset: true }).optional()
 });
 
 const ConvertedCartLinkRepairOneSchema = z.object({
@@ -661,13 +662,18 @@ router.post("/journey-bulk", async (req, res) => {
   const events: any[] = [];
   const EVENT_PAGE_SIZE = 1000;
   for (let from = 0; ; from += EVENT_PAGE_SIZE) {
-    const { data: batch, error } = await supabase
+    let eventsQuery = supabase
       .from("cart_journey_events")
-      .select("*")
+      .select("id, cart_id, product_id, package_id, state, event_type, companion_product_id, companion_package_id, metadata, created_at")
       .eq("org_id", req.user!.orgId)
       .in("cart_id", allowedIds)
       .order("created_at", { ascending: true })
       .range(from, from + EVENT_PAGE_SIZE - 1);
+    if (parsed.data.createdAfter) {
+      // Include the boundary and deduplicate by id so same-time events are not lost.
+      eventsQuery = eventsQuery.gte("created_at", parsed.data.createdAfter);
+    }
+    const { data: batch, error } = await eventsQuery;
 
     if (error) {
       res.status(500).json({ error: error.message });
