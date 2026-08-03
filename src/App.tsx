@@ -82994,12 +82994,12 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "carts" && (
-	              <>
-	                <p>{demoCarts === 0 ? "There are no abandoned carts in this dashboard period." : `${demoCarts} abandoned cart${demoCarts === 1 ? "" : "s"} in this dashboard period.`}</p>
-	                <div className="flex items-center justify-end gap-3 pt-2">
+	              <div className="px-6 py-5">
+	                <p className="m-0">{demoCarts === 0 ? "There are no abandoned carts in this dashboard period." : `${demoCarts} abandoned cart${demoCarts === 1 ? "" : "s"} in this dashboard period.`}</p>
+	                <div className="flex items-center justify-end gap-3 pt-4">
 	                  <button className="!min-h-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Close</button>
 	                </div>
-	              </>
+	              </div>
 	            )}
 
 	            {modal === "createOrder" && (() => {
@@ -88275,7 +88275,7 @@ ${waybillLineItems(w).length > 1
             })()}
 
 	            {modal === "pdaFeeRule" && (
-	              <div className="space-y-4">
+	              <div className="px-6 py-5 space-y-4">
 	                <p className="m-0 text-xs text-gray-500">
 	                  The most specific matching rate wins. A city rate beats its state rate, which beats the default — so adding one city never changes the rest of that state.
 	                </p>
@@ -88333,7 +88333,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "pdaReport" && (
-	              <div className="space-y-4">
+	              <div className="px-6 py-5 space-y-4">
 	                <p className="m-0 text-xs text-gray-500">
 	                  This records what was run and by whom. Downloading it later always <strong>re-runs it against live data</strong> — a saved file could quietly disagree with the system it came from.
 	                </p>
@@ -88367,7 +88367,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "pdaCodDiscrepancy" && (
-	              <div className="space-y-4">
+	              <div className="px-6 py-5 space-y-4">
 	                <p className="m-0 text-xs text-gray-500">
 	                  A variance between what should have reached the office and what did. This is an accounting case to resolve — if you suspect misconduct, raise an <strong>incident</strong> instead, which suspends the agent.
 	                </p>
@@ -88427,7 +88427,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "pdaIncident" && (
-	              <div className="space-y-4">
+	              <div className="px-6 py-5 space-y-4">
 	                <p className="m-0 text-xs text-gray-500">
 	                  A <strong>Critical</strong> incident — or a <strong>High</strong> one involving money or trust (theft, COD, misconduct) — suspends the agent from new work while it is investigated. A high-priority service complaint does not, because suspending someone over a late delivery costs them their income and you your capacity.
 	                </p>
@@ -88482,7 +88482,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "pdaAssignOrder" && pdaCandidates && (
-	              <div className="space-y-4">
+	              <div className="px-6 py-5 space-y-4">
 	                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs">
 	                  <div className="font-black text-gray-900">{pdaCandidates.order.customer}</div>
 	                  <div className="text-gray-600">
@@ -88525,7 +88525,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "pdaRemittance" && (
-	              <div className="space-y-4">
+	              <div className="px-6 py-5 space-y-4">
 	                <p className="m-0 text-xs text-gray-500">
 	                  Record this only when the money is actually in hand — “the agent says they sent it” and “we have it” are different things, and only the second reduces what they owe. It clears their oldest unpaid deliveries first.
 	                </p>
@@ -88557,7 +88557,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "pdaSendStock" && (
-	              <div className="space-y-4">
+	              <div className="px-6 py-5 space-y-4">
 	                <p className="m-0 text-xs text-gray-500">
 	                  This does not add to their balance yet. It stays in transit until the agent confirms what actually arrived — only the confirmed quantity becomes their stock.
 	                </p>
@@ -88589,7 +88589,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "pdaContact" && (
-	              <div className="space-y-3">
+	              <div className="px-6 py-5 space-y-3">
 	                <p className="m-0 text-xs text-gray-500">
 	                  Only pick “Ready to receive” when the customer has actually said they are available now. Starting a delivery before that is how a wasted trip happens.
 	                </p>
@@ -88611,7 +88611,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "pdaDelivered" && (
-	              <div className="space-y-4">
+	              <div className="px-6 py-5 space-y-4">
 	                <p className="m-0 text-xs text-gray-500">
 	                  Proof is required — it protects you as much as the company if the money is ever queried.
 	                </p>
@@ -88650,7 +88650,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "pdaFailed" && (
-	              <div className="space-y-4">
+	              <div className="px-6 py-5 space-y-4">
 	                <label className="flex flex-col gap-1">
 	                  <span className="text-xs font-bold text-gray-600">Outcome</span>
 	                  <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaFailedDraft.outcome}
@@ -88684,7 +88684,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "pdaReschedule" && (
-	              <div className="space-y-4">
+	              <div className="px-6 py-5 space-y-4">
 	                <p className="m-0 text-xs text-gray-500">
 	                  If the customer gave a firm date, put it in and the item stays reserved for them. If they only said “I will call you”, leave the date blank — the item goes back to your available stock so it is not held for someone who may never call.
 	                </p>
@@ -88716,7 +88716,7 @@ ${waybillLineItems(w).length > 1
 	            )}
 
 	            {modal === "pdaGuarantor" && pdaGuarantorDraft && (
-	              <div className="space-y-4">
+	              <div className="px-6 py-5 space-y-4">
 	                <p className="m-0 text-xs text-gray-500">
 	                  Guarantor {pdaGuarantorDraft.slot} of 2. One may be family; the other must be someone independently verifiable — an employer, landlord, business owner or community leader. Two relatives can simply back each other up, so an all-family pair blocks approval.
 	                </p>
@@ -88784,7 +88784,7 @@ ${waybillLineItems(w).length > 1
 	                </div>
 	              );
 	              return (
-	              <div className="space-y-5">
+	              <div className="px-6 py-5 space-y-5">
 	                {/* Who you are calling and what they left behind - on the same
 	                    screen as the form, so nobody dials from another tab. */}
 	                <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-4">
@@ -88917,7 +88917,7 @@ ${waybillLineItems(w).length > 1
 	              );
 
 	              return (
-	                <div className="space-y-6">
+	                <div className="px-6 py-5 space-y-6">
 	                  {/* The single most important thing on this form: opening an
 	                      application is not onboarding anyone. */}
 	                  <div className="flex items-start gap-3 rounded-xl bg-blue-50/70 px-4 py-3">

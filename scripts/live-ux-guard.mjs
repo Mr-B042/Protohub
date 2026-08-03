@@ -306,6 +306,46 @@ for (const check of checks) {
   }
 }
 
+// ── Modal padding ────────────────────────────────────────
+// The shared modal shell body carries NO horizontal padding; every modal's own
+// content block supplies it. A block that forgets renders flush to the modal's
+// edges - labels touch the border and the page behind shows through. That
+// shipped on the Personal Delivery Agent application form and 14 others before
+// anyone noticed, so it is checked rather than remembered.
+//
+// The check is "does this block pad itself at all", not "is the root padded":
+// several blocks are IIFEs with local render helpers, so the first element in
+// the source is not the element that gets returned.
+const MODAL_PAD_MARKERS = ["modal-form", "px-6 py-5", "px-4 py-5", "px-6 py-8", "px-5 py-4", "p-6", "overflow-y-auto p-6"];
+const unpaddedModals = [];
+{
+  const bodyStart = app.indexOf("min-h-0 flex-1 overflow-y-auto overscroll-contain");
+  const body = bodyStart === -1 ? "" : app.slice(bodyStart);
+  const blockRe = /\{modal === "([A-Za-z]+)"[^\n]*&&/g;
+  const seen = new Set();
+  let match;
+  while ((match = blockRe.exec(body)) !== null) {
+    const name = match[1];
+    if (seen.has(name)) continue;
+    // Enough of the block to cover its opening wrapper and any local helpers.
+    const head = body.slice(match.index, match.index + 4000);
+    if (MODAL_PAD_MARKERS.some((marker) => head.includes(marker))) {
+      seen.add(name);
+      continue;
+    }
+    unpaddedModals.push(name);
+    seen.add(name);
+  }
+}
+if (unpaddedModals.length > 0) {
+  console.error("\n[live-ux-guard] Modal content is flush against the modal edges.\n");
+  console.error("  Why: the shared modal body has no padding, so each modal block must");
+  console.error("       carry its own (px-6 py-5, or the .modal-form class).");
+  for (const name of unpaddedModals) console.error(`  - ${name}`);
+  console.error("");
+  process.exit(1);
+}
+
 if (failures.length > 0) {
   console.error("\n[live-ux-guard] Restored live UX guard failed.\n");
   for (const failure of failures) {
