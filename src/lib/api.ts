@@ -791,6 +791,7 @@ export type PdaApplicationRow = {
   kycApproved: number; kycTotal: number; kycPct: number;
   guarantorStatus: string; guarantorsVerified: number; guarantorsTotal: number;
   documentsPending: number; submittedOn: string; approvedAt?: string | null;
+  submittedVia?: string | null; applicationLinkId?: string | null; statusReason?: string | null;
   blockers: string[];
 };
 
@@ -1038,6 +1039,12 @@ export type PdaSettingsOverview = {
   lastUpdatedAt: string | null;
 };
 
+export type PdaBlockedApplicant = {
+  id: string; phoneDigits: string; displayPhone?: string | null; fullName?: string | null;
+  reason: string; agentId?: string | null; applicationLinkId?: string | null;
+  blockedByName?: string | null; createdAt: string;
+};
+
 export type PdaApplicationLink = {
   id: string; token: string; label?: string | null; active: boolean;
   expiresAt?: string | null; maxSubmissions?: number | null; submissionCount: number;
@@ -1093,6 +1100,12 @@ export const personalDeliveryAgentsApi = {
     patch<{ row: PdaDocument }>(`/api/personal-delivery-agents/documents/${documentId}`, body),
   approve: (id: string) =>
     post<{ row: PersonalDeliveryAgentRow }>(`/api/personal-delivery-agents/${id}/approve`, {}),
+  rejectApplication: (id: string, body: { reason: string; blockApplicant: boolean }) =>
+    post<{ ok: boolean; blocked: boolean }>(`/api/personal-delivery-agents/${id}/reject`, body),
+  blockedApplicants: () =>
+    get<{ rows: PdaBlockedApplicant[] }>("/api/personal-delivery-agents/blocked-applicants"),
+  unblockApplicant: (blockId: string) =>
+    del<{ ok: boolean }>(`/api/personal-delivery-agents/blocked-applicants/${blockId}`),
   setStatus: (id: string, body: unknown) =>
     post<{ row: PersonalDeliveryAgentRow }>(`/api/personal-delivery-agents/${id}/status`, body),
   uploadMedia: (dataUrl: string) =>

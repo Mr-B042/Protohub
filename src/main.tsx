@@ -9,6 +9,7 @@ import { LoginScreen } from "./components/LoginScreen";
 import { ResetPasswordScreen } from "./components/ResetPasswordScreen";
 import PublicOrderFormPage from "./pages/PublicOrderFormPage";
 import PublicAgentApplicationPage from "./PublicAgentApplicationPage";
+import PublicAgentStatusPage from "./PublicAgentStatusPage";
 import "./styles.css";
 
 function RouteFallback({ message }: { message: string }) {
@@ -220,6 +221,13 @@ function Root() {
 
   // Agent self-application. Reached by a shared link with no login, so it must
   // sit ahead of the auth gate like the public order form.
+  //
+  // The status route is checked FIRST: it is a longer path under the same
+  // prefix, so the application form would otherwise swallow it and applicants
+  // would land on a blank second application.
+  if (hash.startsWith("#/agent-application/status/")) {
+    return <PublicAgentStatusPage />;
+  }
   if (hash.startsWith("#/agent-application/")) {
     return <PublicAgentApplicationPage />;
   }
