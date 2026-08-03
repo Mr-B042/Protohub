@@ -6392,7 +6392,7 @@ const normalizeCartJourneyEvent = (value: any): CartJourneyEvent => {
 
 const loadCartJourneyBulkInChunks = async (
   cartIds: string[],
-  options?: { createdAfter?: string }
+  options?: { createdAfter?: string; snapshot?: boolean }
 ): Promise<Record<string, CartJourneyEvent[]>> => {
   const uniqueIds = Array.from(new Set(cartIds.map((id) => id.trim()).filter(Boolean)));
   const chunks: string[][] = [];
@@ -6402,12 +6402,10 @@ const loadCartJourneyBulkInChunks = async (
 
   const settled = await Promise.allSettled(chunks.map((chunk) => cartsApi.journeyBulk(chunk, options)));
   const normalized: Record<string, CartJourneyEvent[]> = {};
-  let fulfilledCount = 0;
   let firstError: unknown = null;
 
   for (const result of settled) {
     if (result.status === "fulfilled") {
-      fulfilledCount += 1;
       for (const [cartId, events] of Object.entries(result.value ?? {})) {
         normalized[cartId] = Array.isArray(events) ? events.map((event) => normalizeCartJourneyEvent(event)) : [];
       }
@@ -6416,7 +6414,9 @@ const loadCartJourneyBulkInChunks = async (
     }
   }
 
-  if (fulfilledCount === 0 && firstError) {
+  // Never advance an incremental cursor from a partial multi-chunk response.
+  // Retrying the whole request is cheap and prevents permanent analytics gaps.
+  if (firstError) {
     throw firstError;
   }
 
@@ -6450,6 +6450,19 @@ const mergeCartJourneyEvents = (
   }
   return changed ? next : current;
 };
+
+const mergeRealtimeCartJourneyEvent = (
+  current: Record<string, CartJourneyEvent[]>,
+  event: CartJourneyEvent
+) => {
+  if (!event.cartId || !Object.prototype.hasOwnProperty.call(current, event.cartId)) return current;
+  return mergeCartJourneyEvents(current, { [event.cartId]: [event] });
+};
+
+const scopeCartJourneyMap = (
+  current: Record<string, CartJourneyEvent[]>,
+  cartIds: string[]
+) => Object.fromEntries(cartIds.map((cartId) => [cartId, current[cartId] ?? []]));
 
 const submittedOrderIdFromCartJourney = (journeyEvents: CartJourneyEvent[] = []): string => {
   for (const event of [...journeyEvents].reverse()) {
@@ -15316,6 +15329,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     let pollingHandle: number | undefined;
     let latestCreatedAt = "";
     const cartIds = adTrackingJourneyCartIdsKey.split("|").filter(Boolean);
+    setAdTrackingCartJourneyMap((current) => scopeCartJourneyMap(current, cartIds));
     const loadJourneys = async (silent = false) => {
       if (!silent) {
         setAdTrackingCartJourneyLoading(true);
@@ -15323,13 +15337,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       try {
         const normalized = await loadCartJourneyBulkInChunks(
           cartIds,
-          silent && latestCreatedAt ? { createdAfter: latestCreatedAt } : undefined
+          silent && latestCreatedAt ? { createdAfter: latestCreatedAt } : { snapshot: true }
         );
         if (cancelled) return;
         const newestTimestamp = latestCartJourneyTimestamp(normalized);
-        setAdTrackingCartJourneyMap((current) =>
-          silent && latestCreatedAt ? mergeCartJourneyEvents(current, normalized) : normalized
-        );
+        setAdTrackingCartJourneyMap((current) => {
+          if (silent && latestCreatedAt) return mergeCartJourneyEvents(current, normalized);
+          return mergeCartJourneyEvents(normalized, scopeCartJourneyMap(current, cartIds));
+        });
         if (newestTimestamp > latestCreatedAt) latestCreatedAt = newestTimestamp;
       } catch {
         if (cancelled) return;
@@ -16908,6 +16923,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     let pollingHandle: number | undefined;
     let latestCreatedAt = "";
     const cartIds = abandonedJourneyCartIdsKey.split("|").filter(Boolean);
+    setAbandonedCartJourneyMap((current) => scopeCartJourneyMap(current, cartIds));
     const loadJourneys = async (silent = false) => {
       if (!silent) {
         setAbandonedCartJourneyLoading(true);
@@ -16915,13 +16931,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       try {
         const normalized = await loadCartJourneyBulkInChunks(
           cartIds,
-          silent && latestCreatedAt ? { createdAfter: latestCreatedAt } : undefined
+          silent && latestCreatedAt ? { createdAfter: latestCreatedAt } : { snapshot: true }
         );
         if (cancelled) return;
         const newestTimestamp = latestCartJourneyTimestamp(normalized);
-        setAbandonedCartJourneyMap((current) =>
-          silent && latestCreatedAt ? mergeCartJourneyEvents(current, normalized) : normalized
-        );
+        setAbandonedCartJourneyMap((current) => {
+          if (silent && latestCreatedAt) return mergeCartJourneyEvents(current, normalized);
+          return mergeCartJourneyEvents(normalized, scopeCartJourneyMap(current, cartIds));
+        });
         if (newestTimestamp > latestCreatedAt) latestCreatedAt = newestTimestamp;
       } catch {
         if (cancelled) return;
@@ -22200,6 +22217,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     let pollingHandle: number | undefined;
     let latestCreatedAt = "";
     const cartIds = repJourneyCartIdsKey.split("|").filter(Boolean);
+    setRepCartJourneyMap((current) => scopeCartJourneyMap(current, cartIds));
     const loadJourneys = async (silent = false) => {
       if (!silent) {
         setRepCartJourneyLoading(true);
@@ -22207,13 +22225,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       try {
         const normalized = await loadCartJourneyBulkInChunks(
           cartIds,
-          silent && latestCreatedAt ? { createdAfter: latestCreatedAt } : undefined
+          silent && latestCreatedAt ? { createdAfter: latestCreatedAt } : { snapshot: true }
         );
         if (cancelled) return;
         const newestTimestamp = latestCartJourneyTimestamp(normalized);
-        setRepCartJourneyMap((current) =>
-          silent && latestCreatedAt ? mergeCartJourneyEvents(current, normalized) : normalized
-        );
+        setRepCartJourneyMap((current) => {
+          if (silent && latestCreatedAt) return mergeCartJourneyEvents(current, normalized);
+          return mergeCartJourneyEvents(normalized, scopeCartJourneyMap(current, cartIds));
+        });
         if (newestTimestamp > latestCreatedAt) latestCreatedAt = newestTimestamp;
       } catch {
         if (cancelled) return;
@@ -24561,6 +24580,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         merged[index] = { ...prev[index], ...nextCart };
         return merged;
       });
+    });
+
+    // Keep overview analytics current without repeatedly downloading every
+    // cart timeline. The 60-second incremental HTTP poll remains as a safety
+    // net for websocket reconnect gaps.
+    channel.on("postgres_changes", { event: "INSERT", schema: "public", table: "cart_journey_events" }, (payload) => {
+      const nextEvent = normalizeCartJourneyEvent(payload.new);
+      if (!nextEvent.id || !nextEvent.cartId) return;
+      setAdTrackingCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
+      setAbandonedCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
+      setRepCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
     });
 
     channel.on("postgres_changes", { event: "*", schema: "public", table: "users" }, (payload) => {

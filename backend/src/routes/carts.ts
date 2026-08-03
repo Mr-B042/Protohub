@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { appendCartJourneyEvent } from "../lib/cart-journey.js";
+import { appendCartJourneyEvent, compactCartJourneyEventsForAnalytics } from "../lib/cart-journey.js";
 import { notifyNewAbandonedCart } from "../lib/cart-notifications.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -104,7 +104,8 @@ const JourneyBulkSchema = z.object({
   cartIds: z.array(
     z.string().min(1).max(80).regex(/^[A-Za-z0-9\-_]+$/, "Cart ID must be alphanumeric")
   ).max(500),
-  createdAfter: z.string().datetime({ offset: true }).optional()
+  createdAfter: z.string().datetime({ offset: true }).optional(),
+  snapshot: z.boolean().optional()
 });
 
 const ConvertedCartLinkRepairOneSchema = z.object({
@@ -684,8 +685,11 @@ router.post("/journey-bulk", async (req, res) => {
     if (!batch || batch.length < EVENT_PAGE_SIZE) break;
   }
 
+  const responseEvents = parsed.data.snapshot
+    ? compactCartJourneyEventsForAnalytics(events)
+    : events;
   const grouped = Object.fromEntries(allowedIds.map((id) => [id, [] as any[]]));
-  for (const event of events) {
+  for (const event of responseEvents) {
     const cartId = typeof event.cart_id === "string" ? event.cart_id : "";
     if (!cartId || !grouped[cartId]) continue;
     grouped[cartId].push(event);

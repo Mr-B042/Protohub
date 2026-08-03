@@ -2336,10 +2336,11 @@ export const cartsApi = {
     return snakeToCamel<any>(await res.json());
   },
   journey: (id: string) => get<any[]>(`/api/carts/${encodeURIComponent(id)}/journey`),
-  journeyBulk: (cartIds: string[], options?: { createdAfter?: string }) =>
+  journeyBulk: (cartIds: string[], options?: { createdAfter?: string; snapshot?: boolean }) =>
     post<Record<string, any[]>>("/api/carts/journey-bulk", {
       cartIds,
-      ...(options?.createdAfter ? { createdAfter: options.createdAfter } : {})
+      ...(options?.createdAfter ? { createdAfter: options.createdAfter } : {}),
+      ...(options?.snapshot ? { snapshot: true } : {})
     }),
   convertedLinkRepairs: () => get<any>("/api/carts/converted-link-repairs"),
   applyConvertedLinkRepairs: () => post<any>("/api/carts/converted-link-repairs/apply", {}),

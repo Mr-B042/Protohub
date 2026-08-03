@@ -11,6 +11,111 @@ export type BackofficeCartJourneyEventType =
   | "order_status_changed"
   | "contact_attempt_logged";
 
+type CompactableCartJourneyEvent = {
+  cart_id?: string | null;
+  event_type?: string | null;
+  created_at?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+// Overview analytics needs exact counts for these operational events. For the
+// remaining high-frequency signals, one latest row per cart/event type is
+// enough to preserve funnel presence, latest context, and recovery guidance.
+const ANALYTICS_KEEP_ALL_EVENT_TYPES = new Set([
+  "additional_item_preview_opened",
+  "additional_item_added",
+  "additional_item_removed",
+  "contact_attempt_logged",
+  "order_assigned",
+  "order_reassigned",
+  "delivery_agent_assigned",
+  "delivery_agent_reassigned",
+  "order_status_changed"
+]);
+
+const isAnalyticsCountedJourneyType = (eventType: string) =>
+  ANALYTICS_KEEP_ALL_EVENT_TYPES.has(eventType) || eventType.startsWith("submit_blocked_");
+
+const ANALYTICS_METADATA_KEYS = new Set([
+  "productName",
+  "packageName",
+  "package",
+  "state",
+  "quantity",
+  "variants",
+  "customerName",
+  "additionalItems",
+  "totalAfterAdd",
+  "offerAmount",
+  "currency",
+  "placement",
+  "action",
+  "actorName",
+  "repName",
+  "agentName",
+  "fromStatus",
+  "toStatus",
+  "channel",
+  "outcomeCode",
+  "nextActionType",
+  "fromDate",
+  "toDate",
+  "reason",
+  "message",
+  "status",
+  "secondsOnPage",
+  "lastFieldTouched",
+  "fromPackageName",
+  "toPackageName",
+  "direction",
+  "imageIndex",
+  "totalImages",
+  "field",
+  "clearedAfterChars",
+  "orderId",
+  "order_id",
+  "linkedOrderId",
+  "linked_order_id",
+  "source",
+  "embedLabel"
+]);
+
+const compactJourneyMetadata = (metadata: Record<string, unknown> | null | undefined) => {
+  const compact: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metadata ?? {})) {
+    if (ANALYTICS_METADATA_KEYS.has(key)) compact[key] = value;
+  }
+  return compact;
+};
+
+export const compactCartJourneyEventsForAnalytics = <T extends CompactableCartJourneyEvent>(events: T[]): T[] => {
+  const latestByCartAndType = new Map<string, T>();
+  const latestByCart = new Map<string, T>();
+
+  for (const event of events) {
+    const cartId = String(event.cart_id ?? "");
+    const eventType = String(event.event_type ?? "");
+    if (!cartId || !eventType) continue;
+
+    if (!isAnalyticsCountedJourneyType(eventType)) {
+      latestByCartAndType.set(`${cartId}:${eventType}`, event);
+    }
+    latestByCart.set(cartId, event);
+  }
+
+  return events.filter((event) => {
+    const cartId = String(event.cart_id ?? "");
+    const eventType = String(event.event_type ?? "");
+    if (!cartId || !eventType) return false;
+    return isAnalyticsCountedJourneyType(eventType)
+      || latestByCartAndType.get(`${cartId}:${eventType}`) === event
+      || latestByCart.get(cartId) === event;
+  }).map((event) => ({
+    ...event,
+    metadata: compactJourneyMetadata(event.metadata)
+  }));
+};
+
 type AppendCartJourneyEventArgs = {
   orgId: string;
   cartId: string;
