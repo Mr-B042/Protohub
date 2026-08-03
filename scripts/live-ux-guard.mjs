@@ -322,19 +322,24 @@ const unpaddedModals = [];
   const bodyStart = app.indexOf("min-h-0 flex-1 overflow-y-auto overscroll-contain");
   const body = bodyStart === -1 ? "" : app.slice(bodyStart);
   const blockRe = /\{modal === "([A-Za-z]+)"[^\n]*&&/g;
-  const seen = new Set();
+  // Collect every block start first, so each block can be measured up to the
+  // NEXT one. A fixed-size window was wrong: adding a dozen lines near the top
+  // of a modal pushed its padded root out of view and failed the build for a
+  // modal that was correctly padded all along.
+  const starts = [];
   let match;
   while ((match = blockRe.exec(body)) !== null) {
-    const name = match[1];
+    starts.push({ name: match[1], index: match.index });
+  }
+  const seen = new Set();
+  for (let i = 0; i < starts.length; i++) {
+    const { name, index } = starts[i];
     if (seen.has(name)) continue;
-    // Enough of the block to cover its opening wrapper and any local helpers.
-    const head = body.slice(match.index, match.index + 4000);
-    if (MODAL_PAD_MARKERS.some((marker) => head.includes(marker))) {
-      seen.add(name);
-      continue;
-    }
-    unpaddedModals.push(name);
     seen.add(name);
+    const end = i + 1 < starts.length ? starts[i + 1].index : body.length;
+    const block = body.slice(index, end);
+    if (MODAL_PAD_MARKERS.some((marker) => block.includes(marker))) continue;
+    unpaddedModals.push(name);
   }
 }
 if (unpaddedModals.length > 0) {

@@ -90306,6 +90306,15 @@ ${waybillLineItems(w).length > 1
                 const phoneShort = phoneDigits.length > 0 && phoneDigits.length < 7;
                 const dirty = salesRepName.trim() !== selectedSalesRep.name || salesRepEmail.trim() !== selectedSalesRep.email || salesRepPhone.trim() !== (selectedSalesRep.phone ?? "") || salesRepActive !== selectedSalesRep.active;
                 const canSave = !!salesRepName.trim() && !!salesRepEmail.trim() && !emailTaken && !phoneTaken && !phoneShort && phoneDigits.length >= 7 && dirty;
+                // Same reasoning as the Edit User modal: say why the button is
+                // grey, or it reads as broken.
+                const saveBlocker = canSave ? null
+                  : !salesRepName.trim() ? "Enter a name."
+                  : !salesRepEmail.trim() ? "Enter an email address."
+                  : emailTaken ? "Another user already has that email address."
+                  : phoneTaken ? "Another user already has that phone number."
+                  : (phoneShort || phoneDigits.length < 7) ? "Add a phone number customers can reach from SMS."
+                  : "Nothing has changed yet. Edit a field to enable saving.";
                 return (
                   <div className="px-6 py-5 flex flex-col gap-5">
                     {/* Identity strip */}
@@ -90454,13 +90463,18 @@ ${waybillLineItems(w).length > 1
                     </section>
 
                     {/* Footer actions */}
-                    <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
+                    <div className="flex flex-col gap-2 pt-2 border-t border-gray-100">
+                    {saveBlocker && (
+                      <p className="m-0 text-right text-xs font-semibold text-gray-500">{saveBlocker}</p>
+                    )}
+                    <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3">
                       <button
                         className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
                         onClick={closeModal}
                       >Cancel</button>
                       <button
                         disabled={!canSave}
+                        title={saveBlocker ?? undefined}
                         className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         onClick={() => {
                           if (!salesRepName.trim() || !salesRepEmail.trim()) { showToast("Name and email are required."); return; }
@@ -90477,6 +90491,7 @@ ${waybillLineItems(w).length > 1
                           });
                         }}
                       >Save changes</button>
+                    </div>
                     </div>
                   </div>
                 );
@@ -90784,6 +90799,20 @@ ${waybillLineItems(w).length > 1
                 && (!marketingTagsRequired || marketingTags.length > 0)
                 && !pwdTooShort
                 && dirty;
+              // A greyed-out button with no explanation is indistinguishable
+              // from a broken one - this was reported as "edit user is not
+              // working" when the real answer was "nothing has changed yet".
+              const saveBlocker = canSave ? null
+                : !userFullName.trim() ? "Enter a name."
+                : !userEmail.trim() ? "Enter an email address."
+                : !emailFormatOk ? "That email address does not look right."
+                : emailTaken ? "Another user already has that email address."
+                : phoneTaken ? "Another user already has that phone number."
+                : phoneShort ? "That phone number is too short."
+                : (phoneRequired && phoneDigits.length < 7) ? "A Sales Rep needs a phone number customers can reach."
+                : (marketingTagsRequired && marketingTags.length === 0) ? "Add at least one marketing attribution tag."
+                : pwdTooShort ? "A new password must be at least 6 characters."
+                : "Nothing has changed yet. Edit a field to enable saving.";
               const initial = (selectedUser.name || "?").charAt(0).toUpperCase();
               const roleHelper: Partial<Record<EditableUserRole, string>> = {
                 "Owner": "Full access including billing and account ownership. Cannot be reassigned.",
@@ -90965,16 +90994,22 @@ ${waybillLineItems(w).length > 1
                   )}
 
                   {/* Footer */}
-                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2 border-t border-gray-100">
-                    <button
-                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
-                      onClick={closeModal}
-                    >Cancel</button>
-                    <button
-                      disabled={!canSave}
-                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      onClick={updateUser}
-                    >Save changes</button>
+                  <div className="flex flex-col gap-2 pt-2 border-t border-gray-100">
+                    {saveBlocker && (
+                      <p className="m-0 text-right text-xs font-semibold text-gray-500 sm:order-none">{saveBlocker}</p>
+                    )}
+                    <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3">
+                      <button
+                        className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                        onClick={closeModal}
+                      >Cancel</button>
+                      <button
+                        disabled={!canSave}
+                        title={saveBlocker ?? undefined}
+                        className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-semibold hover:bg-[#1560a8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        onClick={updateUser}
+                      >Save changes</button>
+                    </div>
                   </div>
                 </div>
               );
