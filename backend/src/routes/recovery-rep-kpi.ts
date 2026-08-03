@@ -344,6 +344,12 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     // A Recovery Rep never receives company revenue, cost, margin or salary -
     // stripped SERVER-SIDE, so it is not merely hidden in the UI. Supervisors
     // get the full picture.
+    //
+    // ONE exception, added on Bright's instruction: weeklyPace. A rep asked for
+    // a naira weekly target and now gets that single figure. The surrounding
+    // breakdown it was grouped with - revenue, product cost, logistics,
+    // commission, salary, margin - stays stripped, so this exposes a number to
+    // aim at without exposing the cost structure behind it.
     const isSupervisorView = scopeRole !== "Recovery Rep";
     if (!isSupervisorView) {
       res.json({
@@ -351,6 +357,11 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
         repId,
         viewerScope: "rep",
         recovery,
+        weeklyPace: {
+          value: Math.round(weeklyPace),
+          target: settings.weeklyPaceTarget,
+          weekStart: currentWeekStart
+        },
         deliveryRate: { pct: deliveryRatePct, target: settings.minDeliveryRatePct, deliveredCount, closedCount },
         upsellAttemptRate: { pct: upsellAttemptRatePct, target: settings.upsellAttemptRatePct, eligibleCount: eligibleTotal, loggedCount: loggedTotal },
         documentation: {
