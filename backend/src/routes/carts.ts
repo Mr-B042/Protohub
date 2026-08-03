@@ -6,6 +6,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { sendCartAssignedSms } from "../lib/sms.js";
 import { applyCartMarketingScope } from "../lib/marketing-attribution.js";
+import { lagosDateKey, lagosStartOfDayUtc, mondayOfWeek, addDays, dowOf } from "../lib/follow-up-kpi.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -1648,6 +1649,123 @@ router.post("/:id/contact-attempts",
       res.status(201).json({ row: data, statusMovedTo: cart.status === "Converted" ? null : nextStatus ?? null });
     } catch (error: any) {
       res.status(500).json({ error: error?.message ?? "Could not log that follow-up." });
+    }
+  }
+);
+
+// ── GET /api/carts/follow-up-grid ─────────────────────────
+// Assigned carts as rows, the week's working days as columns - the same
+// day-by-day shape as the order follow-up grid, so a rep reads one layout.
+//
+// Deliberately WITHOUT the miss/penalty machinery. The N50-a-day KPI is defined
+// for orders; carts have no such rule, and inventing one here would charge reps
+// against a target nobody set.
+const CART_WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+router.get("/follow-up-grid",
+  requireRole("Owner", "Admin", "Manager", "Sales Rep"),
+  async (req, res) => {
+    try {
+      const orgId = req.user!.orgId;
+      const scopeRepId = req.user!.role === "Sales Rep"
+        ? (req.user!.effectiveUserId ?? req.user!.id)
+        : null;
+      const requestedRep = typeof req.query.repId === "string" && req.query.repId ? req.query.repId : null;
+      const repFilter = scopeRepId ?? requestedRep;
+
+      const todayKey = lagosDateKey(new Date());
+      const weekStart = typeof req.query.weekStart === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.weekStart)
+        ? req.query.weekStart
+        : mondayOfWeek(todayKey);
+      // Mon-Sat, matching the order grid. Sundays are off.
+      const days = Array.from({ length: 6 }, (_, i) => {
+        const key = addDays(weekStart, i);
+        return { key, label: `${CART_WEEKDAY_SHORT[dowOf(key)]} ${Number(key.slice(8, 10))}`, isToday: key === todayKey };
+      });
+
+      let cartQuery = supabase.from("abandoned_carts")
+        .select("id, customer, phone, whatsapp, status, amount, currency, product_name, package_name, city, state, assigned_rep_id, created_at, last_activity, left_at")
+        .eq("org_id", orgId)
+        .not("assigned_rep_id", "is", null);
+      if (repFilter) cartQuery = cartQuery.eq("assigned_rep_id", repFilter);
+      const { data: carts } = await cartQuery.order("created_at", { ascending: false }).limit(500);
+      const rows = carts ?? [];
+      const cartIds = rows.map((row: any) => row.id);
+
+      if (cartIds.length === 0) {
+        res.json({ weekStart, isCurrentWeek: weekStart === mondayOfWeek(todayKey), todayKey, days, rows: [] });
+        return;
+      }
+
+      const { data: attempts } = await supabase.from(CART_ATTEMPTS)
+        .select("cart_id, channel, outcome_code, custom_outcome, outcome_note, customer_reached, attempted_at, rep_name")
+        .eq("org_id", orgId).in("cart_id", cartIds)
+        .gte("attempted_at", lagosStartOfDayUtc(weekStart))
+        .lt("attempted_at", lagosStartOfDayUtc(addDays(weekStart, 6)))
+        .order("attempted_at", { ascending: true });
+
+      // One bucket per cart+day. Ascending order means the last write wins, so a
+      // cell shows the day's FINAL outcome rather than its first.
+      const byCartDay = new Map<string, any>();
+      for (const a of (attempts ?? []) as any[]) {
+        const key = `${a.cart_id}|${lagosDateKey(a.attempted_at)}`;
+        const cell = byCartDay.get(key) ?? { attempts: 0, channels: [] as string[], reached: false, outcome: null, entries: [] as any[] };
+        cell.attempts++;
+        if (a.channel && !cell.channels.includes(a.channel)) cell.channels.push(a.channel);
+        if (a.customer_reached) cell.reached = true;
+        const label = a.outcome_code === "Other" ? (a.custom_outcome || "Other") : a.outcome_code;
+        cell.outcome = label;
+        cell.entries.push({
+          attemptedAt: a.attempted_at, outcome: label, channel: a.channel,
+          reached: Boolean(a.customer_reached), note: a.outcome_note ?? null, repName: a.rep_name ?? null
+        });
+        byCartDay.set(key, cell);
+      }
+
+      const { data: users } = await supabase.from("users").select("id, name").eq("org_id", orgId);
+      const nameById = new Map((users ?? []).map((u: any) => [u.id, u.name]));
+
+      const { data: linkedOrders } = await supabase.from("orders")
+        .select("id, source_cart_id, status").eq("org_id", orgId).in("source_cart_id", cartIds);
+      const orderByCart = new Map((linkedOrders ?? []).map((o: any) => [o.source_cart_id, o]));
+
+      res.json({
+        weekStart,
+        isCurrentWeek: weekStart === mondayOfWeek(todayKey),
+        todayKey,
+        days,
+        rows: rows.map((row: any) => {
+          const cells: Record<string, any> = {};
+          for (const day of days) {
+            const cell = byCartDay.get(`${row.id}|${day.key}`);
+            if (cell) cells[day.key] = cell;
+          }
+          const order = orderByCart.get(row.id) ?? null;
+          return {
+            id: row.id,
+            customer: row.customer,
+            phone: row.phone,
+            whatsapp: row.whatsapp ?? null,
+            productName: row.product_name ?? null,
+            packageName: row.package_name ?? null,
+            amount: Number(row.amount ?? 0),
+            currency: row.currency ?? "NGN",
+            city: row.city ?? null,
+            state: row.state ?? null,
+            status: row.status,
+            repId: row.assigned_rep_id,
+            repName: nameById.get(row.assigned_rep_id) ?? "Unknown rep",
+            createdAt: row.created_at,
+            // The cart's own arrival day, so a cell before it can be shown as
+            // "not yet a cart" rather than a day the rep failed to call.
+            createdKey: lagosDateKey(row.left_at || row.created_at),
+            convertedOrderId: order?.id ?? null,
+            convertedOrderStatus: order?.status ?? null,
+            cells
+          };
+        })
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message ?? "Could not load the cart follow-up grid." });
     }
   }
 );

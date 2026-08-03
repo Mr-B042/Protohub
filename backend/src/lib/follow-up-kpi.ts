@@ -38,7 +38,7 @@ export function lagosDateKey(input: string | Date): string {
 export function lagosHourNow(): number {
   return new Date(Date.now() + LAGOS_OFFSET_MS).getUTCHours();
 }
-function dowOf(dateKey: string): number {
+export function dowOf(dateKey: string): number {
   return new Date(`${dateKey}T12:00:00Z`).getUTCDay(); // 0=Sun .. 6=Sat
 }
 export function isWorkingDay(dateKey: string): boolean {
@@ -56,7 +56,7 @@ function workingDayNumber(startKey: string, todayKey: string): number {
   }
   return n;
 }
-function lagosStartOfDayUtc(dateKey: string): string {
+export function lagosStartOfDayUtc(dateKey: string): string {
   return new Date(`${dateKey}T00:00:00.000+01:00`).toISOString();
 }
 
@@ -442,14 +442,14 @@ export async function logFollowUpEntry(
 
 // ── Day-by-day log grid (Google-Sheets style) ─────────────
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-function mondayOfWeek(dateKey: string): string {
+export function mondayOfWeek(dateKey: string): string {
   const dow = dowOf(dateKey);
   const back = dow === 0 ? 6 : dow - 1;
   const d = new Date(`${dateKey}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() - back);
   return d.toISOString().slice(0, 10);
 }
-function addDays(dateKey: string, n: number): string {
+export function addDays(dateKey: string, n: number): string {
   const d = new Date(`${dateKey}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
