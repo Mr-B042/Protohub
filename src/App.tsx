@@ -55019,6 +55019,38 @@ ${waybillLineItems(w).length > 1
                         );
                       })}
                     </div>
+
+                    {/* The naira weekly target, on the rep's own dashboard.
+                        Grouped with the company financials before, so it never
+                        reached them - the surrounding cost breakdown is still
+                        stripped server-side, this is the single figure. */}
+                    {summary.weeklyPace && (() => {
+                      const wp = summary.weeklyPace;
+                      const hit = wp.value >= wp.target;
+                      const pct = wp.target > 0 ? Math.min(100, (wp.value / wp.target) * 100) : 0;
+                      return (
+                        <div className={`mt-3 rounded-xl border p-4 ${hit ? "border-emerald-200 bg-emerald-50/70" : "border-sky-200 bg-sky-50/70"}`}>
+                          <div className="flex flex-wrap items-end justify-between gap-2">
+                            <div>
+                              <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-500">This week in naira</p>
+                              <p className="m-0 mt-0.5 text-2xl font-black text-gray-900">
+                                {formatMoney(wp.value)}
+                                <span className="text-base font-bold text-gray-400"> / {formatMoney(wp.target)}</span>
+                              </p>
+                            </div>
+                            <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${hit ? "bg-emerald-100 text-emerald-800" : "bg-sky-100 text-sky-800"}`}>
+                              {hit ? "Target reached" : `${formatMoney(Math.max(0, wp.target - wp.value))} to go`}
+                            </span>
+                          </div>
+                          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/70">
+                            <div className={`h-full rounded-full ${hit ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
+                          </div>
+                          <p className="m-0 mt-1.5 text-[11px] text-gray-500">
+                            Week from {wp.weekStart}. Always the current week - it does not follow the period filter above.
+                          </p>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </section>
               );
@@ -55746,15 +55778,18 @@ ${waybillLineItems(w).length > 1
             {summary ? (
               <ul className="m-0 list-none space-y-2.5 p-0">
                 {([
-                  // A rep sees their own volume targets; company contribution
-                  // and pace are supervisor-only, matching what the API sends.
+                  // A rep sees their own volume targets and the weekly naira
+                  // target. Monthly net contribution stays supervisor-only,
+                  // matching exactly what the API sends to each.
                   ...(summary.recovery ? [
                     ["Recovered this week", summary.recovery.recoveredThisWeek, summary.recovery.weeklyTarget, "count"],
                     ["Recovered this month", summary.recovery.recoveredThisMonth, summary.recovery.monthlyTarget, "count"]
                   ] as Array<[string, number, number, "count"]> : []),
-                  ...(summary.netContribution ? [
-                    ["Monthly Net Contribution", summary.netContribution.value, summary.netContribution.targetMin, "money"],
+                  ...(summary.weeklyPace ? [
                     ["Weekly Pace", summary.weeklyPace.value, summary.weeklyPace.target, "money"]
+                  ] as Array<[string, number, number, "money"]> : []),
+                  ...(summary.netContribution ? [
+                    ["Monthly Net Contribution", summary.netContribution.value, summary.netContribution.targetMin, "money"]
                   ] as Array<[string, number, number, "money"]> : []),
                   ["Delivery Rate", summary.deliveryRate.pct, summary.deliveryRate.target, "pct"],
                   ["Upsell Attempt Rate", summary.upsellAttemptRate.pct, summary.upsellAttemptRate.target, "pct"],
