@@ -2494,7 +2494,13 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   // Console (those all assume the normal Sales Bonus Engine + fresh-lead
   // calling queue, neither of which this role uses).
   "Recovery Rep": [
-    "Recovery Rep Dashboard", "Customers", "Notifications", "Settings", "WhatsApp"
+    // Follow-up Queue is here because the N50-a-day KPI already charges a
+    // Recovery Rep the moment a claimed order is revived to New/Confirmed/
+    // Postponed. Without the page they accrue misses they cannot see or clear -
+    // Blessing had N250 recorded against one order on a screen she could not
+    // open. GET /api/orders scopes a frontline rep to their own orders, and
+    // the follow-up board/grid scope by rep too, so they see only theirs.
+    "Recovery Rep Dashboard", "Follow-up Queue", "Customers", "Notifications", "Settings", "WhatsApp"
   ],
   // A Personal Delivery Agent is an outside individual, not staff. They get
   // their own portal and nothing else - no customer list, no company data.
