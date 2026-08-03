@@ -2241,7 +2241,32 @@ export type CartFollowUpRow = {
   convertedOrderAt?: string | null;
 };
 
+export type CartGridCell = {
+  attempts: number; channels: string[]; reached: boolean; outcome: string | null;
+  entries: Array<{ attemptedAt: string; outcome: string | null; channel: string | null; reached: boolean; note: string | null; repName: string | null }>;
+};
+export type CartGridRow = {
+  id: string; customer: string; phone: string; whatsapp?: string | null;
+  productName?: string | null; packageName?: string | null;
+  amount: number; currency?: string | null; city?: string | null; state?: string | null;
+  status: string; repId: string; repName: string; createdAt: string; createdKey: string;
+  convertedOrderId?: string | null; convertedOrderStatus?: string | null;
+  cells: Record<string, CartGridCell>;
+};
+export type CartFollowUpGrid = {
+  weekStart: string; isCurrentWeek: boolean; todayKey: string;
+  days: Array<{ key: string; label: string; isToday: boolean }>;
+  rows: CartGridRow[];
+};
+
 export const cartsApi = {
+  followUpGrid: (params?: { weekStart?: string; repId?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.weekStart) qs.set("weekStart", params.weekStart);
+    if (params?.repId) qs.set("repId", params.repId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<CartFollowUpGrid>(`/api/carts/follow-up-grid${suffix}`);
+  },
   contactAttempts: (cartId: string) => get<{ rows: CartAttemptRow[] }>(`/api/carts/${cartId}/contact-attempts`),
   logContactAttempt: (cartId: string, body: unknown) =>
     post<{ row: CartAttemptRow; statusMovedTo: string | null }>(`/api/carts/${cartId}/contact-attempts`, body),

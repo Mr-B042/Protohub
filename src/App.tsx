@@ -128,7 +128,7 @@ import {
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
   setApiSpyUserId
 } from "./lib/api";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, CartFollowUpRow, CartAttemptRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -7942,6 +7942,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // cold, and they are invisible in a plain per-rep list.
   const [cartRepFilter, setCartRepFilter] = useState<string>("All reps");
   const [cartFollowUps, setCartFollowUps] = useState<CartFollowUpRow[]>([]);
+  // The day-by-day view of the same carts, matching the order Daily Log.
+  const [cartFollowUpGrid, setCartFollowUpGrid] = useState<CartFollowUpGrid | null>(null);
+  const [cartFollowUpWeekStart, setCartFollowUpWeekStart] = useState<string | null>(null);
+  const [cartFollowUpLayout, setCartFollowUpLayout] = useState<"grid" | "details">("grid");
   const [cartFollowUpRep, setCartFollowUpRep] = useState<string>("All reps");
   const [cartFollowUpFilter, setCartFollowUpFilter] = useState<string>("All");
   // The whole cart, not just its id: the rep making the call needs the number,
@@ -35809,12 +35813,52 @@ ${waybillLineItems(w).length > 1
     }).catch((err: any) => showToast(`Failed to save waybill: ${err.message}`));
   };
 
+  const loadCartFollowUpGrid = async (
+    weekStart: string | null = cartFollowUpWeekStart,
+    repId: string = cartFollowUpRep
+  ) => {
+    if (!canSeeCartFollowUps) return;
+    try {
+      const params: { weekStart?: string; repId?: string } = {};
+      if (weekStart) params.weekStart = weekStart;
+      // A rep is pinned server-side; this only narrows a supervisor's view.
+      if (!cartFollowUpIsOwnWork && repId !== "All reps") params.repId = repId;
+      const result = await cartsApi.followUpGrid(Object.keys(params).length ? params : undefined);
+      setCartFollowUpGrid(result ?? null);
+    } catch { setCartFollowUpGrid(null); }
+  };
+
+  const shiftCartFollowUpWeek = (deltaDays: number) => {
+    const base = cartFollowUpGrid?.weekStart;
+    if (!base) return;
+    const d = new Date(`${base}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + deltaDays);
+    const key = d.toISOString().slice(0, 10);
+    setCartFollowUpWeekStart(key);
+    void loadCartFollowUpGrid(key);
+  };
+
   const loadCartFollowUps = async () => {
     if (!canSeeCartFollowUps) return;
+    void loadCartFollowUpGrid();
     try {
       const result = await cartsApi.followUpOverview();
       setCartFollowUps(result?.rows ?? []);
     } catch (err: any) { showToast(err?.message ?? "Could not load cart follow-ups."); }
+  };
+
+  // The grid carries a lighter row than the details table, so log-from-a-cell
+  // reuses the full record both views already loaded.
+  const openCartFollowUpFromGrid = (row: CartGridRow) => {
+    const full = cartFollowUps.find((cart) => cart.id === row.id);
+    openCartFollowUpModal(full ?? {
+      id: row.id, customer: row.customer, phone: row.phone, whatsapp: row.whatsapp,
+      productName: row.packageName || row.productName, baseProductName: row.productName,
+      packageName: row.packageName, amount: row.amount, currency: row.currency,
+      city: row.city, state: row.state, status: row.status,
+      repId: row.repId, repName: row.repName, createdAt: row.createdAt,
+      lastActivity: row.createdAt, attempts: 0
+    });
   };
 
   const openCartFollowUpModal = (cart: CartFollowUpRow) => {
@@ -53106,6 +53150,152 @@ ${waybillLineItems(w).length > 1
     return last10(whatsapp) === last10(phone) ? null : whatsapp;
   };
 
+  // Day-by-day log, deliberately the same shape as the order Daily Log so a rep
+  // reads one layout for both kinds of chasing.
+  //
+  // No red "at risk" cell here. The N50-a-day miss rule is defined for ORDERS;
+  // carts carry no such target, and colouring an empty cell red would imply a
+  // charge nobody agreed to. An un-worked day is simply blank.
+  const renderCartFollowUpGrid = () => {
+    const grid = cartFollowUpGrid;
+    const attemptsById = new Map(cartFollowUps.map((row) => [row.id, row.attempts]));
+    const lastAttemptById = new Map(cartFollowUps.map((row) => [row.id, row.lastAttemptAt ?? null]));
+    // Same filter as the Details table, so switching layout never silently
+    // changes which carts you are looking at.
+    const rows = (grid?.rows ?? []).filter((row) => {
+      if (cartFollowUpFilter === "All") return true;
+      const attempts = attemptsById.get(row.id) ?? 0;
+      if (cartFollowUpFilter === "Never contacted") return attempts === 0;
+      if (cartFollowUpFilter === "Converted") return Boolean(row.convertedOrderId);
+      if (cartFollowUpFilter === "Still open") return !row.convertedOrderId;
+      if (cartFollowUpFilter === "Going quiet") {
+        const last = lastAttemptById.get(row.id);
+        const at = last ? new Date(last).getTime() : 0;
+        return attempts > 0 && !row.convertedOrderId && (!at || Date.now() - at > 3 * 86400000);
+      }
+      return true;
+    });
+    const days = grid?.days ?? [];
+    const todayKey = grid?.todayKey ?? "";
+
+    const outcomeTone = (outcome: string | null) => {
+      const value = (outcome ?? "").toLowerCase();
+      if (value.includes("wants to order") || (value.includes("interested") && !value.includes("not interested"))) return "bg-emerald-50 text-emerald-700 border-emerald-200";
+      if (value.includes("not interested") || value.includes("wrong number")) return "bg-gray-100 text-gray-600 border-gray-200";
+      if (value.includes("unresponsive") || value.includes("not reachable")) return "bg-amber-50 text-amber-700 border-amber-200";
+      return "bg-sky-50 text-sky-700 border-sky-200";
+    };
+
+    return (
+      <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => shiftCartFollowUpWeek(-7)}
+              className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={() => { setCartFollowUpWeekStart(null); void loadCartFollowUpGrid(null); }}
+              className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50">
+              This week
+            </button>
+            <button type="button" onClick={() => shiftCartFollowUpWeek(7)}
+              className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            {grid && (
+              <span className="ml-1 text-xs font-semibold text-gray-500">
+                Week of {new Date(`${grid.weekStart}T12:00:00Z`).toLocaleDateString([], { dateStyle: "medium" })}
+                {grid.isCurrentWeek ? " · this week" : ""}
+              </span>
+            )}
+          </div>
+          <span className="text-[11px] font-semibold text-gray-400">Mon–Sat · Sundays off</span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1000px] border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50/70 text-[10px] font-black uppercase tracking-[0.12em] text-gray-500">
+                <th className="border-r border-gray-200 px-4 py-3 text-left">Customer / Cart</th>
+                <th className="border-r border-gray-200 px-3 py-3 text-left">Rep</th>
+                {days.map((day) => (
+                  <th key={day.key} className={`border-r border-gray-200 px-3 py-3 text-center last:border-r-0 ${day.isToday ? "bg-blue-50/70 text-[#1F8FE0]" : ""}`}>
+                    {day.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={2 + days.length} className="px-4 py-12 text-center">
+                    <p className="m-0 text-sm font-semibold text-gray-500">
+                      {cartFollowUpIsOwnWork ? "No carts are assigned to you right now." : "No carts are assigned to a rep yet."}
+                    </p>
+                    <p className="m-0 mt-1 text-xs text-gray-400">
+                      {cartFollowUpIsOwnWork
+                        ? "When a cart is assigned to you it shows up here to call."
+                        : "Assign a cart to a rep and their daily log appears here."}
+                    </p>
+                  </td>
+                </tr>
+              ) : rows.map((row) => (
+                <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50/60">
+                  <td className="border-r border-gray-200 px-4 py-3 align-top">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[13px] font-bold text-gray-900">{row.customer || "No name given"}</span>
+                      {row.convertedOrderId ? (
+                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-black uppercase text-emerald-700">Converted</span>
+                      ) : (
+                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-black uppercase text-gray-600">{row.status}</span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-[12px] text-gray-600">
+                      {row.productName || "No product"}{row.packageName ? ` · ${row.packageName}` : ""}
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-gray-400">
+                      {row.id} · {row.phone} · {cartRowMoney(row.amount, row.currency)}
+                    </div>
+                  </td>
+                  <td className="border-r border-gray-200 px-3 py-3 align-top text-[12px] text-gray-500">{row.repName}</td>
+                  {days.map((day) => {
+                    const cell = row.cells?.[day.key];
+                    // Before the cart even existed there was nothing to chase.
+                    const beforeCart = day.key < row.createdKey;
+                    const future = day.key > todayKey;
+                    return (
+                      <td key={day.key} className={`border-r border-gray-200 px-2 py-3 text-center align-top last:border-r-0 ${day.isToday ? "bg-blue-50/40" : ""}`}>
+                        {cell ? (
+                          <button type="button" onClick={() => openCartFollowUpFromGrid(row)}
+                            className={`!min-h-0 mx-auto flex w-full max-w-[150px] flex-col items-center gap-0.5 rounded-lg border px-2 py-1.5 ${outcomeTone(cell.outcome)}`}
+                            title={cell.entries.map((e) => `${new Date(e.attemptedAt).toLocaleTimeString([], { timeStyle: "short" })} · ${e.outcome}${e.note ? ` · ${e.note}` : ""}`).join("\n")}>
+                            <span className="text-[11px] font-black leading-tight">{cell.outcome}</span>
+                            <span className="text-[10px] font-semibold opacity-80">
+                              {cell.channels.join(", ") || "Call"}{cell.attempts > 1 ? ` ×${cell.attempts}` : ""}
+                            </span>
+                          </button>
+                        ) : beforeCart || future ? (
+                          <span className="text-gray-200">·</span>
+                        ) : row.convertedOrderId ? (
+                          <span className="text-gray-200">·</span>
+                        ) : (
+                          <button type="button" onClick={() => openCartFollowUpFromGrid(row)}
+                            className="!min-h-0 text-[12px] font-bold text-[#1F8FE0] hover:underline">
+                            + log
+                          </button>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    );
+  };
+
   const renderCartFollowUpTab = () => {
     // The same period rule the carts table uses, plus the last follow-up:
     // logging a call today on a three-week-old cart is today's work, so the
@@ -53115,7 +53305,7 @@ ${waybillLineItems(w).length > 1
       || (Boolean(row.lastActivity) && isInPeriod(row.lastActivity, cartsPeriod, cartsDateRange))
       || (Boolean(row.lastAttemptAt) && isInPeriod(row.lastAttemptAt!, cartsPeriod, cartsDateRange));
 
-    const periodRows = cartFollowUps.filter(inPeriod);
+    const periodRows = cartFollowUpLayout === "details" ? cartFollowUps.filter(inPeriod) : cartFollowUps;
 
     const isQuiet = (row: CartFollowUpRow) => {
       const last = row.lastAttemptAt ? new Date(row.lastAttemptAt).getTime() : 0;
@@ -53137,7 +53327,9 @@ ${waybillLineItems(w).length > 1
     // A narrow period can hide the oldest untouched carts, which are exactly
     // the ones worth chasing. Say so rather than let the date filter read as
     // "nobody is behind".
-    const hiddenNeverContacted = cartFollowUps.filter((row) => row.attempts === 0).length - neverContacted;
+    const hiddenNeverContacted = cartFollowUpLayout === "details"
+      ? cartFollowUps.filter((row) => row.attempts === 0).length - neverContacted
+      : 0;
 
     const daysSince = (value?: string | null) =>
       value ? Math.floor((Date.now() - new Date(value).getTime()) / 86400000) : null;
@@ -53149,23 +53341,29 @@ ${waybillLineItems(w).length > 1
         {/* Same period controls as the carts table, on the same state, so
             switching tabs keeps the window you were looking at. */}
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-          <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
-            {periods.map((item) => (
-              <button key={item} type="button"
-                className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${cartsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
-                onClick={() => handleCartsPeriodChange(item)}>{item}</button>
-            ))}
-          </div>
-          <div className="relative w-full sm:w-auto">
-            <button type="button" className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              onClick={() => setShowCartsDateRange((v) => !v)}>
-              <CalendarDays className="w-4 h-4" /> {cartsPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
-            </button>
-            {showCartsDateRange && renderDateRangeCalendar("carts-followup-date-range-panel", cartsDateRange, setCartsDateRange, applyCartsDateRange, () => setShowCartsDateRange(false))}
-          </div>
+          {/* The Daily Log navigates by week, so the period pills would be a
+              second, conflicting time control. They belong to Details only. */}
+          {cartFollowUpLayout === "details" && (
+            <>
+              <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                {periods.map((item) => (
+                  <button key={item} type="button"
+                    className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${cartsPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                    onClick={() => handleCartsPeriodChange(item)}>{item}</button>
+                ))}
+              </div>
+              <div className="relative w-full sm:w-auto">
+                <button type="button" className="!min-h-0 w-full sm:w-auto inline-flex items-center gap-2 px-3 py-2.5 sm:py-1.5 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  onClick={() => setShowCartsDateRange((v) => !v)}>
+                  <CalendarDays className="w-4 h-4" /> {cartsPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                </button>
+                {showCartsDateRange && renderDateRangeCalendar("carts-followup-date-range-panel", cartsDateRange, setCartsDateRange, applyCartsDateRange, () => setShowCartsDateRange(false))}
+              </div>
+            </>
+          )}
           {!cartFollowUpIsOwnWork && (
             <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700"
-              value={cartFollowUpRep} onChange={(e) => setCartFollowUpRep(e.target.value)}>
+              value={cartFollowUpRep} onChange={(e) => { setCartFollowUpRep(e.target.value); void loadCartFollowUpGrid(cartFollowUpWeekStart, e.target.value); }}>
               <option value="All reps">All reps</option>
               {activeSalesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
             </select>
@@ -53180,11 +53378,22 @@ ${waybillLineItems(w).length > 1
             className="!min-h-0 inline-flex h-10 sm:h-9 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
             <RefreshCw className="h-4 w-4" /> Refresh
           </button>
+          {/* Same two ways of looking at one set of carts: the week's log, or
+              the full contact and cart detail behind each row. */}
+          <div className="inline-flex items-center rounded-lg bg-gray-100 p-1">
+            {([["grid", "Daily Log"], ["details", "Details"]] as const).map(([key, label]) => (
+              <button key={key} type="button" onClick={() => setCartFollowUpLayout(key)}
+                className={`!min-h-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${cartFollowUpLayout === key ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
-            { label: cartFollowUpIsOwnWork ? "Carts assigned to me" : "Assigned carts", value: periodRows.length, tone: "text-gray-900", sub: "in this period" },
+            { label: cartFollowUpIsOwnWork ? "Carts assigned to me" : "Assigned carts", value: periodRows.length, tone: "text-gray-900",
+              sub: cartFollowUpLayout === "details" ? "in this period" : "all assigned" },
             { label: cartFollowUpIsOwnWork ? "I have not called yet" : "Never contacted", value: neverContacted,
               tone: neverContacted > 0 ? "text-rose-600" : "text-gray-900",
               sub: hiddenNeverContacted > 0 ? `+${hiddenNeverContacted} older, outside this period` : "nobody has called yet" },
@@ -53199,6 +53408,7 @@ ${waybillLineItems(w).length > 1
           ))}
         </div>
 
+        {cartFollowUpLayout === "grid" ? renderCartFollowUpGrid() : (
         <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1180px] text-sm">
@@ -53363,6 +53573,7 @@ ${waybillLineItems(w).length > 1
             </table>
           </div>
         </section>
+        )}
       </div>
     );
   };
