@@ -122,11 +122,14 @@ const sanitizeTeamMemberPayload = <T extends Record<string, unknown>>(row: T) =>
 });
 
 const touchUserPresence = async (userId: string) => {
-  if (!userId) return;
-  await supabase
+  if (!userId) return null;
+  const lastSeenAt = new Date().toISOString();
+  const { error } = await supabase
     .from("users")
-    .update({ last_seen_at: new Date().toISOString() })
+    .update({ last_seen_at: lastSeenAt })
     .eq("id", userId);
+  if (error) throw error;
+  return lastSeenAt;
 };
 
 // ── POST /api/auth/register ───────────────────────────────
@@ -423,8 +426,9 @@ router.get("/me", requireAuth, async (req, res) => {
 // Lightweight heartbeat so Owner can see Active / Offline / Last seen.
 router.post("/presence", requireAuth, async (req, res) => {
   try {
-    await touchUserPresence(req.user!.id);
-    res.json({ ok: true, lastSeenAt: new Date().toISOString() });
+    const lastSeenAt = await touchUserPresence(req.user!.id);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({ ok: true, lastSeenAt });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Failed to update presence." });
   }

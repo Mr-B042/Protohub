@@ -467,6 +467,10 @@ export const authApi = {
 // ── Users ────────────────────────────────────────────────
 export const usersApi = {
   list: () => get<any[]>("/api/users"),
+  presence: () => get<{
+    serverTime: string;
+    users: Array<{ id: string; active: boolean; lastSeenAt?: string | null }>;
+  }>("/api/users/presence"),
   update: (id: string, body: { name?: string; email?: string; phone?: string; active?: boolean }) =>
     patch<any>(`/api/users/${id}`, body)
 };

@@ -35,6 +35,29 @@ router.get("/", async (req, res) => {
   }
 });
 
+// ── GET /api/users/presence ──────────────────────────────
+// Compact presence snapshot for the management screen. Keeping this separate
+// from GET /api/users avoids repeatedly sending profiles, permissions, and
+// agent assignments just to recover from a missed realtime event.
+router.get("/presence", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
+  const { data, error } = await supabase
+    .from("users")
+    .select("id, active, last_seen_at")
+    .eq("org_id", req.user!.orgId)
+    .order("last_seen_at", { ascending: false, nullsFirst: false });
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json({
+    serverTime: new Date().toISOString(),
+    users: data ?? []
+  });
+});
+
 // ── PATCH /api/users/:id ─────────────────────────────────
 // Owner/Admin can update name, email, active status of any org member.
 const UserPatchSchema = z.object({

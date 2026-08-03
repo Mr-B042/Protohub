@@ -3798,7 +3798,7 @@ const orderAuditActorFor = (entry: OrderAuditEntry) => {
   return "Team member";
 };
 const weekRangeLabel = (weekStart: string, weekEnd: string) => `${formatDateOnly(weekStart)} - ${formatDateOnly(weekEnd)}`;
-const USER_ACTIVE_WINDOW_MS = 5 * 60 * 1000;
+const USER_ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 const userPresenceState = (user: Pick<ManagedUser, "active" | "lastSeenAt">): "Active" | "Offline" | "Inactive" => {
   if (!user.active) return "Inactive";
   if (!user.lastSeenAt) return "Offline";
@@ -6755,7 +6755,12 @@ const CART_JOURNEY_POLL_MS = 60_000;
 const CART_DETAIL_FALLBACK_POLL_MS = 30_000;
 
 // ── FORM_PULSE_POLL_MS ────────────────────
-const FORM_PULSE_POLL_MS = 8_000;
+// Realtime journey events refresh this panel immediately. This interval only
+// repairs websocket gaps, so it can stay slow and inexpensive.
+const FORM_PULSE_POLL_MS = 60_000;
+const NOTIFICATION_FALLBACK_POLL_MS = 5 * 60_000;
+const PRESENCE_HEARTBEAT_MS = 45_000;
+const PRESENCE_FALLBACK_POLL_MS = 15_000;
 
 // ── isNativePushShell ────────────────────
 const isNativePushShell = (() => {
@@ -7825,49 +7830,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // itself (moneyHiddenGlobal) lives outside React so every formatXMoney
   // helper can read it, including the ones defined outside this component.
   const moneyHidden = useSyncExternalStore(subscribeMoneyHidden, isMoneyHidden);
-  useEffect(() => {
-    if (!authUser?.id || !auth.isLoggedIn()) {
-      return;
-    }
-
-    let cancelled = false;
-    let timer: number | null = null;
-    const HEARTBEAT_MS = 60_000;
-
-    const ping = () => {
-      if (cancelled || document.visibilityState === "hidden") {
-        return;
-      }
-      authApi.presence().catch(() => {});
-    };
-
-    const schedule = () => {
-      if (timer) window.clearInterval(timer);
-      timer = window.setInterval(ping, HEARTBEAT_MS);
-    };
-
-    const handleVisible = () => {
-      if (document.visibilityState === "visible") {
-        ping();
-        schedule();
-      } else if (timer) {
-        window.clearInterval(timer);
-        timer = null;
-      }
-    };
-
-    ping();
-    schedule();
-    window.addEventListener("focus", ping);
-    document.addEventListener("visibilitychange", handleVisible);
-
-    return () => {
-      cancelled = true;
-      if (timer) window.clearInterval(timer);
-      window.removeEventListener("focus", ping);
-      document.removeEventListener("visibilitychange", handleVisible);
-    };
-  }, [authUser?.id]);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [hashRoute, setHashRoute] = useState(() => (typeof window === "undefined" ? "" : window.location.hash));
@@ -9126,6 +9088,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [newUserActive, setNewUserActive] = useState(true);
   const [selectedUserId, setSelectedUserId] = useState("owner");
   const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [presenceSyncState, setPresenceSyncState] = useState<"idle" | "live" | "error">("idle");
+  const [presenceSyncAt, setPresenceSyncAt] = useState<string | null>(null);
   const adTrackingLabelScope = authUser?.orgId ?? "default";
 
   useEffect(() => {
@@ -9162,6 +9126,99 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const realRole: EditableUserRole = (realManagedUser?.role
     ?? (authUser?.role as EditableUserRole | undefined)
     ?? "Viewer");
+
+  // Every signed-in user writes one tiny heartbeat while their tab is active.
+  // The returned timestamp is also applied locally so the current user does
+  // not depend on a websocket round-trip to appear online.
+  useEffect(() => {
+    if (!authUser?.id || !auth.isLoggedIn()) return;
+
+    let cancelled = false;
+    let timer: number | null = null;
+    const ping = () => {
+      if (cancelled || document.visibilityState === "hidden") return;
+      authApi.presence()
+        .then((result) => {
+          if (cancelled || !result.lastSeenAt) return;
+          setUsers((current) => current.map((user) => (
+            user.id === authUser.id ? { ...user, lastSeenAt: result.lastSeenAt } : user
+          )));
+        })
+        .catch(() => undefined);
+    };
+    const schedule = () => {
+      if (timer) window.clearInterval(timer);
+      timer = window.setInterval(ping, PRESENCE_HEARTBEAT_MS);
+    };
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") {
+        ping();
+        schedule();
+      } else if (timer) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    ping();
+    schedule();
+    window.addEventListener("focus", ping);
+    document.addEventListener("visibilitychange", handleVisible);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearInterval(timer);
+      window.removeEventListener("focus", ping);
+      document.removeEventListener("visibilitychange", handleVisible);
+    };
+  }, [authUser?.id]);
+
+  // Realtime is the fast path. While the Owner is actually viewing User
+  // Management, this compact snapshot catches missed socket events without
+  // downloading the full users/workspace payload.
+  useEffect(() => {
+    if (activePage !== "User Management" || realRole !== "Owner" || !auth.isLoggedIn()) {
+      setPresenceSyncState("idle");
+      return;
+    }
+
+    let cancelled = false;
+    let timer: number | null = null;
+    const syncPresence = async () => {
+      if (cancelled || document.visibilityState === "hidden") return;
+      try {
+        const snapshot = await usersApi.presence();
+        if (cancelled) return;
+        const byId = new Map(snapshot.users.map((row) => [row.id, row]));
+        setUsers((current) => current.map((user) => {
+          const row = byId.get(user.id);
+          if (!row) return user;
+          const lastSeenAt = row.lastSeenAt ?? undefined;
+          if (user.active === row.active && user.lastSeenAt === lastSeenAt) return user;
+          return { ...user, active: row.active, lastSeenAt };
+        }));
+        setPresenceSyncAt(snapshot.serverTime);
+        setPresenceSyncState("live");
+      } catch {
+        if (!cancelled) setPresenceSyncState("error");
+      }
+    };
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") void syncPresence();
+    };
+
+    void syncPresence();
+    timer = window.setInterval(() => void syncPresence(), PRESENCE_FALLBACK_POLL_MS);
+    window.addEventListener("focus", syncPresence);
+    window.addEventListener("online", syncPresence);
+    document.addEventListener("visibilitychange", handleVisible);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearInterval(timer);
+      window.removeEventListener("focus", syncPresence);
+      window.removeEventListener("online", syncPresence);
+      document.removeEventListener("visibilitychange", handleVisible);
+    };
+  }, [activePage, realRole]);
 
   // Spy / View-as: Owner can preview the app as another user. Persist the
   // chosen preview user so refresh keeps the same role/page context.
@@ -11135,6 +11192,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [liveFormPulseLoading, setLiveFormPulseLoading] = useState(false);
   const [liveFormPulseEmbedFilter, setLiveFormPulseEmbedFilter] = useState("");
   const [liveFormPulseEmbedOptions, setLiveFormPulseEmbedOptions] = useState<string[]>([]);
+  const liveFormPulseRefreshRef = useRef<(() => void) | null>(null);
+  const liveFormPulseRefreshTimerRef = useRef<number | null>(null);
   const [managerPerformanceRemote, setManagerPerformanceRemote] = useState<{ rows: any[]; summary: any } | null>(null);
   const [managerPerformanceLoading, setManagerPerformanceLoading] = useState(false);
   const [managerActionSavingKey, setManagerActionSavingKey] = useState<string | null>(null);
@@ -16970,6 +17029,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     const canViewLiveFormPulse = realRole === "Owner" || realRole === "Admin";
     if (activePage !== "Abandoned Carts" || !canViewLiveFormPulse) {
+      liveFormPulseRefreshRef.current = null;
       setLiveFormPulse(null);
       setLiveFormPulseLoading(false);
       setLiveFormPulseEmbedOptions([]);
@@ -17007,17 +17067,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     };
 
+    liveFormPulseRefreshRef.current = () => {
+      if (!cancelled && document.visibilityState === "visible") void loadPulse(true);
+    };
+    const refreshOnVisible = () => {
+      if (document.visibilityState === "visible") liveFormPulseRefreshRef.current?.();
+    };
     void loadPulse();
     pollingHandle = window.setInterval(() => {
       if (cancelled || document.visibilityState !== "visible") return;
       void loadPulse(true);
     }, FORM_PULSE_POLL_MS);
+    window.addEventListener("focus", refreshOnVisible);
+    window.addEventListener("online", refreshOnVisible);
+    document.addEventListener("visibilitychange", refreshOnVisible);
 
     return () => {
       cancelled = true;
+      liveFormPulseRefreshRef.current = null;
       if (pollingHandle) {
         window.clearInterval(pollingHandle);
       }
+      window.removeEventListener("focus", refreshOnVisible);
+      window.removeEventListener("online", refreshOnVisible);
+      document.removeEventListener("visibilitychange", refreshOnVisible);
     };
   }, [activePage, cartProductIdFilterKey, cartProductIdFilterList, cartsDateRange, cartsPeriod, liveFormPulseBounds, liveFormPulseEmbedFilter, realRole]);
 
@@ -24591,6 +24664,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setAdTrackingCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
       setAbandonedCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
       setRepCartJourneyMap((current) => mergeRealtimeCartJourneyEvent(current, nextEvent));
+      if (liveFormPulseRefreshTimerRef.current) {
+        window.clearTimeout(liveFormPulseRefreshTimerRef.current);
+      }
+      liveFormPulseRefreshTimerRef.current = window.setTimeout(() => {
+        liveFormPulseRefreshTimerRef.current = null;
+        liveFormPulseRefreshRef.current?.();
+      }, 500);
     });
 
     channel.on("postgres_changes", { event: "*", schema: "public", table: "users" }, (payload) => {
@@ -24667,6 +24747,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => {
       cancelled = true;
       if (productsReloadTimer) window.clearTimeout(productsReloadTimer);
+      if (liveFormPulseRefreshTimerRef.current) {
+        window.clearTimeout(liveFormPulseRefreshTimerRef.current);
+        liveFormPulseRefreshTimerRef.current = null;
+      }
       window.removeEventListener("focus", syncRealtimeAuth);
       window.removeEventListener("online", syncRealtimeAuth);
       window.removeEventListener("protohub:auth-changed", syncRealtimeAuth as EventListener);
@@ -24738,11 +24822,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => clearInterval(id);
   }, []);
 
-  // ── Notification polling - refresh notifications every 30s ───────────
-  // Without this, the bell badge and dropdown only update on full page
-  // reload. Push pushes the OS notification, but the in-app bell needs to
-  // re-fetch. Merges incoming with existing local state by id so optimistic
-  // local entries (pushSystemNotification) are preserved.
+  // Realtime delivers notifications immediately. This slow poll repairs
+  // websocket gaps without downloading the latest 100 notifications every
+  // 30 seconds in every open dashboard tab.
   useEffect(() => {
     if (!auth.isLoggedIn()) return;
     const poll = async () => {
@@ -24768,8 +24850,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         });
       } catch { /* silent */ }
     };
-    const id = setInterval(poll, 30_000);
-    return () => clearInterval(id);
+    const handleVisible = () => {
+      if (document.visibilityState === "visible") void poll();
+    };
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") void poll();
+    }, NOTIFICATION_FALLBACK_POLL_MS);
+    window.addEventListener("focus", poll);
+    window.addEventListener("online", poll);
+    document.addEventListener("visibilitychange", handleVisible);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("focus", poll);
+      window.removeEventListener("online", poll);
+      document.removeEventListener("visibilitychange", handleVisible);
+    };
   }, []);
 
   // Fetch audit log when order details modal opens
@@ -74813,7 +74908,15 @@ ${waybillLineItems(w).length > 1
                 {[
                   { title: "Total Users", value: String(users.length), helper: "all roles", icon: UserRound, tone: "blue" },
                   { title: "Active Users", value: String(activeUserCount), helper: `${users.length - activeUserCount} inactive`, icon: CheckCircle2, tone: "green" },
-                  ...(ownerCanSeeUserPresence ? [{ title: "Online Now", value: String(onlineUserCount), helper: "seen in last 5 mins", icon: Wifi, tone: "emerald" as const }] : []),
+                  ...(ownerCanSeeUserPresence ? [{
+                    title: "Online Now",
+                    value: String(onlineUserCount),
+                    helper: presenceSyncState === "error"
+                      ? "presence sync reconnecting"
+                      : `seen within 2 mins${presenceSyncAt ? ` · synced ${relativeMinutesLabel(presenceSyncAt)}` : ""}`,
+                    icon: Wifi,
+                    tone: "emerald" as const
+                  }] : []),
                   { title: "New Users (Month)", value: String(users.filter((u) => { if (!u.created) return false; const d = new Date(u.created); const now = new Date(); return !isNaN(d.getTime()) && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }).length), helper: "joined this month", icon: UserPlus, tone: "purple" },
                 ].map(({ title, value, helper, icon: Icon, tone }) => (
                   <article key={title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
