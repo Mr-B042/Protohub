@@ -42782,7 +42782,18 @@ ${waybillLineItems(w).length > 1
       0,
       Math.floor((new Date(`${pipelineToday}T00:00:00`).getTime() - new Date(`${row.stageEnteredDate}T00:00:00`).getTime()) / 86400000)
     );
+    // The pipeline answers "of the customers delivered in this period, where
+    // are they now", so it follows the date filter - the worklist is loaded in
+    // full and scoped here.
+    //
+    // The Priority Work Queue below deliberately does NOT: scoping due and
+    // overdue work to a period would drop an order delivered in June and never
+    // called the moment you looked at July, which is the work it exists to
+    // surface. The stage a row sits in is still measured from today.
+    const pipelineDateBounds = periodBoundsForQuery(retentionPeriod, retentionDateRange);
     const pipelineBoardRows = applyRetentionFilters(retentionWorklist)
+      .filter((row) => !pipelineDateBounds
+        || (row.deliveredDate >= pipelineDateBounds.dateFrom && row.deliveredDate <= pipelineDateBounds.dateTo))
       .filter((row) => retentionPipelineStageFilter === "all" || row.lifecycleStage === retentionPipelineStageFilter);
     const pipelineColumnPageSize = 5;
     const pipelineColumns = pipelineStageConfig.map((stage) => {
@@ -43281,7 +43292,14 @@ ${waybillLineItems(w).length > 1
               <header className="flex flex-col gap-2 border-b border-gray-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="text-sm font-black text-gray-900">Customer Lifecycle Pipeline</h3>
-                  <p className="mt-0.5 text-[11px] text-gray-500">Track customers at each stage of the retention journey.</p>
+                  {/* Says what the tiles are counting. Without it, switching to
+                      a narrow period looks like customers disappeared rather
+                      than the filter doing its job. */}
+                  <p className="mt-0.5 text-[11px] text-gray-500">
+                    Customers delivered in {retentionPeriod === "Custom" && retentionDateRange.start && retentionDateRange.end
+                      ? `${retentionDateRange.start} to ${retentionDateRange.end}`
+                      : retentionPeriod.toLowerCase()}, and where each one stands today.
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -43437,7 +43455,11 @@ ${waybillLineItems(w).length > 1
             <section className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-sm font-black text-gray-900">{pipelineBoardRows.length} customers in view</p>
-                <p className="mt-0.5 text-xs text-gray-500">Live lifecycle position, deadlines, value and the next contact action.</p>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Delivered {pipelineDateBounds
+                    ? `${pipelineDateBounds.dateFrom} to ${pipelineDateBounds.dateTo}`
+                    : "at any time"}. Lifecycle position, deadlines and next action are as of today.
+                </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
