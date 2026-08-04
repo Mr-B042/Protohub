@@ -53682,19 +53682,8 @@ ${waybillLineItems(w).length > 1
     const lastAttemptById = new Map(cartFollowUps.map((row) => [row.id, row.lastAttemptAt ?? null]));
     // Same filter as the Details table, so switching layout never silently
     // changes which carts you are looking at.
-    const rows = (grid?.rows ?? []).filter((row) => {
-      if (cartFollowUpFilter === "All") return true;
-      const attempts = attemptsById.get(row.id) ?? 0;
-      if (cartFollowUpFilter === "Never contacted") return attempts === 0;
-      if (cartFollowUpFilter === "Converted") return Boolean(row.convertedOrderId);
-      if (cartFollowUpFilter === "Still open") return !row.convertedOrderId;
-      if (cartFollowUpFilter === "Going quiet") {
-        const last = lastAttemptById.get(row.id);
-        const at = last ? new Date(last).getTime() : 0;
-        return attempts > 0 && !row.convertedOrderId && (!at || Date.now() - at > 3 * 86400000);
-      }
-      return true;
-    });
+    const rows = (grid?.rows ?? []).filter((row) => cartFollowUpMatchesFilter(
+      cartFollowUpFilter, row, attemptsById.get(row.id) ?? 0, lastAttemptById.get(row.id)));
     const days = grid?.days ?? [];
     const todayKey = grid?.todayKey ?? "";
 
@@ -53816,6 +53805,46 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // The cart statuses a follow-up cart can carry, i.e. what its badge says.
+  const CART_FOLLOW_UP_STATUSES = [
+    "Assigned", "Contacted", "No response", "Not interested", "Converted"
+  ] as const;
+
+  // Built from the carts themselves, not from activeSalesRepUsers: that list
+  // drops round-robin-excluded reps, so pausing a rep from rotation would hide
+  // their carts behind a filter option that had quietly disappeared. Anyone
+  // holding a cart can always be selected, and the count says how many.
+  const cartFollowUpRepOptions = (() => {
+    const byRep = new Map<string, { id: string; name: string; count: number }>();
+    for (const row of cartFollowUps) {
+      if (!row.repId) continue;
+      const found = byRep.get(row.repId);
+      if (found) found.count += 1;
+      else byRep.set(row.repId, { id: row.repId, name: row.repName, count: 1 });
+    }
+    return Array.from(byRep.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  })();
+
+  // One rule for both layouts, so Daily Log and Details can never disagree
+  // about which carts are in view.
+  const cartFollowUpMatchesFilter = (
+    filter: string,
+    row: { status: string; convertedOrderId?: string | null },
+    attempts: number,
+    lastAttemptAt?: string | null
+  ) => {
+    if (filter === "All") return true;
+    if (filter.startsWith("status:")) return row.status === filter.slice(7);
+    if (filter === "Never contacted") return attempts === 0;
+    if (filter === "Converted") return Boolean(row.convertedOrderId);
+    if (filter === "Still open") return !row.convertedOrderId;
+    if (filter === "Going quiet") {
+      const at = lastAttemptAt ? new Date(lastAttemptAt).getTime() : 0;
+      return attempts > 0 && !row.convertedOrderId && (!at || Date.now() - at > 3 * 86400000);
+    }
+    return true;
+  };
+
   const renderCartFollowUpTab = () => {
     // The same period rule the carts table uses, plus the last follow-up:
     // logging a call today on a three-week-old cart is today's work, so the
@@ -53834,11 +53863,7 @@ ${waybillLineItems(w).length > 1
 
     const rows = periodRows.filter((row) => {
       if (cartFollowUpRep !== "All reps" && row.repId !== cartFollowUpRep) return false;
-      if (cartFollowUpFilter === "Never contacted") return row.attempts === 0;
-      if (cartFollowUpFilter === "Going quiet") return isQuiet(row);
-      if (cartFollowUpFilter === "Converted") return Boolean(row.convertedOrderId);
-      if (cartFollowUpFilter === "Still open") return !row.convertedOrderId;
-      return true;
+      return cartFollowUpMatchesFilter(cartFollowUpFilter, row, row.attempts, row.lastAttemptAt);
     });
 
     const neverContacted = periodRows.filter((row) => row.attempts === 0).length;
@@ -53884,15 +53909,29 @@ ${waybillLineItems(w).length > 1
           {!cartFollowUpIsOwnWork && (
             <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700"
               value={cartFollowUpRep} onChange={(e) => { setCartFollowUpRep(e.target.value); void loadCartFollowUpGrid(cartFollowUpWeekStart, e.target.value); }}>
-              <option value="All reps">All reps</option>
-              {activeSalesRepUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+              <option value="All reps">All reps ({cartFollowUps.length})</option>
+              {cartFollowUpRepOptions.map((rep) => (
+                <option key={rep.id} value={rep.id}>{rep.name} ({rep.count})</option>
+              ))}
             </select>
           )}
           <select className="!min-h-0 w-full sm:w-auto h-10 sm:h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700"
             value={cartFollowUpFilter} onChange={(e) => setCartFollowUpFilter(e.target.value)}>
-            {["All", "Never contacted", "Going quiet", "Still open", "Converted"].map((option) => (
-              <option key={option} value={option}>{option}</option>
-            ))}
+            <option value="All">All carts</option>
+            {/* How the work is going - derived from the follow-up log. */}
+            <optgroup label="By follow-up">
+              {["Never contacted", "Going quiet", "Still open", "Converted"].map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </optgroup>
+            {/* The cart's own status, the one shown on its badge. Without
+                these you could see a cart was "Assigned" or "No response"
+                but had no way to list only those. */}
+            <optgroup label="By cart status">
+              {CART_FOLLOW_UP_STATUSES.map((option) => (
+                <option key={option} value={`status:${option}`}>{option}</option>
+              ))}
+            </optgroup>
           </select>
           <button type="button" onClick={() => void loadCartFollowUps()}
             className="!min-h-0 inline-flex h-10 sm:h-9 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
