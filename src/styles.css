@@ -9592,3 +9592,20 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
 .app-shell[data-theme="dark"] .admin-tone-textarea::placeholder {
   color: hsl(214 14% 68%) !important;
 }
+
+/* ── Re-dated order badge ──────────────────────────────────
+   An order whose date was changed by hand moves between days in every
+   report keyed on order date, so the badge has to catch the eye rather
+   than sit quietly with the others. A radar ping rather than a flicker:
+   it draws attention without making the row hard to read, and it stops
+   entirely for anyone who has asked for reduced motion. */
+@keyframes redatedPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(180, 83, 9, 0.5); }
+  50%      { box-shadow: 0 0 0 5px rgba(180, 83, 9, 0); }
+}
+.redated-badge {
+  animation: redatedPulse 2.2s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .redated-badge { animation: none; }
+}
