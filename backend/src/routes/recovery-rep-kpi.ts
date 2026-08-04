@@ -477,7 +477,7 @@ router.get("/candidates", requireRole("Owner", "Admin", "Manager", "Recovery Rep
     const [{ data, error }, held] = await Promise.all([
       supabase
         .from("orders")
-        .select("id, customer, phone, status, amount, currency, product_name, package_name, location, call_outcome, response, created_at, updated_at, delivered_date, assigned_rep_id, review_hold")
+        .select("id, customer, phone, status, amount, currency, product_name, package_name, quantity, cross_sell_lines, free_gift_lines, upsell_from_qty, upsell_to_qty, location, call_outcome, response, created_at, updated_at, delivered_date, assigned_rep_id, review_hold")
         .eq("org_id", orgId)
         .or(`status.in.(${CANDIDATE_STATUSES.join(",")}),call_outcome.eq.Product Unavailable`)
         .neq("review_hold", true)
@@ -497,7 +497,23 @@ router.get("/candidates", requireRole("Owner", "Admin", "Manager", "Recovery Rep
         status: order.status,
         amount: Number(order.amount ?? 0),
         currency: order.currency ?? "NGN",
-        productName: order.package_name || order.product_name,
+        // Both, not one or the other. The card previously showed only the
+        // package - "Home Pack" with no clue what product it was a pack of -
+        // which is not enough to open a recovery call on.
+        productName: order.product_name ?? null,
+        packageName: order.package_name ?? null,
+        quantity: Number(order.quantity ?? 0) || null,
+        // What else was on the order. A customer who added items or upgraded
+        // was more committed than the amount alone suggests, and that changes
+        // how the call should go.
+        addOns: (Array.isArray(order.cross_sell_lines) ? order.cross_sell_lines : [])
+          .map((line: any) => ({ name: line?.productName ?? "Add-on", quantity: Number(line?.quantity ?? 0) }))
+          .filter((line: any) => line.name),
+        freeGifts: (Array.isArray(order.free_gift_lines) ? order.free_gift_lines : [])
+          .map((line: any) => ({ name: line?.productName ?? "Gift", quantity: Number(line?.quantity ?? 0) }))
+          .filter((line: any) => line.name),
+        upgradedFrom: order.upsell_from_qty ? Number(order.upsell_from_qty) : null,
+        upgradedTo: order.upsell_to_qty ? Number(order.upsell_to_qty) : null,
         location: order.location ?? null,
         callOutcome: order.call_outcome ?? null,
         response: order.response ?? null,

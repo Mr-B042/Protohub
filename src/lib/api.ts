@@ -1451,7 +1451,11 @@ export const managerDashboardAlertsApi = {
 
 export type RecoveryCandidateRow = {
   id: string; customer: string; phone: string; status: string;
-  amount: number; currency: string; productName?: string | null;
+  amount: number; currency: string;
+  productName?: string | null; packageName?: string | null; quantity?: number | null;
+  addOns?: Array<{ name: string; quantity: number }>;
+  freeGifts?: Array<{ name: string; quantity: number }>;
+  upgradedFrom?: number | null; upgradedTo?: number | null;
   location?: string | null; callOutcome?: string | null; response?: string | null;
   closedAt: string; createdAt: string; reason: string;
 };
@@ -1548,6 +1552,7 @@ export interface RetentionCustomerRow {
   lastOrderId: string;
   lastProduct: string;
   lastPackage: string;
+  lastQuantity?: number;
   lastOrderDate: string;
   productsPurchased: string[];
   lifecycleStage: RetentionLifecycleStage;
