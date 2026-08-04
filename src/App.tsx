@@ -53815,12 +53815,18 @@ ${waybillLineItems(w).length > 1
   // their carts behind a filter option that had quietly disappeared. Anyone
   // holding a cart can always be selected, and the count says how many.
   const cartFollowUpRepOptions = (() => {
-    const byRep = new Map<string, { id: string; name: string; count: number }>();
+    type RepTally = { id: string; name: string; count: number; uncalled: number; converted: number; quiet: number };
+    const byRep = new Map<string, RepTally>();
     for (const row of cartFollowUps) {
       if (!row.repId) continue;
-      const found = byRep.get(row.repId);
-      if (found) found.count += 1;
-      else byRep.set(row.repId, { id: row.repId, name: row.repName, count: 1 });
+      const found = byRep.get(row.repId)
+        ?? { id: row.repId, name: row.repName, count: 0, uncalled: 0, converted: 0, quiet: 0 };
+      found.count += 1;
+      if (row.attempts === 0) found.uncalled += 1;
+      if (row.convertedOrderId) found.converted += 1;
+      const last = row.lastAttemptAt ? new Date(row.lastAttemptAt).getTime() : 0;
+      if (row.attempts > 0 && !row.convertedOrderId && (!last || Date.now() - last > 3 * 86400000)) found.quiet += 1;
+      byRep.set(row.repId, found);
     }
     return Array.from(byRep.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   })();
@@ -53948,6 +53954,85 @@ ${waybillLineItems(w).length > 1
             ))}
           </div>
         </div>
+
+        {/* Who is carrying what. Dark on a light page on purpose - this is the
+            one thing a supervisor scans first, and the contrast makes it the
+            anchor of the screen instead of a fifth row of white tiles.
+            Each card is the rep filter; the dropdown stays for keyboard use. */}
+        {!cartFollowUpIsOwnWork && cartFollowUpRepOptions.length > 0 && (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {cartFollowUpRepOptions.map((rep) => {
+              const active = cartFollowUpRep === rep.id;
+              const share = cartFollowUps.length > 0 ? Math.round((rep.count / cartFollowUps.length) * 100) : 0;
+              return (
+                <button
+                  key={rep.id}
+                  type="button"
+                  onClick={() => {
+                    const next = active ? "All reps" : rep.id;
+                    setCartFollowUpRep(next);
+                    void loadCartFollowUpGrid(cartFollowUpWeekStart, next);
+                  }}
+                  className={`!min-h-0 group relative overflow-hidden rounded-2xl border px-4 py-4 text-left transition-all duration-200 ${
+                    active
+                      ? "border-slate-600 bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950 shadow-[0_10px_30px_-10px_rgba(15,23,42,0.65)] ring-1 ring-slate-500/40"
+                      : "border-slate-800/70 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 shadow-[0_6px_20px_-12px_rgba(15,23,42,0.6)] hover:border-slate-600 hover:shadow-[0_10px_30px_-10px_rgba(15,23,42,0.65)]"
+                  }`}
+                >
+                  {/* A single soft highlight along the top edge - enough to give
+                      the card depth without decorating it. */}
+                  <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-[13px] font-black text-slate-100 ring-1 ring-white/15">
+                      {customerInitial(rep.name)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="m-0 truncate text-[13px] font-bold text-slate-100">{rep.name}</p>
+                      <p className="m-0 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                        {share}% of the board
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="m-0 text-2xl font-black leading-none text-white">{rep.count}</p>
+                      <p className="m-0 mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">carts</p>
+                    </div>
+                  </div>
+
+                  {/* Where the carts stand. Uncalled is the number that matters,
+                      so it keeps its colour even at zero-width. */}
+                  <div className="mt-3.5 flex h-1 overflow-hidden rounded-full bg-white/10">
+                    {[
+                      { n: rep.uncalled, cls: "bg-rose-500" },
+                      { n: rep.quiet, cls: "bg-amber-500" },
+                      { n: rep.converted, cls: "bg-emerald-500" }
+                    ].filter((seg) => seg.n > 0).map((seg, index) => (
+                      <span key={index} className={seg.cls} style={{ width: `${(seg.n / rep.count) * 100}%` }} />
+                    ))}
+                  </div>
+
+                  <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-semibold">
+                    <span className={rep.uncalled > 0 ? "text-rose-300" : "text-slate-600"}>
+                      {rep.uncalled} uncalled
+                    </span>
+                    <span className={rep.quiet > 0 ? "text-amber-300" : "text-slate-600"}>
+                      {rep.quiet} quiet
+                    </span>
+                    <span className={rep.converted > 0 ? "text-emerald-300" : "text-slate-600"}>
+                      {rep.converted} won
+                    </span>
+                  </div>
+
+                  {active && (
+                    <span className="absolute right-3 top-3 rounded-full bg-white/15 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-slate-100">
+                      Filtered
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
