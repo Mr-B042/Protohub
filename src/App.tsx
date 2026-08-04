@@ -40718,7 +40718,11 @@ ${waybillLineItems(w).length > 1
     );
   };
 
-  const recoveryRepUsers = users.filter((user) => user.role === "Recovery Rep");
+  // Disabled means every function is paused, so a deactivated rep is not
+  // offered anywhere. This list was role-only, and because the picker defaults
+  // to the first entry the dashboard opened on an inactive rep - which is how
+  // an empty dashboard looked like a bug rather than a switched-off account.
+  const recoveryRepUsers = users.filter((user) => user.role === "Recovery Rep" && user.active);
   const recoveryRepIsOwnerLike = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
   const recoveryRepViewingId = recoveryRepIsOwnerLike
     ? (recoveryRepScopeId || recoveryRepUsers[0]?.id || "")
@@ -41436,7 +41440,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
     // Only Delivery Agent logins can use the portal, so only those are offered.
-    const candidates = users.filter((user) => user.role === "Delivery Agent");
+    const candidates = users.filter((user) => user.role === "Delivery Agent" && user.active);
     if (candidates.length === 0) {
       showToast("Create a login with the Delivery Agent role in User Management first.");
       return;
@@ -44706,7 +44710,7 @@ ${waybillLineItems(w).length > 1
                                 <span className="min-w-0"><strong className="block truncate text-xs text-gray-900">{row.name}</strong><span className="block truncate text-[10px] text-gray-500">{row.phone}</span><span className="block truncate text-[10px] text-gray-400">{[row.city, row.state].filter(Boolean).join(", ") || "Location unavailable"}</span></span>
                               </button>
                             </td>
-                            <td className="px-3 py-3"><strong className="block truncate text-xs text-gray-800">{row.lastProduct}</strong><span className="block truncate text-[10px] text-gray-500">{row.lastPackage || `Order #${row.lastOrderId}`}</span><span className="mt-1 block text-[10px] text-gray-600">{row.deliveredOrders}/{row.totalOrders} delivered · <strong>{formatMoney(row.totalSpent)}</strong></span><span className="block text-[9px] text-gray-400">Customer since {customerDate(row.customerSince)}</span></td>
+                            <td className="px-3 py-3"><strong className="block truncate text-xs text-gray-800">{row.lastProduct}</strong><span className="block truncate text-[10px] text-gray-500">{row.lastPackage || `Order #${row.lastOrderId}`}</span><span className="mt-1 block text-[10px] text-gray-600">{row.deliveredOrders}/{row.totalOrders} delivered{row.lastQuantity ? <> · <strong>{row.lastQuantity} pcs</strong></> : null} · <strong>{formatMoney(row.totalSpent)}</strong></span><span className="block text-[9px] text-gray-400">Customer since {customerDate(row.customerSince)}</span></td>
                             <td className="px-3 py-3"><span className={`inline-flex max-w-full rounded-full border px-2 py-1 text-[9px] font-black ${customerStageTone(row.lifecycleStage)}`}>{lifecycleStageLabel(row.lifecycleStage)}</span><span className="mt-2 block text-[10px] text-gray-500">Review: {row.reviewStatus.replace("_", " ")}</span><span className="block text-[10px] text-gray-500">Referral: {row.referralStatus.replace("_", " ")}</span></td>
                             <td className="px-3 py-3"><span className="block text-[9px] font-black uppercase tracking-wide text-gray-400">Last contact</span><strong className="block text-[10px] text-gray-700">{customerDate(row.lastContactAt, true)}</strong><span className="mt-2 block text-[9px] font-black uppercase tracking-wide text-gray-400">Next action</span><strong className={`block text-[10px] ${customerIsOverdue(row) ? "text-rose-600" : "text-gray-700"}`}>{row.nextAction}</strong><span className="block text-[9px] text-gray-500">{row.nextActionAt ? customerDate(row.nextActionAt, true) : "No due date"}</span></td>
                             <td className="px-3 py-3"><strong className="block truncate text-xs text-gray-800">{row.assignedRepName ?? "Unassigned"}</strong><span className={`mt-2 inline-flex max-w-full rounded-full border px-2 py-1 text-[9px] font-black uppercase ${status.tone}`}>{status.label}</span></td>
@@ -54953,8 +54957,27 @@ ${waybillLineItems(w).length > 1
         }) as TrackedOrder)
       : trackedOrders
           .filter((order) => order.assignedRepId !== recoveryRepViewingId && candidateReason(order))
-          .slice()
-          .sort((a, b) => closedAtMs(b) - closedAtMs(a));
+          .slice();
+    // A dead order has a half-life. Reached within a couple of days the
+    // customer still remembers wanting it; three weeks on you are cold-calling
+    // a stranger about a decision they have moved past. The band is the
+    // recovery window, and it is the one thing that should decide what gets
+    // called first.
+    const recoveryUrgency = (order: TrackedOrder) => {
+      const closed = closedAtMs(order);
+      const days = closed ? Math.floor((Date.now() - closed) / 86400000) : null;
+      if (days === null) return { key: "unknown", days, rank: 4, label: "No close date", chip: "bg-gray-100 text-gray-500", rail: "bg-gray-200", note: "closure date not recorded" };
+      if (days <= 2) return { key: "now", days, rank: 0, label: "ACT NOW", chip: "bg-rose-600 text-white", rail: "bg-rose-500", note: days === 0 ? "died today — best chance you will get" : `${days}d ago — still fresh` };
+      if (days <= 7) return { key: "week", days, rank: 1, label: "THIS WEEK", chip: "bg-amber-500 text-white", rail: "bg-amber-400", note: `${days}d ago — window closing` };
+      if (days <= 21) return { key: "fading", days, rank: 2, label: "FADING", chip: "bg-slate-200 text-slate-700", rail: "bg-slate-300", note: `${days}d ago — needs a reason to re-open` };
+      return { key: "cold", days, rank: 3, label: "COLD", chip: "bg-gray-100 text-gray-500", rail: "bg-gray-200", note: `${days}d ago — treat as a fresh pitch` };
+    };
+    const urgencyCounts = recoveryCandidates.reduce<Record<string, number>>((acc, order) => {
+      const key = recoveryUrgency(order).key;
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+
     const claimCap = recoveryCandidatesView?.cap ?? 0;
     const claimHeld = recoveryCandidatesView?.held ?? 0;
     const claimRemaining = recoveryCandidatesView?.remaining ?? 0;
@@ -55040,7 +55063,15 @@ ${waybillLineItems(w).length > 1
       if (!recoveryCandidateSearch.trim()) return true;
       const q = recoveryCandidateSearch.trim().toLowerCase();
       return order.customer.toLowerCase().includes(q) || (order.phone ?? "").includes(q) || order.id.includes(q);
-    });
+    })
+      // Most recoverable first. Sorting by closure date alone buried a fresh
+      // failure under a three-week-old one of the same day.
+      .sort((a, b) => {
+        const ua = recoveryUrgency(a);
+        const ub = recoveryUrgency(b);
+        if (ua.rank !== ub.rank) return ua.rank - ub.rank;
+        return closedAtMs(b) - closedAtMs(a);
+      });
     const CANDIDATE_PAGE_SIZE = 20;
     const candidateTotalPages = Math.max(1, Math.ceil(filteredRecoveryCandidates.length / CANDIDATE_PAGE_SIZE));
     const candidatePage = Math.min(recoveryCandidatePage, candidateTotalPages);
@@ -55735,6 +55766,25 @@ ${waybillLineItems(w).length > 1
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-200">
             <h2 className="text-base font-bold text-gray-900">Recovery Candidates</h2>
+            {/* The recovery window, stated as counts. A dead order has a
+                half-life: reached in a day or two the customer still remembers
+                wanting it, three weeks on you are cold-calling a stranger about
+                a decision they have moved past. Red only for the band that is
+                genuinely running out. */}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {[
+                { key: "now", label: "Act now", sub: "closed in the last 2 days", cls: "border-rose-300 bg-rose-50 text-rose-800", num: "text-rose-700" },
+                { key: "week", label: "This week", sub: "3–7 days", cls: "border-amber-300 bg-amber-50 text-amber-800", num: "text-amber-700" },
+                { key: "fading", label: "Fading", sub: "8–21 days", cls: "border-slate-200 bg-slate-50 text-slate-700", num: "text-slate-700" },
+                { key: "cold", label: "Cold", sub: "over 21 days", cls: "border-gray-200 bg-gray-50 text-gray-500", num: "text-gray-500" }
+              ].map((band) => (
+                <div key={band.key} className={`min-w-[132px] flex-1 rounded-xl border px-3 py-2 ${band.cls}`}>
+                  <div className={`text-2xl font-black leading-none ${band.num}`}>{urgencyCounts[band.key] ?? 0}</div>
+                  <div className="mt-1 text-[11px] font-black uppercase tracking-wider">{band.label}</div>
+                  <div className="text-[10px] font-semibold opacity-80">{band.sub}</div>
+                </div>
+              ))}
+            </div>
             {/* The cap, stated where the claiming happens. A rep who hits it
                 needs to know why the buttons went quiet. */}
             {recoveryCandidatesView && claimCap > 0 && (
@@ -55850,7 +55900,9 @@ ${waybillLineItems(w).length > 1
                 <table className="w-full min-w-[900px] text-sm">
                   <thead>
                     <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                      {["Customer", "Order Details", "Candidate Reason", "Order History", "Actions"].map((h) => (
+                      {/* Empty header for the urgency rail. */}
+                      <th className="w-1 p-0" />
+                      {["Customer", "Order Details", "Recovery Window", "Order History", "Actions"].map((h) => (
                         <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider">{h}</th>
                       ))}
                     </tr>
@@ -55861,8 +55913,14 @@ ${waybillLineItems(w).length > 1
                       const tone = candidateStatusTone(reason);
                       const history = orderHistoryForPhone(order.phone ?? "");
                       const whatsappUrl = buildWhatsAppTargets(order.phone ?? "", `Hello ${order.customer}, this is Protohub following up on your order.`).normalUrl;
+                      const urgency = recoveryUrgency(order);
                       return (
                         <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                          {/* A coloured rail down the row. The window a dead
+                              order can still be recovered in is the whole point
+                              of this queue, so it is the first thing the eye
+                              lands on rather than a detail inside a cell. */}
+                          <td className={`w-1 p-0 ${urgency.rail}`} />
                           <td className="px-4 py-4 max-w-[240px]">
                             <div className="flex items-center gap-3">
                               <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-black ${customerAvatarTone(order.id)}`}>{customerInitial(order.customer)}</span>
@@ -55879,11 +55937,53 @@ ${waybillLineItems(w).length > 1
                             </div>
                           </td>
                           <td className="px-4 py-4">
-                            <div className="font-semibold text-gray-900">{customerOrderLabel(order.productName, order.packageName)}</div>
-                            <div className="text-xs text-gray-500">Qty {quantityForOrder(order)} · {formatProductMoney(order.amount, order.currency)}</div>
-                            <div className="text-xs text-gray-400">{order.state || "No state"} · Placed {customerOrderPlacedLabel(order.createdAt)}</div>
+                            {/* Product AND package. "Home Pack" alone gives no
+                                clue what it is a pack of, which is not enough
+                                to open a recovery call on. */}
+                            <div className="font-semibold text-gray-900">{order.productName || "Product not recorded"}</div>
+                            {order.packageName && order.packageName !== order.productName && (
+                              <div className="text-xs font-semibold text-gray-600">{order.packageName}</div>
+                            )}
+                            <div className="text-xs text-gray-500">
+                              <strong className="text-gray-800">{quantityForOrder(order)} pcs</strong> · {formatProductMoney(order.amount, order.currency)}
+                            </div>
+                            {/* What else was on it. Someone who added items or
+                                upgraded was more committed than the amount
+                                alone shows, and that changes the pitch. */}
+                            {(() => {
+                              const view = recoveryCandidatesView?.rows?.find((r) => r.id === order.id);
+                              const addOns = view?.addOns ?? [];
+                              const gifts = view?.freeGifts ?? [];
+                              const upgraded = view?.upgradedFrom && view?.upgradedTo && view.upgradedTo > view.upgradedFrom;
+                              if (addOns.length === 0 && gifts.length === 0 && !upgraded) return null;
+                              return (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {upgraded && (
+                                    <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700"
+                                      title="They were upsold before the order died">
+                                      ↑ upgraded {view!.upgradedFrom}→{view!.upgradedTo}
+                                    </span>
+                                  )}
+                                  {addOns.map((line, i) => (
+                                    <span key={`a${i}`} className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700"
+                                      title="Add-on the customer accepted">+{line.quantity} {line.name}</span>
+                                  ))}
+                                  {gifts.map((line, i) => (
+                                    <span key={`g${i}`} className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"
+                                      title="Free gift promised on this order">🎁 {line.quantity} {line.name}</span>
+                                  ))}
+                                </div>
+                              );
+                            })()}
+                            <div className="mt-1 text-xs text-gray-400">{order.state || "No state"} · Placed {customerOrderPlacedLabel(order.createdAt)}</div>
                           </td>
                           <td className="px-4 py-4">
+                            <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                              <span className={`inline-flex items-center rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-wider ${urgency.chip}`}>
+                                {urgency.label}
+                              </span>
+                              <span className="text-[10px] font-bold text-gray-500">{urgency.note}</span>
+                            </div>
                             <span className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black ${tone.class}`}><span className={`h-2 w-2 rounded-full ${tone.dot}`} /> {reason}</span>
                             {(() => {
                               // Makes the newest-first ordering legible, and
@@ -92569,7 +92669,7 @@ ${waybillLineItems(w).length > 1
                 <label><span>Sales Rep</span>
                   <select value={penaltyTargetRepId} onChange={(e) => setPenaltyTargetRepId(e.target.value)}>
                     <option value="">Select rep</option>
-                    {users.filter((u) => u.role === "Sales Rep").map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    {users.filter((u) => u.role === "Sales Rep" && u.active).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
                   </select>
                 </label>
                 <label><span>Penalty Type</span>

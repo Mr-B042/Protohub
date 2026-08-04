@@ -185,7 +185,7 @@ type WorklistRow = {
   orderId: string; customerName: string; phone: string; deliveredDate: string; daysSinceDelivery: number;
   dueStage: ReturnType<typeof dueStageFor>["dueStage"]; overdueBy: number; priorityBand: ReturnType<typeof priorityBandFor>;
   lifecycleStage: LifecycleStage; stageEnteredDate: string; stageDueDate: string;
-  orderAmount: number; orderCurrency: string; productName: string;
+  orderAmount: number; orderCurrency: string; productName: string; orderQuantity: number;
   assignedRepId: string | null; assignedRepName: string | null;
   lastTouchpoint: {
     stage: string; loggedAt: string; satisfactionOutcome: string | null; reachStatus: string | null;
@@ -359,6 +359,9 @@ async function loadWorklistRows(
       phone: order.phone,
       deliveredDate: deliveredKey,
       daysSinceDelivery: daysBetween(deliveredKey, today),
+      // Pieces on the original order. A customer who took six is a different
+      // repeat-sale conversation to one who took a single trial piece.
+      orderQuantity: Number(order.quantity ?? 0),
       dueStage,
       overdueBy,
       priorityBand,
@@ -577,6 +580,10 @@ router.get("/customers", requireRole(...RETENTION_ROLES), async (req, res) => {
         lastOrderId: latestDeliveredOrder.id,
         lastProduct: latestDeliveredOrder.product_name ?? lifecycle?.productName ?? "",
         lastPackage: latestDeliveredOrder.package_name ?? "",
+        // Pieces on their most recent order. Six pieces is a different repeat
+        // conversation to a single trial piece, and the amount alone hides it -
+        // packages are priced per pack, not per piece.
+        lastQuantity: Number(latestDeliveredOrder.quantity ?? 0),
         lastOrderDate: latestDeliveredOrder.delivered_date ?? latestDeliveredOrder.created_at,
         productsPurchased,
         lifecycleStage,
