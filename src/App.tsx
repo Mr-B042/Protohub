@@ -7938,9 +7938,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartFollowUpGrid, setCartFollowUpGrid] = useState<CartFollowUpGrid | null>(null);
   const [cartFollowUpWeekStart, setCartFollowUpWeekStart] = useState<string | null>(null);
   const [cartFollowUpLayout, setCartFollowUpLayout] = useState<"grid" | "details">("grid");
-  // Narrows the Daily Log to a single day without leaving the weekly grid -
-  // the columns stay Mon-Sat, this just hides the ones you did not ask for.
-  const [cartGridDayFilter, setCartGridDayFilter] = useState<"Week" | "Today" | "Yesterday">("Week");
+  // Which day's ASSIGNMENTS to show. "" is the whole week. Any other value is
+  // a YYYY-MM-DD day key, matched against when the cart was handed to the rep -
+  // not against when the log column falls, which is a different question.
+  const [cartGridDayFilter, setCartGridDayFilter] = useState<string>("");
   const [cartFollowUpRep, setCartFollowUpRep] = useState<string>("All reps");
   const [cartFollowUpFilter, setCartFollowUpFilter] = useState<string>("All");
   // The whole cart, not just its id: the rep making the call needs the number,
@@ -53661,6 +53662,12 @@ ${waybillLineItems(w).length > 1
   // Formats a cart's money in the currency the cart was actually captured in.
   // A cart taken in USD must not be read as naira just because the page's
   // currency switcher happens to say NGN.
+  // The Lagos calendar day a timestamp falls on. The grid's columns come from
+  // the server in Lagos time; deriving the row's day in the browser's zone
+  // would put a late-evening assignment on the wrong day for anyone abroad.
+  const lagosDayKeyOf = (iso: string) =>
+    new Date(new Date(iso).getTime() + 60 * 60 * 1000).toISOString().slice(0, 10);
+
   const cartRowMoney = (amount: number, code?: string | null) =>
     formatProductMoney(amount, (code || "NGN") as CurrencyCode);
 
@@ -53685,25 +53692,26 @@ ${waybillLineItems(w).length > 1
     const lastAttemptById = new Map(cartFollowUps.map((row) => [row.id, row.lastAttemptAt ?? null]));
     // Same filter as the Details table, so switching layout never silently
     // changes which carts you are looking at.
-    const rows = (grid?.rows ?? []).filter((row) => cartFollowUpMatchesFilter(
+    const statusFiltered = (grid?.rows ?? []).filter((row) => cartFollowUpMatchesFilter(
       cartFollowUpFilter, row, attemptsById.get(row.id) ?? 0, lastAttemptById.get(row.id)));
 
-    // Today/Yesterday narrow the columns rather than refetching: the week is
-    // already loaded, and jumping the grid elsewhere would lose the surrounding
-    // days a supervisor is comparing against.
-    const yesterdayKey = (() => {
-      const base = grid?.todayKey ?? "";
-      if (!base) return "";
-      const d = new Date(`${base}T12:00:00Z`);
-      d.setUTCDate(d.getUTCDate() - 1);
-      return d.toISOString().slice(0, 10);
-    })();
-    const visibleDayKey = cartGridDayFilter === "Today" ? (grid?.todayKey ?? "")
-      : cartGridDayFilter === "Yesterday" ? yesterdayKey
-      : null;
-    const allDays = grid?.days ?? [];
-    const days = visibleDayKey ? allDays.filter((day) => day.key === visibleDayKey) : allDays;
+    // Filters by the day the cart was ASSIGNED, which is the question being
+    // asked - "what did I hand out on Tuesday" - rather than which log column
+    // is on screen. All the week's columns stay visible either way, so you can
+    // still see what has been done since.
+    const assignedDayKey = (row: { assignedAt?: string | null }) =>
+      row.assignedAt ? lagosDayKeyOf(row.assignedAt) : "";
+    const days = grid?.days ?? [];
     const todayKey = grid?.todayKey ?? "";
+    const rows = cartGridDayFilter === ""
+      ? statusFiltered
+      : cartGridDayFilter === "unrecorded"
+        ? statusFiltered.filter((row) => !row.assignedAt)
+        : statusFiltered.filter((row) => assignedDayKey(row) === cartGridDayFilter);
+    // Counts per day so an empty day is visible before you click it, and so
+    // carts assigned before the date was recorded are never silently dropped.
+    const assignedCountFor = (key: string) => statusFiltered.filter((row) => assignedDayKey(row) === key).length;
+    const unrecordedCount = statusFiltered.filter((row) => !row.assignedAt).length;
 
     const outcomeTone = (outcome: string | null) => {
       const value = (outcome ?? "").toLowerCase();
@@ -53736,20 +53744,42 @@ ${waybillLineItems(w).length > 1
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {/* Same shorthand the rest of the app uses. These narrow the
-                columns in the week already on screen rather than jumping the
-                grid, so the surrounding days stay one click away. */}
-            <div className="inline-flex items-center rounded-lg bg-gray-100 p-1">
-              {(["Today", "Yesterday", "Week"] as const).map((option) => (
-                <button key={option} type="button" onClick={() => setCartGridDayFilter(option)}
+          <span className="hidden text-[11px] font-semibold text-gray-400 sm:inline">Mon–Sat · Sundays off</span>
+        </div>
+
+        {/* Filters by the day each cart was ASSIGNED - "what did I hand out on
+            Tuesday" - across the week's Mon-Sat. Every column stays on screen
+            so you can still see what has been done since. Counts are shown so
+            an empty day reads as empty rather than broken. */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 px-4 py-2.5">
+          <span className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-400">Assigned on</span>
+          <div className="flex flex-wrap items-center gap-1">
+            <button type="button" onClick={() => setCartGridDayFilter("")}
+              className={`!min-h-0 whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors ${
+                cartGridDayFilter === "" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600 hover:text-gray-900"}`}>
+              Whole week ({statusFiltered.length})
+            </button>
+            {days.map((day) => {
+              const count = assignedCountFor(day.key);
+              const label = day.key === todayKey ? "Today" : day.label;
+              return (
+                <button key={day.key} type="button" onClick={() => setCartGridDayFilter(day.key)}
                   className={`!min-h-0 whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors ${
-                    cartGridDayFilter === option ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>
-                  {option === "Week" ? "Whole week" : option}
+                    cartGridDayFilter === day.key ? "bg-gray-900 text-white"
+                      : count > 0 ? "bg-gray-100 text-gray-700 hover:text-gray-900"
+                      : "bg-gray-50 text-gray-400 hover:text-gray-600"}`}>
+                  {label} ({count})
                 </button>
-              ))}
-            </div>
-            <span className="hidden text-[11px] font-semibold text-gray-400 sm:inline">Mon–Sat · Sundays off</span>
+              );
+            })}
+            {unrecordedCount > 0 && (
+              <button type="button" onClick={() => setCartGridDayFilter("unrecorded")}
+                title="Assigned before Protohub recorded assignment dates. The real date is not recoverable, so these are kept in their own group rather than guessed into a day."
+                className={`!min-h-0 whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors ${
+                  cartGridDayFilter === "unrecorded" ? "bg-gray-900 text-white" : "bg-amber-50 text-amber-700 hover:bg-amber-100"}`}>
+                No date recorded ({unrecordedCount})
+              </button>
+            )}
           </div>
         </div>
 
@@ -53813,6 +53843,27 @@ ${waybillLineItems(w).length > 1
                           {row.quantity} pc{row.quantity === 1 ? "" : "s"}
                         </span>
                       ) : null}
+                      {/* How long it has sat with this rep. Null for anything
+                          assigned before this was recorded - said plainly
+                          rather than guessed from last_activity, which moves
+                          every time a follow-up is logged. */}
+                      {row.assignedAt ? (() => {
+                        const held = Math.floor((Date.now() - new Date(row.assignedAt).getTime()) / 86400000);
+                        return (
+                          <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                            held >= 3 && !row.convertedOrderId ? "bg-amber-100 text-amber-800" : "bg-sky-50 text-sky-700"}`}
+                            title={`Assigned ${new Date(row.assignedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`}>
+                            <UserPlus className="h-2.5 w-2.5" />
+                            Assigned {new Date(row.assignedAt).toLocaleDateString([], { day: "numeric", month: "short" })}
+                            {held > 0 ? ` · ${held}d` : " · today"}
+                          </span>
+                        );
+                      })() : (
+                        <span className="inline-flex items-center rounded bg-gray-50 px-1.5 py-0.5 text-[10px] font-semibold text-gray-400"
+                          title="This cart was assigned before Protohub recorded assignment dates. The real date is not recoverable, so none is shown.">
+                          assign date not recorded
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="border-r border-gray-200 px-3 py-3 align-top text-[12px] text-gray-500">{row.repName}</td>
