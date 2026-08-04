@@ -2295,7 +2295,7 @@ export type CartFollowUpRow = {
   preferredDelivery?: string | null;
   productId?: string | null; productName?: string | null;
   baseProductName?: string | null; packageName?: string | null;
-  amount: number; currency?: string | null;
+  amount: number; currency?: string | null; quantity?: number | null;
   source?: string | null; embedLabel?: string | null;
   leftAt?: string | null; recoverySentAt?: string | null;
   status: string; repId: string; repName: string; createdAt: string; lastActivity: string;
@@ -2313,7 +2313,8 @@ export type CartGridCell = {
 export type CartGridRow = {
   id: string; customer: string; phone: string; whatsapp?: string | null;
   productName?: string | null; packageName?: string | null;
-  amount: number; currency?: string | null; city?: string | null; state?: string | null;
+  amount: number; currency?: string | null; quantity?: number | null;
+  city?: string | null; state?: string | null;
   status: string; repId: string; repName: string; createdAt: string; createdKey: string;
   convertedOrderId?: string | null; convertedOrderStatus?: string | null;
   cells: Record<string, CartGridCell>;

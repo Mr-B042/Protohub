@@ -7938,6 +7938,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartFollowUpGrid, setCartFollowUpGrid] = useState<CartFollowUpGrid | null>(null);
   const [cartFollowUpWeekStart, setCartFollowUpWeekStart] = useState<string | null>(null);
   const [cartFollowUpLayout, setCartFollowUpLayout] = useState<"grid" | "details">("grid");
+  // Narrows the Daily Log to a single day without leaving the weekly grid -
+  // the columns stay Mon-Sat, this just hides the ones you did not ask for.
+  const [cartGridDayFilter, setCartGridDayFilter] = useState<"Week" | "Today" | "Yesterday">("Week");
   const [cartFollowUpRep, setCartFollowUpRep] = useState<string>("All reps");
   const [cartFollowUpFilter, setCartFollowUpFilter] = useState<string>("All");
   // The whole cart, not just its id: the rep making the call needs the number,
@@ -53684,7 +53687,22 @@ ${waybillLineItems(w).length > 1
     // changes which carts you are looking at.
     const rows = (grid?.rows ?? []).filter((row) => cartFollowUpMatchesFilter(
       cartFollowUpFilter, row, attemptsById.get(row.id) ?? 0, lastAttemptById.get(row.id)));
-    const days = grid?.days ?? [];
+
+    // Today/Yesterday narrow the columns rather than refetching: the week is
+    // already loaded, and jumping the grid elsewhere would lose the surrounding
+    // days a supervisor is comparing against.
+    const yesterdayKey = (() => {
+      const base = grid?.todayKey ?? "";
+      if (!base) return "";
+      const d = new Date(`${base}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - 1);
+      return d.toISOString().slice(0, 10);
+    })();
+    const visibleDayKey = cartGridDayFilter === "Today" ? (grid?.todayKey ?? "")
+      : cartGridDayFilter === "Yesterday" ? yesterdayKey
+      : null;
+    const allDays = grid?.days ?? [];
+    const days = visibleDayKey ? allDays.filter((day) => day.key === visibleDayKey) : allDays;
     const todayKey = grid?.todayKey ?? "";
 
     const outcomeTone = (outcome: string | null) => {
@@ -53718,7 +53736,21 @@ ${waybillLineItems(w).length > 1
               </span>
             )}
           </div>
-          <span className="text-[11px] font-semibold text-gray-400">Mon–Sat · Sundays off</span>
+          <div className="flex items-center gap-2">
+            {/* Same shorthand the rest of the app uses. These narrow the
+                columns in the week already on screen rather than jumping the
+                grid, so the surrounding days stay one click away. */}
+            <div className="inline-flex items-center rounded-lg bg-gray-100 p-1">
+              {(["Today", "Yesterday", "Week"] as const).map((option) => (
+                <button key={option} type="button" onClick={() => setCartGridDayFilter(option)}
+                  className={`!min-h-0 whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors ${
+                    cartGridDayFilter === option ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>
+                  {option === "Week" ? "Whole week" : option}
+                </button>
+              ))}
+            </div>
+            <span className="hidden text-[11px] font-semibold text-gray-400 sm:inline">Mon–Sat · Sundays off</span>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -53764,6 +53796,23 @@ ${waybillLineItems(w).length > 1
                     </div>
                     <div className="mt-0.5 text-[11px] text-gray-400">
                       {row.id} · {row.phone} · {cartRowMoney(row.amount, row.currency)}
+                    </div>
+                    {/* When it arrived, and how many pieces they were trying to
+                        buy. A 6-piece cart is worth a different call to a
+                        1-piece one, and the quantity was already captured on
+                        the form - it just was not shown anywhere. */}
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">
+                        <CalendarDays className="h-2.5 w-2.5" />
+                        Came in {new Date(row.createdAt).toLocaleDateString([], { day: "numeric", month: "short" })}
+                      </span>
+                      {row.quantity ? (
+                        <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-black ${
+                          row.quantity > 1 ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-600"}`}
+                          title="Pieces the customer selected on the form">
+                          {row.quantity} pc{row.quantity === 1 ? "" : "s"}
+                        </span>
+                      ) : null}
                     </div>
                   </td>
                   <td className="border-r border-gray-200 px-3 py-3 align-top text-[12px] text-gray-500">{row.repName}</td>
@@ -54021,13 +54070,14 @@ ${waybillLineItems(w).length > 1
                     <span className={rep.converted > 0 ? "text-emerald-300" : "text-slate-600"}>
                       {rep.converted} won
                     </span>
+                    {active && (
+                      <span className="ml-auto rounded-full bg-white/15 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-slate-100">
+                        Filtered
+                      </span>
+                    )}
                   </div>
 
-                  {active && (
-                    <span className="absolute right-3 top-3 rounded-full bg-white/15 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-slate-100">
-                      Filtered
-                    </span>
-                  )}
+
                 </button>
               );
             })}
@@ -61274,6 +61324,16 @@ ${waybillLineItems(w).length > 1
                                   </span>
                                 ) : null;
                               })()}
+                              {(() => {
+                                if (!orderHasCreatedAtCorrection(order)) return null;
+                                const was = formatMoment(order.originalCreatedAt) || normalizeDateKey(order.originalCreatedAt ?? "");
+                                return (
+                                  <span
+                                    className="redated-badge rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-amber-900 dark:bg-amber-500/15 dark:text-amber-200"
+                                    title={`Order date was changed. Originally ${was}.${order.createdAtCorrectionReason ? ` Reason: ${order.createdAtCorrectionReason}` : ""}`}
+                                  >📅 Re-dated</span>
+                                );
+                              })()}
                             </div>
                           </div>
 
@@ -61502,6 +61562,16 @@ ${waybillLineItems(w).length > 1
                                     </span>
                                   ) : null;
                                 })()}
+                              {(() => {
+                                if (!orderHasCreatedAtCorrection(order)) return null;
+                                const was = formatMoment(order.originalCreatedAt) || normalizeDateKey(order.originalCreatedAt ?? "");
+                                return (
+                                  <span
+                                    className="redated-badge mt-1.5 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-900 dark:bg-amber-500/15 dark:text-amber-200"
+                                    title={`Order date was changed. Originally ${was}.${order.createdAtCorrectionReason ? ` Reason: ${order.createdAtCorrectionReason}` : ""}`}
+                                  >📅 Re-dated</span>
+                                );
+                              })()}
                                 {scheduleMarker ? (
                                   renderScheduleResultBadge(scheduleMarker, { className: "mt-1.5" })
                                 ) : null}
@@ -84052,6 +84122,7 @@ ${waybillLineItems(w).length > 1
 
 	            {modal === "orderDetails" && selectedOrder && !isMarketerOrderView && (
 	              <div className="px-6 py-5 flex flex-col gap-6">
+	                {renderOrderDateAuditStack(selectedOrder, { className: "space-y-1.5 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3" })}
 	                {/* Where this order came from, stated up front. A recovered
 	                    cart otherwise looks identical to a fresh order. */}
 	                {(() => {

@@ -1693,7 +1693,7 @@ router.get("/follow-up-grid",
       });
 
       let cartQuery = supabase.from("abandoned_carts")
-        .select("id, customer, phone, whatsapp, status, amount, currency, product_name, package_name, city, state, assigned_rep_id, created_at, last_activity, left_at")
+        .select("id, customer, phone, whatsapp, status, amount, currency, product_name, package_name, city, state, assigned_rep_id, created_at, last_activity, left_at, quantity:capture_payload->>packageQuantity")
         .eq("org_id", orgId)
         .not("assigned_rep_id", "is", null);
       if (repFilter) cartQuery = cartQuery.eq("assigned_rep_id", repFilter);
@@ -1765,6 +1765,10 @@ router.get("/follow-up-grid",
             repId: row.assigned_rep_id,
             repName: nameById.get(row.assigned_rep_id) ?? "Unknown rep",
             createdAt: row.created_at,
+            // How many pieces they were trying to buy. Comes from the form
+            // capture, so it is what the customer actually chose - a 6-piece
+            // cart is worth a different call to a 1-piece one.
+            quantity: row.quantity ? Number(row.quantity) : null,
             // The cart's own arrival day, so a cell before it can be shown as
             // "not yet a cart" rather than a day the rep failed to call.
             createdKey: lagosDateKey(row.left_at || row.created_at),
@@ -1799,7 +1803,7 @@ router.get("/follow-up-overview",
       // details and what was in the cart in front of them; a supervisor
       // deciding whether the follow-up was any good needs the same context.
       let cartQuery = supabase.from("abandoned_carts")
-        .select("id, customer, phone, whatsapp, email, city, state, address, preferred_delivery, status, amount, currency, product_id, product_name, package_name, source, embed_label, assigned_rep_id, created_at, last_activity, left_at, recovery_sent_at")
+        .select("id, customer, phone, whatsapp, email, city, state, address, preferred_delivery, status, amount, currency, product_id, product_name, package_name, source, embed_label, assigned_rep_id, created_at, last_activity, left_at, recovery_sent_at, quantity:capture_payload->>packageQuantity")
         .eq("org_id", orgId)
         .not("assigned_rep_id", "is", null);
       if (scopeRepId) cartQuery = cartQuery.eq("assigned_rep_id", scopeRepId);
@@ -1853,6 +1857,7 @@ router.get("/follow-up-overview",
             packageName: row.package_name ?? null,
             amount: Number(row.amount ?? 0),
             currency: row.currency ?? "NGN",
+            quantity: row.quantity ? Number(row.quantity) : null,
             source: row.source ?? null,
             embedLabel: row.embed_label ?? null,
             leftAt: row.left_at ?? null,
