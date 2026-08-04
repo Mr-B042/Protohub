@@ -1693,7 +1693,7 @@ router.get("/follow-up-grid",
       });
 
       let cartQuery = supabase.from("abandoned_carts")
-        .select("id, customer, phone, whatsapp, status, amount, currency, product_name, package_name, city, state, assigned_rep_id, created_at, last_activity, left_at, quantity:capture_payload->>packageQuantity")
+        .select("id, customer, phone, whatsapp, status, amount, currency, product_name, package_name, city, state, assigned_rep_id, assigned_at, created_at, last_activity, left_at, quantity:capture_payload->>packageQuantity")
         .eq("org_id", orgId)
         .not("assigned_rep_id", "is", null);
       if (repFilter) cartQuery = cartQuery.eq("assigned_rep_id", repFilter);
@@ -1764,6 +1764,7 @@ router.get("/follow-up-grid",
             status: row.status,
             repId: row.assigned_rep_id,
             repName: nameById.get(row.assigned_rep_id) ?? "Unknown rep",
+            assignedAt: row.assigned_at ?? null,
             createdAt: row.created_at,
             // How many pieces they were trying to buy. Comes from the form
             // capture, so it is what the customer actually chose - a 6-piece
@@ -1803,7 +1804,7 @@ router.get("/follow-up-overview",
       // details and what was in the cart in front of them; a supervisor
       // deciding whether the follow-up was any good needs the same context.
       let cartQuery = supabase.from("abandoned_carts")
-        .select("id, customer, phone, whatsapp, email, city, state, address, preferred_delivery, status, amount, currency, product_id, product_name, package_name, source, embed_label, assigned_rep_id, created_at, last_activity, left_at, recovery_sent_at, quantity:capture_payload->>packageQuantity")
+        .select("id, customer, phone, whatsapp, email, city, state, address, preferred_delivery, status, amount, currency, product_id, product_name, package_name, source, embed_label, assigned_rep_id, assigned_at, created_at, last_activity, left_at, recovery_sent_at, quantity:capture_payload->>packageQuantity")
         .eq("org_id", orgId)
         .not("assigned_rep_id", "is", null);
       if (scopeRepId) cartQuery = cartQuery.eq("assigned_rep_id", scopeRepId);
@@ -1865,6 +1866,7 @@ router.get("/follow-up-overview",
             status: row.status,
             repId: row.assigned_rep_id,
             repName: nameById.get(row.assigned_rep_id) ?? "Unknown rep",
+            assignedAt: row.assigned_at ?? null,
             createdAt: row.created_at,
             lastActivity: row.last_activity,
             attempts: countByCart.get(row.id) ?? 0,
@@ -1921,6 +1923,15 @@ router.patch("/:id",
         }
       }
       updates.assigned_rep_id = repId;
+      // Stamp WHEN, not only who. Only set on a genuine change of hands, so
+      // re-saving a cart does not reset the clock a supervisor is reading; and
+      // cleared on unassign, since a cart back in the pool has no owner to
+      // have been holding it.
+      if (repId && repId !== existing.assigned_rep_id) {
+        updates.assigned_at = new Date().toISOString();
+      } else if (!repId) {
+        updates.assigned_at = null;
+      }
     }
 
     // Keep status and assignee honest about each other. A cart reading

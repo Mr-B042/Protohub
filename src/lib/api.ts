@@ -2298,7 +2298,8 @@ export type CartFollowUpRow = {
   amount: number; currency?: string | null; quantity?: number | null;
   source?: string | null; embedLabel?: string | null;
   leftAt?: string | null; recoverySentAt?: string | null;
-  status: string; repId: string; repName: string; createdAt: string; lastActivity: string;
+  status: string; repId: string; repName: string; assignedAt?: string | null;
+  createdAt: string; lastActivity: string;
   attempts: number; lastOutcome?: string | null; lastOutcomeNote?: string | null;
   lastAttemptAt?: string | null; lastAttemptBy?: string | null; nextActionAt?: string | null;
   convertedOrderId?: string | null; convertedOrderStatus?: string | null;
@@ -2315,7 +2316,8 @@ export type CartGridRow = {
   productName?: string | null; packageName?: string | null;
   amount: number; currency?: string | null; quantity?: number | null;
   city?: string | null; state?: string | null;
-  status: string; repId: string; repName: string; createdAt: string; createdKey: string;
+  status: string; repId: string; repName: string; assignedAt?: string | null;
+  createdAt: string; createdKey: string;
   convertedOrderId?: string | null; convertedOrderStatus?: string | null;
   cells: Record<string, CartGridCell>;
 };
