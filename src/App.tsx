@@ -53814,7 +53814,16 @@ ${waybillLineItems(w).length > 1
                 <tr key={row.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50/60">
                   <td className="border-r border-gray-200 px-4 py-3 align-top">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[13px] font-bold text-gray-900">{row.customer || "No name given"}</span>
+                      {/* Opens the full cart: what they filled in, their
+                          journey on the form, and the convert action. A rep
+                          about to call should not have to leave the log to
+                          see what the customer actually did. */}
+                      <button type="button"
+                        onClick={() => { setSelectedCartId(row.id); setModal("cartDetails"); }}
+                        title="Open this cart"
+                        className="!min-h-0 text-left text-[13px] font-bold text-gray-900 underline-offset-2 hover:text-[#1F8FE0] hover:underline">
+                        {row.customer || "No name given"}
+                      </button>
                       {row.convertedOrderId ? (
                         <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-black uppercase text-emerald-700">Converted</span>
                       ) : (
@@ -53825,7 +53834,14 @@ ${waybillLineItems(w).length > 1
                       {row.productName || "No product"}{row.packageName ? ` · ${row.packageName}` : ""}
                     </div>
                     <div className="mt-0.5 text-[11px] text-gray-400">
-                      {row.id} · {row.phone} · {cartRowMoney(row.amount, row.currency)}
+                      <button type="button"
+                        onClick={() => { setSelectedCartId(row.id); setModal("cartDetails"); }}
+                        className="!min-h-0 font-semibold text-gray-500 underline-offset-2 hover:text-[#1F8FE0] hover:underline">
+                        {row.id}
+                      </button>
+                      {" · "}
+                      <a href={`tel:${row.phone}`} className="hover:text-[#1F8FE0] hover:underline">{row.phone}</a>
+                      {" · "}{cartRowMoney(row.amount, row.currency)}
                     </div>
                     {/* When it arrived, and how many pieces they were trying to
                         buy. A 6-piece cart is worth a different call to a
