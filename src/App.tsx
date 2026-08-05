@@ -55022,6 +55022,44 @@ ${waybillLineItems(w).length > 1
     // date. They sit in their own group at the bottom, labelled honestly, and
     // are exempt from the date filter so filtering can never hide work that
     // exists.
+    // Every follow-up this rep has scheduled on their own orders, grouped by
+    // when it is owed. The date was already being captured and only ever shown
+    // as a flag on individual rows, so a commitment made on Monday had nowhere
+    // to resurface on Thursday. Across the business 65 of 109 scheduled
+    // follow-ups are already past their day.
+    const openStatuses = new Set(["New", "Confirmed", "In Process", "Dispatched", "Postponed"]);
+    const myOpenOrders = myOrders.filter((order) => openStatuses.has(order.status ?? ""));
+    const nextActionGroups = (() => {
+      const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+      const dayIndex = (iso: string) =>
+        Math.floor((new Date(iso).setHours(0, 0, 0, 0) - startOfToday.getTime()) / 86400000);
+      const scheduled = myOpenOrders.filter((order) => Boolean(order.nextFollowUpAt));
+      // An open order with nothing scheduled is the quiet failure: nobody has
+      // said when it will be touched again, so nothing will remind anyone.
+      const unscheduled = myOpenOrders.filter((order) => !order.nextFollowUpAt);
+      return [
+        { key: "overdue", title: "Overdue", hint: "past the day it was promised",
+          tone: "border-rose-300 bg-rose-50", head: "text-rose-800", pill: "bg-rose-600 text-white",
+          rows: scheduled.filter((o) => dayIndex(o.nextFollowUpAt!) < 0) },
+        { key: "today", title: "Today", hint: "owed today",
+          tone: "border-amber-300 bg-amber-50", head: "text-amber-900", pill: "bg-amber-500 text-white",
+          rows: scheduled.filter((o) => dayIndex(o.nextFollowUpAt!) === 0) },
+        { key: "tomorrow", title: "Tomorrow", hint: "",
+          tone: "border-sky-200 bg-sky-50", head: "text-sky-900", pill: "bg-sky-500 text-white",
+          rows: scheduled.filter((o) => dayIndex(o.nextFollowUpAt!) === 1) },
+        { key: "week", title: "Later this week", hint: "within 7 days",
+          tone: "border-slate-200 bg-slate-50", head: "text-slate-800", pill: "bg-slate-500 text-white",
+          rows: scheduled.filter((o) => { const d = dayIndex(o.nextFollowUpAt!); return d > 1 && d <= 7; }) },
+        { key: "later", title: "Later", hint: "more than a week away",
+          tone: "border-gray-200 bg-gray-50", head: "text-gray-700", pill: "bg-gray-400 text-white",
+          rows: scheduled.filter((o) => dayIndex(o.nextFollowUpAt!) > 7) },
+        { key: "none", title: "No follow-up scheduled", hint: "open, but nothing says when it is touched again",
+          tone: "border-violet-200 bg-violet-50", head: "text-violet-900", pill: "bg-violet-500 text-white",
+          rows: unscheduled }
+      ].filter((group) => group.rows.length > 0);
+    })();
+    const overdueNextActionCount = nextActionGroups.find((g) => g.key === "overdue")?.rows.length ?? 0;
+
     const myPickBounds = periodBoundsForQuery(recoveryRepPeriod, recoveryRepDateRange);
     const pickDayKey = (order: TrackedOrder): string | null =>
       order.assignedAt ? String(order.assignedAt).slice(0, 10) : null;
@@ -55945,6 +55983,76 @@ ${waybillLineItems(w).length > 1
             <div className="text-xl font-black text-sky-600 mt-1">{candidateReasonCounts["Failed"] ?? 0}</div>
           </div>
         </div>
+
+        {/* What this rep has already promised, before what they could pick up
+            next. A commitment made on Monday had nowhere to resurface on
+            Thursday - it lived as a flag on one row in one list. */}
+        {nextActionGroups.length > 0 && (
+          <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 px-5 py-4">
+              <h2 className="m-0 text-base font-bold text-gray-900">Next actions</h2>
+              {overdueNextActionCount > 0 && (
+                <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-black text-rose-700">
+                  {overdueNextActionCount} overdue
+                </span>
+              )}
+              <span className="text-[11px] font-semibold text-gray-400">
+                {myOpenOrders.length} open order{myOpenOrders.length === 1 ? "" : "s"} on this rep
+              </span>
+            </div>
+            <div className="space-y-4 p-4">
+              {nextActionGroups.map((group) => (
+                <div key={group.key} className={`rounded-xl border ${group.tone} p-3`}>
+                  <div className="mb-2.5 flex flex-wrap items-baseline gap-2 px-1">
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-black ${group.pill}`}>
+                      {group.rows.length}
+                    </span>
+                    <h3 className={`m-0 text-sm font-black ${group.head}`}>{group.title}</h3>
+                    {group.hint && <span className="text-[11px] font-semibold text-gray-500">{group.hint}</span>}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {group.rows.map((order) => (
+                      <article key={order.id} className="rounded-lg border border-white bg-white p-3 shadow-sm">
+                        <div className="flex items-start justify-between gap-2">
+                          <button type="button" onClick={() => openOrderDetailPopup(order.id)}
+                            className="!min-h-0 text-left text-[13px] font-bold text-gray-900 hover:text-[#1F8FE0] hover:underline">
+                            {order.customer}
+                          </button>
+                          {order.nextFollowUpAt && (
+                            <span className="shrink-0 text-[10px] font-black text-gray-500">
+                              {new Date(order.nextFollowUpAt).toLocaleDateString([], { day: "numeric", month: "short" })}
+                            </span>
+                          )}
+                        </div>
+                        <a href={`tel:${order.phone}`} className="mt-0.5 block text-[11px] font-semibold text-gray-500 hover:text-[#1F8FE0]">
+                          {order.phone}
+                        </a>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          #{order.id} · {order.packageName || order.productName || "No product"}
+                          {quantityForOrder(order) ? ` · ${quantityForOrder(order)} pcs` : ""} · {formatProductMoney(order.amount, order.currency)}
+                        </div>
+                        {/* Where the last call ended, so this one does not start
+                            from nothing. */}
+                        {order.callOutcome && (
+                          <div className="mt-1.5 rounded bg-gray-50 px-2 py-1 text-[11px] text-gray-600">
+                            {String(order.callOutcome).split("\n").slice(-1)[0]}
+                          </div>
+                        )}
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <span className="truncate text-[10px] font-semibold text-gray-400">{order.status}</span>
+                          <button type="button" onClick={() => openFollowUpAttemptModal(order)}
+                            className="!min-h-0 shrink-0 rounded-md bg-[#1F8FE0] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#1560a8]">
+                            Log call
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-200">
