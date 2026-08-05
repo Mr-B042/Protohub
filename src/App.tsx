@@ -53707,15 +53707,36 @@ ${waybillLineItems(w).length > 1
       row.assignedAt ? lagosDayKeyOf(row.assignedAt) : "";
     const days = grid?.days ?? [];
     const todayKey = grid?.todayKey ?? "";
+    // Scope the ROWS to the week on screen, not just the columns. The week nav
+    // only ever chose which days were columns, so a July cart sat under a
+    // heading that said "this week" - 11 of 29 were doing exactly that.
+    //
+    // Three ways in, because "arrived this week" alone would hide live work:
+    //   - it arrived this week, or
+    //   - it was worked this week (its row has a logged cell), or
+    //   - nobody has ever called it.
+    // That last one is the safety valve. An untouched cart must never be
+    // hidden by a date filter - it is the whole reason the board exists.
+    const weekStartKey = grid?.weekStart ?? "";
+    const weekEndKey = days.length > 0 ? days[days.length - 1].key : "";
+    const weekScoped = statusFiltered.filter((row) => {
+      if (!weekStartKey || !weekEndKey) return true;
+      const arrived = row.createdKey >= weekStartKey && row.createdKey <= weekEndKey;
+      const workedThisWeek = Object.keys(row.cells ?? {}).length > 0;
+      const neverCalled = (attemptsById.get(row.id) ?? 0) === 0;
+      return arrived || workedThisWeek || neverCalled;
+    });
+    const hiddenOlder = statusFiltered.length - weekScoped.length;
+
     const rows = cartGridDayFilter === ""
-      ? statusFiltered
+      ? weekScoped
       : cartGridDayFilter === "unrecorded"
-        ? statusFiltered.filter((row) => !row.assignedAt)
-        : statusFiltered.filter((row) => assignedDayKey(row) === cartGridDayFilter);
+        ? weekScoped.filter((row) => !row.assignedAt)
+        : weekScoped.filter((row) => assignedDayKey(row) === cartGridDayFilter);
     // Counts per day so an empty day is visible before you click it, and so
     // carts assigned before the date was recorded are never silently dropped.
-    const assignedCountFor = (key: string) => statusFiltered.filter((row) => assignedDayKey(row) === key).length;
-    const unrecordedCount = statusFiltered.filter((row) => !row.assignedAt).length;
+    const assignedCountFor = (key: string) => weekScoped.filter((row) => assignedDayKey(row) === key).length;
+    const unrecordedCount = weekScoped.filter((row) => !row.assignedAt).length;
 
     const outcomeTone = (outcome: string | null) => {
       const value = (outcome ?? "").toLowerCase();
@@ -53748,7 +53769,18 @@ ${waybillLineItems(w).length > 1
               </span>
             )}
           </div>
-          <span className="hidden text-[11px] font-semibold text-gray-400 sm:inline">Mon–Sat · Sundays off</span>
+          <div className="flex flex-col items-end">
+            <span className="hidden text-[11px] font-semibold text-gray-400 sm:inline">Mon–Sat · Sundays off</span>
+            {/* Says what the table holds, not just what the columns are. The
+                week label used to describe the columns while every assigned
+                cart sat underneath it, which read as a broken date filter. */}
+            {hiddenOlder > 0 && (
+              <span className="text-[10px] font-semibold text-gray-400"
+                title="Older carts appear when they were worked this week, or when nobody has called them yet.">
+                {hiddenOlder} older cart{hiddenOlder === 1 ? "" : "s"} hidden
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Filters by the day each cart was ASSIGNED - "what did I hand out on
@@ -53761,7 +53793,7 @@ ${waybillLineItems(w).length > 1
             <button type="button" onClick={() => setCartGridDayFilter("")}
               className={`!min-h-0 whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors ${
                 cartGridDayFilter === "" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600 hover:text-gray-900"}`}>
-              Whole week ({statusFiltered.length})
+              Whole week ({weekScoped.length})
             </button>
             {days.map((day) => {
               const count = assignedCountFor(day.key);
