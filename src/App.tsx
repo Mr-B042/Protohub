@@ -7937,7 +7937,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // The day-by-day view of the same carts, matching the order Daily Log.
   const [cartFollowUpGrid, setCartFollowUpGrid] = useState<CartFollowUpGrid | null>(null);
   const [cartFollowUpWeekStart, setCartFollowUpWeekStart] = useState<string | null>(null);
-  const [cartFollowUpLayout, setCartFollowUpLayout] = useState<"grid" | "details">("grid");
+  const [cartFollowUpLayout, setCartFollowUpLayout] = useState<"grid" | "details" | "actions">("grid");
   // Which day's ASSIGNMENTS to show. "" is the whole week. Any other value is
   // a YYYY-MM-DD day key, matched against when the cart was handed to the rep -
   // not against when the log column falls, which is a different question.
@@ -54030,6 +54030,114 @@ ${waybillLineItems(w).length > 1
     return true;
   };
 
+  // Every callback a rep has promised, grouped by when it is owed.
+  //
+  // The date was already being captured on each follow-up and shown nowhere,
+  // so it drove nothing and reps stopped filling it in - 2 of 20 logged carts
+  // have one. A promise with no home is a promise that gets lost.
+  const renderCartNextActions = (rows: CartFollowUpRow[]) => {
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const dayMs = 86400000;
+    const dayIndex = (iso: string) =>
+      Math.floor((new Date(iso).setHours(0, 0, 0, 0) - startOfToday.getTime()) / dayMs);
+
+    const open = rows.filter((row) => !row.convertedOrderId);
+    const withDate = open.filter((row) => Boolean(row.nextActionAt));
+    // Someone who said "call me back" but has no date is the same lost
+    // promise, just harder to see. It gets its own group rather than nothing.
+    const promisedNoDate = open.filter((row) =>
+      !row.nextActionAt && /call back|callback|later|tomorrow|next week/i.test(row.lastOutcome ?? ""));
+
+    const groups = [
+      { key: "overdue", title: "Overdue", hint: "past the day it was promised",
+        tone: "border-rose-300 bg-rose-50", head: "text-rose-800", pill: "bg-rose-600 text-white",
+        rows: withDate.filter((row) => dayIndex(row.nextActionAt!) < 0) },
+      { key: "today", title: "Today", hint: "owed today",
+        tone: "border-amber-300 bg-amber-50", head: "text-amber-900", pill: "bg-amber-500 text-white",
+        rows: withDate.filter((row) => dayIndex(row.nextActionAt!) === 0) },
+      { key: "tomorrow", title: "Tomorrow", hint: "",
+        tone: "border-sky-200 bg-sky-50", head: "text-sky-900", pill: "bg-sky-500 text-white",
+        rows: withDate.filter((row) => dayIndex(row.nextActionAt!) === 1) },
+      { key: "week", title: "Later this week", hint: "within 7 days",
+        tone: "border-slate-200 bg-slate-50", head: "text-slate-800", pill: "bg-slate-500 text-white",
+        rows: withDate.filter((row) => { const d = dayIndex(row.nextActionAt!); return d > 1 && d <= 7; }) },
+      { key: "later", title: "Later", hint: "more than a week away",
+        tone: "border-gray-200 bg-gray-50", head: "text-gray-700", pill: "bg-gray-400 text-white",
+        rows: withDate.filter((row) => dayIndex(row.nextActionAt!) > 7) },
+      { key: "nodate", title: "Promised a callback, no date set", hint: "the customer was told someone would ring back",
+        tone: "border-violet-200 bg-violet-50", head: "text-violet-900", pill: "bg-violet-500 text-white",
+        rows: promisedNoDate }
+    ].filter((group) => group.rows.length > 0);
+
+    if (groups.length === 0) {
+      return (
+        <section className="rounded-xl border border-gray-200 bg-white px-6 py-12 text-center shadow-sm">
+          <p className="m-0 text-sm font-semibold text-gray-500">No callbacks are scheduled.</p>
+          <p className="m-0 mt-1 text-xs text-gray-400">
+            Set “Call them again on” when logging a follow-up and it will appear here, grouped by when it is due.
+          </p>
+        </section>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        {groups.map((group) => (
+          <section key={group.key} className={`rounded-xl border ${group.tone} p-3`}>
+            <div className="mb-2.5 flex flex-wrap items-baseline gap-2 px-1">
+              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-black ${group.pill}`}>
+                {group.rows.length}
+              </span>
+              <h3 className={`m-0 text-sm font-black ${group.head}`}>{group.title}</h3>
+              {group.hint && <span className="text-[11px] font-semibold text-gray-500">{group.hint}</span>}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {group.rows.map((row) => (
+                <article key={row.id} className="rounded-lg border border-white bg-white p-3 shadow-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <button type="button" onClick={() => { setSelectedCartId(row.id); setModal("cartDetails"); }}
+                      className="!min-h-0 text-left text-[13px] font-bold text-gray-900 hover:text-[#1F8FE0] hover:underline">
+                      {row.customer || "No name given"}
+                    </button>
+                    {row.nextActionAt && (
+                      <span className="shrink-0 text-[10px] font-black text-gray-500">
+                        {new Date(row.nextActionAt).toLocaleDateString([], { day: "numeric", month: "short" })}
+                      </span>
+                    )}
+                  </div>
+                  <a href={`tel:${row.phone}`} className="mt-0.5 block text-[11px] font-semibold text-gray-500 hover:text-[#1F8FE0]">
+                    {row.phone}
+                  </a>
+                  <div className="mt-1 text-[11px] text-gray-500">
+                    {row.productName || "No product"}
+                    {row.quantity ? ` · ${row.quantity} pcs` : ""} · {cartRowMoney(row.amount, row.currency)}
+                  </div>
+                  {/* What the customer actually said, so the rep opens the call
+                      where the last one ended rather than starting again. */}
+                  {row.lastOutcome && (
+                    <div className="mt-1.5 rounded bg-gray-50 px-2 py-1">
+                      <div className="text-[11px] font-bold text-gray-700">{row.lastOutcome}</div>
+                      {row.lastOutcomeNote && (
+                        <div className="text-[11px] italic text-gray-500">&ldquo;{row.lastOutcomeNote}&rdquo;</div>
+                      )}
+                    </div>
+                  )}
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <span className="truncate text-[10px] font-semibold text-gray-400">{row.repName}</span>
+                    <button type="button" onClick={() => openCartFollowUpModal(row)}
+                      className="!min-h-0 shrink-0 rounded-md bg-[#1F8FE0] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#1560a8]">
+                      Log call
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    );
+  };
+
   const renderCartFollowUpTab = () => {
     // The same period rule the carts table uses, plus the last follow-up:
     // logging a call today on a three-week-old cart is today's work, so the
@@ -54060,6 +54168,14 @@ ${waybillLineItems(w).length > 1
     const hiddenNeverContacted = cartFollowUpLayout === "details"
       ? cartFollowUps.filter((row) => row.attempts === 0).length - neverContacted
       : 0;
+
+    // Callbacks whose promised day has passed, counted on the tab itself.
+    const overdueNextActions = periodRows.filter((row) => {
+      if (row.convertedOrderId || !row.nextActionAt) return false;
+      const due = new Date(row.nextActionAt); due.setHours(0, 0, 0, 0);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      return due.getTime() < today.getTime();
+    }).length;
 
     const daysSince = (value?: string | null) =>
       value ? Math.floor((Date.now() - new Date(value).getTime()) / 86400000) : null;
@@ -54125,10 +54241,16 @@ ${waybillLineItems(w).length > 1
           {/* Same two ways of looking at one set of carts: the week's log, or
               the full contact and cart detail behind each row. */}
           <div className="inline-flex items-center rounded-lg bg-gray-100 p-1">
-            {([["grid", "Daily Log"], ["details", "Details"]] as const).map(([key, label]) => (
+            {([["grid", "Daily Log"], ["actions", "Next actions"], ["details", "Details"]] as const).map(([key, label]) => (
               <button key={key} type="button" onClick={() => setCartFollowUpLayout(key)}
-                className={`!min-h-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${cartFollowUpLayout === key ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>
+                className={`!min-h-0 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${cartFollowUpLayout === key ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>
                 {label}
+                {/* A promised callback that has come and gone is the one thing
+                    on this page with a deadline already missed, so it carries
+                    the count rather than waiting to be discovered. */}
+                {key === "actions" && overdueNextActions > 0 && (
+                  <span className="rounded-full bg-rose-100 px-1.5 text-[10px] font-black text-rose-700">{overdueNextActions}</span>
+                )}
               </button>
             ))}
           </div>
@@ -54232,7 +54354,9 @@ ${waybillLineItems(w).length > 1
           ))}
         </div>
 
-        {cartFollowUpLayout === "grid" ? renderCartFollowUpGrid() : (
+        {cartFollowUpLayout === "grid" ? renderCartFollowUpGrid()
+          : cartFollowUpLayout === "actions" ? renderCartNextActions(rows)
+          : (
         <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1180px] text-sm">
