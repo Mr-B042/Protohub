@@ -23830,6 +23830,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           setProducts(result.value as any);
         }
       };
+      // The background half of the split load: orders OLDER than the 90-day
+      // cutoff. It must merge, never replace - replacing would drop the recent
+      // orders the critical path just fetched, and those are the ones on
+      // screen. Keyed by id so an order appearing in both halves (a boundary
+      // row, or one re-dated across the cutoff) resolves to one row.
+      const hydrateOrdersOlder = (result: PromiseSettledResult<any>) => {
+        if (result.status !== "fulfilled" || !Array.isArray(result.value?.data)) return;
+        const older = (result.value.data as any[]).map((order) => normalizeTrackedOrder(order));
+        // If the older half is itself capped, say so - dashboard stats built on
+        // a silently truncated history are worse than a visible warning.
+        const total = result.value.total ?? 0;
+        if (total > older.length) {
+          setOrdersCappedWarning(`Showing ${older.length.toLocaleString()} of ${total.toLocaleString()} older orders. Dashboard stats may be incomplete.`);
+        }
+        if (older.length === 0) return;
+        setTrackedOrders((current) => {
+          const byId = new Map(current.map((order) => [order.id, order]));
+          for (const order of older) if (!byId.has(order.id)) byId.set(order.id, order);
+          return sortOrdersByCreatedAtDesc(Array.from(byId.values()));
+        });
+      };
+
       const hydrateOrders = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value?.data)) {
           setTrackedOrders((result.value.data as any[]).map((order) => normalizeTrackedOrder(order)));
@@ -24155,7 +24177,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           }
 
           void Promise.allSettled([
-            ordersApi.list({ limit: "5000" }),
+            // Only what the critical-path load did NOT already fetch. That call
+            // takes the last 90 days; this one previously re-fetched everything
+            // including those same 90 days, so the heaviest table in the system
+            // was pulled from the database twice on every single page load.
+            // dateTo makes the two halves meet without overlapping.
+            ordersApi.list({ limit: "5000", dateTo: recentOrdersCutoff }),
             ifNotMarketer(() => agentsApi.list()),
             ifNotMarketer(() => stockApi.movements({ limit: "500" })),
             ifNotMarketer(() => waybillsApi.list()),
@@ -24186,7 +24213,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             if (cancelled) return;
             // Full order history (all-time), pulled off the critical path - replaces
             // the recent-only set so reports/Orders list are complete.
-            hydrateOrders(apiOrdersFull);
+            hydrateOrdersOlder(apiOrdersFull);
             hydrateAgents(apiAgents);
             hydrateMovements(apiMovements);
             hydrateWaybills(apiWaybills);
