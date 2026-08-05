@@ -56027,8 +56027,20 @@ ${waybillLineItems(w).length > 1
                               const days = Math.floor((Date.now() - new Date(closedIso).getTime()) / 86400000);
                               const label = days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
                               return (
-                                <div className={`mt-1 text-[10px] font-bold ${days <= 7 ? "text-rose-600" : "text-gray-400"}`}>
-                                  Closed {label}
+                                <div className="mt-1">
+                                  <div className={`text-[10px] font-bold ${days <= 7 ? "text-rose-600" : "text-gray-400"}`}>
+                                    Closed {label}
+                                  </div>
+                                  {/* The actual date under the relative one.
+                                      "9 days ago" is the right thing to feel,
+                                      but a rep on the phone needs the date the
+                                      customer will recognise. */}
+                                  <div className="text-[10px] font-semibold text-gray-400">
+                                    {new Date(closedIso).toLocaleString([], {
+                                      day: "numeric", month: "short", year: "numeric",
+                                      hour: "numeric", minute: "2-digit"
+                                    })}
+                                  </div>
                                 </div>
                               );
                             })()}
