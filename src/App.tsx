@@ -106,7 +106,11 @@ import {
   Laptop,
   Apple,
   ReceiptText,
-  User
+  User,
+  Lock,
+  ArrowDown,
+  ArrowUp,
+  Tag
 } from "lucide-react";
 import { OrderSourceLogo } from "./components/OrderSourceLogo";
 import { WhatsAppIcon } from "./components/WhatsAppIcon";
@@ -11728,6 +11732,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // stored (remittance_transactions); this only decides which slice to show.
   const [receiptHistoryTarget, setReceiptHistoryTarget] = useState<{ label: string; partnerKey: string | null; orderId: string | null } | null>(null);
   const [receiptHistoryFilter, setReceiptHistoryFilter] = useState<"all" | "received" | "reversals">("all");
+  // Batch modal: the long-form rules and the per-order allocation both stay
+  // available, but folded away so the number entry is what you land on.
+  const [batchRulesOpen, setBatchRulesOpen] = useState(false);
+  const [batchAllocationOpen, setBatchAllocationOpen] = useState(false);
   const [receiptHistoryExpandedId, setReceiptHistoryExpandedId] = useState<string | null>(null);
   const [remittanceOpenBusy, setRemittanceOpenBusy] = useState(false);
   const [remittanceVarianceReason, setRemittanceVarianceReason] = useState("");
@@ -19205,6 +19213,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const remittanceBatchOwnerApprovalGranted = remittanceBatchHasVariance && currentRole === "Owner";
   const remittanceBatchVariancePending = remittanceBatchHasVariance && currentRole === "Admin"; // admin logs → pending owner approval
   const remittanceBatchNeedsOwnerApproval = remittanceBatchHasVariance && currentRole !== "Owner" && currentRole !== "Admin"; // reps/agents still locked
+  // Whole days since the partner last handed cash over - shown under the date
+  // so "Aug 3" carries its own staleness without the reader doing the maths.
+  const remittanceBatchLastReceivedAgo = (() => {
+    const last = remittanceBatchTargetRow?.lastReceivedAt;
+    if (!last) return "";
+    const days = Math.floor((Date.now() - new Date(last).getTime()) / 86400000);
+    if (!Number.isFinite(days) || days < 0) return "";
+    return days === 0 ? "Today" : days === 1 ? "1 day ago" : `${days} days ago`;
+  })();
+  // Short and excess draw from deliberately separate reason lists - an excess
+  // must never be filed under a shortage reason.
+  const remittanceBatchReasonOptions = remittanceBatchExcessAmount > 0 ? remittanceExcessCashReasons : remittanceShortCashReasons;
   const normalizedRemittanceOrderSearch = remittanceOrderSearch.trim().toLowerCase();
   const financeRemittanceEditableOrders = financeDeliveredRows
     .slice()
@@ -84123,7 +84143,7 @@ ${waybillLineItems(w).length > 1
         return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section
-            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
+            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" ? "max-w-5xl" :modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
             role="dialog" aria-modal="true" aria-labelledby="modal-title"
           >
@@ -84192,7 +84212,22 @@ ${waybillLineItems(w).length > 1
 	                {modal === "salesRepDetails" && "Sales Rep Profile"}
 	                {modal === "editSalesRep" && "Edit Sales Rep"}
 	                {modal === "recordRemittance" && remittanceTargetOrder && `Record Remittance - ${remittanceTargetOrder.id}`}
-	                {modal === "recordBatchRemittance" && remittanceBatchTargetRow && `Record Batch Remittance - ${remittanceBatchTargetRow.partnerName}`}
+	                {modal === "recordBatchRemittance" && remittanceBatchTargetRow && (
+	                  <span className="flex items-center gap-3">
+	                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
+	                      <ClipboardCheck className="h-5 w-5" />
+	                    </span>
+	                    <span className="flex min-w-0 flex-col">
+	                      <span className="text-lg font-bold leading-tight">Record Batch Remittance</span>
+	                      <span className="flex flex-wrap items-center gap-2">
+	                        <span className="truncate text-xs font-normal text-gray-500 dark:text-slate-400">{remittanceBatchTargetRow.partnerName}</span>
+	                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+	                          <ShoppingCart className="h-3 w-3" />{remittanceBatchOrders.length} order{remittanceBatchOrders.length === 1 ? "" : "s"}
+	                        </span>
+	                      </span>
+	                    </span>
+	                  </span>
+	                )}
 	                {modal === "remittanceReceipts" && (
 	                  <span className="flex items-center gap-3">
 	                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
@@ -92119,134 +92154,290 @@ ${waybillLineItems(w).length > 1
               );
             })()}
 
-            {modal === "recordBatchRemittance" && remittanceBatchTargetRow && (
-              <div className="modal-form">
-                <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Partner</span><strong className="text-sm font-semibold text-gray-900">{remittanceBatchTargetRow.partnerName}</strong></article>
-                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Orders In Batch</span><strong className="text-sm font-semibold text-gray-900">{remittanceBatchOrders.length}</strong></article>
-                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Logistics Fees</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(remittanceBatchTargetRow.logisticsCost, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></article>
-                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Expected To Receive</span><strong className="text-sm font-semibold text-blue-700">{formatProductMoney(remittanceBatchTargetRow.expected, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></article>
-                  <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Last Cash Received</span><strong className="text-sm font-semibold text-gray-900">{remittanceBatchTargetRow.lastReceivedAt ? displayDateFromKey(remittanceBatchTargetRow.lastReceivedAt.slice(0, 10)) : "-"}</strong></article>
-                </div>
-                <p className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-                  This batch uses the current finance date range and allocates the remitted cash across this logistics partner&apos;s delivered orders oldest first. If delivery fees need correction, update them per order before saving this batch.<br />
-                  <span>Enter the <strong>full amount the partner handed over</strong>. Pay <strong>over</strong> the expected total → pick an <strong>excess</strong> reason; the extra is logged as owner-approved excess (spread across the orders, kept separate from shortages). Pay <strong>under</strong> → pick a short-cash reason. Either way needs Owner approval.</span>
-                </p>
-                <label>
-                  <span>Total Amount Remitted By Partner</span>
-                  <input value={remittanceBatchAmount} onChange={(e) => setRemittanceBatchAmount(e.target.value)} inputMode="decimal" placeholder="e.g. 222500" />
-                </label>
-                <label>
-                  <span>Cash Received Date</span>
-                  <input type="date" value={remittanceBatchReceivedDate} onChange={(e) => setRemittanceBatchReceivedDate(e.target.value)} />
-                </label>
-                <div className={`rounded-xl border px-3 py-3 text-sm ${remittanceBatchShortAmount > 0 ? "border-amber-200 bg-amber-50 text-amber-900" : remittanceBatchExcessAmount > 0 ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-gray-200 bg-gray-50 text-gray-600"}`}>
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                    <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Already received</span><strong>{formatProductMoney(remittanceBatchTargetRow.remitted, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></div>
-                    <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Outstanding</span><strong>{formatProductMoney(remittanceBatchOutstandingTotal, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></div>
-                    <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">This cash</span><strong>{formatProductMoney(remittanceBatchAmountValue, remittanceRowCurrency(remittanceBatchTargetRow))}</strong></div>
-                    <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Difference</span><strong>{remittanceBatchShortAmount > 0 ? `Short ${formatProductMoney(remittanceBatchShortAmount, remittanceRowCurrency(remittanceBatchTargetRow))}` : remittanceBatchExcessAmount > 0 ? `Excess ${formatProductMoney(remittanceBatchExcessAmount, remittanceRowCurrency(remittanceBatchTargetRow))}` : "Balanced"}</strong></div>
-                  </div>
-                  <p className="m-0 mt-2 text-xs">
-                    {remittanceBatchShortAmount > 0
-                      ? remittanceBatchNeedsOwnerApproval
-                        ? "Cash is below the batch outstanding. Only an Admin or the Owner can record this."
-                        : "Cash is below the batch outstanding. Select why before saving."
-                      : remittanceBatchExcessAmount > 0
-                        ? remittanceBatchNeedsOwnerApproval
-                          ? "Extra cash found. Only an Admin or the Owner can record this."
-                          : "Extra cash will be recorded on the final order in this batch."
-                        : "This batch exactly settles the current outstanding cash."}
-                  </p>
-                  {remittanceBatchOwnerApprovalGranted && <p className="m-0 mt-1 text-xs font-semibold">Owner approval: saving will approve and record this batch variance.</p>}
-                  {remittanceBatchVariancePending && <p className="m-0 mt-1 text-xs font-semibold">Saving records this cash now and sends the variance to the Owner to approve.</p>}
-                  {remittanceBatchNeedsOwnerApproval && <p className="m-0 mt-1 text-xs font-semibold">This save is locked - only an Admin or the Owner can record cash variance.</p>}
-                  <p className="m-0 mt-1 text-xs"><strong>Cash week:</strong> this remittance will be counted on {remittanceBatchReceivedDate || "the selected date"}.</p>
-                </div>
-                {remittanceBatchShortAmount > 0 && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <label>
-                      <span>Reason for short batch cash *</span>
-                      <select value={remittanceBatchVarianceReason} onChange={(e) => setRemittanceBatchVarianceReason(e.target.value)}>
-                        <option value="">Select a reason...</option>
-                        {remittanceShortCashReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
-                      </select>
-                    </label>
-                    <label>
-                      <span>Reason note {remittanceBatchVarianceReason === "correction" ? "*" : "(optional)"}</span>
-                      <input value={remittanceBatchVarianceNote} onChange={(e) => setRemittanceBatchVarianceNote(e.target.value)} placeholder="e.g. waybill deducted, customer paid less..." />
-                    </label>
-                  </div>
-                )}
-                {remittanceBatchExcessAmount > 0 && (
-                  <div className="flex flex-col gap-2">
-                    <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 m-0">
-                      <strong>How excess cash works:</strong> the partner paid <strong>{formatProductMoney(remittanceBatchExcessAmount, remittanceRowCurrency(remittanceBatchTargetRow))}</strong> more than these orders owed. The full {formatProductMoney(remittanceBatchAmountValue, remittanceRowCurrency(remittanceBatchTargetRow))} is booked as cash received, and the extra is logged on its own as owner-approved excess (spread across the orders) - never mixed into the short-cash reasons. Pick why below.
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <label>
-                        <span>Reason for excess cash *</span>
-                        <select value={remittanceBatchVarianceReason} onChange={(e) => setRemittanceBatchVarianceReason(e.target.value)}>
-                          <option value="">Select a reason...</option>
-                          {remittanceExcessCashReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
-                        </select>
-                      </label>
-                      <label>
-                        <span>Reason note {remittanceBatchVarianceReason === "correction" ? "*" : "(optional)"}</span>
-                        <input value={remittanceBatchVarianceNote} onChange={(e) => setRemittanceBatchVarianceNote(e.target.value)} placeholder="e.g. partner sent extra, repaid an earlier shortage..." />
-                      </label>
+            {modal === "recordBatchRemittance" && remittanceBatchTargetRow && (() => {
+              const cur = remittanceRowCurrency(remittanceBatchTargetRow);
+              const money = (value: number) => formatProductMoney(value, cur);
+              const entered = remittanceBatchAmount.trim().length > 0;
+              const short = remittanceBatchShortAmount > 0;
+              const excess = remittanceBatchExcessAmount > 0;
+              const oldest = remittanceBatchOrders[0];
+              const newest = remittanceBatchOrders[remittanceBatchOrders.length - 1];
+              const stepBadge = (n: number) => (
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-[11px] font-bold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">{n}</span>
+              );
+              return (
+                <div className="px-6 py-5 space-y-5">
+                  {/* Where the batch stands before any number is typed */}
+                  <div className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 dark:border-slate-700/80 dark:bg-slate-700/80 sm:grid-cols-[1.4fr_1fr_1fr_auto]">
+                    <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Outstanding (to receive)</span>
+                      <span className="mt-1 block text-3xl font-bold leading-tight text-emerald-600 dark:text-emerald-300">{money(remittanceBatchOutstandingTotal)}</span>
+                      <span className="mt-1 block text-[11px] text-gray-400 dark:text-slate-500">Needs to be received for this batch</span>
+                    </div>
+                    <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Already received</span>
+                      <span className="mt-1 block text-lg font-bold leading-tight text-gray-900 dark:text-slate-50">{money(remittanceBatchTargetRow.remitted)}</span>
+                      <span className="mt-1 block text-[11px] text-gray-400 dark:text-slate-500">Total received so far</span>
+                    </div>
+                    <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Last cash received</span>
+                      <span className="mt-1 flex items-center gap-1.5">
+                        <CalendarDays className="h-4 w-4 shrink-0 text-gray-400" />
+                        <span className="text-base font-bold leading-tight text-gray-900 dark:text-slate-50">
+                          {remittanceBatchTargetRow.lastReceivedAt ? displayDateFromKey(remittanceBatchTargetRow.lastReceivedAt.slice(0, 10)) : "-"}
+                        </span>
+                      </span>
+                      <span className="mt-1 block text-[11px] text-gray-400 dark:text-slate-500">{remittanceBatchLastReceivedAgo || "No cash logged yet"}</span>
+                    </div>
+                    <div className="flex items-center bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                      <button
+                        className="!min-h-0 inline-flex w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-200 dark:hover:bg-slate-800"
+                        onClick={() => setBatchRulesOpen((prev) => !prev)}
+                        aria-expanded={batchRulesOpen}
+                      >
+                        <Info className="h-3.5 w-3.5" />Batch Rules
+                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${batchRulesOpen ? "rotate-180" : ""}`} />
+                      </button>
                     </div>
                   </div>
-                )}
-                <div className="border border-gray-200 rounded-xl overflow-hidden">
-                  <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-                    <strong className="text-sm text-gray-900">Allocation preview</strong>
-                    <p className="text-xs text-gray-500 mt-1">This shows how the total remittance will settle the partner&apos;s outstanding delivered orders.</p>
-                  </div>
-                  <div className="max-h-72 overflow-y-auto divide-y divide-gray-100">
-                    {remittanceBatchAllocationPreview.map(({ order, outstanding, applied, excessApplied, after }) => (
-                      <div key={order.id} className="px-4 py-3 grid grid-cols-1 sm:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,0.9fr))] gap-3 text-sm">
-                        <div>
-                          <div className="font-semibold text-[#1F8FE0]">{order.id}</div>
-                          <div className="text-gray-900">{order.customer}</div>
-                          <div className="text-xs text-gray-400">{order.deliveredDate ?? orderCreatedKey(order) ?? "No delivered date"}</div>
-                        </div>
-                        <div>
-                          <span className="text-[10px] uppercase tracking-wider text-gray-400">Outstanding</span>
-                          <div className="font-semibold text-amber-700">{formatProductMoney(outstanding, order.currency)}</div>
-                        </div>
-                        <div>
-                          <span className="text-[10px] uppercase tracking-wider text-gray-400">Applied now</span>
-                          <div className="font-semibold text-green-700">{formatProductMoney(applied, order.currency)}</div>
-                          {excessApplied > 0 && <div className="text-[11px] font-semibold text-emerald-700">includes {formatProductMoney(excessApplied, order.currency)} excess</div>}
-                        </div>
-                        <div>
-                          <span className="text-[10px] uppercase tracking-wider text-gray-400">After save</span>
-                          <div className={`font-semibold ${after > 0 ? "text-amber-700" : after < 0 ? "text-emerald-700" : "text-gray-500"}`}>
-                            {after < 0 ? `Excess ${formatProductMoney(Math.abs(after), order.currency)}` : formatProductMoney(after, order.currency)}
-                          </div>
+
+                  {batchRulesOpen && (
+                    <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-xs leading-relaxed text-gray-600 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-slate-300">
+                      <p className="m-0">This batch uses the current finance date range and allocates the remitted cash across this logistics partner&apos;s delivered orders oldest first. If delivery fees need correction, update them per order before saving this batch.</p>
+                      <p className="m-0 mt-2">Enter the <strong>full amount the partner handed over</strong>. Pay <strong>over</strong> the expected total &rarr; pick an <strong>excess</strong> reason; the extra is logged as owner-approved excess (spread across the orders, kept separate from shortages). Pay <strong>under</strong> &rarr; pick a short-cash reason. Either way needs Owner approval.</p>
+                    </div>
+                  )}
+
+                  {/* 1 - the number */}
+                  <section>
+                    <div className="flex items-center gap-2.5">
+                      {stepBadge(1)}
+                      <div>
+                        <h3 className="m-0 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">Enter Cash Received</h3>
+                        <p className="m-0 text-[11px] text-gray-400 dark:text-slate-500">Enter the full amount the partner handed over.</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_260px]">
+                      <div className={`flex items-center gap-3 rounded-xl border-2 px-3 py-2.5 transition-colors ${entered ? "border-emerald-500 bg-white dark:bg-[#0f1822]" : "border-gray-200 bg-white dark:border-slate-700 dark:bg-[#0f1822]"}`}>
+                        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-xl font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{productCurrencies[cur]?.symbol ?? "₦"}</span>
+                        <input
+                          className="!min-h-0 w-full min-w-0 border-0 bg-transparent p-0 text-4xl font-bold tabular-nums text-gray-900 outline-none placeholder:text-gray-300 focus:ring-0 dark:text-slate-50"
+                          value={remittanceBatchAmount}
+                          onChange={(event) => setRemittanceBatchAmount(event.target.value)}
+                          inputMode="decimal"
+                          placeholder="0"
+                          aria-label="Total amount remitted by partner"
+                        />
+                        {entered && <CheckCircle2 className="h-6 w-6 shrink-0 text-emerald-500" />}
+                      </div>
+                      <div className="rounded-xl border border-gray-200 px-4 py-3 dark:border-slate-700/80">
+                        <label className="!block">
+                          <span className="!mb-1 block text-[11px] font-semibold text-gray-600 dark:text-slate-300">Cash Received Date</span>
+                          <input type="date" className="!min-h-0 w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-100" value={remittanceBatchReceivedDate} onChange={(event) => setRemittanceBatchReceivedDate(event.target.value)} />
+                        </label>
+                        <div className="mt-3 border-t border-gray-100 pt-2.5 dark:border-slate-700/80">
+                          <span className="block text-[11px] font-semibold text-gray-600 dark:text-slate-300">Cash Week</span>
+                          <span className="mt-0.5 block text-sm font-bold text-[#1F8FE0] dark:text-sky-300">{remittanceBatchReceivedDate || "Not set"}</span>
+                          <span className="mt-0.5 block text-[10px] text-gray-400 dark:text-slate-500">This remittance is counted on this date.</span>
                         </div>
                       </div>
-                    ))}
+                    </div>
+                  </section>
+
+                  {/* 2 - what that number means against the outstanding */}
+                  <section>
+                    <div className="flex items-center gap-2.5">
+                      {stepBadge(2)}
+                      <h3 className="m-0 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">Difference <span className="font-normal text-gray-400 dark:text-slate-500">(calculated live)</span></h3>
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 dark:border-slate-700/80 dark:bg-slate-700/80 sm:grid-cols-3">
+                      <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                        <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Expected to receive</span>
+                        <span className="mt-1 block text-xl font-bold leading-tight text-gray-900 dark:text-slate-50">{money(remittanceBatchOutstandingTotal)}</span>
+                      </div>
+                      <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                        <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">You entered</span>
+                        <span className="mt-1 block text-xl font-bold leading-tight text-gray-900 dark:text-slate-50">{money(remittanceBatchAmountValue)}</span>
+                      </div>
+                      <div className={`px-4 py-3.5 ${short ? "bg-orange-50 dark:bg-orange-950/25" : excess ? "bg-emerald-50 dark:bg-emerald-950/25" : "bg-gray-50/80 dark:bg-slate-800/40"}`}>
+                        <span className={`block text-[10px] font-semibold uppercase tracking-wider ${short ? "text-orange-600 dark:text-orange-300" : excess ? "text-emerald-700 dark:text-emerald-300" : "text-gray-400 dark:text-slate-500"}`}>
+                          {short ? "Short cash" : excess ? "Excess cash" : "Balanced"}
+                        </span>
+                        <span className="mt-1 flex items-center gap-2">
+                          {(short || excess) && (
+                            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white ${short ? "bg-orange-500" : "bg-emerald-500"}`}>
+                              {short ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
+                            </span>
+                          )}
+                          <span className={`text-xl font-bold leading-tight ${short ? "text-orange-600 dark:text-orange-300" : excess ? "text-emerald-700 dark:text-emerald-300" : "text-gray-500 dark:text-slate-400"}`}>
+                            {short ? money(remittanceBatchShortAmount) : excess ? money(remittanceBatchExcessAmount) : money(0)}
+                          </span>
+                        </span>
+                        <span className="mt-1 block text-[11px] text-gray-400 dark:text-slate-500">
+                          {short ? "Cash is below the outstanding amount" : excess ? "Cash is above the outstanding amount" : "This batch exactly settles the outstanding cash"}
+                        </span>
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* 3 - only exists when there is a variance to explain */}
+                  {(short || excess) && (
+                    <section>
+                      <div className="flex items-center gap-2.5">
+                        {stepBadge(3)}
+                        <div>
+                          <h3 className="m-0 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">Reason for {short ? "Short Cash" : "Excess Cash"}</h3>
+                          <p className="m-0 text-[11px] text-gray-400 dark:text-slate-500">{short ? "Why is the amount less than expected?" : "Why did the partner pay more than expected?"}</p>
+                        </div>
+                      </div>
+                      {excess && (
+                        <p className="m-0 mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200">
+                          <strong>How excess cash works:</strong> the partner paid <strong>{money(remittanceBatchExcessAmount)}</strong> more than these orders owed. The full {money(remittanceBatchAmountValue)} is booked as cash received, and the extra is logged on its own as owner-approved excess (spread across the orders) - never mixed into the short-cash reasons.
+                        </p>
+                      )}
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="!block">
+                          <span className="!mb-1 block text-[11px] font-semibold text-gray-600 dark:text-slate-300">Reason *</span>
+                          <span className="relative flex items-center">
+                            <Tag className="pointer-events-none absolute left-3 h-4 w-4 text-gray-400" />
+                            <select
+                              className="!min-h-0 w-full appearance-none rounded-lg border border-gray-200 py-2.5 pl-9 pr-9 text-sm font-medium text-gray-800 dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-100"
+                              value={remittanceBatchVarianceReason}
+                              onChange={(event) => setRemittanceBatchVarianceReason(event.target.value)}
+                            >
+                              <option value="">Select a reason...</option>
+                              {remittanceBatchReasonOptions.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+                            </select>
+                            <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-gray-400" />
+                          </span>
+                        </label>
+                        <label className="!block">
+                          <span className="!mb-1 block text-[11px] font-semibold text-gray-600 dark:text-slate-300">Reason Note {remittanceBatchVarianceReason === "correction" ? "*" : "(optional)"}</span>
+                          <input
+                            className="!min-h-0 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-100"
+                            value={remittanceBatchVarianceNote}
+                            onChange={(event) => setRemittanceBatchVarianceNote(event.target.value)}
+                            placeholder={short ? "e.g. waybill deducted, customer refund" : "e.g. partner sent extra, repaid an earlier shortage"}
+                          />
+                        </label>
+                      </div>
+                      {/* Role gate, unchanged: Owner approves on save, Admin logs it as pending, everyone else is blocked. */}
+                      <div className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs ${remittanceBatchNeedsOwnerApproval ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200" : "border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-200"}`}>
+                        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>
+                          {remittanceBatchOwnerApprovalGranted && <><strong>Owner approval:</strong> saving will approve and record this batch variance.</>}
+                          {remittanceBatchVariancePending && <><strong>Owner approval is required</strong> to save this batch variance. Saving records this cash now and sends the variance to the Owner to approve.</>}
+                          {remittanceBatchNeedsOwnerApproval && <><strong>This save is locked</strong> - only an Admin or the Owner can record cash variance.</>}
+                        </span>
+                      </div>
+                    </section>
+                  )}
+
+                  {/* 4 - where the money lands */}
+                  <section>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        {stepBadge(4)}
+                        <div>
+                          <h3 className="m-0 flex flex-wrap items-center gap-2 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">
+                            Allocation Preview
+                            <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{remittanceBatchOrders.length} order{remittanceBatchOrders.length === 1 ? "" : "s"}</span>
+                          </h3>
+                          <p className="m-0 text-[11px] text-gray-400 dark:text-slate-500">Orders will be settled (oldest delivered first).</p>
+                        </div>
+                      </div>
+                      <button
+                        className="!min-h-0 inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                        onClick={() => setBatchAllocationOpen((prev) => !prev)}
+                        aria-expanded={batchAllocationOpen}
+                      >
+                        View Allocation
+                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${batchAllocationOpen ? "rotate-180" : ""}`} />
+                      </button>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 dark:border-slate-700/80 dark:bg-slate-700/80 sm:grid-cols-3">
+                      <div className="flex items-center gap-2.5 bg-gray-50/80 px-4 py-3 dark:bg-slate-800/40">
+                        <CalendarDays className="h-4 w-4 shrink-0 text-gray-400" />
+                        <span>
+                          <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Oldest order</span>
+                          <span className="block text-sm font-bold text-gray-900 dark:text-slate-50">{oldest ? `#${oldest.id}` : "-"}</span>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2.5 bg-gray-50/80 px-4 py-3 dark:bg-slate-800/40">
+                        <CalendarDays className="h-4 w-4 shrink-0 text-gray-400" />
+                        <span>
+                          <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Newest order</span>
+                          <span className="block text-sm font-bold text-gray-900 dark:text-slate-50">{newest ? `#${newest.id}` : "-"}</span>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2.5 bg-gray-50/80 px-4 py-3 dark:bg-slate-800/40">
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                        <span>
+                          <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Total to be applied</span>
+                          <span className="block text-sm font-bold text-gray-900 dark:text-slate-50">{money(remittanceBatchAmountValue)}</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    {batchAllocationOpen && (
+                      <div className="mt-3 overflow-hidden rounded-xl border border-gray-200 dark:border-slate-700/80">
+                        <div className="max-h-72 divide-y divide-gray-100 overflow-y-auto dark:divide-slate-800">
+                          {remittanceBatchAllocationPreview.map(({ order, outstanding, applied, excessApplied, after }) => (
+                            <div key={order.id} className="grid grid-cols-1 gap-3 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,0.9fr))]">
+                              <div>
+                                <div className="font-semibold text-[#1F8FE0]">{order.id}</div>
+                                <div className="text-gray-900 dark:text-slate-100">{order.customer}</div>
+                                <div className="text-xs text-gray-400">{order.deliveredDate ?? orderCreatedKey(order) ?? "No delivered date"}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Outstanding</span>
+                                <div className="font-semibold text-amber-700 dark:text-amber-300">{formatProductMoney(outstanding, order.currency)}</div>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">Applied now</span>
+                                <div className="font-semibold text-green-700 dark:text-green-300">{formatProductMoney(applied, order.currency)}</div>
+                                {excessApplied > 0 && <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">includes {formatProductMoney(excessApplied, order.currency)} excess</div>}
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-gray-400">After save</span>
+                                <div className={`font-semibold ${after > 0 ? "text-amber-700 dark:text-amber-300" : after < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-gray-500 dark:text-slate-400"}`}>
+                                  {after < 0 ? `Excess ${formatProductMoney(Math.abs(after), order.currency)}` : formatProductMoney(after, order.currency)}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {excess && (
+                      <p className="m-0 mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200">
+                        Excess cash of {money(remittanceBatchExcessAmount)} will be attached to the final allocation above. That keeps the ledger balanced instead of throwing the cash away.
+                      </p>
+                    )}
+                  </section>
+
+                  <div className="flex flex-col-reverse items-stretch gap-3 border-t border-gray-100 pt-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                    <span className="flex items-center gap-2 text-[11px] text-gray-400 dark:text-slate-500">
+                      <Lock className="h-3.5 w-3.5 shrink-0" />All changes are secure and logged.
+                    </span>
+                    <span className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
+                      <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-5 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto" onClick={closeModal}>Cancel</button>
+                      <button
+                        className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                        onClick={recordBatchRemittance}
+                        disabled={remittanceBatchNeedsOwnerApproval}
+                      >
+                        <Lock className="h-3.5 w-3.5" />
+                        {remittanceBatchNeedsOwnerApproval ? "Admin / Owner Approval Required" : remittanceBatchOwnerApprovalGranted ? "Approve & Save Batch" : remittanceBatchVariancePending ? "Save Batch (pending Owner approval)" : "Save Batch Remittance"}
+                      </button>
+                    </span>
                   </div>
                 </div>
-                {remittanceBatchExcessAmount > 0 && (
-                  <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-                    Excess cash of {formatProductMoney(remittanceBatchExcessAmount, remittanceRowCurrency(remittanceBatchTargetRow))} will be attached to the final allocation above. That keeps the ledger balanced instead of throwing the cash away.
-                  </p>
-                )}
-                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
-                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                  <button
-                    className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    onClick={recordBatchRemittance}
-                    disabled={remittanceBatchNeedsOwnerApproval}
-                  >
-                    {remittanceBatchNeedsOwnerApproval ? "Admin / Owner Approval Required" : remittanceBatchOwnerApprovalGranted ? "Approve & Save Batch" : remittanceBatchVariancePending ? "Save Batch (pending Owner approval)" : "Save Batch Remittance"}
-                  </button>
-                </div>
-              </div>
-            )}
+              );
+            })()}
+
 
             {modal === "remittanceReceipts" && receiptHistoryTarget && (() => {
               // The summary describes the full history, never the filtered view.
