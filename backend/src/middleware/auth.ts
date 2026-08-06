@@ -67,6 +67,24 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
+/**
+ * The identity a route should scope its DATA to.
+ *
+ * Under view-as this is the spied user; otherwise the caller. Always use this
+ * for "which rows does this person get" — req.user.role/id is the real session
+ * and does not follow view-as, so scoping on it makes an Owner viewing as a rep
+ * silently see the whole org under headings that say "yours".
+ *
+ * Deliberately NOT for permission checks: requireRole still guards on the real
+ * role, so viewing-as narrows what is shown without granting anything.
+ */
+export function scopeOf(req: Request): { role: string; id: string } {
+  return {
+    role: req.user!.effectiveUserRole ?? req.user!.role,
+    id: req.user!.effectiveUserId ?? req.user!.id
+  };
+}
+
 // Role guard — use after requireAuth
 export function requireRole(...roles: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {

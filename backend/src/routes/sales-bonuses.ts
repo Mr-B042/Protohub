@@ -12,7 +12,7 @@ import {
   type SalesBonusRuleType
 } from "../lib/sales-bonus-engine.js";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -347,10 +347,8 @@ router.get("/progress", coachViewer, async (req, res) => {
     return;
   }
   try {
-    const weekStart = clampSalesRepWeekStart(req.user!.role, parsed.data.weekStart ?? currentSalesBonusWeekStart());
-    const repId = req.user!.role === "Sales Rep"
-      ? (req.user!.effectiveUserId ?? req.user!.id)
-      : undefined;
+    const weekStart = clampSalesRepWeekStart(scopeOf(req).role, parsed.data.weekStart ?? currentSalesBonusWeekStart());
+    const repId = scopeOf(req).role === "Sales Rep" ? scopeOf(req).id : undefined;
     res.json(await getSalesBonusProgress(req.user!.orgId, weekStart, { repId }));
   } catch (error: any) {
     res.status(400).json({ error: error?.message ?? "Failed to calculate bonus progress." });
@@ -401,7 +399,7 @@ router.get("/order-bonus-map", coachViewer, async (req, res) => {
     res.status(400).json({ error: "dateFrom must be on or before dateTo." });
     return;
   }
-  const repId = req.user!.role === "Sales Rep" ? (req.user!.effectiveUserId ?? req.user!.id) : undefined;
+  const repId = scopeOf(req).role === "Sales Rep" ? scopeOf(req).id : undefined;
   try {
     res.json(await perOrderBonusMapForDeliveredRange(req.user!.orgId, dateFrom, parsed.data.dateTo, { repId }));
   } catch (error: any) {
@@ -420,7 +418,7 @@ router.get("/order-bonus-settlement-map", coachViewer, async (req, res) => {
     res.status(400).json({ error: "dateFrom must be on or before dateTo." });
     return;
   }
-  const repId = req.user!.role === "Sales Rep" ? (req.user!.effectiveUserId ?? req.user!.id) : undefined;
+  const repId = scopeOf(req).role === "Sales Rep" ? scopeOf(req).id : undefined;
   try {
     res.json(await perOrderBonusSettlementMapForDeliveredRange(req.user!.orgId, dateFrom, parsed.data.dateTo, { repId }));
   } catch (error: any) {
@@ -439,7 +437,7 @@ router.get("/order-expansion-attribution-map", coachViewer, async (req, res) => 
     res.status(400).json({ error: "dateFrom must be on or before dateTo." });
     return;
   }
-  const repId = req.user!.role === "Sales Rep" ? (req.user!.effectiveUserId ?? req.user!.id) : undefined;
+  const repId = scopeOf(req).role === "Sales Rep" ? scopeOf(req).id : undefined;
   try {
     res.json(await perOrderExpansionBonusBreakdownMapForDeliveredRange(
       req.user!.orgId,
@@ -467,14 +465,14 @@ router.get("/order-attribution/:orderId", coachViewer, async (req, res) => {
     // Self-scope: a Sales Rep may only see their OWN order's breakdown - if
     // the order isn't assigned to them, treat it as empty rather than
     // leaking another rep's compensation figures.
-    if (req.user!.role === "Sales Rep" && items.length > 0) {
+    if (scopeOf(req).role === "Sales Rep" && items.length > 0) {
       const { data: order } = await supabase
         .from("orders")
         .select("assigned_rep_id")
         .eq("org_id", req.user!.orgId)
         .eq("id", parsed.data.orderId)
         .maybeSingle();
-      if (order?.assigned_rep_id !== (req.user!.effectiveUserId ?? req.user!.id)) {
+      if (order?.assigned_rep_id !== scopeOf(req).id) {
         res.json([]);
         return;
       }
