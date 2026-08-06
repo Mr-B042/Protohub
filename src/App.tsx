@@ -11736,6 +11736,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // available, but folded away so the number entry is what you land on.
   const [batchRulesOpen, setBatchRulesOpen] = useState(false);
   const [batchAllocationOpen, setBatchAllocationOpen] = useState(false);
+  // Partner receivable table: status tab, sort and paging.
+  const [remittanceStatusTab, setRemittanceStatusTab] = useState<"all" | "owing" | "partial" | "settled" | "nocash">("all");
+  const [remittanceSortBy, setRemittanceSortBy] = useState<"outstandingDesc" | "outstandingAsc" | "receivedDesc" | "ordersDesc" | "nameAsc">("outstandingDesc");
+  const [remittancePartnerPage, setRemittancePartnerPage] = useState(1);
+  const [remittancePartnerPageSize, setRemittancePartnerPageSize] = useState(10);
+  const [remittanceRowMenuKey, setRemittanceRowMenuKey] = useState<string | null>(null);
   const [receiptHistoryExpandedId, setReceiptHistoryExpandedId] = useState<string | null>(null);
   const [remittanceOpenBusy, setRemittanceOpenBusy] = useState(false);
   const [remittanceVarianceReason, setRemittanceVarianceReason] = useState("");
@@ -19165,12 +19171,79 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     showToast(`Exported ${receiptHistoryRows.length} receipt${receiptHistoryRows.length === 1 ? "" : "s"} as CSV.`);
   };
   const remittancePartnerOptions = ["All Partners", ...remittanceRows.map((r) => r.partnerName)];
-  const filteredRemittanceRows = remittanceRows.filter((row) => {
+  // Settlement state of a partner row. "Owing" covers anything still short,
+  // and the two narrower labels sit inside it - a partner who has paid nothing
+  // is Owing AND No cash yet, which is why the tab counts overlap.
+  const remittancePartnerStatus = (row: { outstanding: number; remitted: number }): "settled" | "partial" | "owing" =>
+    row.outstanding <= 0 ? "settled" : row.remitted > 0 ? "partial" : "owing";
+  const remittanceSearchMatched = remittanceRows.filter((row) => {
     const matchPartner = remittancePartnerFilter === "All Partners" || row.partnerName === remittancePartnerFilter;
     const search = remittanceSearch.trim().toLowerCase();
     const matchSearch = !search || row.partnerName.toLowerCase().includes(search);
     return matchPartner && matchSearch;
   });
+  const remittanceStatusCounts = {
+    all: remittanceSearchMatched.length,
+    owing: remittanceSearchMatched.filter((row) => row.outstanding > 0).length,
+    partial: remittanceSearchMatched.filter((row) => remittancePartnerStatus(row) === "partial").length,
+    settled: remittanceSearchMatched.filter((row) => remittancePartnerStatus(row) === "settled").length,
+    nocash: remittanceSearchMatched.filter((row) => row.remitted <= 0 && row.outstanding > 0).length
+  };
+  const filteredRemittanceRows = remittanceSearchMatched
+    .filter((row) => {
+      if (remittanceStatusTab === "all") return true;
+      if (remittanceStatusTab === "owing") return row.outstanding > 0;
+      if (remittanceStatusTab === "nocash") return row.remitted <= 0 && row.outstanding > 0;
+      return remittancePartnerStatus(row) === remittanceStatusTab;
+    })
+    .sort((a, b) => {
+      switch (remittanceSortBy) {
+        case "outstandingAsc": return a.outstanding - b.outstanding;
+        case "receivedDesc": return b.remitted - a.remitted;
+        case "ordersDesc": return b.orderCount - a.orderCount;
+        case "nameAsc": return a.partnerName.localeCompare(b.partnerName);
+        default: return b.outstanding - a.outstanding;
+      }
+    });
+  const remittancePartnerTotalPages = Math.max(1, Math.ceil(filteredRemittanceRows.length / remittancePartnerPageSize));
+  // Clamp rather than store - filtering down to fewer rows must not strand the
+  // reader on an empty page.
+  const remittancePartnerPageClamped = Math.min(remittancePartnerPage, remittancePartnerTotalPages);
+  const remittancePartnerPageRows = filteredRemittanceRows.slice(
+    (remittancePartnerPageClamped - 1) * remittancePartnerPageSize,
+    remittancePartnerPageClamped * remittancePartnerPageSize
+  );
+  const exportRemittancePartnersCsv = () => {
+    if (filteredRemittanceRows.length === 0) return;
+    const header = ["Partner", "Zone", "Orders", "Revenue", "Logistics fees", "Expected", "Cash received", "Outstanding", "Last cash received", "Oldest unpaid days", "Receipts", "Status"];
+    const statusLabel = { settled: "Fully settled", partial: "Partially settled", owing: "Owing" };
+    const rows = filteredRemittanceRows.map((row) => [
+      row.partnerName,
+      agents.find((agent) => agent.id === row.agentId)?.zone ?? "",
+      row.orderCount,
+      row.revenue,
+      row.logisticsCost,
+      row.expected,
+      row.remitted,
+      row.outstanding,
+      row.lastReceivedAt ? displayDateFromKey(row.lastReceivedAt.slice(0, 10)) : "",
+      row.outstanding > 0 ? row.oldestUnpaidDays : "",
+      row.transactionCount,
+      statusLabel[remittancePartnerStatus(row)]
+    ]);
+    const csv = [header, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `partner-receivable-${todayKey()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${filteredRemittanceRows.length} partner${filteredRemittanceRows.length === 1 ? "" : "s"} as CSV.`);
+  };
   const highlightedRemittanceBatchRow = filteredRemittanceRows.length === 1 && filteredRemittanceRows[0].outstanding > 0
     ? filteredRemittanceRows[0]
     : null;
@@ -72155,20 +72228,27 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
                   {/* Top metric cards */}
-                  <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Remittance summary">
-                    {[
-                      { title: "Delivery-week Receivable", value: formatMoney(totalRemittanceExpected), helper: `From ${financeDeliveredCount} delivered orders in ${selectedFinancePeriodLabel}`, tone: "blue", icon: HandCoins },
-                      { title: "Cash Received", value: formatMoney(totalRemittanceReceived), helper: `${financeRemittanceReceiptCount} remittance entr${financeRemittanceReceiptCount === 1 ? "y" : "ies"} logged in ${selectedFinancePeriodLabel}`, tone: "green", icon: BadgeCheck },
-                      { title: "Outstanding", value: formatMoney(totalRemittanceOutstanding), helper: `${remittanceRows.filter((r) => r.outstanding > 0).length} partner${remittanceRows.filter((r) => r.outstanding > 0).length === 1 ? "" : "s"} still owe on delivered-period orders`, tone: "amber", icon: AlertTriangle },
-                      { title: "Logistics Fees", value: formatMoney(totalLogisticsCost), helper: "Delivery-period logistics already deducted by partners", tone: "gray", icon: Truck },
-                    ].map(({ title, value, helper, tone, icon: Icon }) => (
-                      <article key={title} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className={`w-9 h-9 rounded-full flex items-center justify-center ${tone === "blue" ? "bg-blue-50 text-blue-500" : tone === "green" ? "bg-green-50 text-green-500" : tone === "amber" ? "bg-amber-50 text-amber-500" : "bg-gray-50 text-gray-500"}`}><Icon className="w-4 h-4" /></span>
+                  <section className="grid grid-cols-2 gap-4 lg:grid-cols-5" aria-label="Remittance summary">
+                    {(() => {
+                      const partnersOwing = remittanceRows.filter((r) => r.outstanding > 0).length;
+                      const pctReceived = totalRemittanceExpected > 0 ? (totalRemittanceReceived / totalRemittanceExpected) * 100 : 0;
+                      return [
+                        { title: "Total Expected", value: formatMoney(totalRemittanceExpected), helper: `Across ${remittanceRows.length} partner${remittanceRows.length === 1 ? "" : "s"}`, tone: "blue", icon: WalletCards },
+                        { title: "Total Cash Received", value: formatMoney(totalRemittanceReceived), helper: totalRemittanceExpected > 0 ? `${pctReceived.toFixed(2)}% of expected` : "No receivable this period", tone: "green", icon: BadgeCheck },
+                        { title: "Total Outstanding", value: formatMoney(totalRemittanceOutstanding), helper: totalRemittanceExpected > 0 ? `${Math.max(0, 100 - pctReceived).toFixed(2)}% remaining` : "Nothing outstanding", tone: "amber", icon: PieChart },
+                        { title: "Receipts This Period", value: String(financeRemittanceReceiptCount), helper: "Receipt-dated cash", tone: "purple", icon: CalendarDays },
+                        { title: "Partners Owing", value: String(partnersOwing), helper: partnersOwing > 0 ? "Require attention" : "All partners settled", tone: "indigo", icon: Users }
+                      ];
+                    })().map(({ title, value, helper, tone, icon: Icon }) => (
+                      <article key={title} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${tone === "blue" ? "bg-blue-50 text-blue-500" : tone === "green" ? "bg-green-50 text-green-500" : tone === "amber" ? "bg-orange-50 text-orange-500" : tone === "purple" ? "bg-purple-50 text-purple-500" : "bg-indigo-50 text-indigo-500"}`}>
+                          <Icon className="h-5 w-5" />
+                        </span>
+                        <div className="min-w-0">
+                          <h2 className="m-0 text-xs font-semibold text-gray-500">{title}</h2>
+                          <strong className={`my-0.5 block truncate text-xl font-bold ${tone === "amber" ? "text-orange-600" : tone === "green" ? "text-green-600" : tone === "blue" ? "text-[#1F8FE0]" : tone === "purple" ? "text-purple-600" : "text-indigo-600"}`}>{value}</strong>
+                          <p className="m-0 truncate text-[10px] text-gray-400">{helper}</p>
                         </div>
-                        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{title}</h2>
-                        <strong className={`text-xl font-bold block my-1 ${tone === "amber" ? "text-amber-700" : tone === "green" ? "text-green-700" : "text-gray-900"}`}>{value}</strong>
-                        <p className="text-[10px] text-gray-400">{helper}</p>
                       </article>
                     ))}
                   </section>
@@ -72217,14 +72297,60 @@ ${waybillLineItems(w).length > 1
                         <select className="!min-h-0 h-10 sm:h-9 px-3 border border-gray-200 rounded-md bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0] w-full sm:w-auto" value={remittancePartnerFilter} onChange={(e) => setRemittancePartnerFilter(e.target.value)}>
                           {remittancePartnerOptions.map((p) => <option key={p}>{p}</option>)}
                         </select>
+                        <button
+                          className="!min-h-0 inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-md border border-gray-200 px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 sm:h-9 sm:w-auto"
+                          onClick={exportRemittancePartnersCsv}
+                          disabled={filteredRemittanceRows.length === 0}
+                          title="Download these partners as CSV"
+                        >
+                          <Download className="h-3.5 w-3.5" />Export
+                        </button>
                       </div>
+                    </div>
+
+                    {/* Settlement tabs + sort. Counts follow the search box, so a
+                        search narrows the tabs rather than leaving stale totals. */}
+                    <div className="flex flex-col gap-3 border-b border-gray-100 px-5 py-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="-mx-1 flex items-center gap-1 overflow-x-auto px-1">
+                        {([
+                          { key: "all", label: "All Partners", count: remittanceStatusCounts.all, tone: "text-[#1F8FE0] bg-blue-50" },
+                          { key: "owing", label: "Owing Money", count: remittanceStatusCounts.owing, tone: "text-orange-600 bg-orange-50" },
+                          { key: "partial", label: "Partially Settled", count: remittanceStatusCounts.partial, tone: "text-amber-600 bg-amber-50" },
+                          { key: "settled", label: "Fully Settled", count: remittanceStatusCounts.settled, tone: "text-green-600 bg-green-50" },
+                          { key: "nocash", label: "No Cash Yet", count: remittanceStatusCounts.nocash, tone: "text-gray-500 bg-gray-100" }
+                        ] as const).map((tab) => (
+                          <button
+                            key={tab.key}
+                            className={`!min-h-0 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${remittanceStatusTab === tab.key ? "bg-blue-50 text-[#1F8FE0] ring-1 ring-blue-200" : "text-gray-500 hover:bg-gray-50"}`}
+                            onClick={() => { setRemittanceStatusTab(tab.key); setRemittancePartnerPage(1); }}
+                            aria-pressed={remittanceStatusTab === tab.key}
+                          >
+                            {tab.label}
+                            <span className={`inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${remittanceStatusTab === tab.key ? "bg-white text-[#1F8FE0]" : tab.tone}`}>{tab.count}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <label className="flex shrink-0 items-center gap-2 text-xs text-gray-500">
+                        <span className="whitespace-nowrap">Sort by:</span>
+                        <select
+                          className="!min-h-0 h-9 rounded-md border border-gray-200 bg-white px-2 text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                          value={remittanceSortBy}
+                          onChange={(event) => { setRemittanceSortBy(event.target.value as typeof remittanceSortBy); setRemittancePartnerPage(1); }}
+                        >
+                          <option value="outstandingDesc">Outstanding (High to Low)</option>
+                          <option value="outstandingAsc">Outstanding (Low to High)</option>
+                          <option value="receivedDesc">Cash received (High to Low)</option>
+                          <option value="ordersDesc">Orders (High to Low)</option>
+                          <option value="nameAsc">Partner name (A-Z)</option>
+                        </select>
+                      </label>
                     </div>
                     <div className="sm:hidden divide-y divide-gray-100">
                       {filteredRemittanceRows.length === 0 ? (
                         <div className="px-5 py-12 text-center text-sm text-gray-400 italic">No remittance activity or delivered-period receivable in this period yet.</div>
                       ) : (
                         <>
-                          {filteredRemittanceRows.map((row) => {
+                          {remittancePartnerPageRows.map((row) => {
                             const aging = row.outstanding > 0 ? remittanceAgingLabel(row.oldestUnpaidDays) : null;
                             const openedCount = row.orders.filter((o) => o.remittanceEditOpen).length;
                             const lockedSettledCount = row.orders.filter((o) => orderRemittanceStatus(o) === "Paid" && !o.remittanceEditOpen).length;
@@ -72353,35 +72479,53 @@ ${waybillLineItems(w).length > 1
                       <table className="w-full text-sm sticky-col-first">
                         <thead>
                           <tr className="bg-gray-50 border-b border-gray-200 text-left">
-                            {["Logistics Partner", "Orders", "Revenue", "Logistics Fees", "Expected", "Cash Received", "Last Cash Received", "Outstanding", "Aging", "Receipts", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
+                            {["Logistics Partner", "Orders", "Expected", "Cash Received", "Outstanding", "Last Cash Received", "Aging", "Receipts", "Status", "Action"].map((h) => <th key={h} className="px-4 py-3 font-semibold text-gray-500 uppercase text-[10px] tracking-wider whitespace-nowrap">{h}</th>)}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                          {filteredRemittanceRows.length === 0 ? (
-                            <tr><td colSpan={11} className="px-4 py-12 text-center text-sm text-gray-400 italic">No remittance activity or delivered-period receivable in this period yet.</td></tr>
+                          {remittancePartnerPageRows.length === 0 ? (
+                            <tr><td colSpan={10} className="px-4 py-12 text-center text-sm text-gray-400 italic">No partners match this view.</td></tr>
                           ) : (
-                            filteredRemittanceRows.map((row) => {
+                            remittancePartnerPageRows.map((row) => {
                               const openedCount = row.orders.filter((o) => o.remittanceEditOpen).length;
                               const lockedSettledCount = row.orders.filter((o) => orderRemittanceStatus(o) === "Paid" && !o.remittanceEditOpen).length;
+                              const status = remittancePartnerStatus(row);
+                              const statusTone = status === "settled" ? "bg-green-50 text-green-700" : status === "partial" ? "bg-amber-50 text-amber-700" : "bg-orange-50 text-orange-600";
+                              const statusLabel = status === "settled" ? "Fully Settled" : status === "partial" ? "Partially Settled" : "Owing";
+                              // Stable per-partner avatar colour: same partner, same
+                              // swatch on every render and every reload.
+                              const swatches = ["bg-emerald-500", "bg-blue-500", "bg-purple-500", "bg-orange-500", "bg-pink-500", "bg-teal-500", "bg-indigo-500", "bg-rose-500"];
+                              const swatch = swatches[Math.abs(Array.from(row.partnerName).reduce((acc, ch) => acc + ch.charCodeAt(0), 0)) % swatches.length];
+                              const lockedIds = currentRole === "Owner" ? row.orders.filter((o) => orderRemittanceStatus(o) === "Paid" && !o.remittanceEditOpen).map((o) => o.id) : [];
+                              const canCorrect = row.orders.some((o) => orderAmountRemitted(o) > 0) && (currentRole === "Owner" || (currentRole === "Admin" && row.orders.some((o) => o.remittanceEditOpen)));
+                              const hasMenu = lockedIds.length > 0 || canCorrect || row.transactionCount > 0;
                               return (
                                 <tr key={row.key} className="hover:bg-gray-50 transition-colors">
                                   <td className="px-4 py-4">
-                                    <div className="font-bold text-gray-900">{row.partnerName}</div>
-                                    {row.agentId && <div className="text-xs text-gray-400">{agents.find((a) => a.id === row.agentId)?.zone ?? "-"}</div>}
-                                    {(openedCount > 0 || (currentRole === "Owner" && lockedSettledCount > 0)) && (
-                                      <div className="mt-1 flex flex-wrap gap-1.5">
-                                        {openedCount > 0 && <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Open for Admin · {openedCount}</span>}
-                                        {currentRole === "Owner" && lockedSettledCount > 0 && <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">Locked · {lockedSettledCount}</span>}
+                                    <div className="flex items-center gap-3">
+                                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white ${swatch}`}>{userInitials(row.partnerName)}</span>
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="font-bold text-gray-900">{row.partnerName}</span>
+                                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${row.remitted > 0 ? "bg-green-500" : "bg-orange-500"}`} title={row.remitted > 0 ? "Cash logged this period" : "No cash logged yet"} />
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                          {row.agentId && <span className="text-xs text-gray-400">{agents.find((a) => a.id === row.agentId)?.zone ?? "-"}</span>}
+                                          {openedCount > 0 && <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Open for Admin · {openedCount}</span>}
+                                          {currentRole === "Owner" && lockedSettledCount > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">Locked · {lockedSettledCount}<Lock className="h-2.5 w-2.5" /></span>}
+                                        </div>
                                       </div>
-                                    )}
+                                    </div>
                                   </td>
                                   <td className="px-4 py-4 text-gray-700">{row.orderCount}</td>
-                                  <td className="px-4 py-4 text-gray-700">{formatMoney(row.revenue)}</td>
-                                  <td className="px-4 py-4 text-gray-600">{formatMoney(row.logisticsCost)}</td>
-                                  <td className="px-4 py-4 font-semibold text-blue-700">{formatMoney(row.expected)}</td>
-                                  <td className="px-4 py-4 font-semibold text-green-700">{formatMoney(row.remitted)}</td>
-                                  <td className="px-4 py-4 whitespace-nowrap text-gray-600">{row.lastReceivedAt ? displayDateFromKey(row.lastReceivedAt.slice(0, 10)) : <span className="text-gray-300">-</span>}</td>
-                                  <td className={`px-4 py-4 font-bold ${row.outstanding > 0 ? "text-amber-700" : "text-gray-400"}`}>{formatMoney(row.outstanding)}</td>
+                                  <td className="px-4 py-4 font-semibold text-[#1F8FE0]">{formatMoney(row.expected)}</td>
+                                  <td className="px-4 py-4 font-semibold text-green-600">{formatMoney(row.remitted)}</td>
+                                  <td className={`px-4 py-4 font-bold ${row.outstanding > 0 ? "text-orange-600" : "text-gray-400"}`}>{formatMoney(row.outstanding)}</td>
+                                  <td className="px-4 py-4 whitespace-nowrap text-gray-600">
+                                    {row.lastReceivedAt ? (
+                                      <span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5 shrink-0 text-gray-400" />{displayDateFromKey(row.lastReceivedAt.slice(0, 10))}</span>
+                                    ) : <span className="text-gray-300">-</span>}
+                                  </td>
                                   <td className="px-4 py-4">
                                     {row.outstanding > 0
                                       ? (() => { const ag = remittanceAgingLabel(row.oldestUnpaidDays); return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${ag.cls}`}>{ag.label}</span>; })()
@@ -72397,36 +72541,68 @@ ${waybillLineItems(w).length > 1
                                         {row.transactionCount}
                                       </button>
                                     ) : (
-                                      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-gray-100 text-gray-600">{row.transactionCount}</span>
+                                      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-gray-100 text-gray-600">0</span>
                                     )}
                                   </td>
                                   <td className="px-4 py-4">
-                                    {(() => {
-                                      const lockedIds = currentRole === "Owner" ? row.orders.filter((o) => orderRemittanceStatus(o) === "Paid" && !o.remittanceEditOpen).map((o) => o.id) : [];
-                                      const hasBatch = row.outstanding > 0;
-                                      // Batch correction: Owner anytime there's recorded cash; Admin only once the batch is opened.
-                                      const canCorrect = row.orders.some((o) => orderAmountRemitted(o) > 0) && (currentRole === "Owner" || (currentRole === "Admin" && row.orders.some((o) => o.remittanceEditOpen)));
-                                      if (!hasBatch && lockedIds.length === 0 && !canCorrect) return <span className="text-gray-300 text-xs">-</span>;
-                                      return (
-                                        <div className="flex items-center gap-1.5">
-                                          {hasBatch && (
-                                            <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border border-[#1F8FE0] text-[#1F8FE0] rounded-md hover:bg-blue-50 transition-colors" onClick={() => openRecordBatchRemittance(row.key)}>
-                                              <HandCoins className="w-3 h-3" />Batch
-                                            </button>
-                                          )}
-                                          {lockedIds.length > 0 && (
-                                            <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50 transition-colors" onClick={() => openRemittanceForEdit(lockedIds, `${row.partnerName} - ${lockedIds.length} settled order(s)`)} title="Open all this partner's settled remittances for Admin correction">
-                                              Open all ({lockedIds.length})
-                                            </button>
-                                          )}
-                                          {canCorrect && (
-                                            <button className="!min-h-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold border border-purple-300 text-purple-700 rounded-md hover:bg-purple-50 transition-colors" onClick={() => openBatchCorrection(row)} title="Set the corrected total for selected orders in this batch">
-                                              Correct total
-                                            </button>
+                                    <span className={`inline-block whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold ${statusTone}`}>{statusLabel}</span>
+                                  </td>
+                                  <td className="px-4 py-4">
+                                    <div className="flex items-center gap-1.5">
+                                      {row.outstanding > 0 ? (
+                                        <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-md bg-[#1F8FE0] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#1560a8]" onClick={() => openRecordBatchRemittance(row.key)}>
+                                          <HandCoins className="h-3.5 w-3.5" />Record Cash
+                                        </button>
+                                      ) : row.transactionCount > 0 ? (
+                                        <button className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-[#1F8FE0] px-3 py-2 text-xs font-semibold text-[#1F8FE0] transition-colors hover:bg-blue-50" onClick={() => openReceiptHistory({ label: row.partnerName, partnerKey: row.key })}>
+                                          View Receipts
+                                        </button>
+                                      ) : (
+                                        <span className="text-xs text-gray-300">-</span>
+                                      )}
+                                      {/* Owner/Admin correction tools keep working -
+                                          they move into the row menu rather than
+                                          crowding every row with three buttons. */}
+                                      {hasMenu && (
+                                        <div className="relative">
+                                          <button
+                                            className="!min-h-0 rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+                                            onClick={() => setRemittanceRowMenuKey(remittanceRowMenuKey === row.key ? null : row.key)}
+                                            aria-label={`More actions for ${row.partnerName}`}
+                                            aria-expanded={remittanceRowMenuKey === row.key}
+                                          >
+                                            <MoreVertical className="h-4 w-4" />
+                                          </button>
+                                          {remittanceRowMenuKey === row.key && (
+                                            <>
+                                              <button className="fixed inset-0 z-10 cursor-default" aria-label="Close menu" onClick={() => setRemittanceRowMenuKey(null)} />
+                                              <div className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                                                {row.transactionCount > 0 && (
+                                                  <button className="!min-h-0 flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-50" onClick={() => { setRemittanceRowMenuKey(null); openReceiptHistory({ label: row.partnerName, partnerKey: row.key }); }}>
+                                                    <ReceiptText className="h-3.5 w-3.5 text-gray-400" />Receipt history
+                                                  </button>
+                                                )}
+                                                {row.outstanding > 0 && (
+                                                  <button className="!min-h-0 flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-50" onClick={() => { setRemittanceRowMenuKey(null); openRecordBatchRemittance(row.key); }}>
+                                                    <HandCoins className="h-3.5 w-3.5 text-gray-400" />Record batch cash
+                                                  </button>
+                                                )}
+                                                {lockedIds.length > 0 && (
+                                                  <button className="!min-h-0 flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-amber-700 hover:bg-amber-50" onClick={() => { setRemittanceRowMenuKey(null); openRemittanceForEdit(lockedIds, `${row.partnerName} - ${lockedIds.length} settled order(s)`); }} title="Open all this partner's settled remittances for Admin correction">
+                                                    <Lock className="h-3.5 w-3.5" />Open all ({lockedIds.length})
+                                                  </button>
+                                                )}
+                                                {canCorrect && (
+                                                  <button className="!min-h-0 flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-purple-700 hover:bg-purple-50" onClick={() => { setRemittanceRowMenuKey(null); openBatchCorrection(row); }} title="Set the corrected total for selected orders in this batch">
+                                                    <Scale className="h-3.5 w-3.5" />Correct total
+                                                  </button>
+                                                )}
+                                              </div>
+                                            </>
                                           )}
                                         </div>
-                                      );
-                                    })()}
+                                      )}
+                                    </div>
                                   </td>
                                 </tr>
                               );
@@ -72434,23 +72610,62 @@ ${waybillLineItems(w).length > 1
                           )}
                           {filteredRemittanceRows.length > 0 && (
                             <tr className="bg-gray-50 font-bold border-t border-gray-200">
-                              <td className="px-4 py-3 text-gray-900">Total</td>
+                              <td className="px-4 py-3 text-gray-900">Total{filteredRemittanceRows.length > remittancePartnerPageRows.length ? " (all pages)" : ""}</td>
                               <td className="px-4 py-3 text-gray-700">{filteredRemittanceRows.reduce((s, r) => s + r.orderCount, 0)}</td>
-                              <td className="px-4 py-3 text-gray-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.revenue, 0))}</td>
-                              <td className="px-4 py-3 text-gray-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.logisticsCost, 0))}</td>
-                              <td className="px-4 py-3 text-blue-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.expected, 0))}</td>
-                              <td className="px-4 py-3 text-green-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.remitted, 0))}</td>
-                              <td className="px-4 py-3 text-gray-700">-</td>
-                              <td className="px-4 py-3 text-amber-700">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.outstanding, 0))}</td>
-                              <td className="px-4 py-3 text-gray-700">-</td>
+                              <td className="px-4 py-3 text-[#1F8FE0]">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.expected, 0))}</td>
+                              <td className="px-4 py-3 text-green-600">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.remitted, 0))}</td>
+                              <td className="px-4 py-3 text-orange-600">{formatMoney(filteredRemittanceRows.reduce((s, r) => s + r.outstanding, 0))}</td>
+                              <td className="px-4 py-3 text-gray-400">-</td>
+                              <td className="px-4 py-3 text-gray-400">-</td>
                               <td className="px-4 py-3 text-gray-700">{filteredRemittanceRows.reduce((sum, row) => sum + row.transactionCount, 0)}</td>
-                              <td className="px-4 py-3 text-gray-700">-</td>
+                              <td className="px-4 py-3 text-gray-400">-</td>
+                              <td className="px-4 py-3 text-gray-400">-</td>
                             </tr>
                           )}
                         </tbody>
                       </table>
                     </div>
+
+                    {filteredRemittanceRows.length > 0 && (
+                      <div className="flex flex-col gap-3 border-t border-gray-100 px-5 py-3 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
+                        <span>
+                          Showing {(remittancePartnerPageClamped - 1) * remittancePartnerPageSize + 1} to {Math.min(remittancePartnerPageClamped * remittancePartnerPageSize, filteredRemittanceRows.length)} of {filteredRemittanceRows.length} partner{filteredRemittanceRows.length === 1 ? "" : "s"}
+                        </span>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex items-center gap-1">
+                            <button
+                              className="!min-h-0 rounded-md border border-gray-200 p-1.5 text-gray-500 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => setRemittancePartnerPage(Math.max(1, remittancePartnerPageClamped - 1))}
+                              disabled={remittancePartnerPageClamped <= 1}
+                              aria-label="Previous page"
+                            >
+                              <ChevronLeft className="h-3.5 w-3.5" />
+                            </button>
+                            <span className="px-2 font-semibold text-gray-700">{remittancePartnerPageClamped} / {remittancePartnerTotalPages}</span>
+                            <button
+                              className="!min-h-0 rounded-md border border-gray-200 p-1.5 text-gray-500 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => setRemittancePartnerPage(Math.min(remittancePartnerTotalPages, remittancePartnerPageClamped + 1))}
+                              disabled={remittancePartnerPageClamped >= remittancePartnerTotalPages}
+                              aria-label="Next page"
+                            >
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <label className="flex items-center gap-2">
+                            <span className="whitespace-nowrap">Rows per page</span>
+                            <select
+                              className="!min-h-0 h-8 rounded-md border border-gray-200 bg-white px-2 text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                              value={remittancePartnerPageSize}
+                              onChange={(event) => { setRemittancePartnerPageSize(Number(event.target.value)); setRemittancePartnerPage(1); }}
+                            >
+                              {[10, 25, 50].map((size) => <option key={size} value={size}>{size}</option>)}
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+                    )}
                   </div>
+
 
                   {/* Per-order remittance editor */}
                   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
