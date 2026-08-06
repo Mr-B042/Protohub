@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { fetchAllRows } from "../lib/paginated-query.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, scopeOf } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -48,7 +48,7 @@ router.get("/", async (req, res) => {
       .or("review_hold.is.null,review_hold.eq.false")
       .order("created_at", { ascending: false })
       .order("id", { ascending: false });
-    if (req.user!.role === "Sales Rep") query = query.eq("assigned_rep_id", req.user!.id);
+    if (scopeOf(req).role === "Sales Rep") query = query.eq("assigned_rep_id", scopeOf(req).id);
     if (requestedProductIds.length > 0) query = query.in("product_id", requestedProductIds);
     const result = await query.range(from, to);
     return { data: result.data, error: result.error };
@@ -64,7 +64,7 @@ router.get("/", async (req, res) => {
       .lte("delivered_date", dateTo)
       .order("delivered_date", { ascending: false })
       .order("id", { ascending: false });
-    if (req.user!.role === "Sales Rep") query = query.eq("assigned_rep_id", req.user!.id);
+    if (scopeOf(req).role === "Sales Rep") query = query.eq("assigned_rep_id", scopeOf(req).id);
     if (requestedProductIds.length > 0) query = query.in("product_id", requestedProductIds);
     const result = await query.range(from, to);
     return { data: result.data, error: result.error };

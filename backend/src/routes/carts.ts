@@ -3,7 +3,7 @@ import { z } from "zod";
 import { appendCartJourneyEvent, compactCartJourneyEventsForAnalytics } from "../lib/cart-journey.js";
 import { notifyNewAbandonedCart } from "../lib/cart-notifications.js";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { sendCartAssignedSms } from "../lib/sms.js";
 import { applyCartMarketingScope } from "../lib/marketing-attribution.js";
 import { lagosDateKey, lagosStartOfDayUtc, mondayOfWeek, addDays, dowOf } from "../lib/follow-up-kpi.js";
@@ -30,8 +30,8 @@ router.get("/", async (req, res) => {
     // Sales Reps see assigned carts; Marketers see only attributed cart traffic.
     if (req.user!.role === "Marketer") {
       query = applyCartMarketingScope(query, req.user!.marketingAttributionTags, req.user!.id);
-    } else if (req.user!.role === "Sales Rep") {
-      query = query.eq("assigned_rep_id", req.user!.id);
+    } else if (scopeOf(req).role === "Sales Rep") {
+      query = query.eq("assigned_rep_id", scopeOf(req).id);
     }
     const { data, error } = await query;
     if (error) { res.status(500).json({ error: error.message }); return; }
@@ -642,8 +642,8 @@ router.post("/journey-bulk", async (req, res) => {
     .eq("org_id", req.user!.orgId)
     .in("id", requestedIds);
 
-  if (req.user!.role === "Sales Rep") {
-    allowedCartQuery = allowedCartQuery.eq("assigned_rep_id", req.user!.id);
+  if (scopeOf(req).role === "Sales Rep") {
+    allowedCartQuery = allowedCartQuery.eq("assigned_rep_id", scopeOf(req).id);
   }
 
   const { data: allowedCarts, error: cartError } = await allowedCartQuery;
@@ -1517,8 +1517,8 @@ router.get("/:id/journey", async (req, res) => {
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId);
 
-  if (req.user!.role === "Sales Rep") {
-    cartQuery = cartQuery.eq("assigned_rep_id", req.user!.id);
+  if (scopeOf(req).role === "Sales Rep") {
+    cartQuery = cartQuery.eq("assigned_rep_id", scopeOf(req).id);
   }
 
   const { data: cart, error: cartError } = await cartQuery.maybeSingle();
@@ -1623,8 +1623,8 @@ router.post("/:id/contact-attempts",
       // A rep may only log against their own cart. Otherwise one rep's work
       // could land on another's record and their follow-up numbers would be
       // someone else's.
-      const scopeId = req.user!.effectiveUserId ?? req.user!.id;
-      if (req.user!.role === "Sales Rep" && cart.assigned_rep_id !== scopeId) {
+      const { role: scopeRole, id: scopeId } = scopeOf(req);
+      if (scopeRole === "Sales Rep" && cart.assigned_rep_id !== scopeId) {
         res.status(403).json({ error: "That cart is not assigned to you." });
         return;
       }
@@ -1676,9 +1676,7 @@ router.get("/follow-up-grid",
   async (req, res) => {
     try {
       const orgId = req.user!.orgId;
-      const scopeRepId = req.user!.role === "Sales Rep"
-        ? (req.user!.effectiveUserId ?? req.user!.id)
-        : null;
+      const scopeRepId = scopeOf(req).role === "Sales Rep" ? scopeOf(req).id : null;
       const requestedRep = typeof req.query.repId === "string" && req.query.repId ? req.query.repId : null;
       const repFilter = scopeRepId ?? requestedRep;
 
@@ -1796,9 +1794,7 @@ router.get("/follow-up-overview",
       const orgId = req.user!.orgId;
       // Scoped HERE, not in the browser. A rep's own carts are decided by the
       // server so no client can ask for somebody else's follow-up record.
-      const scopeRepId = req.user!.role === "Sales Rep"
-        ? (req.user!.effectiveUserId ?? req.user!.id)
-        : null;
+      const scopeRepId = scopeOf(req).role === "Sales Rep" ? scopeOf(req).id : null;
 
       // The whole cart, not a summary. A rep about to call needs the contact
       // details and what was in the cart in front of them; a supervisor

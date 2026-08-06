@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, scopeOf } from "../middleware/auth.js";
 import { getOrgPushBranding } from "../lib/push-branding.js";
 import { sendPushToUsers } from "../lib/push.js";
 
@@ -17,6 +17,37 @@ const smartStockDigestCache = new Map<string, number>();
 
 const titleSlug = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "stock";
+
+// ── Who an ORG-WIDE notification is actually for ──────────────────────────
+// A row with recipient_id IS NULL is delivered to every authenticated user,
+// which is how a Recovery Rep ended up reading "Remittance overdue ... ₦58,498
+// outstanding" and every rep's postponed orders.
+//
+// There is no audience column, so the audience is derived from the title the
+// creator wrote. That is the only signal these rows carry - 1,995 of them are
+// type "info" and the title is what separates "Order failed" from "Low SMS
+// Balance". Storing an explicit audience is the durable fix; this makes the
+// existing rows behave correctly without a migration.
+//
+// Anything not matched here (order postponed / failed / edited) stays visible
+// to everyone - those are the shared operational feed.
+const NOTIFICATION_MANAGEMENT = ["Owner", "Admin", "Manager"] as const;
+const NOTIFICATION_AUDIENCE_RULES: Array<{ test: RegExp; roles: readonly string[] }> = [
+  // Money and account admin. Never to the floor - the Recovery Rep dashboard
+  // already strips financials server-side, and the bell must not undo that.
+  { test: /remittance|sms balance|payout|salary|bonus pool/i, roles: NOTIFICATION_MANAGEMENT },
+  // Stock and waybill movement belongs to whoever owns inventory.
+  { test: /stock|waybill|inventory/i, roles: [...NOTIFICATION_MANAGEMENT, "Inventory Manager"] },
+  // Cart supervision: sales reps work carts, recovery reps do not.
+  { test: /cart/i, roles: [...NOTIFICATION_MANAGEMENT, "Sales Rep"] }
+];
+
+export const notificationReachesRole = (title: string | null, type: string | null, role: string): boolean => {
+  if ((NOTIFICATION_MANAGEMENT as readonly string[]).includes(role)) return true;
+  const subject = `${title ?? ""} ${type ?? ""}`;
+  const rule = NOTIFICATION_AUDIENCE_RULES.find((candidate) => candidate.test.test(subject));
+  return rule ? rule.roles.includes(role) : true;
+};
 
 type SmartStockSignal = {
   productId: string;
@@ -92,15 +123,24 @@ const smartStockDigestMessage = (signals: SmartStockSignal[]) => {
 
 router.get("/", async (req, res) => {
   // Return org-wide notifications (recipient_id IS NULL) + those addressed to this user
+  const scope = scopeOf(req);
+  // Over-fetch, then drop what this role has no business reading, then take
+  // the page. Filtering after a LIMIT 100 would hand a restricted role a short
+  // list; filtering before it keeps the page full of things they can act on.
   const { data, error } = await supabase
     .from("system_notifications")
     .select("*")
     .eq("org_id", req.user!.orgId)
-    .or(`recipient_id.is.null,recipient_id.eq.${req.user!.effectiveUserId ?? req.user!.id}`)
+    .or(`recipient_id.is.null,recipient_id.eq.${scope.id}`)
     .order("created_at", { ascending: false })
-    .limit(100);
+    .limit(400);
   if (error) { res.status(500).json({ error: error.message }); return; }
-  res.json(data);
+  const visible = (data ?? []).filter((row: any) =>
+    // Anything addressed to this person specifically was already a decision to
+    // send it to them; only the org-wide broadcast needs an audience check.
+    row.recipient_id ? true : notificationReachesRole(row.title ?? null, row.type ?? null, scope.role)
+  ).slice(0, 100);
+  res.json(visible);
 });
 
 // Create notification

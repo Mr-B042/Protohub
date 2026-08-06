@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { fetchAllRows } from "../lib/paginated-query.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, scopeOf } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -165,7 +165,7 @@ router.get("/", async (req, res) => {
       const order = orderMap.get(String(row.order_id));
       const productId = row.product_id_snapshot ?? order?.product_id ?? null;
       const assignedRepId = row.assigned_rep_id_snapshot ?? order?.assigned_rep_id ?? null;
-      if (req.user!.role === "Sales Rep" && assignedRepId !== req.user!.id) return null;
+      if (scopeOf(req).role === "Sales Rep" && assignedRepId !== scopeOf(req).id) return null;
       if (requestedProductIds.length > 0 && (!productId || !requestedProductIds.includes(String(productId)))) return null;
       if (!order && !productId && !row.customer_snapshot && !row.product_name_snapshot) return null;
       const orderAmount = row.order_amount_snapshot != null ? numericAmount(row.order_amount_snapshot) : numericAmount(order?.amount);
@@ -216,7 +216,7 @@ router.get("/", async (req, res) => {
       .lte("delivered_date", dateTo)
       .order("delivered_date", { ascending: false })
       .order("id", { ascending: false });
-    if (req.user!.role === "Sales Rep") query = query.eq("assigned_rep_id", req.user!.id);
+    if (scopeOf(req).role === "Sales Rep") query = query.eq("assigned_rep_id", scopeOf(req).id);
     if (requestedProductIds.length > 0) query = query.in("product_id", requestedProductIds);
     const result = await query.range(from, to);
     return { data: result.data, error: result.error };
