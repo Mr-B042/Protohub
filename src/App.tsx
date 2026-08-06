@@ -209,7 +209,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -11439,6 +11439,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // KYC Review: which non-file item has its stored answers open. Items that
   // carry a file still open the file instead.
   const [pdaKycDetailItemId, setPdaKycDetailItemId] = useState<string | null>(null);
+  // Signed-media viewer. Every PDA file - ID photos, selfies, the liveness
+  // video, signed agreements - opens here rather than in a browser tab, so the
+  // reviewer keeps the application on screen while looking at the evidence.
+  const [pdaMediaTarget, setPdaMediaTarget] = useState<{ path: string; title: string; subtitle: string } | null>(null);
+  const [pdaMediaUrl, setPdaMediaUrl] = useState("");
+  const [pdaMediaLoading, setPdaMediaLoading] = useState(false);
+  const [pdaMediaError, setPdaMediaError] = useState("");
   const [pdaReviewSort, setPdaReviewSort] = useState("Newest First");
   // Pending Approval sorts oldest-first by default: an application that has
   // been ready longest is the one someone is waiting on.
@@ -41892,12 +41899,31 @@ ${waybillLineItems(w).length > 1
     } finally { setPdaSaving(false); }
   };
 
-  const pdaOpenSignedFile = async (path?: string | null) => {
+  // What a stored path actually is, decided by extension. A signed URL carries
+  // no content type we can read before fetching it, and the reviewer needs the
+  // right player either way.
+  const pdaMediaKind = (path: string): "image" | "video" | "pdf" | "other" => {
+    const ext = (path.split("?")[0].split(".").pop() ?? "").toLowerCase();
+    if (["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif"].includes(ext)) return "image";
+    if (["mp4", "mov", "webm", "m4v", "ogg", "ogv", "qt"].includes(ext)) return "video";
+    if (ext === "pdf") return "pdf";
+    return "other";
+  };
+  const pdaOpenSignedFile = async (path?: string | null, meta?: { title?: string; subtitle?: string }) => {
     if (!path) return;
+    setPdaMediaTarget({ path, title: meta?.title || "Document", subtitle: meta?.subtitle || "" });
+    setPdaMediaUrl("");
+    setPdaMediaError("");
+    setPdaMediaLoading(true);
+    setModal("pdaMediaViewer");
     try {
       const { url } = await personalDeliveryAgentsApi.signedMediaUrl(path);
-      window.open(url, "_blank", "noopener");
-    } catch (err: any) { showToast(err?.message ?? "Could not open that file."); }
+      setPdaMediaUrl(url);
+    } catch (err: any) {
+      setPdaMediaError(err?.message ?? "Could not open that file.");
+    } finally {
+      setPdaMediaLoading(false);
+    }
   };
 
   const pdaCsvDownload = (name: string, header: string[], body: string[][]) => {
@@ -52325,7 +52351,7 @@ ${waybillLineItems(w).length > 1
                           <td className="px-3 py-3">
                             {doc.path ? (
                               <>
-                                <button type="button" onClick={() => void pdaOpenSignedFile(doc.path)}
+                                <button type="button" onClick={() => void pdaOpenSignedFile(doc.path, { title: doc.label, subtitle: doc.fileName ?? "" })}
                                   className="!min-h-0 text-[12px] font-semibold text-[#1F8FE0] hover:underline">
                                   {doc.fileName ?? "View file"}
                                 </button>
@@ -52360,7 +52386,7 @@ ${waybillLineItems(w).length > 1
                               {doc.path || doc.hasElectronicAcceptance ? (
                                 <>
                                   <button type="button" title="Open" onClick={() => {
-                                    if (doc.path) void pdaOpenSignedFile(doc.path);
+                                    if (doc.path) void pdaOpenSignedFile(doc.path, { title: doc.label, subtitle: doc.fileName ?? "" });
                                     else {
                                       const agreement = agreementById.get(doc.id);
                                       if (agreement) setPdaAgreementPreview(agreement);
@@ -52666,13 +52692,10 @@ ${waybillLineItems(w).length > 1
       } catch (err: any) { showToast(err?.message ?? "Could not update that agreement."); }
     };
 
-    const openFile = async (path?: string | null) => {
-      if (!path) return;
-      try {
-        const { url } = await personalDeliveryAgentsApi.signedMediaUrl(path);
-        window.open(url, "_blank", "noopener");
-      } catch (err: any) { showToast(err?.message ?? "Could not open that file."); }
-    };
+    // Signed, short-lived link - KYC files live in a private bucket and are
+    // never reachable by URL alone. Shown in the shared viewer, not a new tab.
+    const openFile = async (path?: string | null, meta?: { title?: string; subtitle?: string }) =>
+      pdaOpenSignedFile(path, meta);
 
     return (
       <div className="space-y-5">
@@ -52809,7 +52832,7 @@ ${waybillLineItems(w).length > 1
                       <span className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-bold ${itemChip(item.status)}`}>{item.status}</span>
                       <button type="button"
                         onClick={() => {
-                          if (item.filePath) { void openFile(item.filePath); return; }
+                          if (item.filePath) { void openFile(item.filePath, { title: item.label, subtitle: item.fileName ?? "" }); return; }
                           if (answers) { setPdaKycDetailItemId(answersOpen ? null : item.id); return; }
                           showToast("Nothing has been uploaded for this item yet.");
                         }}
@@ -53121,7 +53144,7 @@ ${waybillLineItems(w).length > 1
                         <div key={doc.label} className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2">
                           <span className="text-[12px] font-semibold text-gray-800">{doc.label}</span>
                           {doc.path ? (
-                            <button type="button" onClick={() => void pdaOpenSignedFile(doc.path)}
+                            <button type="button" onClick={() => void pdaOpenSignedFile(doc.path, { title: doc.label, subtitle: detail.guarantor.fullName ?? "" })}
                               className="!min-h-0 rounded-md border border-gray-200 px-2.5 py-1 text-[11px] font-bold text-gray-700 hover:bg-gray-50">View</button>
                           ) : (
                             <span className="text-[11px] text-gray-400">Not uploaded</span>
@@ -53321,7 +53344,7 @@ ${waybillLineItems(w).length > 1
                   <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                     <span className={`rounded-md border px-2 py-1 text-[10px] font-black uppercase ${tone(doc.status)}`}>{doc.status}</span>
                     <button type="button" disabled={!doc.content && !doc.signedFilePath}
-                      onClick={() => doc.content ? setPdaAgreementPreview(doc) : void pdaOpenSignedFile(doc.signedFilePath)}
+                      onClick={() => doc.content ? setPdaAgreementPreview(doc) : void pdaOpenSignedFile(doc.signedFilePath, { title: doc.label, subtitle: doc.fileName ?? "" })}
                       className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-40">
                       <Eye className="h-3.5 w-3.5" /> View details
                     </button>
@@ -53453,15 +53476,10 @@ ${waybillLineItems(w).length > 1
       } catch (err: any) { showToast(err?.message ?? "Could not update the guarantor."); }
     };
 
-    const openFile = async (path?: string | null) => {
-      if (!path) return;
-      try {
-        // Signed, short-lived link - KYC files live in a private bucket and are
-        // never reachable by URL alone.
-        const { url } = await personalDeliveryAgentsApi.signedMediaUrl(path);
-        window.open(url, "_blank", "noopener");
-      } catch (err: any) { showToast(err?.message ?? "Could not open that file."); }
-    };
+    // Signed, short-lived link - KYC files live in a private bucket and are
+    // never reachable by URL alone. Shown in the shared viewer, not a new tab.
+    const openFile = async (path?: string | null, meta?: { title?: string; subtitle?: string }) =>
+      pdaOpenSignedFile(path, meta);
 
     // Which sub-tab a row belongs to. Each answers "what is this waiting on",
     // so an application appears where the work actually is.
@@ -53625,7 +53643,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                       {item.rejectionReason && <p className="m-0 text-[11px] text-red-600">{item.rejectionReason}</p>}
                       {item.filePath && (
-                        <button type="button" onClick={() => void openFile(item.filePath)} className="!min-h-0 text-[11px] font-bold text-[#1F8FE0] underline">
+                        <button type="button" onClick={() => void openFile(item.filePath, { title: item.label })} className="!min-h-0 text-[11px] font-bold text-[#1F8FE0] underline">
                           View file
                         </button>
                       )}
@@ -58655,6 +58673,13 @@ ${waybillLineItems(w).length > 1
       setReceiptHistoryTarget(null);
       setReceiptHistoryFilter("all");
       setReceiptHistoryExpandedId(null);
+    }
+    if (modalBeforeClose === "pdaMediaViewer") {
+      // Drop the signed URL on close so a stale link is never re-shown.
+      setPdaMediaTarget(null);
+      setPdaMediaUrl("");
+      setPdaMediaError("");
+      setPdaMediaLoading(false);
     }
     if (modalBeforeClose === "orderDetails" && isAdminOrderWorkspaceHash(hashRoute)) {
       syncHashRoute(activeOrderWorkspaceBaseHash);
@@ -84451,7 +84476,7 @@ ${waybillLineItems(w).length > 1
         return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section
-            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" ? "max-w-5xl" :modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
+            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" ? "max-w-5xl" :modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
             role="dialog" aria-modal="true" aria-labelledby="modal-title"
           >
@@ -84486,6 +84511,17 @@ ${waybillLineItems(w).length > 1
                 {modal === "pdaReport" && "Create a report"}
 	                {modal === "pdaReject" && "Reject this application"}
 	                {modal === "pdaStatusLink" && "Their application link"}
+	                {modal === "pdaMediaViewer" && pdaMediaTarget && (
+	                  <span className="flex min-w-0 items-center gap-3">
+	                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-white">
+	                      <FileText className="h-5 w-5" />
+	                    </span>
+	                    <span className="flex min-w-0 flex-col">
+	                      <span className="truncate text-lg font-bold leading-tight">{pdaMediaTarget.title}</span>
+	                      {pdaMediaTarget.subtitle && <span className="truncate text-xs font-normal text-gray-500 dark:text-slate-400">{pdaMediaTarget.subtitle}</span>}
+	                    </span>
+	                  </span>
+	                )}
                 {modal === "setRate" && "Set Pay Structure"}
                 {modal === "addExpense" && "Add New Expense"}
                 {modal === "addUser" && "Add New User"}
@@ -92746,6 +92782,67 @@ ${waybillLineItems(w).length > 1
               );
             })()}
 
+
+            {modal === "pdaMediaViewer" && pdaMediaTarget && (() => {
+              const kind = pdaMediaKind(pdaMediaTarget.path);
+              return (
+                <div className="px-6 py-5">
+                  {/* Dark stage: an ID photo or a selfie reads far better against
+                      neutral dark than against the modal's white. */}
+                  <div className="flex min-h-[320px] items-center justify-center overflow-hidden rounded-xl bg-slate-900 p-3">
+                    {pdaMediaLoading ? (
+                      <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
+                        <RefreshCw className="h-6 w-6 animate-spin" />
+                        <span className="text-xs font-semibold">Fetching a secure link...</span>
+                      </div>
+                    ) : pdaMediaError ? (
+                      <div className="flex max-w-sm flex-col items-center gap-2 px-6 py-16 text-center">
+                        <AlertTriangle className="h-6 w-6 text-amber-400" />
+                        <p className="m-0 text-sm font-semibold text-slate-200">Could not open that file</p>
+                        <p className="m-0 text-xs text-slate-400">{pdaMediaError}</p>
+                      </div>
+                    ) : kind === "image" ? (
+                      <img src={pdaMediaUrl} alt={pdaMediaTarget.title} className="max-h-[60vh] w-auto max-w-full rounded-lg object-contain" />
+                    ) : kind === "video" ? (
+                      <video src={pdaMediaUrl} controls playsInline className="max-h-[60vh] w-auto max-w-full rounded-lg" />
+                    ) : kind === "pdf" ? (
+                      <iframe src={pdaMediaUrl} title={pdaMediaTarget.title} className="h-[60vh] w-full rounded-lg bg-white" />
+                    ) : (
+                      <div className="flex max-w-sm flex-col items-center gap-2 px-6 py-16 text-center">
+                        <FileText className="h-7 w-7 text-slate-400" />
+                        <p className="m-0 text-sm font-semibold text-slate-200">This file type can&apos;t be previewed</p>
+                        <p className="m-0 text-xs text-slate-400">Download it or open it in a new tab to view it.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <span className="truncate text-[11px] text-gray-400 dark:text-slate-500" title={pdaMediaTarget.path}>
+                      Secure link, expires shortly. Nothing here is reachable by URL alone.
+                    </span>
+                    <span className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
+                      {pdaMediaUrl && (
+                        <>
+                          <a
+                            href={pdaMediaUrl} target="_blank" rel="noopener noreferrer"
+                            className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />Open in new tab
+                          </a>
+                          <a
+                            href={pdaMediaUrl} download
+                            className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto"
+                          >
+                            <Download className="h-3.5 w-3.5" />Download
+                          </a>
+                        </>
+                      )}
+                      <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1F8FE0] px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#1560a8] sm:w-auto" onClick={closeModal}>Close</button>
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
 
             {modal === "remittanceReceipts" && receiptHistoryTarget && (() => {
               // The summary describes the full history, never the filtered view.
