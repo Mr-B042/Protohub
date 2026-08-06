@@ -66,6 +66,7 @@ function isMissingTable(error: { code?: string; message?: string } | null | unde
 
 const SELECT = `
   id, agent_code, full_name, phone, whatsapp_phone, email, state, city,
+  date_of_birth, emergency_contact_name, emergency_contact_phone,
   residential_address, photo_url, service_areas, service_radius_km, transport_method,
   account_status, kyc_status, trust_level, availability, vehicle_model, vehicle_plate,
   gender, id_type, id_number, guarantors_required, preferred_pickup_location,
@@ -85,6 +86,11 @@ const mapAgent = (row: any) => ({
   state: row.state ?? null,
   city: row.city ?? null,
   residentialAddress: row.residential_address ?? null,
+  // Needed by KYC Review: the Personal Information check has no file to open,
+  // so the reviewer verifies these values instead.
+  dateOfBirth: row.date_of_birth ?? null,
+  emergencyContactName: row.emergency_contact_name ?? null,
+  emergencyContactPhone: row.emergency_contact_phone ?? null,
   photoUrl: row.photo_url ?? null,
   serviceAreas: Array.isArray(row.service_areas) ? row.service_areas : [],
   serviceRadiusKm: row.service_radius_km === null || row.service_radius_km === undefined
@@ -124,13 +130,16 @@ type MappedAgent = ReturnType<typeof mapAgent>;
  */
 function stripSensitive(agent: MappedAgent, role: string): MappedAgent | Omit<MappedAgent,
   "bankName" | "bankAccountNumber" | "bankAccountName" | "residentialAddress" | "email"
-  | "idNumber" | "gender"> {
+  | "idNumber" | "gender" | "dateOfBirth" | "emergencyContactName" | "emergencyContactPhone"> {
   if ((MANAGEMENT_ROLES as readonly string[]).includes(role)) return agent;
   const {
     bankName, bankAccountNumber, bankAccountName, residentialAddress, email,
     // An ID number identifies a person outside this system entirely; a rep
     // monitoring a delivery has no reason to hold one.
     idNumber, gender,
+    // Same reasoning: a date of birth and a next-of-kin number are KYC facts
+    // for the reviewer, not operational detail for a rep tracking a delivery.
+    dateOfBirth, emergencyContactName, emergencyContactPhone,
     ...safe
   } = agent;
   return safe;
