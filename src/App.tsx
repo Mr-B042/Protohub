@@ -104,7 +104,9 @@ import {
   WalletCards,
   Smartphone,
   Laptop,
-  Apple
+  Apple,
+  ReceiptText,
+  User
 } from "lucide-react";
 import { OrderSourceLogo } from "./components/OrderSourceLogo";
 import { WhatsAppIcon } from "./components/WhatsAppIcon";
@@ -3720,6 +3722,26 @@ const formatDateOnly = (value?: string | Date | null) => {
     return d.toLocaleDateString();
   }
 };
+// A stored remittance reason is one long sentence that already carries the
+// detail, e.g.
+//   "Batch remittance: Balanced remittance · Expected ₦119,000 · received
+//    ₦119,000 · balanced · allocated to 2932"
+// Split on the separator it was written with: the first segment is the
+// headline, the rest are the supporting facts. Nothing is invented here - a
+// reason with no separator (e.g. "Manual remittance update") just has no meta.
+const parseRemittanceReason = (reason?: string | null): { headline: string; meta: string[] } => {
+  const trimmed = (reason ?? "").trim();
+  if (!trimmed) return { headline: "", meta: [] };
+  const parts = trimmed.split("·").map((part) => part.trim()).filter(Boolean);
+  const [headline, ...meta] = parts;
+  return {
+    headline: headline ?? "",
+    // Sentence-case each fact so "received ₦119,000" and "allocated to 2932"
+    // read as labels rather than the tail of a run-on sentence.
+    meta: meta.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+  };
+};
+
 const formatTimeOnly = (value?: string | Date | null) => {
   if (!value) return "";
   const d = typeof value === "string" || value instanceof Date ? new Date(value as any) : null;
@@ -11704,7 +11726,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [remittanceOpenRequest, setRemittanceOpenRequest] = useState<{ orderIds: string[]; label: string } | null>(null);
   // Receipt-history viewer. The ledger behind every cash entry is already
   // stored (remittance_transactions); this only decides which slice to show.
-  const [receiptHistoryTarget, setReceiptHistoryTarget] = useState<{ title: string; subtitle: string; partnerKey: string | null; orderId: string | null } | null>(null);
+  const [receiptHistoryTarget, setReceiptHistoryTarget] = useState<{ label: string; partnerKey: string | null; orderId: string | null } | null>(null);
+  const [receiptHistoryFilter, setReceiptHistoryFilter] = useState<"all" | "received" | "reversals">("all");
+  const [receiptHistoryExpandedId, setReceiptHistoryExpandedId] = useState<string | null>(null);
   const [remittanceOpenBusy, setRemittanceOpenBusy] = useState(false);
   const [remittanceVarianceReason, setRemittanceVarianceReason] = useState("");
   const [remittanceVarianceNote, setRemittanceVarianceNote] = useState("");
@@ -19078,21 +19102,59 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, new Map<string, WeeklyAccountingRemittanceTransaction[]>());
   // Newest first - reading a disputed balance backwards from "now" is how you
   // find the entry that broke it.
-  const receiptHistoryRows = (() => {
+  const receiptHistoryAllRows = (() => {
     if (!receiptHistoryTarget) return [] as WeeklyAccountingRemittanceTransaction[];
     const rows = receiptHistoryTarget.orderId
       ? (financeRemittanceReceiptsByOrderId.get(receiptHistoryTarget.orderId) ?? [])
       : (receiptHistoryTarget.partnerKey ? (financeRemittanceReceiptsByPartnerKey.get(receiptHistoryTarget.partnerKey) ?? []) : []);
     return [...rows].sort((a, b) => (b.receivedAt || "").localeCompare(a.receivedAt || ""));
   })();
-  const openReceiptHistory = (target: { title: string; subtitle: string; partnerKey?: string | null; orderId?: string | null }) => {
+  // The summary strip always describes the whole history; only the timeline
+  // below it responds to the filter, so switching to "Reversals" cannot make
+  // the headline net-cash figure look like the partner paid less.
+  const receiptHistoryRows = receiptHistoryAllRows.filter((row) =>
+    receiptHistoryFilter === "all" ? true : receiptHistoryFilter === "reversals" ? row.deltaAmount < 0 : row.deltaAmount > 0
+  );
+  const openReceiptHistory = (target: { label: string; partnerKey?: string | null; orderId?: string | null }) => {
     setReceiptHistoryTarget({
-      title: target.title,
-      subtitle: target.subtitle,
+      label: target.label,
       partnerKey: target.partnerKey ?? null,
       orderId: target.orderId ?? null
     });
+    setReceiptHistoryFilter("all");
+    setReceiptHistoryExpandedId(null);
     setModal("remittanceReceipts");
+  };
+  const exportReceiptHistoryCsv = () => {
+    if (!receiptHistoryTarget || receiptHistoryRows.length === 0) return;
+    const header = ["Date", "Time", "Order", "Direction", "Amount", "Balance before", "Balance after", "Expected", "Logged by", "Reason", "Customer", "Product", "Package"];
+    const rows = receiptHistoryRows.map((row) => [
+      formatDateOnly(row.receivedAt),
+      formatTimeOnly(row.receivedAt),
+      row.orderId,
+      row.deltaAmount < 0 ? "Reversal" : "Received",
+      row.deltaAmount,
+      row.previousAmountRemitted,
+      row.runningAmountRemitted,
+      row.currentExpectedRemittance,
+      row.loggedByName ?? "",
+      row.reason ?? "",
+      row.customer ?? "",
+      row.productName ?? "",
+      row.packageName ?? ""
+    ]);
+    const csv = [header, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `receipt-history-${receiptHistoryTarget.label.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${receiptHistoryRows.length} receipt${receiptHistoryRows.length === 1 ? "" : "s"} as CSV.`);
   };
   const remittancePartnerOptions = ["All Partners", ...remittanceRows.map((r) => r.partnerName)];
   const filteredRemittanceRows = remittanceRows.filter((row) => {
@@ -58405,6 +58467,8 @@ ${waybillLineItems(w).length > 1
     }
     if (modalBeforeClose === "remittanceReceipts") {
       setReceiptHistoryTarget(null);
+      setReceiptHistoryFilter("all");
+      setReceiptHistoryExpandedId(null);
     }
     if (modalBeforeClose === "orderDetails" && isAdminOrderWorkspaceHash(hashRoute)) {
       syncHashRoute(activeOrderWorkspaceBaseHash);
@@ -72154,7 +72218,7 @@ ${waybillLineItems(w).length > 1
                                   {row.transactionCount > 0 ? (
                                     <button
                                       className="!min-h-0 inline-block px-2 py-0.5 rounded-full text-xs font-bold shrink-0 bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
-                                      onClick={() => openReceiptHistory({ title: `Receipt History - ${row.partnerName}`, subtitle: `${row.transactionCount} cash entr${row.transactionCount === 1 ? "y" : "ies"} in the selected period`, partnerKey: row.key })}
+                                      onClick={() => openReceiptHistory({ label: row.partnerName, partnerKey: row.key })}
                                     >
                                       {row.transactionCount} receipt{row.transactionCount === 1 ? "" : "s"}
                                     </button>
@@ -72308,7 +72372,7 @@ ${waybillLineItems(w).length > 1
                                       <button
                                         className="!min-h-0 inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700 hover:bg-green-200 hover:underline transition-colors"
                                         title={`See all ${row.transactionCount} cash entries for ${row.partnerName} - date, amount, who logged it, and why`}
-                                        onClick={() => openReceiptHistory({ title: `Receipt History - ${row.partnerName}`, subtitle: `${row.transactionCount} cash entr${row.transactionCount === 1 ? "y" : "ies"} in the selected period`, partnerKey: row.key })}
+                                        onClick={() => openReceiptHistory({ label: row.partnerName, partnerKey: row.key })}
                                       >
                                         {row.transactionCount}
                                       </button>
@@ -72449,7 +72513,7 @@ ${waybillLineItems(w).length > 1
                                       if (receipts.length > 0) return (
                                         <button
                                           className="!min-h-0 mt-1 block text-left text-[11px] font-bold text-emerald-600 hover:text-emerald-800 hover:underline"
-                                          onClick={() => openReceiptHistory({ title: `Receipt History - Order ${order.id}`, subtitle: `${order.customer ?? "Customer"} · ${receipts.length} cash entr${receipts.length === 1 ? "y" : "ies"}`, orderId: order.id })}
+                                          onClick={() => openReceiptHistory({ label: "Order " + order.id, orderId: order.id })}
                                         >
                                           Ledger verified · {receipts.length} receipt{receipts.length === 1 ? "" : "s"} in selected dates
                                         </button>
@@ -72550,7 +72614,7 @@ ${waybillLineItems(w).length > 1
                                         <button
                                           className="!min-h-0 mt-1 block text-left text-[10px] font-bold text-emerald-600 hover:text-emerald-800 hover:underline"
                                           title="See every cash entry on this order - date, amount, who logged it, and why"
-                                          onClick={() => openReceiptHistory({ title: `Receipt History - Order ${order.id}`, subtitle: `${order.customer ?? "Customer"} · ${receipts.length} cash entr${receipts.length === 1 ? "y" : "ies"}`, orderId: order.id })}
+                                          onClick={() => openReceiptHistory({ label: "Order " + order.id, orderId: order.id })}
                                         >
                                           Ledger verified · {receipts.length} receipt{receipts.length === 1 ? "" : "s"}
                                         </button>
@@ -84059,7 +84123,7 @@ ${waybillLineItems(w).length > 1
         return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section
-            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" || modal === "remittanceReceipts" ? "max-w-3xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
+            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" ? "max-w-5xl" : modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
             role="dialog" aria-modal="true" aria-labelledby="modal-title"
           >
@@ -84129,7 +84193,17 @@ ${waybillLineItems(w).length > 1
 	                {modal === "editSalesRep" && "Edit Sales Rep"}
 	                {modal === "recordRemittance" && remittanceTargetOrder && `Record Remittance - ${remittanceTargetOrder.id}`}
 	                {modal === "recordBatchRemittance" && remittanceBatchTargetRow && `Record Batch Remittance - ${remittanceBatchTargetRow.partnerName}`}
-	                {modal === "remittanceReceipts" && (receiptHistoryTarget?.title ?? "Receipt History")}
+	                {modal === "remittanceReceipts" && (
+	                  <span className="flex items-center gap-3">
+	                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
+	                      <ReceiptText className="h-5 w-5" />
+	                    </span>
+	                    <span className="flex min-w-0 flex-col">
+	                      <span className="text-lg font-bold leading-tight">Receipt History</span>
+	                      <span className="truncate text-xs font-normal text-gray-500 dark:text-slate-400">{receiptHistoryTarget?.label ?? ""}</span>
+	                    </span>
+	                  </span>
+	                )}
 	                {modal === "bonusBreakdown" && "Bonus Breakdown"}
 	                {modal === "bonusSettings" && "Bonus Settings"}
 	                {modal === "stateAvailability" && "State Availability"}
@@ -92175,12 +92249,16 @@ ${waybillLineItems(w).length > 1
             )}
 
             {modal === "remittanceReceipts" && receiptHistoryTarget && (() => {
-              const net = receiptHistoryRows.reduce((sum, row) => sum + row.deltaAmount, 0);
-              const reversals = receiptHistoryRows.filter((row) => row.deltaAmount < 0).length;
-              const loggers = Array.from(new Set(receiptHistoryRows.map((row) => row.loggedByName).filter(Boolean)));
+              // The summary describes the full history, never the filtered view.
+              const net = receiptHistoryAllRows.reduce((sum, row) => sum + row.deltaAmount, 0);
+              const loggers = Array.from(new Set(receiptHistoryAllRows.map((row) => row.loggedByName).filter(Boolean))) as string[];
+              const dates = receiptHistoryAllRows.map((row) => row.receivedAt).filter(Boolean).sort();
+              const firstDate = dates[0];
+              const lastDate = dates[dates.length - 1];
+              const sameDay = (firstDate ?? "").slice(0, 10) === (lastDate ?? "").slice(0, 10);
               const singleOrder = Boolean(receiptHistoryTarget.orderId);
-              // Newest day first, entries already sorted newest-first inside it.
-              // Grouping by day keeps the date out of every single row.
+              const filterLabels: Record<typeof receiptHistoryFilter, string> = { all: "All Entries", received: "Received only", reversals: "Reversals only" };
+              // Newest day first; entries inside a day are already newest-first.
               const byDay: { key: string; label: string; rows: WeeklyAccountingRemittanceTransaction[] }[] = [];
               receiptHistoryRows.forEach((row) => {
                 const key = (row.receivedAt || "").slice(0, 10);
@@ -92190,79 +92268,178 @@ ${waybillLineItems(w).length > 1
               });
               return (
                 <div className="px-6 py-5">
-                  {/* Summary - one hero number, everything else quiet */}
-                  <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3.5 dark:border-slate-700/80 dark:bg-slate-800/40">
-                    <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
-                      <div>
-                        <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Net cash recorded</span>
-                        <span className="text-2xl font-bold leading-tight text-gray-900 dark:text-slate-50">{formatMoney(net)}</span>
-                      </div>
-                      <div className="text-right">
-                        <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Entries</span>
-                        <span className="text-2xl font-bold leading-tight text-gray-900 dark:text-slate-50">{receiptHistoryRows.length}</span>
-                      </div>
+                  {/* Summary - one strip, four facts, dividers instead of boxes */}
+                  <div className="grid grid-cols-1 divide-y divide-gray-200 rounded-xl border border-gray-200 bg-gray-50/60 dark:divide-slate-700/80 dark:border-slate-700/80 dark:bg-slate-800/30 sm:grid-cols-4 sm:divide-x sm:divide-y-0">
+                    <div className="px-4 py-3.5">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Net cash recorded</span>
+                      <span className="mt-1 block text-2xl font-bold leading-tight text-emerald-600 dark:text-emerald-300">{formatMoney(net)}</span>
+                      <span className="mt-1 flex items-center gap-1 text-[11px] text-gray-400 dark:text-slate-500"><TrendingUp className="h-3 w-3" />Total received in period</span>
                     </div>
-                    <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-gray-200 pt-2.5 text-xs text-gray-500 dark:border-slate-700/80 dark:text-slate-400">
-                      <span>{receiptHistoryTarget.subtitle}</span>
-                      {loggers.length > 0 && <><span className="text-gray-300 dark:text-slate-600">·</span><span>logged by {loggers.join(", ")}</span></>}
-                      {reversals > 0 && (
-                        <>
-                          <span className="text-gray-300 dark:text-slate-600">·</span>
-                          <span className="font-semibold text-red-600 dark:text-red-300">{reversals} reversal{reversals === 1 ? "" : "s"}</span>
-                        </>
-                      )}
+                    <div className="px-4 py-3.5">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Entries</span>
+                      <span className="mt-1 flex items-center gap-2">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300"><FileText className="h-3.5 w-3.5" /></span>
+                        <span className="text-2xl font-bold leading-tight text-gray-900 dark:text-slate-50">{receiptHistoryAllRows.length}</span>
+                      </span>
+                      <span className="mt-1 block text-[11px] text-gray-400 dark:text-slate-500">Cash entries</span>
+                    </div>
+                    <div className="px-4 py-3.5">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Logged by</span>
+                      <span className="mt-1 flex items-center gap-1.5">
+                        <User className="h-4 w-4 shrink-0 text-gray-400" />
+                        <span className="truncate text-base font-bold leading-tight text-gray-900 dark:text-slate-50">{loggers.length === 0 ? "-" : loggers[0]}</span>
+                      </span>
+                      <span className="mt-1 block text-[11px] text-gray-400 dark:text-slate-500">{loggers.length > 1 ? `+${loggers.length - 1} other${loggers.length === 2 ? "" : "s"}` : "System user"}</span>
+                    </div>
+                    <div className="px-4 py-3.5">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Period</span>
+                      <span className="mt-1 flex items-center gap-1.5">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300"><CalendarDays className="h-3.5 w-3.5" /></span>
+                        <span className="truncate text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">
+                          {dates.length === 0 ? "-" : sameDay ? formatDateOnly(firstDate) : `${formatDateOnly(firstDate)} - ${formatDateOnly(lastDate)}`}
+                        </span>
+                      </span>
+                      <span className="mt-1 block text-[11px] text-gray-400 dark:text-slate-500">{dates.length === 0 ? "No entries" : sameDay ? "Selected date" : "Date range"}</span>
                     </div>
                   </div>
 
-                  {receiptHistoryRows.length === 0 ? (
-                    <p className="mt-6 text-center text-sm italic text-gray-400">No cash entries recorded in the selected period.</p>
+                  {receiptHistoryAllRows.length === 0 ? (
+                    <p className="mt-8 text-center text-sm italic text-gray-400">No cash entries recorded in the selected period.</p>
                   ) : (
-                    <div className="mt-5 space-y-5">
-                      {byDay.map((group) => (
-                        <section key={group.key}>
-                          <h3 className="mb-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">{group.label}</h3>
-                          <ol className="m-0 list-none space-y-0 border-l border-gray-200 pl-0 dark:border-slate-700">
+                    <>
+                      {/* Filter + export sit once, above the timeline */}
+                      <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
+                        <label className="relative inline-flex items-center">
+                          <Filter className="pointer-events-none absolute left-3 h-3.5 w-3.5 text-gray-400" />
+                          <select
+                            className="!min-h-0 appearance-none rounded-lg border border-gray-200 bg-white py-2 pl-8 pr-8 text-xs font-semibold text-gray-700 outline-none transition-colors hover:bg-gray-50 focus:ring-2 focus:ring-emerald-500 dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-200 dark:hover:bg-slate-800"
+                            value={receiptHistoryFilter}
+                            onChange={(event) => setReceiptHistoryFilter(event.target.value as typeof receiptHistoryFilter)}
+                            aria-label="Filter receipt entries"
+                          >
+                            {(Object.keys(filterLabels) as (typeof receiptHistoryFilter)[]).map((key) => <option key={key} value={key}>{filterLabels[key]}</option>)}
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-gray-400" />
+                        </label>
+                        <button
+                          className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                          onClick={exportReceiptHistoryCsv}
+                          disabled={receiptHistoryRows.length === 0}
+                          title="Download these entries as CSV"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Export</span>
+                        </button>
+                      </div>
+
+                      {receiptHistoryRows.length === 0 ? (
+                        <p className="mt-6 text-center text-sm italic text-gray-400">No entries match this filter.</p>
+                      ) : byDay.map((group) => (
+                        <section key={group.key} className="mt-5">
+                          <div className="flex items-center gap-2.5">
+                            <CalendarDays className="h-4 w-4 shrink-0 text-gray-400" />
+                            <div>
+                              <h3 className="m-0 text-base font-bold leading-tight text-gray-900 dark:text-slate-50">{group.label}</h3>
+                              <p className="m-0 text-[11px] text-gray-400 dark:text-slate-500">{group.rows.length} cash entr{group.rows.length === 1 ? "y" : "ies"} recorded</p>
+                            </div>
+                          </div>
+
+                          <ol className="m-0 mt-3 list-none space-y-2.5 border-l border-gray-200 pl-0 dark:border-slate-700">
                             {group.rows.map((row) => {
                               const reversal = row.deltaAmount < 0;
+                              const parsed = parseRemittanceReason(row.reason);
+                              const expanded = receiptHistoryExpandedId === row.id;
                               return (
-                                <li key={row.id} className="relative py-2.5 pl-5 pr-1">
+                                <li key={row.id} className="relative pl-5">
                                   <span
-                                    className={`absolute -left-[4.5px] top-[18px] h-[9px] w-[9px] rounded-full ring-2 ring-white dark:ring-[#0f1822] ${reversal ? "bg-red-500" : "bg-emerald-500"}`}
+                                    className={`absolute -left-[5px] top-6 h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-[#0f1822] ${reversal ? "bg-red-500" : "bg-emerald-500"}`}
                                     aria-hidden="true"
                                   />
-                                  <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                                    <span className={`text-base font-bold leading-none ${reversal ? "text-red-600 dark:text-red-300" : "text-emerald-700 dark:text-emerald-300"}`}>
-                                      {reversal ? "−" : "+"}{formatMoney(Math.abs(row.deltaAmount))}
-                                    </span>
-                                    <span className="font-mono text-xs tabular-nums text-gray-400 dark:text-slate-500">
-                                      {formatMoney(row.previousAmountRemitted)} → <strong className="font-semibold text-gray-600 dark:text-slate-300">{formatMoney(row.runningAmountRemitted)}</strong>
-                                    </span>
-                                  </div>
-                                  <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-gray-500 dark:text-slate-400">
-                                    <span className="tabular-nums">{formatTimeOnly(row.receivedAt)}</span>
-                                    {!singleOrder && row.orderId && (
-                                      <><span className="text-gray-300 dark:text-slate-600">·</span><span className="font-medium text-gray-700 dark:text-slate-300">Order {row.orderId}</span></>
+                                  <div className={`rounded-xl border transition-colors ${reversal ? "border-red-200 bg-red-50/50 dark:border-red-900/50 dark:bg-red-950/20" : "border-gray-200 bg-white hover:border-gray-300 dark:border-slate-700/80 dark:bg-slate-800/30 dark:hover:border-slate-600"}`}>
+                                    <button
+                                      className="!min-h-0 flex w-full items-start gap-3 p-3.5 text-left"
+                                      onClick={() => setReceiptHistoryExpandedId(expanded ? null : row.id)}
+                                      aria-expanded={expanded}
+                                    >
+                                      <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${reversal ? "bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-300" : "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300"}`}>
+                                        <Banknote className="h-4 w-4" />
+                                      </span>
+                                      <span className="min-w-0 flex-1">
+                                        <span className={`block text-lg font-bold leading-tight ${reversal ? "text-red-600 dark:text-red-300" : "text-emerald-600 dark:text-emerald-300"}`}>
+                                          {reversal ? "−" : "+"}{formatMoney(Math.abs(row.deltaAmount))}
+                                        </span>
+                                        <span className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-gray-500 dark:text-slate-400">
+                                          <Clock className="h-3 w-3 shrink-0" />
+                                          <span className="tabular-nums">{formatTimeOnly(row.receivedAt)}</span>
+                                          {!singleOrder && row.orderId && (
+                                            <><span className="text-gray-300 dark:text-slate-600">·</span><span className="font-semibold text-gray-800 dark:text-slate-200">Order {row.orderId}</span></>
+                                          )}
+                                          <span className="text-gray-300 dark:text-slate-600">·</span>
+                                          <span>{row.loggedByName || "unknown"}</span>
+                                        </span>
+                                        {parsed.headline && (
+                                          <span className="mt-1.5 block text-xs font-medium text-gray-700 dark:text-slate-300">{parsed.headline}</span>
+                                        )}
+                                        {parsed.meta.length > 0 && (
+                                          <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-gray-400 dark:text-slate-500">
+                                            {parsed.meta.map((fact, index) => (
+                                              <Fragment key={`-meta-`}>
+                                                {index > 0 && <span className="text-gray-300 dark:text-slate-600">•</span>}
+                                                <span>{fact}</span>
+                                              </Fragment>
+                                            ))}
+                                          </span>
+                                        )}
+                                      </span>
+                                      <span className="flex shrink-0 items-center gap-1.5 pt-0.5">
+                                        <span className="text-right">
+                                          <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Balance</span>
+                                          <span className="mt-0.5 block whitespace-nowrap font-mono text-xs tabular-nums text-gray-400 dark:text-slate-500">
+                                            {formatMoney(row.previousAmountRemitted)} → <strong className="font-semibold text-gray-800 dark:text-slate-200">{formatMoney(row.runningAmountRemitted)}</strong>
+                                          </span>
+                                        </span>
+                                        <ChevronRight className={`h-4 w-4 shrink-0 text-gray-300 transition-transform dark:text-slate-600 ${expanded ? "rotate-90" : ""}`} />
+                                      </span>
+                                    </button>
+
+                                    {expanded && (
+                                      <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 border-t border-gray-100 px-3.5 py-3 dark:border-slate-700/80 sm:grid-cols-4">
+                                        {[
+                                          { label: "Customer", value: row.customer || "-" },
+                                          { label: "Product", value: row.productName || "-" },
+                                          { label: "Package", value: row.packageName || "-" },
+                                          { label: "Order value", value: row.orderAmount ? formatMoney(row.orderAmount) : "-" },
+                                          { label: "Logistics", value: row.logisticsCost ? formatMoney(row.logisticsCost) : "-" },
+                                          { label: "Expected", value: row.currentExpectedRemittance ? formatMoney(row.currentExpectedRemittance) : "-" },
+                                          { label: "Outstanding", value: formatMoney(row.currentOutstanding ?? 0) },
+                                          { label: "Delivered", value: row.orderDeliveredDate ? formatDateOnly(row.orderDeliveredDate) : "-" }
+                                        ].map((cell) => (
+                                          <div key={cell.label}>
+                                            <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">{cell.label}</span>
+                                            <span className="mt-0.5 block truncate text-xs font-medium text-gray-800 dark:text-slate-200" title={String(cell.value)}>{cell.value}</span>
+                                          </div>
+                                        ))}
+                                      </div>
                                     )}
-                                    <span className="text-gray-300 dark:text-slate-600">·</span>
-                                    <span>{row.loggedByName || "unknown"}</span>
                                   </div>
-                                  {row.reason && (
-                                    <p className="m-0 mt-1 text-xs leading-relaxed text-gray-600 dark:text-slate-400">{row.reason}</p>
-                                  )}
                                 </li>
                               );
                             })}
                           </ol>
                         </section>
                       ))}
-                    </div>
+                    </>
                   )}
 
-                  <div className="mt-6 flex flex-col-reverse gap-3 border-t border-gray-100 pt-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="m-0 text-[11px] leading-relaxed text-gray-400 dark:text-slate-500">
-                      Times are when the cash was recorded as received. Red entries reduced the balance.
-                    </p>
-                    <button className="!min-h-0 inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto" onClick={closeModal}>Close</button>
+                  <div className="mt-6 flex flex-col-reverse items-stretch gap-3 border-t border-gray-100 pt-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-start gap-2 rounded-lg bg-emerald-50/60 px-3 py-2.5 dark:bg-emerald-950/20">
+                      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                      <p className="m-0 text-[11px] leading-relaxed text-gray-500 dark:text-slate-400">
+                        Times are when the cash was recorded as received.<br />
+                        All amounts are in Nigerian Naira (₦). Red entries reduced the balance.
+                      </p>
+                    </div>
+                    <button className="!min-h-0 inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 sm:w-auto" onClick={closeModal}>Close</button>
                   </div>
                 </div>
               );
