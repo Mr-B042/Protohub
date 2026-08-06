@@ -11436,6 +11436,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     { agentId: string; name: string; phone: string; reason: string; blockApplicant: boolean } | null
   >(null);
   const [pdaReviewSearch, setPdaReviewSearch] = useState("");
+  // KYC Review: which non-file item has its stored answers open. Items that
+  // carry a file still open the file instead.
+  const [pdaKycDetailItemId, setPdaKycDetailItemId] = useState<string | null>(null);
   const [pdaReviewSort, setPdaReviewSort] = useState("Newest First");
   // Pending Approval sorts oldest-first by default: an application that has
   // been ready longest is the one someone is waiting on.
@@ -52573,6 +52576,70 @@ ${waybillLineItems(w).length > 1
       : status === "Submitted" ? "bg-sky-50 text-sky-700"
       : "bg-gray-100 text-gray-500";
 
+    // Four of the nine checks are answers on the application form, not
+    // uploads: they have no file to open, but the applicant DID submit them.
+    // This returns what was submitted so the reviewer can verify it, instead
+    // of the button reporting that nothing was uploaded.
+    const kycItemAnswers = (itemKey: string): { label: string; value: string }[] | null => {
+      if (!view) return null;
+      const agent: any = view.agent;
+      const show = (value: unknown) => {
+        const text = value === null || value === undefined ? "" : String(value).trim();
+        return text.length > 0 ? text : "Not provided";
+      };
+      if (itemKey === "personal_information") {
+        return [
+          { label: "Full name", value: show(agent.fullName) },
+          { label: "Date of birth", value: agent.dateOfBirth ? formatDateOnly(agent.dateOfBirth) : "Not provided" },
+          { label: "Gender", value: show(agent.gender) },
+          { label: "Phone", value: show(agent.phone) },
+          { label: "WhatsApp", value: show(agent.whatsappPhone) },
+          { label: "Email", value: show(agent.email) },
+          { label: "Residential address", value: show(agent.residentialAddress) },
+          { label: "City / State", value: show([agent.city, agent.state].filter(Boolean).join(", ")) },
+          { label: "ID type", value: show(agent.idType) },
+          { label: "ID number", value: show(agent.idNumber) },
+          { label: "Emergency contact", value: show(agent.emergencyContactName) },
+          { label: "Emergency phone", value: show(agent.emergencyContactPhone) }
+        ];
+      }
+      if (itemKey === "bank_account") {
+        return [
+          { label: "Bank", value: show(agent.bankName) },
+          { label: "Account number", value: show(agent.bankAccountNumber) },
+          { label: "Account name", value: show(agent.bankAccountName) },
+          // Flagged rather than left for the eye: paying a different name than
+          // the one on the ID is exactly what KYC is meant to catch.
+          {
+            label: "Matches applicant name",
+            value: agent.bankAccountName && agent.fullName
+              ? (String(agent.bankAccountName).trim().toLowerCase() === String(agent.fullName).trim().toLowerCase() ? "Yes - exact match" : "No - names differ, check before approving")
+              : "Cannot check - a name is missing"
+          }
+        ];
+      }
+      if (itemKey === "guarantor_one" || itemKey === "guarantor_two") {
+        const slot = itemKey === "guarantor_one" ? 1 : 2;
+        const guarantor: any = (view.guarantors ?? []).find((row: any) => Number(row.slot) === slot);
+        if (!guarantor) return [{ label: "Guarantor", value: "No guarantor has been submitted for this slot yet." }];
+        return [
+          { label: "Full name", value: show(guarantor.fullName) },
+          { label: "Relationship", value: show(guarantor.relationship) },
+          { label: "Phone", value: show(guarantor.phone) },
+          { label: "WhatsApp", value: show(guarantor.whatsappPhone) },
+          { label: "Email", value: show(guarantor.email) },
+          { label: "Occupation", value: show(guarantor.occupation) },
+          { label: "Workplace", value: show(guarantor.workplace) },
+          { label: "Address", value: show(guarantor.address) },
+          { label: "Years known", value: show(guarantor.yearsKnown) },
+          { label: "Consent given", value: guarantor.consentGiven ? "Yes" : "No" },
+          { label: "Verification", value: show(guarantor.verificationStatus) },
+          { label: "Call attempts", value: show(guarantor.callAttempts) }
+        ];
+      }
+      return null;
+    };
+
     const reviewItem = async (itemId: string, status: string) => {
       let rejectionReason: string | undefined;
       if (status === "Rejected" || status === "Replacement Requested") {
@@ -52721,8 +52788,12 @@ ${waybillLineItems(w).length > 1
 
               <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
                 <div className="divide-y divide-gray-100">
-                  {view.kycItems.map((item, index) => (
-                    <div key={item.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                  {view.kycItems.map((item, index) => {
+                    const answers = item.filePath ? null : kycItemAnswers((item as any).itemKey);
+                    const answersOpen = answers !== null && pdaKycDetailItemId === item.id;
+                    return (
+                    <div key={item.id} className="px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-3">
                       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-500">
                         <FileText className="h-4 w-4" />
                       </span>
@@ -52731,13 +52802,19 @@ ${waybillLineItems(w).length > 1
                         <div className="text-[11px] text-gray-500">
                           {item.rejectionReason ? <span className="text-rose-600">{item.rejectionReason}</span>
                             : item.reviewNote ? item.reviewNote
+                            : answers ? "Submitted on the form - no file to upload"
                             : item.mandatory ? "Required before approval" : "Optional"}
                         </div>
                       </div>
                       <span className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-bold ${itemChip(item.status)}`}>{item.status}</span>
-                      <button type="button" onClick={() => item.filePath ? void openFile(item.filePath) : showToast("Nothing has been uploaded for this item yet.")}
+                      <button type="button"
+                        onClick={() => {
+                          if (item.filePath) { void openFile(item.filePath); return; }
+                          if (answers) { setPdaKycDetailItemId(answersOpen ? null : item.id); return; }
+                          showToast("Nothing has been uploaded for this item yet.");
+                        }}
                         className="!min-h-0 shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50">
-                        View Details
+                        {answers ? (answersOpen ? "Hide Details" : "View Details") : "View Details"}
                       </button>
                       {item.status === "Approved" ? (
                         <span className="shrink-0 text-emerald-600" title="Approved"><CheckCircle2 className="h-5 w-5" /></span>
@@ -52752,7 +52829,23 @@ ${waybillLineItems(w).length > 1
                         </div>
                       )}
                     </div>
-                  ))}
+                    {answersOpen && answers && (
+                      <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2.5 rounded-lg border border-gray-200 bg-gray-50/70 px-4 py-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {answers.map((answer) => {
+                          const missing = answer.value === "Not provided";
+                          const mismatch = answer.value.startsWith("No - names differ");
+                          return (
+                            <div key={answer.label}>
+                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400">{answer.label}</span>
+                              <span className={`mt-0.5 block break-words text-[12px] font-medium ${mismatch ? "text-rose-600" : missing ? "text-gray-400 italic" : "text-gray-800"}`}>{answer.value}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    </div>
+                    );
+                  })}
                 </div>
               </section>
 
