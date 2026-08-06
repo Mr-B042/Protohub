@@ -11446,6 +11446,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaMediaUrl, setPdaMediaUrl] = useState("");
   const [pdaMediaLoading, setPdaMediaLoading] = useState(false);
   const [pdaMediaError, setPdaMediaError] = useState("");
+  // Image zoom/pan. 1 = fit to the stage. Panning is only meaningful once
+  // zoomed past fit, so it resets whenever zoom returns to 1.
+  const [pdaMediaZoom, setPdaMediaZoom] = useState(1);
+  const [pdaMediaPan, setPdaMediaPan] = useState({ x: 0, y: 0 });
+  const pdaMediaDragRef = useRef<{ active: boolean; startX: number; startY: number; originX: number; originY: number }>({ active: false, startX: 0, startY: 0, originX: 0, originY: 0 });
+  const PDA_MEDIA_ZOOM_MIN = 1;
+  const PDA_MEDIA_ZOOM_MAX = 6;
+  const setPdaMediaZoomClamped = (next: number) => {
+    const clamped = Math.min(PDA_MEDIA_ZOOM_MAX, Math.max(PDA_MEDIA_ZOOM_MIN, Number(next.toFixed(2))));
+    setPdaMediaZoom(clamped);
+    if (clamped === 1) setPdaMediaPan({ x: 0, y: 0 });
+  };
+  const resetPdaMediaZoom = () => { setPdaMediaZoom(1); setPdaMediaPan({ x: 0, y: 0 }); };
   const [pdaReviewSort, setPdaReviewSort] = useState("Newest First");
   // Pending Approval sorts oldest-first by default: an application that has
   // been ready longest is the one someone is waiting on.
@@ -41915,6 +41928,7 @@ ${waybillLineItems(w).length > 1
     setPdaMediaUrl("");
     setPdaMediaError("");
     setPdaMediaLoading(true);
+    resetPdaMediaZoom();
     setModal("pdaMediaViewer");
     try {
       const { url } = await personalDeliveryAgentsApi.signedMediaUrl(path);
@@ -58680,6 +58694,7 @@ ${waybillLineItems(w).length > 1
       setPdaMediaUrl("");
       setPdaMediaError("");
       setPdaMediaLoading(false);
+      resetPdaMediaZoom();
     }
     if (modalBeforeClose === "orderDetails" && isAdminOrderWorkspaceHash(hashRoute)) {
       syncHashRoute(activeOrderWorkspaceBaseHash);
@@ -92802,7 +92817,65 @@ ${waybillLineItems(w).length > 1
                         <p className="m-0 text-xs text-slate-400">{pdaMediaError}</p>
                       </div>
                     ) : kind === "image" ? (
-                      <img src={pdaMediaUrl} alt={pdaMediaTarget.title} className="max-h-[60vh] w-auto max-w-full rounded-lg object-contain" />
+                      <div
+                        className={`relative h-[60vh] w-full overflow-hidden ${pdaMediaZoom > 1 ? (pdaMediaDragRef.current.active ? "cursor-grabbing" : "cursor-grab") : "cursor-zoom-in"}`}
+                        onWheel={(event) => { event.preventDefault(); setPdaMediaZoomClamped(pdaMediaZoom + (event.deltaY < 0 ? 0.25 : -0.25)); }}
+                        onDoubleClick={() => (pdaMediaZoom > 1 ? resetPdaMediaZoom() : setPdaMediaZoomClamped(2))}
+                        onPointerDown={(event) => {
+                          if (pdaMediaZoom <= 1) return;
+                          pdaMediaDragRef.current = { active: true, startX: event.clientX, startY: event.clientY, originX: pdaMediaPan.x, originY: pdaMediaPan.y };
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                        }}
+                        onPointerMove={(event) => {
+                          const drag = pdaMediaDragRef.current;
+                          if (!drag.active) return;
+                          setPdaMediaPan({ x: drag.originX + (event.clientX - drag.startX), y: drag.originY + (event.clientY - drag.startY) });
+                        }}
+                        onPointerUp={(event) => {
+                          pdaMediaDragRef.current.active = false;
+                          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+                        }}
+                        onPointerCancel={() => { pdaMediaDragRef.current.active = false; }}
+                      >
+                        <img
+                          src={pdaMediaUrl}
+                          alt={pdaMediaTarget.title}
+                          draggable={false}
+                          className="pointer-events-none absolute left-1/2 top-1/2 max-h-full max-w-full select-none rounded-lg object-contain"
+                          style={{
+                            transform: `translate(-50%, -50%) translate(${pdaMediaPan.x}px, ${pdaMediaPan.y}px) scale(${pdaMediaZoom})`,
+                            transition: pdaMediaDragRef.current.active ? "none" : "transform 120ms ease-out"
+                          }}
+                        />
+                        {/* Controls float over the stage so the image keeps the full height */}
+                        <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-slate-800/90 px-1.5 py-1 shadow-lg backdrop-blur">
+                          <button
+                            className="!min-h-0 rounded-full p-1.5 text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-30"
+                            onClick={() => setPdaMediaZoomClamped(pdaMediaZoom - 0.5)}
+                            disabled={pdaMediaZoom <= PDA_MEDIA_ZOOM_MIN}
+                            aria-label="Zoom out"
+                          >
+                            <Minus className="h-4 w-4" />
+                          </button>
+                          <span className="min-w-[3.25rem] text-center text-xs font-bold tabular-nums text-slate-100">{Math.round(pdaMediaZoom * 100)}%</span>
+                          <button
+                            className="!min-h-0 rounded-full p-1.5 text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-30"
+                            onClick={() => setPdaMediaZoomClamped(pdaMediaZoom + 0.5)}
+                            disabled={pdaMediaZoom >= PDA_MEDIA_ZOOM_MAX}
+                            aria-label="Zoom in"
+                          >
+                            <Plus className="h-4 w-4" />
+                          </button>
+                          <span className="mx-0.5 h-4 w-px bg-slate-600" />
+                          <button
+                            className="!min-h-0 rounded-full px-2.5 py-1.5 text-[11px] font-bold text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-30"
+                            onClick={resetPdaMediaZoom}
+                            disabled={pdaMediaZoom === 1 && pdaMediaPan.x === 0 && pdaMediaPan.y === 0}
+                          >
+                            Fit
+                          </button>
+                        </div>
+                      </div>
                     ) : kind === "video" ? (
                       <video src={pdaMediaUrl} controls playsInline className="max-h-[60vh] w-auto max-w-full rounded-lg" />
                     ) : kind === "pdf" ? (
