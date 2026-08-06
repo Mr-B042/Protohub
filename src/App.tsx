@@ -11451,12 +11451,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaMediaZoom, setPdaMediaZoom] = useState(1);
   const [pdaMediaPan, setPdaMediaPan] = useState({ x: 0, y: 0 });
   const pdaMediaDragRef = useRef<{ active: boolean; startX: number; startY: number; originX: number; originY: number }>({ active: false, startX: 0, startY: 0, originX: 0, originY: 0 });
+  // How much the image was already shrunk to fit the stage. Measured on load:
+  // rendered width / natural width. Everything below is expressed against the
+  // file's REAL resolution, so 100% means one image pixel per screen pixel -
+  // the only reading of "zoom" that tells you whether you are looking at
+  // detail or at an upscale.
+  const [pdaMediaFitScale, setPdaMediaFitScale] = useState(1);
   const PDA_MEDIA_ZOOM_MIN = 1;
-  const PDA_MEDIA_ZOOM_MAX = 6;
+  // Ceiling is set in NATIVE terms - 32x actual pixels - then converted back
+  // into a transform scale. A small image therefore still zooms far enough to
+  // resolve single pixels instead of stopping at an arbitrary 6x.
+  const PDA_MEDIA_NATIVE_MAX = 32;
+  const pdaMediaZoomMax = Math.max(8, PDA_MEDIA_NATIVE_MAX / Math.max(pdaMediaFitScale, 0.01));
+  // Percentage against the real file, not against the fit.
+  const pdaMediaNativePct = pdaMediaZoom * pdaMediaFitScale * 100;
+  // Past 1:1 every screen pixel is an upscale, so stop smoothing and show the
+  // actual pixel grid rather than a blur.
+  const pdaMediaPixelated = pdaMediaNativePct > 100;
   const setPdaMediaZoomClamped = (next: number) => {
-    const clamped = Math.min(PDA_MEDIA_ZOOM_MAX, Math.max(PDA_MEDIA_ZOOM_MIN, Number(next.toFixed(2))));
+    const clamped = Math.min(pdaMediaZoomMax, Math.max(PDA_MEDIA_ZOOM_MIN, Number(next.toFixed(3))));
     setPdaMediaZoom(clamped);
-    if (clamped === 1) setPdaMediaPan({ x: 0, y: 0 });
+    if (clamped === PDA_MEDIA_ZOOM_MIN) setPdaMediaPan({ x: 0, y: 0 });
   };
   const resetPdaMediaZoom = () => { setPdaMediaZoom(1); setPdaMediaPan({ x: 0, y: 0 }); };
   const [pdaReviewSort, setPdaReviewSort] = useState("Newest First");
@@ -41929,6 +41944,7 @@ ${waybillLineItems(w).length > 1
     setPdaMediaError("");
     setPdaMediaLoading(true);
     resetPdaMediaZoom();
+    setPdaMediaFitScale(1);
     setModal("pdaMediaViewer");
     try {
       const { url } = await personalDeliveryAgentsApi.signedMediaUrl(path);
@@ -58695,6 +58711,7 @@ ${waybillLineItems(w).length > 1
       setPdaMediaError("");
       setPdaMediaLoading(false);
       resetPdaMediaZoom();
+      setPdaMediaFitScale(1);
     }
     if (modalBeforeClose === "orderDetails" && isAdminOrderWorkspaceHash(hashRoute)) {
       syncHashRoute(activeOrderWorkspaceBaseHash);
@@ -92819,8 +92836,8 @@ ${waybillLineItems(w).length > 1
                     ) : kind === "image" ? (
                       <div
                         className={`relative h-[60vh] w-full overflow-hidden ${pdaMediaZoom > 1 ? (pdaMediaDragRef.current.active ? "cursor-grabbing" : "cursor-grab") : "cursor-zoom-in"}`}
-                        onWheel={(event) => { event.preventDefault(); setPdaMediaZoomClamped(pdaMediaZoom + (event.deltaY < 0 ? 0.25 : -0.25)); }}
-                        onDoubleClick={() => (pdaMediaZoom > 1 ? resetPdaMediaZoom() : setPdaMediaZoomClamped(2))}
+                        onWheel={(event) => { event.preventDefault(); setPdaMediaZoomClamped(pdaMediaZoom * (event.deltaY < 0 ? 1.18 : 1 / 1.18)); }}
+                        onDoubleClick={() => (pdaMediaZoom > 1 ? resetPdaMediaZoom() : setPdaMediaZoomClamped(1 / Math.max(pdaMediaFitScale, 0.01)))}
                         onPointerDown={(event) => {
                           if (pdaMediaZoom <= 1) return;
                           pdaMediaDragRef.current = { active: true, startX: event.clientX, startY: event.clientY, originX: pdaMediaPan.x, originY: pdaMediaPan.y };
@@ -92841,27 +92858,34 @@ ${waybillLineItems(w).length > 1
                           src={pdaMediaUrl}
                           alt={pdaMediaTarget.title}
                           draggable={false}
+                          onLoad={(event) => {
+                            const el = event.currentTarget;
+                            if (el.naturalWidth > 0 && el.clientWidth > 0) setPdaMediaFitScale(el.clientWidth / el.naturalWidth);
+                          }}
                           className="pointer-events-none absolute left-1/2 top-1/2 max-h-full max-w-full select-none rounded-lg object-contain"
                           style={{
                             transform: `translate(-50%, -50%) translate(${pdaMediaPan.x}px, ${pdaMediaPan.y}px) scale(${pdaMediaZoom})`,
-                            transition: pdaMediaDragRef.current.active ? "none" : "transform 120ms ease-out"
+                            transition: pdaMediaDragRef.current.active ? "none" : "transform 120ms ease-out",
+                            imageRendering: pdaMediaPixelated ? "pixelated" : "auto"
                           }}
                         />
                         {/* Controls float over the stage so the image keeps the full height */}
                         <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-slate-800/90 px-1.5 py-1 shadow-lg backdrop-blur">
                           <button
                             className="!min-h-0 rounded-full p-1.5 text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-30"
-                            onClick={() => setPdaMediaZoomClamped(pdaMediaZoom - 0.5)}
+                            onClick={() => setPdaMediaZoomClamped(pdaMediaZoom / 1.5)}
                             disabled={pdaMediaZoom <= PDA_MEDIA_ZOOM_MIN}
                             aria-label="Zoom out"
                           >
                             <Minus className="h-4 w-4" />
                           </button>
-                          <span className="min-w-[3.25rem] text-center text-xs font-bold tabular-nums text-slate-100">{Math.round(pdaMediaZoom * 100)}%</span>
+                          <span className="min-w-[4rem] text-center text-xs font-bold tabular-nums text-slate-100" title="Percentage of the file's real resolution - 100% is one image pixel per screen pixel">
+                            {pdaMediaNativePct >= 1000 ? Math.round(pdaMediaNativePct) : pdaMediaNativePct.toFixed(0)}%
+                          </span>
                           <button
                             className="!min-h-0 rounded-full p-1.5 text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-30"
-                            onClick={() => setPdaMediaZoomClamped(pdaMediaZoom + 0.5)}
-                            disabled={pdaMediaZoom >= PDA_MEDIA_ZOOM_MAX}
+                            onClick={() => setPdaMediaZoomClamped(pdaMediaZoom * 1.5)}
+                            disabled={pdaMediaZoom >= pdaMediaZoomMax}
                             aria-label="Zoom in"
                           >
                             <Plus className="h-4 w-4" />
@@ -92874,6 +92898,18 @@ ${waybillLineItems(w).length > 1
                           >
                             Fit
                           </button>
+                          <button
+                            className="!min-h-0 rounded-full px-2.5 py-1.5 text-[11px] font-bold text-slate-200 transition-colors hover:bg-slate-700"
+                            onClick={() => { setPdaMediaZoomClamped(1 / Math.max(pdaMediaFitScale, 0.01)); setPdaMediaPan({ x: 0, y: 0 }); }}
+                            title="Actual size - one image pixel per screen pixel"
+                          >
+                            1:1
+                          </button>
+                          {pdaMediaPixelated && (
+                            <span className="ml-0.5 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-300" title="Beyond the file's real resolution - you are seeing its actual pixels, not more detail">
+                              pixels
+                            </span>
+                          )}
                         </div>
                       </div>
                     ) : kind === "video" ? (
