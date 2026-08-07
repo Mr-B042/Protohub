@@ -131,3 +131,50 @@ test("consent must be given", () => {
   const payload = { ...complete(), consent: false as unknown as true };
   assert.equal(SubmitSchema.safeParse(payload).success, false);
 });
+
+// A validation message is read by somebody filling in a form on a phone, not by
+// a developer. A real applicant was shown "Array must contain at most 20
+// element(s)" - true, and useless. These lock every rule to its own words.
+const ZODISH = /^(String|Array|Number|Expected|Invalid enum value|Required$|Invalid input)/i;
+
+const messagesFor = (payload: Record<string, unknown>) => {
+  const result = SubmitSchema.safeParse(payload);
+  assert.equal(result.success, false, "expected this payload to be refused");
+  const flat = (result as { error: any }).error.flatten();
+  return [...Object.values(flat.fieldErrors).flat(), ...flat.formErrors] as string[];
+};
+
+test("too many delivery areas is explained in words, not Zod's", () => {
+  const payload = complete();
+  payload.serviceAreas = Array.from({ length: 25 }, (_, i) => `Area ${i + 1}`);
+  const messages = messagesFor(payload);
+  assert.ok(messages.length > 0);
+  for (const message of messages) assert.ok(!ZODISH.test(message), `raw Zod message leaked: ${message}`);
+  assert.ok(messages.some((m) => /delivery areas/i.test(m)), messages.join(" | "));
+});
+
+test("no rule in the schema falls back to Zod's own wording", () => {
+  // One oversized value per constrained field, plus the empty payload, so a
+  // rule added later without a message fails this rather than an applicant.
+  const overlong = "x".repeat(1200);
+  const cases: Array<Record<string, unknown>> = [
+    {},
+    { ...complete(), fullName: overlong },
+    { ...complete(), phone: overlong },
+    { ...complete(), dateOfBirth: overlong },
+    { ...complete(), state: overlong, city: overlong, residentialAddress: overlong },
+    { ...complete(), emergencyContactName: overlong, emergencyContactPhone: overlong },
+    { ...complete(), idNumber: overlong, bankName: overlong, bankAccountNumber: overlong, bankAccountName: overlong },
+    { ...complete(), vehicleModel: overlong, vehiclePlate: overlong },
+    { ...complete(), whatsappPhone: overlong, email: overlong },
+    { ...complete(), serviceAreas: [overlong] },
+    { ...complete(), guarantors: [...complete().guarantors, ...complete().guarantors] },
+    { ...complete(), guarantors: complete().guarantors.map((g) => ({ ...g, fullName: overlong, phone: overlong, address: overlong })) },
+    { ...complete(), guarantors: complete().guarantors.map((g) => ({ ...g, guarantorType: "Neighbour" })) }
+  ];
+  for (const payload of cases) {
+    for (const message of messagesFor(payload)) {
+      assert.ok(!ZODISH.test(message), `raw Zod message leaked: ${message}`);
+    }
+  }
+});
