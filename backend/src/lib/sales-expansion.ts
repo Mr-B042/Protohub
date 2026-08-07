@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { buildPackageComponentSnapshot, orderInventoryLinesFromRow } from "./order-inventory.js";
 import { packageAllowsState, packageHasAgentStateStock } from "./package-availability.js";
 import { supabase } from "./supabase.js";
+import { TtlCache } from "./ttl-cache.js";
 
 export const SALES_EXPANSION_EXEMPTIONS = [
   "unreachable_customer",
@@ -96,7 +97,18 @@ export const salesExpansionSettingsFromRow = (row: any): SalesExpansionSettings 
   };
 };
 
+// Read per expansion evaluation - 4,223 Supabase reads a day of a row edited
+// by hand now and then. 60s, invalidated when the settings are saved.
+const expansionSettingsCache = new TtlCache<{ settings: ReturnType<typeof salesExpansionSettingsFromRow>; isDefault: boolean }>(60_000);
+export function invalidateSalesExpansionSettings(orgId: string): void {
+  expansionSettingsCache.invalidate(orgId);
+}
+
 export async function loadSalesExpansionSettings(orgId: string) {
+  return expansionSettingsCache.get(orgId, () => loadSalesExpansionSettingsUncached(orgId));
+}
+
+async function loadSalesExpansionSettingsUncached(orgId: string) {
   const { data, error } = await supabase
     .from("sales_expansion_settings")
     .select("*")

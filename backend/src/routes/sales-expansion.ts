@@ -7,8 +7,7 @@ import {
   loadSalesExpansionSettings,
   salesExpansionComplianceForRepWeek,
   salesExpansionSettingsFromRow,
-  salesExpansionSummaryFromRows
-} from "../lib/sales-expansion.js";
+  salesExpansionSummaryFromRows, invalidateSalesExpansionSettings } from "../lib/sales-expansion.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
@@ -52,6 +51,8 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
       res.status(400).json({ error: "Compliance thresholds must descend from full bonus to warning to minimum." });
       return;
     }
+    // Settings just changed - drop the cached copy so the next evaluation reads it.
+    invalidateSalesExpansionSettings(req.user!.orgId);
     const { data, error } = await supabase.from("sales_expansion_settings").upsert({
       org_id: req.user!.orgId,
       enabled: next.enabled,
