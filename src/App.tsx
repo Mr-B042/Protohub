@@ -52869,7 +52869,14 @@ ${waybillLineItems(w).length > 1
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
                         <span className="truncate text-[13px] font-bold text-gray-900">{row.fullName}</span>
-                        <span className="shrink-0 text-[13px] font-black text-gray-900">{row.kycPct}%</span>
+                        {/* The APPLICANT's completeness, not the reviewer's.
+                            Approved is 0% for everyone until somebody reviews,
+                            so it could never separate a full application from
+                            an empty one. */}
+                        <span className={`shrink-0 text-[13px] font-black ${row.formComplete ? "text-emerald-600" : (row.kycSuppliedPct ?? 0) >= 70 ? "text-amber-600" : "text-rose-600"}`}
+                          title={row.formComplete ? "Form complete - everything required was submitted" : `Form ${row.kycSuppliedPct ?? 0}% complete · missing: ${(row.missingItems ?? []).join(", ") || "-"}`}>
+                          {row.kycSuppliedPct ?? 0}%
+                        </span>
                       </div>
                       <div className="text-[11px] text-gray-400">{row.applicationId}</div>
                       <div className="mt-1 flex items-center justify-between gap-2">
@@ -52877,6 +52884,18 @@ ${waybillLineItems(w).length > 1
                           {new Date(row.submittedOn).toLocaleDateString([], { dateStyle: "medium" })}
                         </span>
                         <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${chip(row.status)}`}>{row.status}</span>
+                      </div>
+                      <div className="mt-1">
+                        {row.formComplete ? (
+                          <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 bg-emerald-50">
+                            <CheckCircle2 className="h-3 w-3" />Form complete
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"
+                            title={(row.missingItems ?? []).join(", ")}>
+                            {Math.max(0, (row.kycTotal ?? 0) - (row.kycSupplied ?? 0))} still missing
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -52913,14 +52932,45 @@ ${waybillLineItems(w).length > 1
                     </div>
                   </div>
                 </div>
-                <div className="lg:border-l lg:border-gray-100 lg:pl-5">
-                  <div className="text-[12px] font-semibold text-gray-500">KYC Progress</div>
-                  <div className="mt-1 text-3xl font-black text-[#1F8FE0]">{view.progress.pct}%</div>
-                  <div className="mt-2 h-2 w-full rounded-full bg-gray-100">
-                    <div className="h-2 rounded-full bg-[#1F8FE0]" style={{ width: `${view.progress.pct}%` }} />
-                  </div>
-                  <div className="mt-1 text-[11px] text-gray-400">{view.progress.approved} of {view.progress.total} completed</div>
-                </div>
+                {/* Two bars, because they answer different questions. The top
+                    one is the applicant's - it decides whether to chase them.
+                    The bottom is the reviewer's - it decides whether this is
+                    done. Showing only the second made every application read 0%
+                    however complete it was. */}
+                {(() => {
+                  const suppliedPct = (view.progress as any).suppliedPct ?? 0;
+                  const supplied = (view.progress as any).supplied ?? 0;
+                  const complete = view.progress.total > 0 && supplied === view.progress.total;
+                  return (
+                    <div className="space-y-3 lg:border-l lg:border-gray-100 lg:pl-5">
+                      <div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[12px] font-semibold text-gray-500">Form completed</span>
+                          {complete && (
+                            <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 bg-emerald-50">
+                              <CheckCircle2 className="h-3 w-3" />All submitted
+                            </span>
+                          )}
+                        </div>
+                        <div className={`mt-1 text-3xl font-black ${complete ? "text-emerald-600" : suppliedPct >= 70 ? "text-amber-600" : "text-rose-600"}`}>{suppliedPct}%</div>
+                        <div className="mt-2 h-2 w-full rounded-full bg-gray-100">
+                          <div className={`h-2 rounded-full ${complete ? "bg-emerald-500" : suppliedPct >= 70 ? "bg-amber-500" : "bg-rose-500"}`} style={{ width: `${suppliedPct}%` }} />
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-400">
+                          {supplied} of {view.progress.total} submitted by the applicant
+                        </div>
+                      </div>
+                      <div className="border-t border-gray-100 pt-3">
+                        <div className="text-[12px] font-semibold text-gray-500">Approved by you</div>
+                        <div className="mt-1 text-xl font-black text-[#1F8FE0]">{view.progress.pct}%</div>
+                        <div className="mt-2 h-2 w-full rounded-full bg-gray-100">
+                          <div className="h-2 rounded-full bg-[#1F8FE0]" style={{ width: `${view.progress.pct}%` }} />
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-400">{view.progress.approved} of {view.progress.total} approved</div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </section>
 
               <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -54035,12 +54085,17 @@ ${waybillLineItems(w).length > 1
                         <div className="mt-1 text-[11px] text-gray-400">{statusSub(row)}</div>
                       </td>
                       <td className="px-3 py-3 min-w-[130px]">
-                        <div className="font-bold text-gray-900">{row.kycPct}%</div>
+                        <div className={`font-bold ${row.formComplete ? "text-emerald-600" : "text-gray-900"}`}>{row.kycSuppliedPct ?? 0}%</div>
                         <div className="mt-1 h-1.5 w-full rounded-full bg-gray-100">
-                          <div className={`h-1.5 rounded-full ${row.kycPct === 100 ? "bg-emerald-500" : row.kycPct >= 60 ? "bg-blue-500" : "bg-rose-500"}`}
-                            style={{ width: `${row.kycPct}%` }} />
+                          <div className={`h-1.5 rounded-full ${row.formComplete ? "bg-emerald-500" : (row.kycSuppliedPct ?? 0) >= 70 ? "bg-amber-500" : "bg-rose-500"}`}
+                            style={{ width: `${row.kycSuppliedPct ?? 0}%` }} />
                         </div>
-                        <div className="mt-1 text-[11px] text-gray-400">{row.kycApproved}/{row.kycTotal} completed</div>
+                        {/* Submitted and approved are separate facts and both
+                            matter: the first says whether to chase the
+                            applicant, the second whether the reviewer is done. */}
+                        <div className="mt-1 text-[11px] text-gray-400" title={(row.missingItems ?? []).join(", ")}>
+                          {row.kycSupplied ?? 0}/{row.kycTotal} submitted · {row.kycApproved}/{row.kycTotal} approved
+                        </div>
                       </td>
                       <td className="px-3 py-3">
                         <span className={`inline-flex rounded-md px-2 py-1 text-[11px] font-bold ${guarantorChip(row.guarantorStatus)}`}>{row.guarantorStatus}</span>
