@@ -101,6 +101,7 @@ import {
   BarChart3,
   FileText,
   Wifi,
+  WifiOff,
   WalletCards,
   Smartphone,
   Laptop,
@@ -60228,6 +60229,18 @@ ${waybillLineItems(w).length > 1
             >
               {moneyHidden ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
             </button>
+            {/* Live updates went off in production for months with nothing on
+                screen to say so - realtime.ts exports a null client when its
+                env vars are missing and every subscription silently skips.
+                Owners see it now rather than wondering why the list is stale. */}
+            {!realtimeClient && isOwnerOrAdmin && (
+              <span
+                className="hidden sm:inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700"
+                title="Supabase realtime is not configured for this build, so orders, notifications and carts refresh on a timer instead of instantly. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel and redeploy."
+              >
+                <WifiOff className="h-3 w-3" />Live off
+              </span>
+            )}
             {/* Notification bell + dropdown */}
             <div className="relative">
               <button className="topbar-icon-button text-gray-600 hover:text-gray-900 relative p-1.5" onClick={() => setShowNotifPanel((v) => !v)}>
