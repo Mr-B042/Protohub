@@ -2234,6 +2234,10 @@ export const whatsappUserAccountApi = {
   // Owner/Admin: switch off a stuck account belonging to someone else
   disconnectUser: (userId: string) =>
     post<{ account: any }>(`/api/whatsapp-user-account/user/${encodeURIComponent(userId)}/disconnect`, {}),
+  // Owner/Admin: every account in the org, problems first
+  listAccounts: () => get<{ accounts: any[] }>("/api/whatsapp-user-account/accounts"),
+  // Owner/Admin: the master switch - disconnects every enabled account
+  disableAll: () => post<{ disabled: number; orgDisabled: boolean; total: number }>("/api/whatsapp-user-account/disable-all", {}),
   groups: () => get<{ groups: Array<{ jid: string; subject: string; participants?: number | null }> }>("/api/whatsapp-user-account/me/groups"),
   teamDispatches: () => get<{ dispatches: any[] }>("/api/whatsapp-user-account/dispatches?scope=team")
 };

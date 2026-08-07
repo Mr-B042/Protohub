@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase.js";
 import {
   beginUserWhatsAppConnection,
   disconnectUserWhatsAppConnection,
+  disconnectWhatsAppConnection,
   listUserWhatsAppGroups,
   type WhatsAppPairingMode
 } from "../lib/whatsapp-runtime.js";
@@ -190,6 +191,69 @@ router.get("/user/:userId/connect", requireRole("Owner", "Admin"), async (req, r
     res.json({ account, dispatches });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "Could not load user WhatsApp account." });
+  }
+});
+
+// ── Owner/Admin: every WhatsApp account in the org, in one list ───────────
+//
+// There was no way to SEE these. An Owner could fetch one account if they
+// already knew the user id, which is no use when the question is "which of
+// these is stuck and costing me money". Two accounts retried for a day before
+// anyone could have noticed from inside the app.
+router.get("/accounts", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const [{ data: accounts }, { data: people }] = await Promise.all([
+      supabase
+        .from("whatsapp_user_accounts")
+        .select("user_id, enabled, connection_status, connected_phone, connected_name, last_error, last_connected_at, updated_at")
+        .eq("org_id", orgId),
+      supabase.from("users").select("id, name, role").eq("org_id", orgId)
+    ]);
+    const nameOf = new Map((people ?? []).map((p: any) => [String(p.id), { name: p.name as string, role: p.role as string }]));
+    const rows = (accounts ?? []).map((account: any) => ({
+      ...account,
+      userName: nameOf.get(String(account.user_id))?.name ?? "Unknown user",
+      userRole: nameOf.get(String(account.user_id))?.role ?? null
+    }));
+    // Anything still enabled but not connected is what a reader is looking for,
+    // so it sorts to the top rather than being hunted for.
+    rows.sort((a: any, b: any) => {
+      const problem = (r: any) => (r.enabled && r.connection_status !== "connected" ? 0 : 1);
+      return problem(a) - problem(b) || String(a.userName).localeCompare(String(b.userName));
+    });
+    res.json({ accounts: rows });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Could not load WhatsApp accounts." });
+  }
+});
+
+// The master switch. Disconnects every enabled account in the org - personal
+// accounts and the shared org automation - in one action.
+router.post("/disable-all", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { data: accounts } = await supabase
+      .from("whatsapp_user_accounts")
+      .select("user_id")
+      .eq("org_id", orgId)
+      .eq("enabled", true);
+
+    const userIds = (accounts ?? []).map((row: any) => String(row.user_id));
+    // Sequential, not parallel: each disconnect tears down a socket and writes
+    // a row, and firing them all at once is how you trip the contention this
+    // module has been bitten by before.
+    let disabled = 0;
+    for (const userId of userIds) {
+      try { await disconnectUserWhatsAppConnection(orgId, userId); disabled += 1; }
+      catch { /* keep going - one stuck socket must not block the rest */ }
+    }
+    let orgDisabled = false;
+    try { await disconnectWhatsAppConnection(orgId); orgDisabled = true; } catch { /* may not be connected */ }
+
+    res.json({ disabled, orgDisabled, total: userIds.length });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Could not disable WhatsApp." });
   }
 });
 
