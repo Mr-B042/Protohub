@@ -8375,6 +8375,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waUserPairingPhone, setWaUserPairingPhone] = useState("");
   const [waUserGroups, setWaUserGroups] = useState<Array<{ jid: string; subject: string; participants?: number | null }>>([]);
   const [waUserGroupsLoading, setWaUserGroupsLoading] = useState(false);
+  // Owner/Admin view of every WhatsApp account in the org. Nothing listed these
+  // before, so a stuck account could retry for a day unseen.
+  const [waAllAccounts, setWaAllAccounts] = useState<any[]>([]);
+  const [waAccountsLoading, setWaAccountsLoading] = useState(false);
+  const [waDisablingAll, setWaDisablingAll] = useState(false);
   const [waJustConnected, setWaJustConnected] = useState<{ phone: string; name: string } | null>(null);
   const waPrevConnectedRef = useRef<boolean>(false);
   const [waDestinations, setWaDestinations] = useState<Record<string, any>[]>([]);
@@ -10374,8 +10379,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setWaUserDisconnecting(true);
       try {
         const updated = await whatsappUserAccountApi.disconnectUser(userId);
-        setWaUserAccount(updated.account ?? null);
-        setWaUserGroups([]);
+        // Only replace the single-account view when it IS that account - from
+        // the org list this would otherwise blank out the viewer's own panel.
+        if (isSpying) { setWaUserAccount(updated.account ?? null); setWaUserGroups([]); }
+        if (waAllAccounts.length > 0) await loadWaAllAccounts();
         showToast(`${name}'s WhatsApp disconnected. It will stop retrying.`);
       } catch (err: any) {
         showToast(`Could not disconnect: ${err?.message ?? "please retry"}.`);
@@ -10383,6 +10390,33 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         setWaUserDisconnecting(false);
       }
     }, { detail: `Their direct group sending stops until ${name} reconnects. Use this to stop an account that keeps failing to connect.`, danger: true, confirmLabel: "Disconnect" });
+  };
+  const loadWaAllAccounts = async () => {
+    setWaAccountsLoading(true);
+    try {
+      const result = await whatsappUserAccountApi.listAccounts();
+      setWaAllAccounts(result.accounts ?? []);
+    } catch { setWaAllAccounts([]); }
+    finally { setWaAccountsLoading(false); }
+  };
+  // The master switch. Every enabled account, personal and shared, in one act.
+  const waDisableAll = async () => {
+    const live = waAllAccounts.filter((a: any) => a.enabled).length;
+    showConfirm("Disable ALL WhatsApp connections?", async () => {
+      setWaDisablingAll(true);
+      try {
+        const result = await whatsappUserAccountApi.disableAll();
+        showToast(`${result.disabled} account${result.disabled === 1 ? "" : "s"} disconnected. WhatsApp sending is off until someone reconnects.`);
+        await loadWaAllAccounts();
+        try { setWaUserAccount((await whatsappUserAccountApi.get()).account ?? null); } catch { /* view refresh only */ }
+      } catch (err: any) {
+        showToast(`Could not disable: ${err?.message ?? "please retry"}.`);
+      } finally { setWaDisablingAll(false); }
+    }, {
+      detail: `Stops ${live || "all"} connected account${live === 1 ? "" : "s"} and the shared org automation. Order dispatch to WhatsApp stops entirely, and each person must scan again to restore it. Use this to kill a connection that keeps failing.`,
+      danger: true,
+      confirmLabel: "Disable all"
+    });
   };
   const waUserAcknowledgeRisk = async () => {
     try {
@@ -79360,6 +79394,98 @@ ${waybillLineItems(w).length > 1
                 );
               })()}
 
+
+              {/* Owner/Admin: every account in the org, problems first, each
+                  with its own off switch - plus one that stops everything. */}
+              {isOwnerOrAdmin && !isSpying && (() => {
+                const live = waAllAccounts.filter((a: any) => a.enabled);
+                const stuck = live.filter((a: any) => a.connection_status !== "connected");
+                return (
+                  <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
+                      <div>
+                        <h3 className="m-0 text-sm font-bold text-gray-900">WhatsApp connections</h3>
+                        <p className="m-0 text-xs text-gray-400">
+                          Every account in the org. A connection left enabled but not connected keeps retrying in the background.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-40"
+                          onClick={() => void loadWaAllAccounts()}
+                          disabled={waAccountsLoading}
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${waAccountsLoading ? "animate-spin" : ""}`} />
+                          {waAllAccounts.length === 0 ? "Load accounts" : "Refresh"}
+                        </button>
+                        {live.length > 0 && (
+                          <button
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-red-700 disabled:opacity-40"
+                            onClick={() => void waDisableAll()}
+                            disabled={waDisablingAll}
+                            title="Stop every WhatsApp connection in the org"
+                          >
+                            <Lock className="h-3.5 w-3.5" />
+                            {waDisablingAll ? "Disabling..." : `Disable all (${live.length})`}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {stuck.length > 0 && (
+                      <div className="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                        <p className="m-0 text-xs text-amber-900">
+                          <strong>{stuck.length} account{stuck.length === 1 ? " is" : "s are"} enabled but not connected.</strong>{" "}
+                          {stuck.length === 1 ? "It is" : "They are"} retrying in the background. Disable {stuck.length === 1 ? "it" : "them"} unless someone is about to re-scan.
+                        </p>
+                      </div>
+                    )}
+
+                    {waAllAccounts.length === 0 ? (
+                      <p className="m-0 px-5 py-8 text-center text-sm italic text-gray-400">
+                        {waAccountsLoading ? "Loading..." : "Press Load accounts to see every WhatsApp connection."}
+                      </p>
+                    ) : (
+                      <div className="divide-y divide-gray-100">
+                        {waAllAccounts.map((account: any) => {
+                          const connected = account.connection_status === "connected";
+                          const problem = account.enabled && !connected;
+                          return (
+                            <div key={String(account.user_id)} className="flex flex-wrap items-center gap-3 px-5 py-3">
+                              <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? "bg-emerald-500" : problem ? "bg-amber-500" : "bg-gray-300"}`} />
+                              <div className="min-w-[160px] flex-1">
+                                <div className="text-[13px] font-bold text-gray-900">{account.userName}</div>
+                                <div className="text-[11px] text-gray-500">
+                                  {connected
+                                    ? `Connected${account.connected_phone ? ` · ${account.connected_phone}` : ""}`
+                                    : account.enabled
+                                      ? `${account.connection_status ?? "not connected"}${account.last_error ? ` · ${String(account.last_error).slice(0, 70)}` : ""}`
+                                      : "Disabled"}
+                                </div>
+                              </div>
+                              <span className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-bold ${connected ? "bg-emerald-50 text-emerald-700" : problem ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-500"}`}>
+                                {connected ? "Connected" : account.enabled ? "Retrying" : "Off"}
+                              </span>
+                              {account.enabled ? (
+                                <button
+                                  className="!min-h-0 shrink-0 rounded-lg border border-red-300 px-3 py-1.5 text-[11px] font-bold text-red-700 transition-colors hover:bg-red-50 disabled:opacity-40"
+                                  disabled={waUserDisconnecting}
+                                  onClick={() => void waDisconnectOtherUser(String(account.user_id), String(account.userName))}
+                                >
+                                  Disable
+                                </button>
+                              ) : (
+                                <span className="shrink-0 text-[11px] text-gray-300">-</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+                );
+              })()}
 
               {canUsePersonalWhatsApp ? (() => {
                 const userStatus = whatsappStatus(waUserAccount);
