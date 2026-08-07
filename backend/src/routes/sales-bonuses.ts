@@ -12,10 +12,23 @@ import {
   type SalesBonusRuleType
 } from "../lib/sales-bonus-engine.js";
 import { supabase } from "../lib/supabase.js";
+import { invalidateSalesBonusPrograms } from "../lib/sales-bonus-engine.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
+
+// Programs and rules are cached for 60s (they are read on every bonus
+// calculation). Invalidate at the router rather than at each of the ten write
+// sites, so a new mutating route added later cannot forget to do it.
+router.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.on("finish", () => {
+      if (res.statusCode < 400 && req.user?.orgId) invalidateSalesBonusPrograms(req.user.orgId);
+    });
+  }
+  next();
+});
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 

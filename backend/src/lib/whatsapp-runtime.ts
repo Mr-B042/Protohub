@@ -9,6 +9,7 @@ import QRCode from "qrcode";
 import { nextWorkingScheduleAt, normalizeWorkingDays, type WorkingDayName, type WorkingSchedule } from "./business-schedule.js";
 import { recordContactAttemptAndNextAction, recordFollowUpProgressNote } from "./follow-up-workflow.js";
 import { logger } from "./logger.js";
+import { TtlCache } from "./ttl-cache.js";
 import { supabase } from "./supabase.js";
 
 export type WhatsAppPairingMode = "qr" | "pairing_code";
@@ -951,7 +952,18 @@ async function bootstrapSettings(orgId: string) {
   return (data ?? null) as RuntimeRow | null;
 }
 
+// Checked on every inbound reply. A single boolean that changes when someone
+// flips a toggle in settings - 60s is far fresher than it needs to be.
+const replyAssistantCache = new TtlCache<boolean>(60_000);
+export function invalidateWhatsAppSettingsCache(orgId: string): void {
+  replyAssistantCache.invalidate(orgId);
+}
+
 async function isReplyAssistantEnabled(orgId: string) {
+  return replyAssistantCache.get(orgId, () => isReplyAssistantEnabledUncached(orgId));
+}
+
+async function isReplyAssistantEnabledUncached(orgId: string) {
   const { data, error } = await supabase
     .from("whatsapp_settings")
     .select("assistant_outcome_autofill_enabled")

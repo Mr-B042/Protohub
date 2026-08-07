@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { TtlCache } from "./ttl-cache.js";
 import { salesExpansionComplianceForRepWeek, type SalesExpansionCompliance } from "./sales-expansion.js";
 
 export type SalesBonusRuleType =
@@ -730,7 +731,19 @@ export const buildProgramsWithRules = (programs: SalesBonusProgram[], rules: Sal
         .sort((a, b) => toNumber(a.display_order) - toNumber(b.display_order))
     }));
 
-export const listSalesBonusPrograms = async (orgId: string, includeDeleted = false) => {
+// Two tables, both read on every bonus calculation - 4,062 reads a day of rules
+// that change when Bright edits a bonus program. Cached together because they
+// are always read together; keyed by org + whether deleted rows are wanted.
+const bonusProgramsCache = new TtlCache<Array<SalesBonusProgram & { rules: SalesBonusRule[] }>>(60_000);
+export function invalidateSalesBonusPrograms(orgId: string): void {
+  bonusProgramsCache.invalidate(`${orgId}:0`);
+  bonusProgramsCache.invalidate(`${orgId}:1`);
+}
+
+export const listSalesBonusPrograms = async (orgId: string, includeDeleted = false) =>
+  bonusProgramsCache.get(`${orgId}:${includeDeleted ? 1 : 0}`, () => listSalesBonusProgramsUncached(orgId, includeDeleted));
+
+const listSalesBonusProgramsUncached = async (orgId: string, includeDeleted = false) => {
   const [programsResult, rulesResult] = await Promise.all([
     supabase
       .from("sales_bonus_programs")
