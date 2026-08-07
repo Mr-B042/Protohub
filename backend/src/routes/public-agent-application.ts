@@ -373,6 +373,22 @@ router.get("/:token", readLimiter, async (req, res) => {
 const VIDEO_ONLY_ITEMS = new Set(["live_verification_video"]);
 const isVideoMime = (mime: string) => mime.startsWith("video/");
 
+// A validation message goes straight to somebody filling in a form on a phone.
+// Every rule in the schema now carries its own wording, but a rule added later
+// might not, and Zod's default - "Array must contain at most 20 element(s)",
+// which is what a real applicant was shown - names nothing they can act on.
+// This is the net under that: anything that still reads like library output is
+// replaced rather than displayed.
+const ZODISH = /^(String|Array|Number|Expected|Invalid enum value|Required$|Invalid input)/i;
+export function humanValidationMessage(message?: string | null): string {
+  const text = (message ?? "").trim();
+  if (!text) return "Some details are still missing. Please check the form and try again.";
+  if (ZODISH.test(text)) {
+    return "Something you entered is too long or not in the expected format. Please check your answers and try again.";
+  }
+  return text;
+}
+
 const UPLOAD_MIME_EXT: Record<string, string> = {
   "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/webp": "webp",
   "application/pdf": "pdf", "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov"
@@ -412,7 +428,7 @@ router.post("/:token", submitLimiter, async (req, res) => {
     // can land in formErrors, so read both or the applicant gets a useless
     // "Some details are missing" for a problem we can name exactly.
     const first = Object.values(flat.fieldErrors).flat()[0] ?? flat.formErrors[0];
-    res.status(400).json({ error: first ?? "Some details are missing." });
+    res.status(400).json({ error: humanValidationMessage(first) });
     return;
   }
   const d = parsed.data;
