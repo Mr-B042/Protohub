@@ -12,12 +12,13 @@ type Guarantor = {
   fullName: string; relationship: string; guarantorType: string; phone: string;
   whatsappPhone: string; address: string; occupation: string; yearsKnown: string;
   referenceStatement: string; idDocumentPath: string; idDocumentName: string;
+  photoPath: string; photoName: string;
 };
 
 const blankGuarantor = (guarantorType: string): Guarantor => ({
   fullName: "", relationship: "", guarantorType, phone: "", whatsappPhone: "",
   address: "", occupation: "", yearsKnown: "", referenceStatement: "",
-  idDocumentPath: "", idDocumentName: ""
+  idDocumentPath: "", idDocumentName: "", photoPath: "", photoName: ""
 });
 
 export default function PublicAgentApplicationPage() {
@@ -188,7 +189,8 @@ export default function PublicAgentApplicationPage() {
             address: g.address.trim(), occupation: g.occupation.trim() || undefined,
             yearsKnown: g.yearsKnown.trim() || undefined,
             referenceStatement: g.referenceStatement.trim() || undefined,
-            idDocumentPath: g.idDocumentPath || undefined
+            idDocumentPath: g.idDocumentPath || undefined,
+            photoPath: g.photoPath || undefined
           })),
           consent: true
         })
@@ -466,6 +468,21 @@ export default function PublicAgentApplicationPage() {
               <div className="sm:col-span-2"><span className={label}>Their address {req}</span>
                 <input className={fieldClass(`g${index}Addr`)} value={g.address}
                   onChange={(e) => setGuarantors((list) => list.map((item, i) => i === index ? { ...item, address: e.target.value } : item))} /></div>
+              {/* A guarantor is a person somebody is vouching with. A name and a
+                  phone number can be anybody's; a face and an ID are what make
+                  the reference checkable. Optional, so a missing photo never
+                  blocks an application that is otherwise complete. */}
+              <div className="sm:col-span-2 grid gap-4 sm:grid-cols-2">
+                {fileRow(
+                  "Their photograph", `g${index}Photo`, g.photoName,
+                  (path, fileName) => setGuarantors((list) => list.map((item, i) => i === index ? { ...item, photoPath: path, photoName: fileName } : item)),
+                  "image/*"
+                )}
+                {fileRow(
+                  "Their ID (optional)", `g${index}Id`, g.idDocumentName,
+                  (path, fileName) => setGuarantors((list) => list.map((item, i) => i === index ? { ...item, idDocumentPath: path, idDocumentName: fileName } : item))
+                )}
+              </div>
             </div>
           ))}
         </section>

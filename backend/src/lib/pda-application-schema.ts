@@ -21,7 +21,8 @@ const GuarantorSchema = z.object({
   workplace: z.string().trim().max(160).optional(),
   yearsKnown: z.string().trim().max(60).optional(),
   referenceStatement: z.string().trim().max(1000).optional(),
-  idDocumentPath: z.string().trim().max(500).optional()
+  idDocumentPath: z.string().trim().max(500).optional(),
+  photoPath: z.string().trim().max(500).optional()
 });
 
 export const SubmitSchema = z.object({

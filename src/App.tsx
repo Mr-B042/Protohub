@@ -11551,7 +11551,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaGuarantorDraft, setPdaGuarantorDraft] = useState<{
     slot: number; guarantorType: string; fullName: string; relationship: string;
     phone: string; whatsappPhone: string; address: string; occupation: string; consentGiven: boolean;
+    photoPath: string; photoName: string; idDocumentPath: string; idDocumentName: string;
   } | null>(null);
+  const [pdaGuarantorUploading, setPdaGuarantorUploading] = useState("");
   const [showRecoveryRepDateRange, setShowRecoveryRepDateRange] = useState(false);
   const [recoveryRepSettingsOpen, setRecoveryRepSettingsOpen] = useState(false);
   const [recoveryRepSettingsDraft, setRecoveryRepSettingsDraft] = useState<{
@@ -42201,9 +42203,37 @@ ${waybillLineItems(w).length > 1
       whatsappPhone: existing?.whatsappPhone ?? "",
       address: existing?.address ?? "",
       occupation: existing?.occupation ?? "",
-      consentGiven: existing?.consentGiven ?? false
+      consentGiven: existing?.consentGiven ?? false,
+      // Carry what is already stored so a save preserves it, and so the modal
+      // can show that a file is present rather than looking empty.
+      photoPath: existing?.photoPath ?? "",
+      photoName: existing?.photoPath ? "Photograph on file" : "",
+      idDocumentPath: existing?.idDocumentPath ?? "",
+      idDocumentName: existing?.idDocumentPath ? "ID document on file" : ""
     });
     setModal("pdaGuarantor");
+  };
+
+  // Same private bucket the applicant's own KYC files use, so a guarantor's
+  // photo is never reachable by URL alone either.
+  const uploadPdaGuarantorFile = async (file: File, field: "photo" | "id") => {
+    if (file.size > 25 * 1024 * 1024) { showToast("That file is larger than 25MB."); return; }
+    setPdaGuarantorUploading(field);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ""));
+        reader.onerror = () => reject(new Error("read failed"));
+        reader.readAsDataURL(file);
+      });
+      const { path } = await personalDeliveryAgentsApi.uploadMedia(dataUrl);
+      setPdaGuarantorDraft((draft) => draft ? (field === "photo"
+        ? { ...draft, photoPath: path, photoName: file.name }
+        : { ...draft, idDocumentPath: path, idDocumentName: file.name }) : draft);
+      showToast(`${field === "photo" ? "Photograph" : "ID document"} attached. Save the guarantor to keep it.`);
+    } catch (err: any) {
+      showToast(`Could not upload: ${err?.message ?? "please retry"}.`);
+    } finally { setPdaGuarantorUploading(""); }
   };
 
   const savePdaGuarantor = async () => {
@@ -42223,7 +42253,9 @@ ${waybillLineItems(w).length > 1
         whatsappPhone: pdaGuarantorDraft.whatsappPhone.trim() || undefined,
         address: pdaGuarantorDraft.address.trim() || undefined,
         occupation: pdaGuarantorDraft.occupation.trim() || undefined,
-        consentGiven: pdaGuarantorDraft.consentGiven
+        consentGiven: pdaGuarantorDraft.consentGiven,
+        photoPath: pdaGuarantorDraft.photoPath || undefined,
+        idDocumentPath: pdaGuarantorDraft.idDocumentPath || undefined
       });
       showToast(`Guarantor ${pdaGuarantorDraft.slot} saved.`);
       setModal(null);
@@ -90752,6 +90784,38 @@ ${waybillLineItems(w).length > 1
 	                    <input className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={pdaGuarantorDraft.address}
 	                      onChange={(e) => setPdaGuarantorDraft((v) => v ? { ...v, address: e.target.value } : v)} />
 	                  </label>
+	                </div>
+	                {/* A name and a number can be anybody's. A face and an ID are
+	                    what make the reference checkable - and until now there was
+	                    nowhere to put either, so all 32 guarantors on file have
+	                    neither. Attaching one here also replaces what is stored. */}
+	                <div className="grid gap-3 sm:grid-cols-2">
+	                  {([
+	                    { field: "photo" as const, label: "Photograph", name: pdaGuarantorDraft.photoName, path: pdaGuarantorDraft.photoPath, accept: "image/*" },
+	                    { field: "id" as const, label: "ID document", name: pdaGuarantorDraft.idDocumentName, path: pdaGuarantorDraft.idDocumentPath, accept: "image/*,application/pdf" }
+	                  ]).map((item) => (
+	                    <div key={item.field} className="rounded-lg border border-gray-200 p-3">
+	                      <span className="block text-xs font-bold text-gray-600">{item.label}</span>
+	                      {item.name ? (
+	                        <p className="m-0 mt-1 truncate text-[11px] font-semibold text-emerald-700" title={item.name}>✓ {item.name}</p>
+	                      ) : (
+	                        <p className="m-0 mt-1 text-[11px] text-gray-400">Nothing attached yet</p>
+	                      )}
+	                      <div className="mt-2 flex items-center gap-2">
+	                        <label className="!min-h-0 inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50">
+	                          {pdaGuarantorUploading === item.field ? "Uploading…" : item.name ? "Replace" : "Upload"}
+	                          <input type="file" accept={item.accept} className="hidden"
+	                            onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPdaGuarantorFile(f, item.field); e.currentTarget.value = ""; }} />
+	                        </label>
+	                        {item.path && (
+	                          <button type="button" className="!min-h-0 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-[#1F8FE0] hover:bg-blue-50"
+	                            onClick={() => void pdaOpenSignedFile(item.path, { title: `${item.label} - ${pdaGuarantorDraft.fullName || "Guarantor"}` })}>
+	                            View
+	                          </button>
+	                        )}
+	                      </div>
+	                    </div>
+	                  ))}
 	                </div>
 	                <label className="flex items-center gap-2 text-xs font-semibold text-gray-700">
 	                  <input type="checkbox" checked={pdaGuarantorDraft.consentGiven}
