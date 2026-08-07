@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { buildSalesExpansionContext, SALES_EXPANSION_EXEMPTIONS, SALES_EXPANSION_REFUSALS, submitSalesExpansionAttempt } from "../lib/sales-expansion.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -46,7 +47,7 @@ router.get("/:id/sales-expansion-context", async (req, res) => {
 
 router.post("/:id/sales-expansion-attempts", async (req, res) => {
   const parsed = AttemptSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const context = await buildSalesExpansionContext(req.user!.orgId, req.params.id);
     if (!context) { res.status(404).json({ error: "Order not found." }); return; }

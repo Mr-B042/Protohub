@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { fetchAllRows } from "../lib/paginated-query.js";
@@ -21,7 +22,7 @@ const toWatUtcIso = (dateKey: string, time: "start" | "end") =>
 router.get("/", async (req, res) => {
   const parsed = QuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 

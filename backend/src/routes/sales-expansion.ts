@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import {
   dailyComplianceBreakdownForWeek,
@@ -43,7 +44,7 @@ router.get("/settings", async (req, res) => {
 
 router.patch("/settings", requireRole("Owner"), async (req, res) => {
   const parsed = SettingsSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const current = await loadSalesExpansionSettings(req.user!.orgId).catch(() => ({ settings: defaultSalesExpansionSettings(), isDefault: true }));
     const next = { ...current.settings, ...parsed.data };
@@ -293,7 +294,7 @@ router.get("/daily-compliance", async (req, res) => {
 const AuditSchema = z.object({ status: z.enum(["verified", "flagged"]), note: z.string().min(1).max(2000) });
 router.patch("/attempts/:id/audit", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
   const parsed = AuditSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const { data, error } = await supabase.from("order_sales_expansion_attempts").update({
       audit_status: parsed.data.status,
@@ -320,7 +321,7 @@ router.patch("/attempts/:id/audit", requireRole("Owner", "Admin", "Manager"), as
 const CorrectionSchema = z.object({ reason: z.string().min(5).max(2000) });
 router.patch("/attempts/:id/correction", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
   const parsed = CorrectionSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const { data, error } = await supabase.from("order_sales_expansion_attempts").update({
       record_status: "voided",

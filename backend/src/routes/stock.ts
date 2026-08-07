@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
@@ -56,7 +57,7 @@ router.post("/update",
   async (req, res) => {
     const parsed = UpdateSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const { productId, change, note } = parsed.data;
@@ -196,7 +197,7 @@ router.post("/movements",
   async (req, res) => {
     const parsed = MovementSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const d = parsed.data;
@@ -266,7 +267,7 @@ router.post("/count-sessions",
     });
     const parsed = Schema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const { title, agentIds } = parsed.data;
@@ -323,7 +324,7 @@ router.patch("/count-entries/:entryId",
     });
     const parsed = Schema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const { agentCount, adminCount, notes } = parsed.data;
@@ -380,7 +381,7 @@ router.post("/count-entries/:entryId/adjust",
     });
     const parsed = Schema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const { writeoffReason, writeoffCustom } = parsed.data;

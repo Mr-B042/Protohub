@@ -11,6 +11,7 @@
 // Org context derives from the package's product (same pattern as public-carts).
 
 import { Router, type Request } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import rateLimit from "express-rate-limit";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
@@ -693,7 +694,7 @@ const missingPublicOrderOptionalColumn = (error: { message?: string } | null | u
 router.post("/", submitRateLimit, async (req, res) => {
   const parsed = PublicOrderSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   if (parsed.data.company) {
@@ -1670,7 +1671,7 @@ router.post("/:id/upsell", submitRateLimit, async (req, res) => {
   }
   const parsed = PublicUpsellAcceptSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const tokenPayload = verifyPublicUpsellToken(parsed.data.token);

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { buildAgentAssignmentSnapshot } from "../lib/agent-coverage.js";
@@ -756,7 +757,7 @@ const OrderSchema = z.object({
 router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const parsed = OrderSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const d = parsed.data;
@@ -1190,7 +1191,7 @@ router.get("/:id/whatsapp-dispatch/preview", requireRole("Owner", "Admin", "Mana
 router.post("/:id/whatsapp-dispatch", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const parsed = WhatsAppDispatchSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -1403,7 +1404,7 @@ async function recordOrderDetailCallOutcomeLog(input: {
 router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const parsed = StatusSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const { status, callOutcome, response, deliveredDate, scheduledDate, scheduledAt, timelineNotes, agentId, agentLocationId } = parsed.data;
@@ -2279,7 +2280,7 @@ const OrderDatePatchSchema = z.object({
 router.patch("/:id/date", requireRole("Owner", "Admin"), async (req, res) => {
   const parsed = OrderDatePatchSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -3094,7 +3095,7 @@ const ContactAttemptSchema = z.object({
 router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
   const parsed = ContactAttemptSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 

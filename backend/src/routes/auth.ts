@@ -1,6 +1,7 @@
 
 
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { createSupabaseAuthClient, supabase, supabaseAnon } from "../lib/supabase.js";
 import { requireAuth, invalidateUserProfile } from "../middleware/auth.js";
@@ -154,7 +155,7 @@ router.post("/register", async (req, res) => {
   }
   const parsed = RegisterSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const { orgName, name, email, password } = parsed.data;
@@ -713,7 +714,7 @@ router.put("/team/:id/agent-assignments", requireAuth, async (req, res) => {
 
   const parsed = TeamAgentAssignmentsSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -855,7 +856,7 @@ router.post("/invite", requireAuth, async (req, res) => {
 
   const parsed = Schema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const { name, email, phone, password, role } = parsed.data;

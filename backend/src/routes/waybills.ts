@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { syncAgentStockAggregate } from "../lib/agent-locations.js";
@@ -182,7 +183,7 @@ router.post("/",
   async (req, res) => {
     const parsed = WaybillSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const d = parsed.data;
@@ -371,7 +372,7 @@ router.patch("/:id",
   async (req, res) => {
     const parsed = WaybillPatchSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const updates: Record<string, unknown> = {};
@@ -446,7 +447,7 @@ router.patch("/:id/status",
   async (req, res) => {
     const parsed = WaybillStatusSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const { status, receivedDate, notes } = parsed.data;

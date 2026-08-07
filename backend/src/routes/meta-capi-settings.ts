@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -76,7 +77,7 @@ router.get("/", async (req, res) => {
 router.post("/", async (req, res) => {
   const parsed = ConfigSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -157,7 +158,7 @@ const TestSchema = z.object({
 });
 router.post("/test", async (req, res) => {
   const parsed = TestSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const d = parsed.data;
 
   let pixelId = d.pixelId ?? "";
@@ -182,7 +183,7 @@ router.post("/test", async (req, res) => {
 // ── POST /api/meta-capi-settings/test-tiktok ────────────
 router.post("/test-tiktok", async (req, res) => {
   const parsed = TestSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const d = parsed.data;
 
   let pixelId = d.pixelId ?? "";

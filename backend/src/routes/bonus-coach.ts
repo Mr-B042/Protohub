@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { getRepBonusCoach } from "../lib/bonus-coach.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -17,7 +18,7 @@ const ParamsSchema = z.object({
 router.get("/me", async (req, res) => {
   const parsed = QuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   try {

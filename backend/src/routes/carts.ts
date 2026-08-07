@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { appendCartJourneyEvent, compactCartJourneyEventsForAnalytics } from "../lib/cart-journey.js";
 import { notifyNewAbandonedCart } from "../lib/cart-notifications.js";
@@ -527,7 +528,7 @@ const isInteractionEvent = (eventType: string) =>
 router.post("/", async (req, res) => {
   const parsed = CartUpsertSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const d = parsed.data;
@@ -626,7 +627,7 @@ router.post("/", async (req, res) => {
 router.post("/journey-bulk", async (req, res) => {
   const parsed = JourneyBulkSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -744,7 +745,7 @@ router.post("/converted-link-repairs/apply", requireRole("Owner", "Admin"), asyn
 router.post("/converted-link-repairs/apply-one", requireRole("Owner", "Admin"), async (req, res) => {
   const parsed = ConvertedCartLinkRepairOneSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -1613,7 +1614,7 @@ router.post("/:id/contact-attempts",
   requireRole("Owner", "Admin", "Manager", "Sales Rep"),
   async (req, res) => {
     const parsed = AttemptSchema.safeParse(req.body);
-    if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
     try {
       const orgId = req.user!.orgId;
       const { data: cart } = await supabase.from("abandoned_carts")
@@ -1922,7 +1923,7 @@ router.patch("/:id",
   async (req, res) => {
     const parsed = CartPatchSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const updates: Record<string, unknown> = {};
@@ -2011,7 +2012,7 @@ router.patch("/:id/date",
   async (req, res) => {
     const parsed = CartDatePatchSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
 

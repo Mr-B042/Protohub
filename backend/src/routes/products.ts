@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
@@ -97,7 +98,7 @@ router.post("/",
   async (req, res) => {
     const parsed = ProductSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const { name, sku, description, reorderPoint, active, catalogType } = parsed.data;
@@ -339,8 +340,8 @@ router.post("/:id/pricings",
     if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const parsed = PricingSchema.safeParse(req.body);
     if (!parsed.success) {
-      logger.error("createPricing validation failed", { body: req.body, errors: parsed.error.flatten().fieldErrors });
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      logger.error("createPricing validation failed", { body: req.body, errors: humanFieldErrors(parsed.error) });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const { currency, sellingPrice, unitCost, isPrimary } = parsed.data;
@@ -412,7 +413,7 @@ router.post("/package-images/upload",
   async (req, res) => {
     const parsed = PackageImageUploadSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const match = parsed.data.dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
@@ -555,7 +556,7 @@ router.post("/:id/packages",
     if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const parsed = PackageSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const {
@@ -659,7 +660,7 @@ router.patch("/:id/packages/:pkgId",
     if (!await checkProductOrg(req.params.id, req.user!.orgId, res)) return;
     const parsed = PackageUpdateSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const updates: Record<string, unknown> = {};

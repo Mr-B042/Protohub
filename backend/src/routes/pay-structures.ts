@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -34,7 +35,7 @@ const PayStructureSchema = z.object({
 router.post("/", async (req, res) => {
   const parsed = PayStructureSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const { userId, type, fixedSalary, commissionRate, bonusTiers } = parsed.data;

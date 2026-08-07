@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { buildCoverageRows } from "../lib/agent-coverage.js";
@@ -49,7 +50,7 @@ router.post("/",
   async (req, res) => {
     const parsed = AgentSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const primaryBaseState = (parsed.data.primaryBaseState ?? parsed.data.zone ?? "").trim();
@@ -122,7 +123,7 @@ const AgentPatchSchema = z.object({
 router.patch("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   const parsed = AgentPatchSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const updates: Record<string, unknown> = {};
@@ -249,7 +250,7 @@ router.post("/:id/stock",
     const orgId = Array.isArray(req.user!.orgId) ? String(req.user!.orgId[0] ?? "") : String(req.user!.orgId);
     const parsed = AssignStockSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const { productId, quantity } = parsed.data;
@@ -369,7 +370,7 @@ router.post("/:id/reconcile",
     const orgId = Array.isArray(req.user!.orgId) ? String(req.user!.orgId[0] ?? "") : String(req.user!.orgId);
     const parsed = ReconcileSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const { productId, returned, defective, missing, notes } = parsed.data;

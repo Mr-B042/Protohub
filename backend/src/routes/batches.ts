@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -158,7 +159,7 @@ const CreateSchema = z.object({
 
 router.post("/", async (req, res) => {
   const parsed = CreateSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const d = parsed.data;
   const { data, error } = await supabase.from("batch_economics").insert({
     org_id: req.user!.orgId,
@@ -177,7 +178,7 @@ const UpdateSchema = CreateSchema.extend({ status: z.enum(["open", "closed"]).op
 
 router.patch("/:id", async (req, res) => {
   const parsed = UpdateSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const d = parsed.data;
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (d.label !== undefined) updates.label = d.label;
@@ -216,7 +217,7 @@ const AssignSchema = z.object({
 router.post("/:id/assign-orders", async (req, res) => {
   const orgId = req.user!.orgId;
   const parsed = AssignSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const d = parsed.data;
   // Verify the batch belongs to this org.
   const { data: batch } = await supabase
@@ -409,7 +410,7 @@ const ConfigSchema = z.object({
 router.patch("/config/tiers", async (req, res) => {
   const orgId = req.user!.orgId;
   const parsed = ConfigSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const d = parsed.data;
   if (d.tiers) {
     const rows = d.tiers.map((t, i) => ({

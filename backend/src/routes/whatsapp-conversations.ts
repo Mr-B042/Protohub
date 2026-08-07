@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -256,7 +257,7 @@ router.post("/:phone/send", async (req, res) => {
   if (!normalizedPhone) { res.status(400).json({ error: "Invalid phone." }); return; }
 
   const parsed = SendSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
 
   // Rep/Manager can only message their assigned customers
   if (role === "Sales Rep" || role === "Manager" || role === "Recovery Rep") {

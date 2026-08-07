@@ -5,6 +5,7 @@
 // the existing WhatsApp custom-send path and calls /record-send so the trail
 // is written once, by whoever actually sent it.
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -78,7 +79,7 @@ router.get("/", requireRole(...READ_ROLES), async (req, res) => {
 
 router.post("/", requireRole(...WRITE_ROLES), async (req, res) => {
   const parsed = TemplateSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const { data, error } = await supabase.from(TEMPLATES_TABLE).insert({
       org_id: req.user!.orgId,
@@ -103,7 +104,7 @@ router.post("/", requireRole(...WRITE_ROLES), async (req, res) => {
 
 router.patch("/:id", requireRole(...WRITE_ROLES), async (req, res) => {
   const parsed = TemplateUpdateSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (parsed.data.name !== undefined) patch.name = parsed.data.name;
