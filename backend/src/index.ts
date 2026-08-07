@@ -8,6 +8,7 @@ import cron from "node-cron";
 import { logger } from "./lib/logger.js";
 import { runtimeDataProfile } from "./lib/local-safety.js";
 import { syncDueOrderFollowUpNotifications } from "./lib/order-follow-up-notifications.js";
+import { syncDueCartCallbacks, sendCartFollowUpDigest } from "./lib/cart-follow-up-notifications.js";
 import { runSmartStockAlerts } from "./lib/smart-stock-alerts.js";
 import { runPhantomStockCheck } from "./lib/phantom-stock-check.js";
 import { getOrgPushBranding } from "./lib/push-branding.js";
@@ -456,6 +457,32 @@ cron.schedule("*/5 * * * *", async () => {
     await syncDueOrderFollowUpNotifications();
   } catch (e) {
     logger.error("cron: order follow-up notification sync crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Cart callbacks that have come due — every 15 minutes ──
+// A promise to ring somebody back is only worth writing down if something
+// reminds you on the day. Each cart fires once per day at most.
+cron.schedule("*/15 * * * *", async () => {
+  try {
+    const result = await syncDueCartCallbacks();
+    if (result.notified > 0) logger.info("cron: cart callbacks due", { notified: result.notified });
+  } catch (e) {
+    logger.error("cron: cart callback sync crashed", { error: (e as Error).message });
+  }
+});
+
+// ── Carts going quiet — once each working morning ─────────
+// 8am Lagos. One notification per rep listing how many carts they have gone
+// quiet on, not one per cart. Sundays off, matching the rest of the follow-up
+// rules - nobody is expected to work them.
+cron.schedule("0 7 * * 1-6", async () => {
+  logger.info("cron: cart follow-up digest");
+  try {
+    const result = await sendCartFollowUpDigest();
+    logger.info("cron: cart digest sent", { notified: result.notified });
+  } catch (e) {
+    logger.error("cron: cart digest crashed", { error: (e as Error).message });
   }
 });
 
