@@ -718,6 +718,13 @@ router.get("/applications", requireRole(...MANAGEMENT_ROLES), async (req, res) =
       const mandatory = kyc.filter((item: any) => item.mandatory);
       const approved = mandatory.filter((item: any) => item.status === "Approved").length;
       const total = mandatory.length;
+      // Two different questions, and the screen only ever answered the second.
+      // "Approved" measures how far the REVIEWER has got. "Supplied" measures
+      // how much the APPLICANT actually sent - which is what decides whether
+      // to chase them or to start reviewing. Everyone reads 0% approved until
+      // somebody works through them, so without this the queue cannot tell a
+      // complete application from an empty one.
+      const supplied = mandatory.filter((item: any) => item.status === "Submitted" || item.status === "Approved").length;
 
       const guarantorsVerified = guarantors.filter((g: any) => g.verification_status === "Approved").length;
       const guarantorStatus = guarantors.length === 0 ? "Not started"
@@ -757,6 +764,10 @@ router.get("/applications", requireRole(...MANAGEMENT_ROLES), async (req, res) =
         kycApproved: approved,
         kycTotal: total,
         kycPct: total > 0 ? Math.round((approved / total) * 100) : 0,
+        kycSupplied: supplied,
+        kycSuppliedPct: total > 0 ? Math.round((supplied / total) * 100) : 0,
+        formComplete: total > 0 && supplied === total,
+        missingItems: mandatory.filter((item: any) => item.status !== "Submitted" && item.status !== "Approved").map((item: any) => item.label),
         guarantorStatus,
         guarantorsVerified,
         guarantorsTotal: 2,
@@ -931,7 +942,14 @@ router.get("/applications/:id/review", requireRole(...MANAGEMENT_ROLES), async (
         applicationId: `PDA-APP-${String(agent.agent_code ?? "").replace(/^PDA-/, "")}`,
         applicantStatusToken: agent.status_token ?? null
       },
-      progress: { approved, total: mandatory.length, pct: mandatory.length > 0 ? Math.round((approved / mandatory.length) * 100) : 0 },
+      progress: {
+        approved, total: mandatory.length,
+        pct: mandatory.length > 0 ? Math.round((approved / mandatory.length) * 100) : 0,
+        supplied: mandatory.filter((item: any) => item.status === "Submitted" || item.status === "Approved").length,
+        suppliedPct: mandatory.length > 0
+          ? Math.round((mandatory.filter((item: any) => item.status === "Submitted" || item.status === "Approved").length / mandatory.length) * 100)
+          : 0
+      },
       kycItems: kycItems.map(mapKycItem),
       guarantors: guarantors.map(mapGuarantorFull),
       documents: documents.map((document: any) => mapDocument(

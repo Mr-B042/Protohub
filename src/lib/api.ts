@@ -819,6 +819,10 @@ export type PdaApplicationRow = {
   id: string; applicationId: string; fullName: string; phone: string; location: string;
   photoUrl?: string | null; status: string; accountStatus: string;
   kycApproved: number; kycTotal: number; kycPct: number;
+  /** What the APPLICANT supplied. kycPct above is what the reviewer approved -
+   *  it reads 0% for everyone until a review happens, so only these separate a
+   *  complete application from an empty one. */
+  kycSupplied: number; kycSuppliedPct: number; formComplete: boolean; missingItems: string[];
   guarantorStatus: string; guarantorsVerified: number; guarantorsTotal: number;
   documentsPending: number; submittedOn: string; approvedAt?: string | null;
   submittedVia?: string | null; applicationLinkId?: string | null; statusReason?: string | null;
