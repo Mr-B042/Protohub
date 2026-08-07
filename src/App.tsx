@@ -54443,11 +54443,18 @@ ${waybillLineItems(w).length > 1
                           </button>
                         ) : beforeCart || future ? (
                           <span className="text-gray-200">·</span>
-                        ) : row.convertedOrderId ? (
+                        ) : row.closed ? (
+                          // Finished. Asking a rep to log a call on an order
+                          // that already arrived is how the real work gets lost
+                          // among rows that need nothing.
                           <span className="text-gray-200">·</span>
                         ) : (
                           <button type="button" onClick={() => openCartFollowUpFromGrid(row)}
-                            className="!min-h-0 text-[12px] font-bold text-[#1F8FE0] hover:underline">
+                            className={`!min-h-0 rounded px-1.5 py-0.5 text-[12px] font-bold hover:underline ${
+                              day.isToday && row.needsLog ? "animate-pulse bg-amber-100 text-amber-800" : "text-[#1F8FE0]"}`}
+                            title={day.isToday && row.needsLog
+                              ? (row.neverContacted ? "Never contacted - nobody has called this customer yet" : `Nothing logged for ${row.staleDays} days`)
+                              : undefined}>
                             + log
                           </button>
                         )}
