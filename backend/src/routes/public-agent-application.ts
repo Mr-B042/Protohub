@@ -317,6 +317,12 @@ router.post("/status/:statusToken/items/:itemKey", uploadLimiter, async (req, re
   const mime = match[1].toLowerCase();
   const ext = UPLOAD_MIME_EXT[mime];
   if (!ext) { res.status(400).json({ error: "Upload a photo, a PDF or a short video." }); return; }
+  if (VIDEO_ONLY_ITEMS.has(itemKey) && !isVideoMime(mime)) {
+    res.status(400).json({
+      error: "This one has to be a video, not a photo. Record yourself saying the phrase, or pick a video from your gallery."
+    });
+    return;
+  }
   const buffer = Buffer.from(match[2], "base64");
   if (buffer.length > 25 * 1024 * 1024) { res.status(413).json({ error: "That file is larger than 25MB." }); return; }
 
@@ -361,6 +367,12 @@ router.get("/:token", readLimiter, async (req, res) => {
 });
 
 // ── POST /api/public/agent-application/:token/upload ──────
+// A liveness check has to be a moving picture of a person. A photograph
+// proves nothing about liveness, and half the ones on file are .jpg - the
+// browser's `accept` attribute is a hint, not a rule, so the rule lives here.
+const VIDEO_ONLY_ITEMS = new Set(["live_verification_video"]);
+const isVideoMime = (mime: string) => mime.startsWith("video/");
+
 const UPLOAD_MIME_EXT: Record<string, string> = {
   "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/webp": "webp",
   "application/pdf": "pdf", "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov"

@@ -261,13 +261,27 @@ export default function PublicAgentStatusPage() {
                       className="mt-2 h-16 w-16 rounded-lg border border-emerald-200 object-cover" />
                   )}
                   {sent && <p className="m-0 mt-1.5 text-[12px] font-bold text-emerald-700">✓ Sent. We will check it.</p>}
-                  {item.canUpload && (
-                    <label className="mt-2 flex cursor-pointer items-center justify-center rounded-xl bg-blue-50 px-4 py-2.5 text-[13px] font-bold text-[#1F8FE0]">
-                      {uploading === item.key ? "Sending…" : item.status === "Pending" ? "Send this" : "Send a new one"}
-                      <input type="file" accept="image/*,application/pdf,video/*" className="hidden"
-                        onChange={(e) => { const f = e.target.files?.[0]; if (f) void sendItem(item, f); }} />
-                    </label>
-                  )}
+                  {item.canUpload && (() => {
+                    // The liveness check is the one item a photo cannot satisfy.
+                    // Narrowing `accept` puts the camera first on a phone; the
+                    // server refuses a photo regardless, since accept is only a
+                    // hint and half the ones already on file are .jpg.
+                    const videoOnly = item.key === "live_verification_video";
+                    return (
+                      <>
+                        {videoOnly && (
+                          <p className="m-0 mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-800">
+                            This must be a <strong>video</strong>, not a photo - record yourself saying the phrase, or choose a video you already have.
+                          </p>
+                        )}
+                        <label className="mt-2 flex cursor-pointer items-center justify-center rounded-xl bg-blue-50 px-4 py-2.5 text-[13px] font-bold text-[#1F8FE0]">
+                          {uploading === item.key ? "Sending…" : item.status === "Pending" ? (videoOnly ? "Record or choose a video" : "Send this") : "Send a new one"}
+                          <input type="file" accept={videoOnly ? "video/*" : "image/*,application/pdf,video/*"} className="hidden"
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) void sendItem(item, f); }} />
+                        </label>
+                      </>
+                    );
+                  })()}
                 </div>
               );
             })}

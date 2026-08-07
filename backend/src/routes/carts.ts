@@ -1838,6 +1838,30 @@ router.get("/follow-up-overview",
         rows: rows.map((row: any) => {
           const latest = latestByCart.get(row.id) ?? null;
           const order = orderByCart.get(row.id) ?? null;
+
+          // A cart stops asking for follow-up logs once it has actually
+          // finished: the order landed, the customer said no, or the number was
+          // never theirs. Everything else - price concern, call back, silence -
+          // is still workable and keeps asking, because those are the ones a
+          // rep is supposed to come back to.
+          //
+          // Deliberately NOT a lock. The flag only changes what the row shows;
+          // logging stays available, because a "not interested" who rings back
+          // next month must be recordable without an admin unpicking anything.
+          const lastOutcomeCode = latest?.outcome_code ?? null;
+          const closedReason = order?.status === "Delivered" ? "Delivered"
+            : (lastOutcomeCode === "Not interested" || row.status === "Not interested") ? "Not interested"
+            : lastOutcomeCode === "Wrong number" ? "Wrong number"
+            : null;
+
+          // How long this cart has gone untouched. Drives the nudge in the UI -
+          // the whole problem being that fresh carts get worked and older ones
+          // quietly rot.
+          const lastTouch = latest?.attempted_at ?? row.assigned_at ?? row.created_at ?? null;
+          const staleDays = closedReason || !lastTouch
+            ? 0
+            : Math.max(0, Math.floor((Date.now() - new Date(lastTouch).getTime()) / 86400000));
+
           return {
             id: row.id,
             customer: row.customer,
@@ -1873,6 +1897,12 @@ router.get("/follow-up-overview",
             lastAttemptAt: latest?.attempted_at ?? null,
             lastAttemptBy: latest?.rep_name ?? null,
             nextActionAt: latest?.next_action_at ?? null,
+            closed: Boolean(closedReason),
+            closedReason,
+            neverContacted: !latest && !closedReason,
+            staleDays,
+            // Nothing logged yet, or nothing for two days.
+            needsLog: !closedReason && (!latest || staleDays >= 2),
             convertedOrderId: order?.id ?? null,
             convertedOrderStatus: order?.status ?? null,
             convertedOrderAmount: order ? Number(order.amount ?? 0) : null,

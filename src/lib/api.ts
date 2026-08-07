@@ -2335,6 +2335,11 @@ export type CartGridRow = {
   status: string; repId: string; repName: string; assignedAt?: string | null;
   createdAt: string; createdKey: string;
   convertedOrderId?: string | null; convertedOrderStatus?: string | null;
+  /** Finished: order delivered, customer said no, or the number was wrong.
+   *  A display state only - logging stays possible if they come back. */
+  closed?: boolean; closedReason?: string | null;
+  /** Untouched for 2+ days, or never contacted. Drives the nudge. */
+  needsLog?: boolean; neverContacted?: boolean; staleDays?: number;
   cells: Record<string, CartGridCell>;
 };
 export type CartFollowUpGrid = {
