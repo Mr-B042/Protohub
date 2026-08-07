@@ -2212,6 +2212,21 @@ router.post("/:id/guarantors", requireRole(...MANAGEMENT_ROLES), async (req, res
     const { data, error } = await supabase.from(GUARANTORS)
       .upsert(payload, { onConflict: "agent_id,slot" }).select("*").single();
     if (error) { res.status(500).json({ error: error.message }); return; }
+
+    // The slot now has a guarantor, so its checklist item is no longer waiting
+    // on the applicant - it is waiting on a reviewer. Only Pending is moved: an
+    // item already Approved or Rejected must not be quietly reset by an edit to
+    // the guarantor's phone number.
+    const slotKey = parsed.data.slot === 1 ? "guarantor_one" : parsed.data.slot === 2 ? "guarantor_two" : null;
+    if (slotKey && parsed.data.fullName?.trim()) {
+      await supabase.from(KYC)
+        .update({ status: "Submitted", updated_at: new Date().toISOString() })
+        .eq("org_id", req.user!.orgId)
+        .eq("agent_id", req.params.id)
+        .eq("item_key", slotKey)
+        .eq("status", "Pending");
+    }
+
     res.status(201).json({ row: mapGuarantor(data) });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not save the guarantor." });

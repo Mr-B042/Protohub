@@ -488,9 +488,16 @@ router.post("/:token", submitLimiter, async (req, res) => {
       mandatory: true,
       // What the applicant supplied is SUBMITTED. Nothing self-submitted is
       // ever pre-approved - that is the reviewer's job, and the whole point.
+      // Same rule as every other item: what the applicant supplied is
+      // SUBMITTED, and a reviewer decides whether it is good. A guarantor slot
+      // counts as supplied once there is a guarantor in it - previously these
+      // two sat on Pending forever no matter what was submitted, which is why
+      // no application could ever reach a complete checklist.
       status: item.path ? "Submitted"
         : ["personal_information", "bank_account"].includes(item.key) && d.bankAccountNumber ? "Submitted"
         : item.key === "personal_information" ? "Submitted"
+        : item.key === "guarantor_one" && d.guarantors?.[0]?.fullName ? "Submitted"
+        : item.key === "guarantor_two" && d.guarantors?.[1]?.fullName ? "Submitted"
         : "Pending",
       file_url: item.path ?? null
     })));
