@@ -1946,6 +1946,14 @@ function clearReconnectTimer(connection: RuntimeConnection) {
 // an hour.
 const RECONNECT_BASE_MS = 5_000;
 const RECONNECT_MAX_MS = 5 * 60_000;
+// After this many consecutive failures the runtime gives up and DISABLES the
+// account rather than retrying at the ceiling forever. With the doubling below
+// that is roughly twenty minutes of trying - long enough for a network blip or
+// a deploy to resolve itself, short enough that a genuinely dead session stops
+// costing anything. Reconnecting is then a deliberate act by a human, which is
+// correct: a session that has failed for twenty minutes needs a re-scan, not
+// another automatic attempt.
+const RECONNECT_GIVE_UP_AFTER = 10;
 function reconnectDelayFor(connection: RuntimeConnection): number {
   const attempts = connection.failedAttempts ?? 0;
   return Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, Math.max(0, attempts)));
@@ -2171,6 +2179,12 @@ async function ensureConnection(orgId: string, requestedMode?: WhatsAppPairingMo
             pairing_code: null
           });
           connection.failedAttempts = (connection.failedAttempts ?? 0) + 1;
+          if (connection.failedAttempts >= RECONNECT_GIVE_UP_AFTER) {
+            clearReconnectTimer(connection);
+            await markDisconnected(orgId, `Stopped reconnecting after ${RECONNECT_GIVE_UP_AFTER} failed attempts. Pair again to resume. Last error: ${reason}`);
+            logger.warn("whatsapp: gave up reconnecting, account disabled", { orgId, attempts: connection.failedAttempts });
+            return;
+          }
           scheduleReconnect(connection, reconnectDelayFor(connection), orgId);
         }
       } catch (error) {
@@ -2314,6 +2328,12 @@ async function ensureUserConnection(orgId: string, userId: string, requestedMode
             pairing_code: null
           });
           connection.failedAttempts = (connection.failedAttempts ?? 0) + 1;
+          if (connection.failedAttempts >= RECONNECT_GIVE_UP_AFTER) {
+            clearReconnectTimer(connection);
+            await markUserDisconnected(orgId, userId, `Stopped reconnecting after ${RECONNECT_GIVE_UP_AFTER} failed attempts. Connect again to resume. Last error: ${reason}`);
+            logger.warn("user whatsapp: gave up reconnecting, account disabled", { orgId, userId, attempts: connection.failedAttempts });
+            return;
+          }
           scheduleUserReconnect(connection, reconnectDelayFor(connection));
         }
       } catch (error) {
