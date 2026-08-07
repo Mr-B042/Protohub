@@ -1,6 +1,33 @@
 import type { Request, Response, NextFunction } from "express";
 import { supabase } from "../lib/supabase.js";
 import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
+import { TtlCache } from "../lib/ttl-cache.js";
+
+type UserProfile = {
+  id: string; org_id: string; role: import("../types/index.js").UserRole;
+  email: string; name: string;
+  active: boolean | null; marketing_attribution_tags: unknown;
+};
+
+// The profile was re-read from Supabase on EVERY authenticated request -
+// 33,485 reads a day of a row that changes when somebody is hired or their
+// role is edited. Held for 30 seconds instead.
+//
+// Correctness rests on invalidateUserProfile() being called on every write to
+// a user, which is what makes a deactivation or role change take effect at
+// once rather than after the TTL. The token itself is still verified against
+// Supabase Auth on every request - only the profile lookup is cached, so a
+// revoked session is rejected immediately regardless of this.
+const USER_PROFILE_TTL_MS = 30_000;
+const userProfileCache = new TtlCache<UserProfile | null>(USER_PROFILE_TTL_MS);
+
+/** Call after ANY write to a users row - role change, deactivation, deletion. */
+export function invalidateUserProfile(userId: string): void {
+  userProfileCache.invalidate(userId);
+}
+export function invalidateAllUserProfiles(): void {
+  userProfileCache.clear();
+}
 
 // Validates the Bearer token from the Authorization header.
 // Attaches the user profile to req.user for downstream handlers.
@@ -20,14 +47,20 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
 
-  // Fetch the user's profile from our users table
-  const { data: profile, error: profileError } = await supabase
-    .from("users")
-    .select("id, org_id, role, email, name, active, marketing_attribution_tags")
-    .eq("id", user.id)
-    .single();
+  // Fetch the user's profile from our users table (cached - see above)
+  const profile = await userProfileCache.get(user.id, async () => {
+    const { data } = await supabase
+      .from("users")
+      .select("id, org_id, role, email, name, active, marketing_attribution_tags")
+      .eq("id", user.id)
+      .single();
+    return (data as UserProfile | null) ?? null;
+  });
 
-  if (profileError || !profile) {
+  if (!profile) {
+    // Not cached as a hit-with-null for long: a profile created moments after a
+    // first failed call must not stay missing for the rest of the TTL.
+    userProfileCache.invalidate(user.id);
     res.status(403).json({ error: "User profile not found. Contact your administrator." });
     return;
   }

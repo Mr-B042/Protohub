@@ -3,7 +3,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { createSupabaseAuthClient, supabase, supabaseAnon } from "../lib/supabase.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, invalidateUserProfile } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 import { normalizeWorkingDays } from "../lib/business-schedule.js";
 import { loadAssignedAgentIdsByUser } from "../lib/user-agent-assignments.js";
@@ -696,6 +696,8 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
     if (error.code === "PGRST116") { res.status(404).json({ error: "User not found." }); return; }
     res.status(500).json({ error: error.message }); return;
   }
+  // Same reason as the soft-delete: a role edit must not wait for the TTL.
+  invalidateUserProfile(String(req.params.id));
   res.json(sanitizeTeamMemberPayload(data));
 });
 
@@ -827,6 +829,8 @@ router.delete("/team/:id", requireAuth, async (req, res) => {
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId);
   if (error) { res.status(500).json({ error: error.message }); return; }
+  // Deactivation has to take effect immediately, not when the TTL lapses.
+  invalidateUserProfile(String(req.params.id));
   await supabase.from("push_subscriptions").delete().eq("user_id", req.params.id);
   res.status(204).send();
 });

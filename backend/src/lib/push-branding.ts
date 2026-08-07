@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { TtlCache } from "./ttl-cache.js";
 
 type OrgPushBranding = {
   brandName?: string;
@@ -50,15 +51,25 @@ export async function getOrgPushBranding(orgId: string): Promise<OrgPushBranding
   };
 }
 
-export async function getOrgBrandingRecord(orgId: string): Promise<OrgBrandingRecord> {
-  const { data } = await supabase
-    .from("organizations")
-    .select("name, logo_url")
-    .eq("id", orgId)
-    .single();
+// Read once per notification before this - 23,200 Supabase reads a day for a
+// name and a logo URL. Five minutes stale is invisible for branding, and a
+// rename still lands within one cache window.
+const orgBrandingCache = new TtlCache<OrgBrandingRecord>(5 * 60_000);
+export function invalidateOrgBranding(orgId: string): void {
+  orgBrandingCache.invalidate(orgId);
+}
 
-  return {
-    brandName: typeof data?.name === "string" && data.name.trim() ? data.name.trim() : "Protohub",
-    rawLogoUrl: typeof data?.logo_url === "string" ? data.logo_url.trim() : ""
-  };
+export async function getOrgBrandingRecord(orgId: string): Promise<OrgBrandingRecord> {
+  return orgBrandingCache.get(orgId, async () => {
+    const { data } = await supabase
+      .from("organizations")
+      .select("name, logo_url")
+      .eq("id", orgId)
+      .single();
+
+    return {
+      brandName: typeof data?.name === "string" && data.name.trim() ? data.name.trim() : "Protohub",
+      rawLogoUrl: typeof data?.logo_url === "string" ? data.logo_url.trim() : ""
+    };
+  });
 }
