@@ -2231,6 +2231,9 @@ export const whatsappUserAccountApi = {
   acknowledgeRisk: () =>
     post<{ account: any }>("/api/whatsapp-user-account/me/risk-acknowledgement", { riskAcknowledged: true }),
   disconnect: () => post<{ account: any }>("/api/whatsapp-user-account/me/disconnect", {}),
+  // Owner/Admin: switch off a stuck account belonging to someone else
+  disconnectUser: (userId: string) =>
+    post<{ account: any }>(`/api/whatsapp-user-account/user/${encodeURIComponent(userId)}/disconnect`, {}),
   groups: () => get<{ groups: Array<{ jid: string; subject: string; participants?: number | null }> }>("/api/whatsapp-user-account/me/groups"),
   teamDispatches: () => get<{ dispatches: any[] }>("/api/whatsapp-user-account/dispatches?scope=team")
 };

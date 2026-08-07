@@ -10366,6 +10366,24 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     }, { detail: "Direct group sending from your personal WhatsApp will stop until you reconnect.", danger: true, confirmLabel: "Disconnect" });
   };
+  // Owner/Admin switching off SOMEBODY ELSE'S account. Previously only the
+  // account's own user could stop it, so a stuck connection retried forever
+  // while the person who could see the cost had no way to intervene.
+  const waDisconnectOtherUser = async (userId: string, name: string) => {
+    showConfirm(`Disconnect ${name}'s WhatsApp?`, async () => {
+      setWaUserDisconnecting(true);
+      try {
+        const updated = await whatsappUserAccountApi.disconnectUser(userId);
+        setWaUserAccount(updated.account ?? null);
+        setWaUserGroups([]);
+        showToast(`${name}'s WhatsApp disconnected. It will stop retrying.`);
+      } catch (err: any) {
+        showToast(`Could not disconnect: ${err?.message ?? "please retry"}.`);
+      } finally {
+        setWaUserDisconnecting(false);
+      }
+    }, { detail: `Their direct group sending stops until ${name} reconnects. Use this to stop an account that keeps failing to connect.`, danger: true, confirmLabel: "Disconnect" });
+  };
   const waUserAcknowledgeRisk = async () => {
     try {
       const updated = await whatsappUserAccountApi.acknowledgeRisk();
@@ -79352,9 +79370,23 @@ ${waybillLineItems(w).length > 1
                 // In per-user mode every member manages their OWN destinations; in shared mode only Owner/Admin.
                 const canManageWaDestinations = waPerUserDispatch || isOwnerOrAdmin;
                 const spyBanner = isSpying && spiedUser ? (
-                  <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 flex items-center gap-2 text-sm font-bold text-blue-800">
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 flex flex-wrap items-center gap-2 text-sm font-bold text-blue-800">
                     <span className="shrink-0">👁</span>
-                    <span>Viewing <span className="font-black">{spiedUser.name}</span>'s WhatsApp - read-only. Connect/disconnect actions are disabled in view-as mode.</span>
+                    <span className="min-w-0 flex-1">
+                      Viewing <span className="font-black">{spiedUser.name}</span>&apos;s WhatsApp - read-only. Connecting must be done by {spiedUser.name}.
+                    </span>
+                    {/* The one exception: an Owner/Admin CAN switch a stuck account
+                        off. Leaving it enabled is what makes it retry forever. */}
+                    {isOwnerOrAdmin && waUserAccount?.enabled && (
+                      <button
+                        className="!min-h-0 shrink-0 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-700 transition-colors hover:bg-red-50 disabled:opacity-40"
+                        disabled={waUserDisconnecting}
+                        onClick={() => waDisconnectOtherUser(spiedUser.id, spiedUser.name)}
+                        title="Stop this account reconnecting. Use when it keeps failing."
+                      >
+                        {waUserDisconnecting ? "Disconnecting..." : "Disconnect this account"}
+                      </button>
+                    )}
                   </div>
                 ) : null;
                 return (

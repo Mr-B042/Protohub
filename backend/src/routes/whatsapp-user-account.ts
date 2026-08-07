@@ -193,4 +193,21 @@ router.get("/user/:userId/connect", requireRole("Owner", "Admin"), async (req, r
   }
 });
 
+// Owner/Admin can disconnect ANY user's account.
+//
+// Until now only /me/disconnect existed, so an account stuck failing could only
+// be switched off by the person who owned it. Two accounts sat errored+enabled
+// for a day retrying every five seconds, and the Owner watching the bill had no
+// way to stop them.
+router.post("/user/:userId/disconnect", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const userId = String(req.params["userId"] ?? "");
+    if (!userId) { res.status(400).json({ error: "A user is required." }); return; }
+    await disconnectUserWhatsAppConnection(req.user!.orgId, userId);
+    res.json({ account: defaultAccount(req.user!.orgId, userId) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Could not disconnect that WhatsApp account." });
+  }
+});
+
 export default router;
