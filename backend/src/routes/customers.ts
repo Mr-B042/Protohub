@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -91,7 +92,7 @@ router.post("/flags",
   async (req, res) => {
     const parsed = FlagSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const normalized = parsed.data.phone.replace(/\D/g, "");
@@ -155,7 +156,7 @@ router.post("/opt-out",
   async (req, res) => {
     const parsed = OptOutSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
     const normalized = parsed.data.phone.replace(/\D/g, "");

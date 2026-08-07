@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
@@ -629,7 +630,7 @@ router.patch("/order/:orderId/assignment", requireRole("Owner", "Admin", "Manage
   try {
     const parsed = RetentionAssignmentSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+      res.status(400).json({ error: humanFieldErrors(parsed.error) });
       return;
     }
 
@@ -702,7 +703,7 @@ const RetentionActionEventSchema = z.object({
 router.post("/action-events", requireRole(...RETENTION_ROLES), async (req, res) => {
   const parsed = RetentionActionEventSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   try {
@@ -1152,7 +1153,7 @@ const TouchpointSchema = z.discriminatedUnion("stage", [
 router.post("/touchpoints", requireRole(...RETENTION_ROLES), async (req, res) => {
   const parsed = TouchpointSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const d = parsed.data;
@@ -1222,7 +1223,7 @@ const TouchpointPatchSchema = z.object({
 
 router.patch("/touchpoints/:id", requireRole(...RETENTION_ROLES), async (req, res) => {
   const parsed = TouchpointPatchSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const update: Record<string, unknown> = {};
   if (parsed.data.mediaUrls) update.media_urls = parsed.data.mediaUrls;
   if (parsed.data.customerDiscountCleared) update.customer_discount_cleared_at = new Date().toISOString();
@@ -1853,7 +1854,7 @@ const ProductTimingSchema = z.object({
 
 router.patch("/product-timing/:productId", requireRole("Owner"), async (req, res) => {
   const parsed = ProductTimingSchema.safeParse(req.body ?? {});
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const hasAnyOverride = Object.keys(parsed.data).length > 0;
   const { data, error } = await supabase
     .from("products")
@@ -1994,7 +1995,7 @@ router.get("/tasks", requireRole(...RETENTION_ROLES), async (req, res) => {
 
 router.post("/tasks", requireRole(...RETENTION_ROLES), async (req, res) => {
   const parsed = ManualTaskSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const { data, error } = await supabase
       .from(MANUAL_TASKS_TABLE)
@@ -2026,7 +2027,7 @@ router.post("/tasks", requireRole(...RETENTION_ROLES), async (req, res) => {
 
 router.patch("/tasks/:id", requireRole(...RETENTION_ROLES), async (req, res) => {
   const parsed = ManualTaskUpdateSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = req.user!.orgId;
     const { data: existing, error: findError } = await supabase
@@ -2075,7 +2076,7 @@ router.patch("/tasks/:id", requireRole(...RETENTION_ROLES), async (req, res) => 
 
 router.post("/tasks/bulk-assign", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
   const parsed = BulkAssignSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const { data, error } = await supabase
       .from(MANUAL_TASKS_TABLE)
@@ -2096,7 +2097,7 @@ router.post("/tasks/bulk-assign", requireRole("Owner", "Admin", "Manager"), asyn
 
 router.post("/tasks/import", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
   const parsed = ImportTasksSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const rows = parsed.data.tasks.map((task) => ({
       org_id: req.user!.orgId,
@@ -2139,7 +2140,7 @@ const ReviewModerationSchema = z.object({
 
 router.patch("/reviews/:touchpointId", requireRole(...RETENTION_ROLES), async (req, res) => {
   const parsed = ReviewModerationSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = req.user!.orgId;
     const { data: existing, error: findError } = await supabase
@@ -2264,7 +2265,7 @@ router.get("/referrals", requireRole(...RETENTION_ROLES), async (req, res) => {
 
 router.post("/referrals", requireRole(...RETENTION_ROLES), async (req, res) => {
   const parsed = ReferralSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const { data, error } = await supabase
       .from(REFERRALS_TABLE)
@@ -2302,7 +2303,7 @@ router.post("/referrals", requireRole(...RETENTION_ROLES), async (req, res) => {
 
 router.patch("/referrals/:id", requireRole(...RETENTION_ROLES), async (req, res) => {
   const parsed = ReferralUpdateSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = req.user!.orgId;
     const { data: existing, error: findError } = await supabase

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -179,7 +180,7 @@ router.get("/", requireWhatsAppHealthViewer, async (req, res) => {
 router.put("/", requireOwner, async (req, res) => {
   const parsed = SettingsSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -240,7 +241,7 @@ router.put("/", requireOwner, async (req, res) => {
 router.post("/connect", requireOwner, async (req, res) => {
   const parsed = ConnectSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -340,7 +341,7 @@ router.post("/test", requireOwner, async (req, res) => {
 router.post("/custom-send", requireOwner, async (req, res) => {
   const parsed = CustomSendSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -428,7 +429,7 @@ router.get("/opt-outs", requireOwner, async (req, res) => {
 router.post("/opt-outs", requireOwner, async (req, res) => {
   const parsed = OptOutSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 

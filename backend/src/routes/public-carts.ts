@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { notifyNewAbandonedCart } from "../lib/cart-notifications.js";
@@ -122,7 +123,7 @@ function mergeTouchpoints(...lists: (CartTouchpoint[] | null | undefined)[]): Ca
 router.post("/", captureRateLimit, async (req, res) => {
   const parsed = CaptureSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const d = parsed.data;
@@ -496,7 +497,7 @@ router.post("/:id/events", captureRateLimit, async (req, res) => {
 
   const parsed = JourneyEventSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const event = parsed.data;

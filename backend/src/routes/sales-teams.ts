@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { buildManagerPerformance } from "../lib/manager-performance.js";
 import { supabase } from "../lib/supabase.js";
@@ -27,7 +28,7 @@ const PerformanceQuerySchema = z.object({
 router.get("/performance", async (req, res) => {
   const parsed = PerformanceQuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -170,7 +171,7 @@ const ManagerActionSchema = z.object({
 router.post("/:id/manager-actions", async (req, res) => {
   const parsed = ManagerActionSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -250,7 +251,7 @@ async function checkOrgUuids(table: "users" | "products", ids: string[], orgId: 
 router.post("/", async (req, res) => {
   const parsed = TeamSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const { name, leadId, productIds, memberIds } = parsed.data;
@@ -281,7 +282,7 @@ const TeamPatchSchema = z.object({
 router.patch("/:id", async (req, res) => {
   const parsed = TeamPatchSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 

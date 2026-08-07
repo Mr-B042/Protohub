@@ -11,6 +11,7 @@
 // filtered by role SERVER-SIDE (see `stripSensitive`) rather than hidden in the
 // UI - the data never reaches their browser.
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -509,7 +510,7 @@ const DEFAULT_KYC_ITEMS: Array<{ key: string; label: string; mandatory?: boolean
 
 router.post("/", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = CreateSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = req.user!.orgId;
     // PDA-00001 style, per org.
@@ -1793,7 +1794,7 @@ const AppLinkSchema = z.object({
 
 router.post("/application-links", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = AppLinkSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     // 32 hex chars of real randomness - long enough that guessing is not a
     // realistic way in.
@@ -2133,7 +2134,7 @@ const KycReviewSchema = z.object({
 
 router.patch("/kyc-items/:itemId", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = KycReviewSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const patch: Record<string, unknown> = {
       status: parsed.data.status,
@@ -2204,7 +2205,7 @@ const GuarantorSchema = z.object({
 
 router.post("/:id/guarantors", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = GuarantorSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const payload = {
       org_id: req.user!.orgId,
@@ -2262,7 +2263,7 @@ const GuarantorVerifySchema = z.object({
 
 router.patch("/guarantors/:guarantorId", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = GuarantorVerifySchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const patch: Record<string, unknown> = {
       verification_status: parsed.data.verificationStatus,
@@ -2320,7 +2321,7 @@ const DocumentReviewSchema = z.object({
 
 router.patch("/documents/:documentId", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = DocumentReviewSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const { data: current } = await supabase.from(DOCS).select("*")
       .eq("org_id", req.user!.orgId).eq("id", req.params.documentId).maybeSingle();
@@ -2424,7 +2425,7 @@ const StatusSchema = z.object({
 
 router.post("/:id/status", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = StatusSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const patch: Record<string, unknown> = {
       account_status: parsed.data.accountStatus,
@@ -2576,7 +2577,7 @@ const AssignSchema = z.object({
 
 router.post("/:id/assign", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = AssignSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = req.user!.orgId;
     const { data: agent } = await supabase.from(AGENTS)
@@ -2791,7 +2792,7 @@ const RespondSchema = z.object({
 router.post("/my/orders/:assignmentId/respond", requireAgentPortal, async (req, res) => {
   if (assertNotSpying(req, res)) return;
   const parsed = RespondSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
   const { data, error } = await supabase.from(ASSIGNMENTS).update({
@@ -2815,7 +2816,7 @@ const ContactSchema = z.object({
 router.post("/my/orders/:assignmentId/contact", requireAgentPortal, async (req, res) => {
   if (assertNotSpying(req, res)) return;
   const parsed = ContactSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
   const isReady = parsed.data.customerContactStatus === CUSTOMER_READY;
@@ -2873,7 +2874,7 @@ const DeliveredSchema = z.object({
 router.post("/my/orders/:assignmentId/delivered", requireAgentPortal, async (req, res) => {
   if (assertNotSpying(req, res)) return;
   const parsed = DeliveredSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
 
@@ -2916,7 +2917,7 @@ const FailedSchema = z.object({
 router.post("/my/orders/:assignmentId/failed", requireAgentPortal, async (req, res) => {
   if (assertNotSpying(req, res)) return;
   const parsed = FailedSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
 
@@ -2952,7 +2953,7 @@ const RescheduleSchema = z.object({
 router.post("/my/orders/:assignmentId/reschedule", requireAgentPortal, async (req, res) => {
   if (assertNotSpying(req, res)) return;
   const parsed = RescheduleSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const found = await loadOwnAssignment(orgIdOf(req), portalUserId(req), paramOf(req.params.assignmentId));
   if ("error" in found) { res.status(404).json({ error: found.error }); return; }
 
@@ -3020,7 +3021,7 @@ const SendStockSchema = z.object({
 
 router.post("/:id/stock/send", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = SendStockSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = orgIdOf(req);
     const agentId = paramOf(req.params.id);
@@ -3083,7 +3084,7 @@ const ConfirmTransferSchema = z.object({
 router.post("/my/transfers/:transferId/confirm", requireAgentPortal, async (req, res) => {
   if (assertNotSpying(req, res)) return;
   const parsed = ConfirmTransferSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = orgIdOf(req);
     const resolved = await resolvePortalAgent(req);
@@ -3188,7 +3189,7 @@ const DiscrepancySchema = z.object({
 router.post("/my/stock/discrepancy", requireAgentPortal, async (req, res) => {
   if (assertNotSpying(req, res)) return;
   const parsed = DiscrepancySchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = orgIdOf(req);
     const resolved = await resolvePortalAgent(req);
@@ -3227,7 +3228,7 @@ const ReviewDiscrepancySchema = z.object({
 
 router.post("/stock/discrepancies/:discrepancyId/review", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = ReviewDiscrepancySchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = orgIdOf(req);
     const discrepancyId = paramOf(req.params.discrepancyId);
@@ -3373,7 +3374,7 @@ const RemittanceSchema = z.object({
 
 router.post("/:id/remittances", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = RemittanceSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = orgIdOf(req);
     const agentId = paramOf(req.params.id);
@@ -3749,7 +3750,7 @@ const SettingsSchema = z.object({
 
 router.put("/settings", requireRole("Owner", "Admin"), async (req, res) => {
   const parsed = SettingsSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const d = parsed.data;
   const { error } = await supabase.from(SETTINGS).upsert({
     org_id: orgIdOf(req),
@@ -3797,7 +3798,7 @@ const FeeRuleSchema = z.object({
 
 router.post("/fees/rules", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = FeeRuleSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const { data, error } = await supabase.from(FEE_RULES).insert({
     org_id: orgIdOf(req), scope: parsed.data.scope,
     match_value: parsed.data.matchValue ?? null,
@@ -3891,7 +3892,7 @@ const NegotiationDecisionSchema = z.object({
 
 router.post("/fees/negotiations/:negotiationId/decide", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = NegotiationDecisionSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const orgId = orgIdOf(req);
   const negotiationId = paramOf(req.params.negotiationId);
   const { data: negotiation } = await supabase.from(NEGOTIATIONS)
@@ -3950,7 +3951,7 @@ const IncidentSchema = z.object({
 
 router.post("/incidents", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = IncidentSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const { count: existingCount } = await supabase.from(INCIDENTS)
     .select("id", { count: "exact", head: true }).eq("org_id", orgIdOf(req));
   const incidentCode = `INC-${new Date().toISOString().slice(2, 10).replace(/-/g, "")}-${String((existingCount ?? 0) + 1).padStart(3, "0")}`;
@@ -4005,7 +4006,7 @@ const IncidentUpdateSchema = z.object({
 
 router.patch("/incidents/:incidentId", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = IncidentUpdateSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   const patch: Record<string, unknown> = {
     status: parsed.data.status, updated_at: new Date().toISOString()
   };
@@ -4232,7 +4233,7 @@ const PaymentStatusSchema = z.object({
 
 router.post("/cod/payments/:paymentId/status", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = PaymentStatusSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = orgIdOf(req);
     const paymentId = paramOf(req.params.paymentId);
@@ -4340,7 +4341,7 @@ const CodDiscrepancySchema = z.object({
 
 router.post("/cod/discrepancies", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = CodDiscrepancySchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const { data, error } = await supabase.from(COD_DISCREPANCIES).insert({
       org_id: orgIdOf(req), agent_id: parsed.data.agentId,
@@ -4374,7 +4375,7 @@ const ResolveDiscrepancySchema = z.object({
 
 router.post("/cod/discrepancies/:discrepancyId/resolve", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = ResolveDiscrepancySchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const patch: Record<string, unknown> = {
       status: parsed.data.status,
@@ -4469,7 +4470,7 @@ const ReportSchema = z.object({
 
 router.post("/reports-list", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   const parsed = ReportSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   try {
     const orgId = orgIdOf(req);
     const { count } = await supabase.from(REPORTS).select("id", { count: "exact", head: true }).eq("org_id", orgId);

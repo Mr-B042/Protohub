@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -59,7 +60,7 @@ router.post("/subscribe", async (req, res) => {
 
   const parsed = SubscribeSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -130,7 +131,7 @@ router.post("/subscribe", async (req, res) => {
 router.post("/native/subscribe", async (req, res) => {
   const parsed = NativeSubscribeSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
@@ -309,7 +310,7 @@ router.get("/status", async (req, res) => {
 router.post("/test", async (req, res) => {
   const parsed = TestPushSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 

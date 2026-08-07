@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import {
   SALES_BONUS_LAUNCH_WEEK_START,
@@ -132,7 +133,7 @@ const normalizeRulePatch = (body: z.infer<typeof RulePatchSchema>) => {
 router.get("/programs", coachViewer, async (req, res) => {
   const parsed = QuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   try {
@@ -146,7 +147,7 @@ router.get("/programs", coachViewer, async (req, res) => {
 router.post("/programs", ownerAdminOnly, async (req, res) => {
   const parsed = ProgramBodySchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const { data, error } = await supabase
@@ -190,7 +191,7 @@ router.patch("/programs/:id", ownerAdminOnly, async (req, res) => {
 router.delete("/programs/:id", ownerAdminOnly, async (req, res) => {
   const parsed = UuidParamsSchema.safeParse(req.params);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const now = new Date().toISOString();
@@ -209,7 +210,7 @@ router.delete("/programs/:id", ownerAdminOnly, async (req, res) => {
 router.post("/programs/:id/duplicate", ownerAdminOnly, async (req, res) => {
   const parsed = UuidParamsSchema.safeParse(req.params);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const { data: program, error: programError } = await supabase
@@ -337,7 +338,7 @@ router.patch("/rules/:id", ownerAdminOnly, async (req, res) => {
 router.delete("/rules/:id", ownerAdminOnly, async (req, res) => {
   const parsed = UuidParamsSchema.safeParse(req.params);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const now = new Date().toISOString();
@@ -356,7 +357,7 @@ router.delete("/rules/:id", ownerAdminOnly, async (req, res) => {
 router.get("/progress", coachViewer, async (req, res) => {
   const parsed = QuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   try {
@@ -404,7 +405,7 @@ const OrderBonusMapQuerySchema = z.object({
 router.get("/order-bonus-map", coachViewer, async (req, res) => {
   const parsed = OrderBonusMapQuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const dateFrom = parsed.data.dateFrom ?? SALES_BONUS_LAUNCH_WEEK_START;
@@ -423,7 +424,7 @@ router.get("/order-bonus-map", coachViewer, async (req, res) => {
 router.get("/order-bonus-settlement-map", coachViewer, async (req, res) => {
   const parsed = OrderBonusMapQuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const dateFrom = parsed.data.dateFrom ?? SALES_BONUS_LAUNCH_WEEK_START;
@@ -442,7 +443,7 @@ router.get("/order-bonus-settlement-map", coachViewer, async (req, res) => {
 router.get("/order-expansion-attribution-map", coachViewer, async (req, res) => {
   const parsed = OrderBonusMapQuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const dateFrom = parsed.data.dateFrom ?? SALES_BONUS_LAUNCH_WEEK_START;

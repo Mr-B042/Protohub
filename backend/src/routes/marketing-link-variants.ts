@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -97,7 +98,7 @@ router.get("/", requireRole(...ALLOWED_ROLES), async (req, res) => {
 
 router.post("/", requireRole(...ALLOWED_ROLES), async (req, res) => {
   const parsed = VariantSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten().fieldErrors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
   if (!await productBelongsToOrg(parsed.data.productId, req.user!.orgId)) {
     res.status(404).json({ error: "Product not found." });
     return;

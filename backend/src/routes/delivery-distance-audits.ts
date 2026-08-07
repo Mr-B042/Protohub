@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
@@ -154,7 +155,7 @@ router.get("/", requireRole("Owner", "Admin", "Manager", "Inventory Manager"), a
 router.patch("/orders/:orderId/coordinates", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
   const parsed = CoordinatePairSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const latitude = parsed.data.latitude ?? null;
@@ -180,7 +181,7 @@ router.patch("/orders/:orderId/coordinates", requireRole("Owner", "Admin", "Mana
 router.patch("/agent-locations/:locationId/coordinates", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
   const parsed = CoordinatePairSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const latitude = parsed.data.latitude ?? null;

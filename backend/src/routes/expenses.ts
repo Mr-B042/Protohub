@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
@@ -50,7 +51,7 @@ const AdSpendBatchSchema = z.object({
 router.post("/", requireRole("Owner", "Admin", "Sales Rep"), async (req, res) => {
   const parsed = ExpenseSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
   const d = parsed.data;
@@ -80,7 +81,7 @@ router.post("/", requireRole("Owner", "Admin", "Sales Rep"), async (req, res) =>
 router.post("/batch-ad-spend", requireRole("Owner", "Admin"), async (req, res) => {
   const parsed = AdSpendBatchSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
     return;
   }
 
