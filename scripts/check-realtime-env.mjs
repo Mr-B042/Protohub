@@ -19,8 +19,14 @@
 // Local and preview builds only warn - the variables are legitimately absent
 // when running against mock data.
 
-const REQUIRED = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"];
-const missing = REQUIRED.filter((name) => !String(process.env[name] ?? "").trim());
+const has = (name) => Boolean(String(process.env[name] ?? "").trim());
+// Either key name is correct - Supabase issues publishable keys now and calls
+// the older JWT one legacy.
+const missing = [];
+if (!has("VITE_SUPABASE_URL")) missing.push("VITE_SUPABASE_URL");
+if (!has("VITE_SUPABASE_ANON_KEY") && !has("VITE_SUPABASE_PUBLISHABLE_KEY")) {
+  missing.push("VITE_SUPABASE_ANON_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY)");
+}
 
 // Vercel sets VERCEL_ENV=production for a production deployment. CI covers other
 // pipelines. Anything else is somebody building locally.
