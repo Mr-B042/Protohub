@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requireRole, invalidateUserProfile } from "../middleware/auth.js";
 import { loadAssignedAgentIdsByUser } from "../lib/user-agent-assignments.js";
 import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
 
@@ -97,6 +97,8 @@ router.patch("/:id",
       .single();
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!data) { res.status(404).json({ error: "User not found." }); return; }
+    // Role/permission edits must bite now, not after the profile cache expires.
+    invalidateUserProfile(String(req.params.id));
     res.json(data);
   }
 );

@@ -33,6 +33,9 @@ type RuntimeConnection = {
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   mode: WhatsAppPairingMode;
   pairingPhone: string | null;
+  // Consecutive failed reconnects. Drives the backoff below; reset on a
+  // successful open so a healthy account always retries fast again.
+  failedAttempts?: number;
 };
 
 type UserRuntimeConnection = RuntimeConnection & {
@@ -1931,6 +1934,23 @@ function clearReconnectTimer(connection: RuntimeConnection) {
   }
 }
 
+// An account that cannot connect used to retry every 5 seconds forever. Two
+// stuck accounts were doing that continuously - roughly 34,000 Supabase
+// reads/writes a day, the single largest source of database traffic in the
+// system, none of it doing anything but failing again.
+//
+// Backoff doubles from 5s to a 5 minute ceiling. A transient blip still
+// recovers in seconds; a genuinely broken session stops costing money to keep
+// failing. The ceiling matters more than the curve: it must keep trying, since
+// a session CAN come back on its own, but it must not do it hundreds of times
+// an hour.
+const RECONNECT_BASE_MS = 5_000;
+const RECONNECT_MAX_MS = 5 * 60_000;
+function reconnectDelayFor(connection: RuntimeConnection): number {
+  const attempts = connection.failedAttempts ?? 0;
+  return Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, Math.max(0, attempts)));
+}
+
 function scheduleReconnect(connection: RuntimeConnection, delayMs: number, orgId: string) {
   clearReconnectTimer(connection);
   connection.reconnectTimer = setTimeout(() => {
@@ -2088,6 +2108,8 @@ async function ensureConnection(orgId: string, requestedMode?: WhatsAppPairingMo
         }
 
         if (update.connection === "open") {
+          // Healthy again - the next failure starts from 5s, not the ceiling.
+          connection.failedAttempts = 0;
           clearReconnectTimer(connection);
           await updateConnectionRow(orgId, {
             connection_status: "connected",
@@ -2148,7 +2170,8 @@ async function ensureConnection(orgId: string, requestedMode?: WhatsAppPairingMo
             qr_code_data_url: null,
             pairing_code: null
           });
-          scheduleReconnect(connection, 5000, orgId);
+          connection.failedAttempts = (connection.failedAttempts ?? 0) + 1;
+          scheduleReconnect(connection, reconnectDelayFor(connection), orgId);
         }
       } catch (error) {
         logger.warn("whatsapp connection update handler failed", {
@@ -2230,6 +2253,8 @@ async function ensureUserConnection(orgId: string, userId: string, requestedMode
         }
 
         if (update.connection === "open") {
+          // Healthy again - the next failure starts from 5s, not the ceiling.
+          connection.failedAttempts = 0;
           clearUserReconnectTimer(connection);
           await updateUserConnectionRow(orgId, userId, {
             connection_status: "connected",
@@ -2288,7 +2313,8 @@ async function ensureUserConnection(orgId: string, userId: string, requestedMode
             qr_code_data_url: null,
             pairing_code: null
           });
-          scheduleUserReconnect(connection, 5000);
+          connection.failedAttempts = (connection.failedAttempts ?? 0) + 1;
+          scheduleUserReconnect(connection, reconnectDelayFor(connection));
         }
       } catch (error) {
         logger.warn("user whatsapp connection update handler failed", {

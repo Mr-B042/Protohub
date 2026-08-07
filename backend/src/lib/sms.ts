@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
+import { TtlCache } from "./ttl-cache.js";
 import { sendLowSmsBalanceEmail } from "./mailer.js";
 import { DEFAULT_WORKING_DAYS, isWithinWorkingSchedule, nextWorkingScheduleAt, normalizeWorkingDays } from "./business-schedule.js";
 
@@ -657,7 +658,20 @@ async function loadAssignedRepContact(orgId: string, assignedRepId?: string | nu
   };
 }
 
+// Two of the four heaviest reads in the whole system lived here: this ran per
+// SMS evaluation and fetched sms_settings AND organizations every time -
+// 21,765 + a large share of 23,200 reads a day of rows edited by hand now and
+// then. Held for 60 seconds; a settings change lands within a minute.
+const smsSettingsCache = new TtlCache<SmsSettings | null>(60_000);
+export function invalidateSmsSettings(orgId: string): void {
+  smsSettingsCache.invalidate(orgId);
+}
+
 async function loadSettings(orgId: string): Promise<SmsSettings | null> {
+  return smsSettingsCache.get(orgId, () => loadSettingsUncached(orgId));
+}
+
+async function loadSettingsUncached(orgId: string): Promise<SmsSettings | null> {
   const [{ data, error }, { data: org }] = await Promise.all([
     supabase
       .from("sms_settings")
