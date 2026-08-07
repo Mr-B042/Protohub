@@ -522,6 +522,7 @@ router.post("/:token", submitLimiter, async (req, res) => {
         years_known: g.yearsKnown ?? null,
         reference_statement: g.referenceStatement ?? null,
         id_document_url: g.idDocumentPath ?? null,
+        photo_url: g.photoPath ?? null,
         // The applicant SAYS they consented; nobody has verified it. Consent is
         // confirmed on the guarantor call, not by the person who benefits.
         consent_given: false,

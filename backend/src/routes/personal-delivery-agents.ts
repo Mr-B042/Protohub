@@ -2199,11 +2199,15 @@ router.post("/:id/guarantors", requireRole(...MANAGEMENT_ROLES), async (req, res
       whatsapp_phone: parsed.data.whatsappPhone ?? null,
       address: parsed.data.address ?? null,
       occupation: parsed.data.occupation ?? null,
-      id_document_url: parsed.data.idDocumentPath ?? null,
-      photo_url: parsed.data.photoPath ?? null,
-      signed_form_url: parsed.data.signedFormPath ?? null,
       consent_given: parsed.data.consentGiven ?? false,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      // Files are only touched when the caller actually sends one. This is an
+      // upsert, so writing `?? null` here meant editing a guarantor's phone
+      // number silently deleted their photo and ID - a destructive side effect
+      // of an unrelated edit, and unrecoverable.
+      ...(parsed.data.idDocumentPath !== undefined ? { id_document_url: parsed.data.idDocumentPath || null } : {}),
+      ...(parsed.data.photoPath !== undefined ? { photo_url: parsed.data.photoPath || null } : {}),
+      ...(parsed.data.signedFormPath !== undefined ? { signed_form_url: parsed.data.signedFormPath || null } : {})
     };
     const { data, error } = await supabase.from(GUARANTORS)
       .upsert(payload, { onConflict: "agent_id,slot" }).select("*").single();
