@@ -12363,7 +12363,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     // spent by then - so the interval itself is the thing that has to be
     // sensible. Assigning or converting a cart refreshes the list directly,
     // so this is a safety net, not the main path.
-    const handle = window.setInterval(pull, 45_000);
+    // Realtime now delivers cart inserts, updates and deletes as they happen -
+    // the replication slot is active and caught up - so this full-list pull is a
+    // reconciliation net for websocket gaps, not the mechanism. At 45s it was
+    // re-fetching every cart (~2,100 rows) 1,920 times a day per open tab, the
+    // most expensive thing left after the caching work. Five minutes still
+    // repairs a gap long before anybody notices one.
+    const handle = window.setInterval(pull, 5 * 60_000);
     return () => { cancelled = true; window.clearInterval(handle); };
   }, [activePage]);
 
@@ -25151,7 +25157,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         });
       } catch { /* silent - polling failure shouldn't disrupt the UI */ }
     };
-    const id = setInterval(poll, 30_000);
+    // Same reasoning as the cart pull: realtime carries status changes and edits
+    // live now, so this is the backfill for a dropped socket rather than the way
+    // updates arrive. Incremental (updatedSince) so it was never expensive, but
+    // there is no reason to ask every 30 seconds for what is already pushed.
+    const id = setInterval(poll, 3 * 60_000);
     return () => clearInterval(id);
   }, []);
 
