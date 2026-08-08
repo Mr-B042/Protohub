@@ -11846,6 +11846,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [receiptHistoryFilter, setReceiptHistoryFilter] = useState<"all" | "received" | "reversals">("all");
   // Batch modal: the long-form rules and the per-order allocation both stay
   // available, but folded away so the number entry is what you land on.
+  // The batch modal doubles as the way into a SINGLE order's remittance. Both
+  // were always possible, but the per-order one lived in a table further down
+  // the page, so recording one order meant closing this, scrolling and hunting.
+  const [remittanceModalMode, setRemittanceModalMode] = useState<"batch" | "single">("batch");
+  const [remittanceSingleSearch, setRemittanceSingleSearch] = useState("");
   const [batchRulesOpen, setBatchRulesOpen] = useState(false);
   const [batchAllocationOpen, setBatchAllocationOpen] = useState(false);
   // Partner receivable table: status tab, sort and paging.
@@ -19648,6 +19653,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     openFinanceRemittanceRoute(order.id);
   };
   const openRecordBatchRemittance = (partnerKey: string) => {
+    setRemittanceModalMode("batch");
+    setRemittanceSingleSearch("");
     setRemittanceBatchPartnerKeyValue(partnerKey);
     setRemittanceBatchAmount("");
     setRemittanceBatchReceivedDate(todayKey());
@@ -84950,7 +84957,7 @@ ${waybillLineItems(w).length > 1
 	                      <ClipboardCheck className="h-5 w-5" />
 	                    </span>
 	                    <span className="flex min-w-0 flex-col">
-	                      <span className="text-lg font-bold leading-tight">Record Batch Remittance</span>
+	                      <span className="text-lg font-bold leading-tight">{remittanceModalMode === "single" ? "Record Remittance" : "Record Batch Remittance"}</span>
 	                      <span className="flex flex-wrap items-center gap-2">
 	                        <span className="truncate text-xs font-normal text-gray-500 dark:text-slate-400">{remittanceBatchTargetRow.partnerName}</span>
 	                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
@@ -92972,6 +92979,80 @@ ${waybillLineItems(w).length > 1
                     </div>
                   )}
 
+                  {/* One modal, two jobs. Recording a single order was only
+                      reachable from a table further down the page, so doing it
+                      meant closing this, scrolling and hunting for the row. The
+                      partner and their orders are already loaded here. */}
+                  <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 dark:border-slate-700/80 dark:bg-slate-800/40">
+                    {([
+                      { key: "batch" as const, label: "Whole batch", hint: `${remittanceBatchOrders.length} order${remittanceBatchOrders.length === 1 ? "" : "s"} at once` },
+                      { key: "single" as const, label: "One order", hint: "Pick a single order" }
+                    ]).map((tab) => (
+                      <button
+                        key={tab.key}
+                        className={`!min-h-0 flex-1 rounded-lg px-3 py-2 text-left transition-colors ${remittanceModalMode === tab.key ? "bg-white shadow-sm dark:bg-[#0f1822]" : "hover:bg-white/60 dark:hover:bg-slate-800"}`}
+                        onClick={() => setRemittanceModalMode(tab.key)}
+                        aria-pressed={remittanceModalMode === tab.key}
+                      >
+                        <span className={`block text-sm font-bold ${remittanceModalMode === tab.key ? "text-gray-900 dark:text-slate-50" : "text-gray-500 dark:text-slate-400"}`}>{tab.label}</span>
+                        <span className="block text-[11px] text-gray-400 dark:text-slate-500">{tab.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {remittanceModalMode === "single" && (() => {
+                    const query = remittanceSingleSearch.trim().toLowerCase();
+                    const matches = remittanceBatchOrders.filter((order) => !query
+                      || `${order.id} ${order.customer} ${order.phone ?? ""} ${order.productName ?? ""}`.toLowerCase().includes(query));
+                    return (
+                      <section className="space-y-3">
+                        <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-[#1F8FE0] dark:border-slate-700 dark:bg-[#0f1822]">
+                          <Search className="h-4 w-4 shrink-0 text-gray-400" />
+                          <input
+                            className="!min-h-0 w-full border-0 bg-transparent p-0 text-sm outline-none focus:ring-0 dark:text-slate-100"
+                            value={remittanceSingleSearch}
+                            onChange={(event) => setRemittanceSingleSearch(event.target.value)}
+                            placeholder="Search this partner's orders by id, customer or phone..."
+                          />
+                        </label>
+                        {matches.length === 0 ? (
+                          <p className="m-0 py-8 text-center text-sm italic text-gray-400">
+                            {remittanceBatchOrders.length === 0 ? "This partner has nothing outstanding." : "No order here matches that search."}
+                          </p>
+                        ) : (
+                          <div className="max-h-80 divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-200 dark:divide-slate-800 dark:border-slate-700/80">
+                            {matches.map((order) => (
+                              <div key={order.id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
+                                <div className="min-w-[150px] flex-1">
+                                  <div className="text-[13px] font-bold text-gray-900 dark:text-slate-100">{order.customer}</div>
+                                  <div className="text-[11px] text-gray-400">
+                                    {order.id} · {order.deliveredDate ?? orderCreatedKey(order) ?? "no delivered date"}
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <span className="block text-[10px] uppercase tracking-wider text-gray-400">Outstanding</span>
+                                  <span className="block text-sm font-bold text-amber-700 dark:text-amber-300">
+                                    {formatProductMoney(orderRemittanceOutstanding(order), order.currency)}
+                                  </span>
+                                </div>
+                                <button
+                                  className="!min-h-0 shrink-0 rounded-md bg-[#1F8FE0] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#1560a8]"
+                                  onClick={() => openRecordRemittance(order)}
+                                >
+                                  Record cash
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="m-0 text-[11px] text-gray-400 dark:text-slate-500">
+                          Opens the same single-order form as the Delivered Orders table - the amount, the variance reason and the approval rules are identical, so nothing behaves differently for being reached from here.
+                        </p>
+                      </section>
+                    );
+                  })()}
+
+                  {remittanceModalMode === "batch" && (<>
                   {/* 1 - the number */}
                   <section>
                     <div className="flex items-center gap-2.5">
@@ -93181,6 +93262,7 @@ ${waybillLineItems(w).length > 1
                       </p>
                     )}
                   </section>
+                  </>)}
 
                   <div className="flex flex-col-reverse items-stretch gap-3 border-t border-gray-100 pt-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
                     <span className="flex items-center gap-2 text-[11px] text-gray-400 dark:text-slate-500">
@@ -93188,6 +93270,10 @@ ${waybillLineItems(w).length > 1
                     </span>
                     <span className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
                       <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-5 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto" onClick={closeModal}>Cancel</button>
+                      {/* Nothing to save in single mode - each row saves itself
+                          through the per-order form, so a Save Batch button here
+                          would only be a way to bank the wrong thing. */}
+                      {remittanceModalMode === "batch" && (
                       <button
                         className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                         onClick={recordBatchRemittance}
@@ -93196,6 +93282,7 @@ ${waybillLineItems(w).length > 1
                         <Lock className="h-3.5 w-3.5" />
                         {remittanceBatchNeedsOwnerApproval ? "Admin / Owner Approval Required" : remittanceBatchOwnerApprovalGranted ? "Approve & Save Batch" : remittanceBatchVariancePending ? "Save Batch (pending Owner approval)" : "Save Batch Remittance"}
                       </button>
+                      )}
                     </span>
                   </div>
                 </div>
