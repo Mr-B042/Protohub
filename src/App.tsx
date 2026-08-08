@@ -11852,6 +11852,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [remittanceModalMode, setRemittanceModalMode] = useState<"batch" | "single">("batch");
   // Which order the batch modal is currently recording inline. null = show the list.
   const [remittanceSingleSelectedId, setRemittanceSingleSelectedId] = useState<string | null>(null);
+  // True from an inline single save until the finance data behind the batch view
+  // has caught up. See the comment in recordRemittance for why this matters.
+  const [remittanceBatchRefreshing, setRemittanceBatchRefreshing] = useState(false);
   const [remittanceSingleSearch, setRemittanceSingleSearch] = useState("");
   const [batchRulesOpen, setBatchRulesOpen] = useState(false);
   const [batchAllocationOpen, setBatchAllocationOpen] = useState(false);
@@ -19631,7 +19634,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       notes: [orderTimelineNote(`Remittance updated - logistics ${formatMoney(newLogistics)}, received ${formatMoney(newRemitted)} on ${remittanceReceivedDate}, ${status.toLowerCase()}.${varianceNote}`), ...orderNotesFor(o)]
     } : o));
     syncOrderDeliveryExpense({ ...order, logisticsCost: newLogistics });
-    if (options?.stayInModal) setRemittanceSingleSelectedId(null); else closeModal();
+    if (options?.stayInModal) {
+      setRemittanceSingleSelectedId(null);
+      setRemittanceBatchRefreshing(true);
+    } else {
+      closeModal();
+    }
     setRemittanceAmount("");
     setRemittanceLogisticsCost("");
     setRemittanceReceivedDate(todayKey());
@@ -19639,11 +19647,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRemittanceVarianceNote("");
     showToast(`${order.id} remittance saved for ${remittanceReceivedDate} (${status}).${hasVariance ? (isOwnerVariance ? " Owner approval recorded." : " Sent to the Owner for approval.") : ""}${variance > 0 ? ` Excess ${formatMoney(variance)} recorded.` : ""}${newLogistics > 0 ? ` Delivery cost ${formatMoney(newLogistics)} booked to expenses.` : ""}`);
     ordersApi.update(order.id, { logistics_cost: newLogistics, amount_remitted: newRemitted, remittance_status: status, remittance_received_at: remittanceReceivedDate, remittance_reason: approvedRemittanceReason }).then(() => {
-      void loadFinanceSummaryData({ quiet: true });
-      void loadFinanceRemittanceData({ quiet: true });
-      void loadWeeklyAccountingData({ quiet: true });
+      // The batch view is built from financeSummaryData - server-loaded - not
+      // from trackedOrders, so the optimistic update above does NOT move its
+      // outstanding total. Until these land it still shows the pre-save figure,
+      // and typing that into the batch form would bank this cash a second time.
+      // recordRemittance's caller holds the batch save until this resolves.
+      void Promise.all([
+        loadFinanceSummaryData({ quiet: true }),
+        loadFinanceRemittanceData({ quiet: true }),
+        loadWeeklyAccountingData({ quiet: true })
+      ]).finally(() => setRemittanceBatchRefreshing(false));
     }).catch((err: any) => {
       setTrackedOrders(prevOrders);
+      setRemittanceBatchRefreshing(false);
       showToast(`Failed to save remittance: ${err.message}`);
     });
   };
@@ -19670,6 +19686,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setRemittanceModalMode("batch");
     setRemittanceSingleSearch("");
     setRemittanceSingleSelectedId(null);
+    setRemittanceBatchRefreshing(false);
     setRemittanceBatchPartnerKeyValue(partnerKey);
     setRemittanceBatchAmount("");
     setRemittanceBatchReceivedDate(todayKey());
@@ -19680,6 +19697,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const recordBatchRemittance = async () => {
     if (!remittanceBatchTargetRow) {
       showToast("Partner batch not found.");
+      return;
+    }
+    // Backstop for the disabled button: the outstanding total this batch would
+    // allocate against is still the pre-save one until the reload lands.
+    if (remittanceBatchRefreshing) {
+      showToast("Still updating the batch totals after that single order. Give it a second so this cash is not counted twice.");
       return;
     }
     if (remittanceBatchOrders.length === 0) {
@@ -59204,6 +59227,15 @@ ${waybillLineItems(w).length > 1
   };
 
   const dismissModal = () => {
+    // Closing the single-order form inside the batch modal steps back to the
+    // whole batch instead of throwing the partner and their other orders away.
+    // Every close route funnels through here - the X, Escape, the backdrop and
+    // the Cancel button - so one guard covers all of them. A second close exits.
+    if (modal === "recordBatchRemittance" && remittanceBatchOrders.some((order) => order.id === remittanceSingleSelectedId)) {
+      setRemittanceSingleSelectedId(null);
+      setRemittanceModalMode("batch");
+      return;
+    }
     const modalBeforeClose = modal;
     const shouldReturnToOrderDetails = orderActionReturnTarget === "details";
     const orderActionModalTypes: ModalType[] = ["editOrderItems", "editOrderCustomer", "reassignOrder", "sendToAgent", "deleteOrder", "changeOrderStatus", "scheduleOrder", "addCrossSell", "addFreeGift", "manualBonus"];
@@ -85240,7 +85272,7 @@ ${waybillLineItems(w).length > 1
 	                {modal === "editSalesRep" && "Edit Sales Rep"}
 	                {modal === "recordRemittance" && remittanceTargetOrder && (
 	                  <span className="flex items-center gap-3">
-	                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
+	                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#1F8FE0] text-white">
 	                      <HandCoins className="h-5 w-5" />
 	                    </span>
 	                    <span className="flex min-w-0 flex-col">
@@ -85259,7 +85291,7 @@ ${waybillLineItems(w).length > 1
 	                )}
 	                {modal === "recordBatchRemittance" && remittanceBatchTargetRow && (
 	                  <span className="flex items-center gap-3">
-	                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
+	                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#1F8FE0] text-white">
 	                      <ClipboardCheck className="h-5 w-5" />
 	                    </span>
 	                    <span className="flex min-w-0 flex-col">
@@ -93246,9 +93278,12 @@ ${waybillLineItems(w).length > 1
                             <span className="text-[11px] text-gray-400">{selected.deliveredDate ? `Delivered ${displayDateFromKey(selected.deliveredDate)}` : "Not delivered yet"}</span>
                           </div>
                           {renderRemittanceFormBody(selected, st)}
+                          {/* Two different exits, each labelled with where it
+                              goes: the chevron above returns to the order list,
+                              this one steps out to the whole batch. */}
                           {renderRemittanceFormFooter(selected, st, {
-                            onCancel: () => setRemittanceSingleSelectedId(null),
-                            cancelLabel: "Back to list",
+                            onCancel: () => { setRemittanceSingleSelectedId(null); setRemittanceModalMode("batch"); },
+                            cancelLabel: "Back to whole batch",
                             stayInModal: true
                           })}
                         </div>
@@ -93306,6 +93341,17 @@ ${waybillLineItems(w).length > 1
                   })()}
 
                   {remittanceModalMode === "batch" && (<>
+                  {/* These totals come from the server, not from the order we
+                      just saved locally, so for one round-trip they still read
+                      pre-save. Saying so - and holding the save - is the whole
+                      reason someone cannot bank the same cash twice by going
+                      One order, then Whole batch. */}
+                  {remittanceBatchRefreshing && (
+                    <p className="m-0 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+                      <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+                      <span><strong>Updating these totals.</strong> You just recorded an order on its own - the outstanding figure above is still the one from before that save. Saving a batch now would count that cash twice, so it is held for a moment.</span>
+                    </p>
+                  )}
                   {/* 1 - the number */}
                   <section>
                     <div className="flex items-center gap-2.5">
@@ -93531,10 +93577,10 @@ ${waybillLineItems(w).length > 1
                       <button
                         className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                         onClick={recordBatchRemittance}
-                        disabled={remittanceBatchNeedsOwnerApproval}
+                        disabled={remittanceBatchNeedsOwnerApproval || remittanceBatchRefreshing}
                       >
-                        <Lock className="h-3.5 w-3.5" />
-                        {remittanceBatchNeedsOwnerApproval ? "Admin / Owner Approval Required" : remittanceBatchOwnerApprovalGranted ? "Approve & Save Batch" : remittanceBatchVariancePending ? "Save Batch (pending Owner approval)" : "Save Batch Remittance"}
+                        {remittanceBatchRefreshing ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Lock className="h-3.5 w-3.5" />}
+                        {remittanceBatchRefreshing ? "Updating totals..." : remittanceBatchNeedsOwnerApproval ? "Admin / Owner Approval Required" : remittanceBatchOwnerApprovalGranted ? "Approve & Save Batch" : remittanceBatchVariancePending ? "Save Batch (pending Owner approval)" : "Save Batch Remittance"}
                       </button>
                       )}
                     </span>
