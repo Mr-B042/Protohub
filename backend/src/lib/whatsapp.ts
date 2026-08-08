@@ -2195,7 +2195,32 @@ export async function sendCartRecoveryWhatsApp(orgId: string, cart: Record<strin
  * to orders first and skip this.)
  */
 const CART_RECOVERY_RECENCY_MINUTES = 60;
+
+/**
+ * Cheap "is cart recovery even on" check, so the cron can leave without
+ * touching abandoned_carts. Returns null when nothing would be sent anyway.
+ */
+async function loadCartRecoveryGateSettings(): Promise<WhatsAppSettings | null> {
+  const { data: orgs } = await supabase.from("whatsapp_settings").select("org_id").eq("enabled", true).limit(1);
+  const orgId = orgs?.[0]?.org_id;
+  if (!orgId) return null;
+  const settings = await loadSettings(orgId);
+  if (!isConnected(settings)) return null;
+  if (!settings?.triggers?.cart_recovery) return null;
+  return settings;
+}
+
 export async function runCartRecoveryWhatsApp(): Promise<void> {
+  // Gate BEFORE the query, not per cart. isConnected + the cart_recovery
+  // trigger were only checked inside sendCartRecoveryWhatsApp, which runs after
+  // the search - so with the trigger off (it has been since the number was
+  // restricted) and WhatsApp disconnected, this still ran a compound query over
+  // abandoned_carts every minute, 1,440 times a day, to hand the results to a
+  // function that returned immediately. loadSettings is cached, so the check
+  // itself costs nothing.
+  const orgSettings = await loadCartRecoveryGateSettings();
+  if (!orgSettings) return;
+
   const now = Date.now();
   const idleCutoff = new Date(now - 5 * 60 * 1000).toISOString();
   const leftCutoff = new Date(now - 3 * 60 * 1000).toISOString();
