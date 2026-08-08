@@ -263,7 +263,23 @@ app.get("/health", (_req, res) => {
     dataMode: DATA_PROFILE.dataMode,
     localSandbox: DATA_PROFILE.localSandbox,
     backgroundJobsEnabled: ENABLE_BACKGROUND_JOBS,
-    whatsappRuntimeEnabled: ENABLE_WHATSAPP_RUNTIME
+    whatsappRuntimeEnabled: ENABLE_WHATSAPP_RUNTIME,
+    // Memory is the largest line on the Railway bill - charged per GB per
+    // minute the container runs - and there was no way to see it without
+    // reading it off a graph. rss is what Railway actually bills; heapUsed says
+    // how much of that is live JavaScript, which is what separates a leak from
+    // a library that is simply large.
+    memory: (() => {
+      const usage = process.memoryUsage();
+      const mb = (bytes: number) => Math.round(bytes / 1024 / 1024);
+      return {
+        rssMb: mb(usage.rss),
+        heapUsedMb: mb(usage.heapUsed),
+        heapTotalMb: mb(usage.heapTotal),
+        externalMb: mb(usage.external),
+        uptimeMinutes: Math.round(process.uptime() / 60)
+      };
+    })()
   });
 });
 
