@@ -84871,7 +84871,7 @@ ${waybillLineItems(w).length > 1
         return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section
-            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" ? "max-w-5xl" :modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
+            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" ? "max-w-5xl" :modal === "recordRemittance" || modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
             role="dialog" aria-modal="true" aria-labelledby="modal-title"
           >
@@ -84950,7 +84950,25 @@ ${waybillLineItems(w).length > 1
 	                {modal === "deleteAgent" && "Delete Agent"}
 	                {modal === "salesRepDetails" && "Sales Rep Profile"}
 	                {modal === "editSalesRep" && "Edit Sales Rep"}
-	                {modal === "recordRemittance" && remittanceTargetOrder && `Record Remittance - ${remittanceTargetOrder.id}`}
+	                {modal === "recordRemittance" && remittanceTargetOrder && (
+	                  <span className="flex items-center gap-3">
+	                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
+	                      <HandCoins className="h-5 w-5" />
+	                    </span>
+	                    <span className="flex min-w-0 flex-col">
+	                      <span className="text-lg font-bold leading-tight">Record Remittance</span>
+	                      <span className="flex flex-wrap items-center gap-2">
+	                        <span className="truncate text-xs font-normal text-gray-500 dark:text-slate-400">{remittanceTargetOrder.customer}</span>
+	                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+	                          <ShoppingCart className="h-3 w-3" />{remittanceTargetOrder.id}
+	                        </span>
+	                        <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600 dark:bg-slate-800 dark:text-slate-300">
+	                          <Truck className="h-3 w-3" />{agents.find((a) => a.id === remittanceTargetOrder.agentId)?.name ?? "Unassigned"}
+	                        </span>
+	                      </span>
+	                    </span>
+	                  </span>
+	                )}
 	                {modal === "recordBatchRemittance" && remittanceBatchTargetRow && (
 	                  <span className="flex items-center gap-3">
 	                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
@@ -92831,95 +92849,244 @@ ${waybillLineItems(w).length > 1
               const ownerApprovalGranted = hasVariance && currentRole === "Owner";
               const adminVariancePending = hasVariance && currentRole === "Admin";
               const ownerApprovalRequired = hasVariance && currentRole !== "Owner" && currentRole !== "Admin";
+              const cur = remittanceTargetOrder.currency;
+              const money = (value: number) => formatProductMoney(value, cur);
+              const partnerName = agents.find((a) => a.id === remittanceTargetOrder.agentId)?.name ?? "Unassigned";
+              const storedRemitted = orderAmountRemitted(remittanceTargetOrder);
+              const orderReceipts = financeRemittanceReceiptsByOrderId.get(remittanceTargetOrder.id) ?? [];
+              const outstandingAfter = Math.max(0, expectedValue - receivedValue);
+              const enteredCash = remittanceAmount.trim().length > 0;
+              const stepBadge = (n: number) => (
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-[11px] font-bold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">{n}</span>
+              );
               return (
-                <div className="modal-form">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Customer</span><strong className="text-sm font-semibold text-gray-900">{remittanceTargetOrder.customer}</strong></article>
-                    <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Order Amount</span><strong className="text-sm font-semibold text-gray-900">{formatProductMoney(remittanceTargetOrder.amount, remittanceTargetOrder.currency)}</strong></article>
-                    <article className="bg-gray-50 rounded-xl p-3 flex flex-col gap-0.5"><span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Partner</span><strong className="text-sm font-semibold text-gray-900">{agents.find((a) => a.id === remittanceTargetOrder.agentId)?.name ?? "Unassigned"}</strong></article>
-                  </div>
-                  <label>
-                    <span>Logistics Cost (paid to partner)</span>
-                    <input value={remittanceLogisticsCost} onChange={(e) => setRemittanceLogisticsCost(e.target.value)} inputMode="decimal" placeholder="e.g. 4000" />
-                  </label>
-                  <label>
-                    <span>Amount Remitted (cash actually received from partner)</span>
-                    <input value={remittanceAmount} onChange={(e) => setRemittanceAmount(e.target.value)} inputMode="decimal" placeholder="e.g. 61500" />
-                  </label>
-                  <label>
-                    <span>Cash Received Date</span>
-                    <input type="date" value={remittanceReceivedDate} onChange={(e) => setRemittanceReceivedDate(e.target.value)} />
-                  </label>
-                  <div className={`rounded-xl border px-3 py-3 text-sm ${isShort ? "border-amber-200 bg-amber-50 text-amber-900" : isExcess ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-gray-200 bg-gray-50 text-gray-600"}`}>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Expected</span><strong>{formatProductMoney(expectedValue, remittanceTargetOrder.currency)}</strong></div>
-                      <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Received</span><strong>{formatProductMoney(receivedValue, remittanceTargetOrder.currency)}</strong></div>
-                      <div><span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">Difference</span><strong>{isShort ? `Short ${formatProductMoney(Math.abs(variance), remittanceTargetOrder.currency)}` : isExcess ? `Excess ${formatProductMoney(variance, remittanceTargetOrder.currency)}` : "Balanced"}</strong></div>
+                <div className="px-6 py-5 space-y-5">
+                  {/* Where this one order stands before any number is typed -
+                      same opening strip as the batch modal, scoped to an order. */}
+                  <div className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 dark:border-slate-700/80 dark:bg-slate-700/80 sm:grid-cols-[1.4fr_1fr_1fr_auto]">
+                    <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Outstanding (to receive)</span>
+                      <span className="mt-1 block text-3xl font-bold leading-tight text-emerald-600 dark:text-emerald-300">{money(outstandingAfter)}</span>
+                      <span className="mt-1 block text-[11px] text-gray-400 dark:text-slate-500">Still owed on this order</span>
                     </div>
-                    <p className="m-0 mt-2 text-xs">
-                      {isShort
-                        ? ownerApprovalRequired
-                          ? "Cash is below expected. Only an Admin or the Owner can record this."
-                          : "Cash is below expected. Select why before saving."
-                        : isExcess
-                          ? ownerApprovalRequired
-                            ? "Extra cash found. Only an Admin or the Owner can record this."
-                            : "Extra cash will be recorded on this order."
-                          : "Cash received matches the expected remittance."}
+                    <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Already received</span>
+                      <span className="mt-1 block text-lg font-bold leading-tight text-gray-900 dark:text-slate-50">{money(storedRemitted)}</span>
+                      <span className="mt-1 block text-[11px] text-gray-400 dark:text-slate-500">Banked against this order so far</span>
+                    </div>
+                    <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Order amount</span>
+                      <span className="mt-1 block text-lg font-bold leading-tight text-gray-900 dark:text-slate-50">{money(remittanceTargetOrder.amount)}</span>
+                      <span className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-400 dark:text-slate-500">
+                        <CalendarDays className="h-3.5 w-3.5 shrink-0" />
+                        {remittanceTargetOrder.deliveredDate ? `Delivered ${displayDateFromKey(remittanceTargetOrder.deliveredDate)}` : "Not delivered yet"}
+                      </span>
+                    </div>
+                    <div className="flex items-center bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                      {/* The receipt trail for this exact order - the same history the
+                          Received column links to, so you can check what was already
+                          logged without leaving the form you are about to save. */}
+                      <button
+                        className="!min-h-0 inline-flex w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-200 dark:hover:bg-slate-800"
+                        onClick={() => openReceiptHistory({ label: `Order ${remittanceTargetOrder.id}`, orderId: remittanceTargetOrder.id })}
+                        disabled={orderReceipts.length === 0}
+                        title={orderReceipts.length === 0 ? "No cash has been logged on this order yet" : "See every receipt logged on this order"}
+                      >
+                        <ReceiptText className="h-3.5 w-3.5" />
+                        {orderReceipts.length === 0 ? "No receipts" : `${orderReceipts.length} receipt${orderReceipts.length === 1 ? "" : "s"}`}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* A Failed/Cancelled delivery collected nothing, so expected is
+                      zero. Saying so up front stops the maths below reading as a
+                      shortage the recorder has to justify. */}
+                  {isFailedOrder && (
+                    <p className="m-0 flex items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs text-gray-600 dark:border-slate-700/80 dark:bg-slate-800/40 dark:text-slate-300">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />
+                      <span>This order is <strong>{remittanceTargetOrder.status}</strong>, so no cash was collected and nothing is expected. Anything entered below counts as excess.</span>
                     </p>
-                    {ownerApprovalGranted && <p className="m-0 mt-1 text-xs font-semibold">Owner approval: saving will approve and record this variance.</p>}
-                    {adminVariancePending && <p className="m-0 mt-1 text-xs font-semibold">Saving records this cash now and sends the variance to the Owner to approve.</p>}
-                    {ownerApprovalRequired && <p className="m-0 mt-1 text-xs font-semibold">This save is locked - only an Admin or the Owner can record cash variance.</p>}
-                  </div>
-                  {isShort && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <label>
-                        <span>Reason for short cash *</span>
-                        <select value={remittanceVarianceReason} onChange={(e) => setRemittanceVarianceReason(e.target.value)}>
-                          <option value="">Select a reason...</option>
-                          {remittanceShortCashReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
-                        </select>
-                      </label>
-                      <label>
-                        <span>Reason note {remittanceVarianceReason === "correction" ? "*" : "(optional)"}</span>
-                        <input value={remittanceVarianceNote} onChange={(e) => setRemittanceVarianceNote(e.target.value)} placeholder="e.g. waybill deducted, customer paid less..." />
-                      </label>
-                    </div>
                   )}
-                  {isExcess && (
-                    <div className="flex flex-col gap-2">
-                      <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 m-0">
-                        <strong>How excess cash works:</strong> the partner paid <strong>{formatProductMoney(variance, remittanceTargetOrder.currency)}</strong> more than this order owed. The full {formatProductMoney(receivedValue, remittanceTargetOrder.currency)} is booked as cash received, and the extra is logged on its own as owner-approved excess - never mixed into the short-cash reasons. Pick why below.
-                      </p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <label>
-                          <span>Reason for excess cash *</span>
-                          <select value={remittanceVarianceReason} onChange={(e) => setRemittanceVarianceReason(e.target.value)}>
-                            <option value="">Select a reason...</option>
-                            {remittanceExcessCashReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
-                          </select>
-                        </label>
-                        <label>
-                          <span>Reason note {remittanceVarianceReason === "correction" ? "*" : "(optional)"}</span>
-                          <input value={remittanceVarianceNote} onChange={(e) => setRemittanceVarianceNote(e.target.value)} placeholder="e.g. customer overpaid, agent repaid an earlier shortage..." />
-                        </label>
+
+                  {/* 1 - the fee comes first because it decides what "expected" even is */}
+                  <section>
+                    <div className="flex items-center gap-2.5">
+                      {stepBadge(1)}
+                      <div>
+                        <h3 className="m-0 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">Logistics Cost <span className="font-normal text-gray-400 dark:text-slate-500">(paid to {partnerName})</span></h3>
+                        <p className="m-0 text-[11px] text-gray-400 dark:text-slate-500">What the partner keeps. Enter a real waybill or delivery fee here instead of logging it as short cash.</p>
                       </div>
                     </div>
+                    <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_260px]">
+                      <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-[#0f1822]">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-base font-bold text-gray-500 dark:bg-slate-800 dark:text-slate-300">{productCurrencies[cur]?.symbol ?? "₦"}</span>
+                        <input
+                          className="!min-h-0 w-full min-w-0 border-0 bg-transparent p-0 text-2xl font-bold tabular-nums text-gray-900 outline-none placeholder:text-gray-300 focus:ring-0 dark:text-slate-50"
+                          value={remittanceLogisticsCost}
+                          onChange={(event) => setRemittanceLogisticsCost(event.target.value)}
+                          inputMode="decimal"
+                          placeholder="0"
+                          aria-label="Logistics cost paid to the partner"
+                        />
+                      </div>
+                      <div className="rounded-xl border border-gray-200 px-4 py-3 dark:border-slate-700/80">
+                        <span className="block text-[11px] font-semibold text-gray-600 dark:text-slate-300">Expected cash after this fee</span>
+                        <span className="mt-0.5 block text-lg font-bold text-gray-900 dark:text-slate-50">{money(expectedValue)}</span>
+                        <span className="mt-0.5 block text-[10px] text-gray-400 dark:text-slate-500">
+                          {isFailedOrder ? "Nothing is expected on a failed delivery." : `${money(remittanceTargetOrder.amount)} order - ${money(logisticsValue)} fee`}
+                        </span>
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* 2 - the number */}
+                  <section>
+                    <div className="flex items-center gap-2.5">
+                      {stepBadge(2)}
+                      <div>
+                        <h3 className="m-0 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">Cash Received</h3>
+                        <p className="m-0 text-[11px] text-gray-400 dark:text-slate-500">The <strong>running total</strong> received on this order, not just today&apos;s hand-over.</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_260px]">
+                      <div className={`flex items-center gap-3 rounded-xl border-2 px-3 py-2.5 transition-colors ${enteredCash ? "border-emerald-500 bg-white dark:bg-[#0f1822]" : "border-gray-200 bg-white dark:border-slate-700 dark:bg-[#0f1822]"}`}>
+                        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-xl font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{productCurrencies[cur]?.symbol ?? "₦"}</span>
+                        <input
+                          className="!min-h-0 w-full min-w-0 border-0 bg-transparent p-0 text-4xl font-bold tabular-nums text-gray-900 outline-none placeholder:text-gray-300 focus:ring-0 dark:text-slate-50"
+                          value={remittanceAmount}
+                          onChange={(event) => setRemittanceAmount(event.target.value)}
+                          inputMode="decimal"
+                          placeholder="0"
+                          aria-label="Total cash received from the partner on this order"
+                        />
+                        {enteredCash && <CheckCircle2 className="h-6 w-6 shrink-0 text-emerald-500" />}
+                      </div>
+                      <div className="rounded-xl border border-gray-200 px-4 py-3 dark:border-slate-700/80">
+                        <label className="!block">
+                          <span className="!mb-1 block text-[11px] font-semibold text-gray-600 dark:text-slate-300">Cash Received Date</span>
+                          <input type="date" className="!min-h-0 w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-100" value={remittanceReceivedDate} onChange={(event) => setRemittanceReceivedDate(event.target.value)} />
+                        </label>
+                        <div className="mt-3 border-t border-gray-100 pt-2.5 dark:border-slate-700/80">
+                          <span className="block text-[11px] font-semibold text-gray-600 dark:text-slate-300">Cash Week</span>
+                          <span className="mt-0.5 block text-sm font-bold text-[#1F8FE0] dark:text-sky-300">{remittanceReceivedDate || "Not set"}</span>
+                          <span className="mt-0.5 block text-[10px] text-gray-400 dark:text-slate-500">This remittance is counted on this date.</span>
+                        </div>
+                      </div>
+                    </div>
+                    {storedRemitted > 0 && (
+                      <p className="m-0 mt-2 text-[11px] text-gray-400 dark:text-slate-500">
+                        {money(storedRemitted)} is already logged on this order. To add another payment, type the <strong>new running total</strong> - not the amount just handed over.
+                      </p>
+                    )}
+                  </section>
+
+                  {/* 3 - what that number means */}
+                  <section>
+                    <div className="flex items-center gap-2.5">
+                      {stepBadge(3)}
+                      <h3 className="m-0 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">Difference <span className="font-normal text-gray-400 dark:text-slate-500">(calculated live)</span></h3>
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 dark:border-slate-700/80 dark:bg-slate-700/80 sm:grid-cols-3">
+                      <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                        <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Expected to receive</span>
+                        <span className="mt-1 block text-xl font-bold leading-tight text-gray-900 dark:text-slate-50">{money(expectedValue)}</span>
+                      </div>
+                      <div className="bg-gray-50/80 px-4 py-3.5 dark:bg-slate-800/40">
+                        <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">You entered</span>
+                        <span className="mt-1 block text-xl font-bold leading-tight text-gray-900 dark:text-slate-50">{money(receivedValue)}</span>
+                      </div>
+                      <div className={`px-4 py-3.5 ${isShort ? "bg-orange-50 dark:bg-orange-950/25" : isExcess ? "bg-emerald-50 dark:bg-emerald-950/25" : "bg-gray-50/80 dark:bg-slate-800/40"}`}>
+                        <span className={`block text-[10px] font-semibold uppercase tracking-wider ${isShort ? "text-orange-600 dark:text-orange-300" : isExcess ? "text-emerald-700 dark:text-emerald-300" : "text-gray-400 dark:text-slate-500"}`}>
+                          {isShort ? "Short cash" : isExcess ? "Excess cash" : "Balanced"}
+                        </span>
+                        <span className="mt-1 flex items-center gap-2">
+                          {hasVariance && (
+                            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white ${isShort ? "bg-orange-500" : "bg-emerald-500"}`}>
+                              {isShort ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
+                            </span>
+                          )}
+                          <span className={`text-xl font-bold leading-tight ${isShort ? "text-orange-600 dark:text-orange-300" : isExcess ? "text-emerald-700 dark:text-emerald-300" : "text-gray-500 dark:text-slate-400"}`}>
+                            {money(Math.abs(variance))}
+                          </span>
+                        </span>
+                        <span className="mt-1 block text-[11px] text-gray-400 dark:text-slate-500">
+                          {isShort ? "Cash is below the expected amount" : isExcess ? "Cash is above the expected amount" : "This exactly settles the expected cash"}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="m-0 mt-2 text-[11px] text-gray-400 dark:text-slate-500">
+                      <strong className="text-gray-500 dark:text-slate-300">Outstanding after saving:</strong> {money(outstandingAfter)}
+                    </p>
+                  </section>
+
+                  {/* 4 - only exists when there is a variance to explain */}
+                  {hasVariance && (
+                    <section>
+                      <div className="flex items-center gap-2.5">
+                        {stepBadge(4)}
+                        <div>
+                          <h3 className="m-0 text-sm font-bold leading-tight text-gray-900 dark:text-slate-50">Reason for {isShort ? "Short Cash" : "Excess Cash"}</h3>
+                          <p className="m-0 text-[11px] text-gray-400 dark:text-slate-500">{isShort ? "Why is the cash less than expected?" : "Why did the partner pay more than expected?"}</p>
+                        </div>
+                      </div>
+                      {isExcess && (
+                        <p className="m-0 mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200">
+                          <strong>How excess cash works:</strong> the partner paid <strong>{money(variance)}</strong> more than this order owed. The full {money(receivedValue)} is booked as cash received, and the extra is logged on its own as owner-approved excess - never mixed into the short-cash reasons.
+                        </p>
+                      )}
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="!block">
+                          <span className="!mb-1 block text-[11px] font-semibold text-gray-600 dark:text-slate-300">Reason *</span>
+                          <span className="relative flex items-center">
+                            <Tag className="pointer-events-none absolute left-3 h-4 w-4 text-gray-400" />
+                            <select
+                              className="!min-h-0 w-full appearance-none rounded-lg border border-gray-200 py-2.5 pl-9 pr-9 text-sm font-medium text-gray-800 dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-100"
+                              value={remittanceVarianceReason}
+                              onChange={(event) => setRemittanceVarianceReason(event.target.value)}
+                            >
+                              <option value="">Select a reason...</option>
+                              {(isShort ? remittanceShortCashReasons : remittanceExcessCashReasons).map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+                            </select>
+                            <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-gray-400" />
+                          </span>
+                        </label>
+                        <label className="!block">
+                          <span className="!mb-1 block text-[11px] font-semibold text-gray-600 dark:text-slate-300">Reason Note {remittanceVarianceReason === "correction" ? "*" : "(optional)"}</span>
+                          <input
+                            className="!min-h-0 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-[#0f1822] dark:text-slate-100"
+                            value={remittanceVarianceNote}
+                            onChange={(event) => setRemittanceVarianceNote(event.target.value)}
+                            placeholder={isShort ? "e.g. waybill deducted, customer paid less" : "e.g. customer overpaid, repaid an earlier shortage"}
+                          />
+                        </label>
+                      </div>
+                      {/* Role gate, unchanged: Owner approves on save, Admin logs it as pending, everyone else is blocked. */}
+                      <div className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs ${ownerApprovalRequired ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200" : "border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-200"}`}>
+                        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>
+                          {ownerApprovalGranted && <><strong>Owner approval:</strong> saving will approve and record this variance.</>}
+                          {adminVariancePending && <><strong>Owner approval is required</strong> to save this variance. Saving records this cash now and sends the variance to the Owner to approve.</>}
+                          {ownerApprovalRequired && <><strong>This save is locked</strong> - only an Admin or the Owner can record cash variance.</>}
+                        </span>
+                      </div>
+                    </section>
                   )}
-                  <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                    If the difference is a real waybill/logistics fee, enter it under <strong>Logistics Cost</strong> so the expected cash is reduced correctly.<br />
-                    <strong>Outstanding after this:</strong> {formatProductMoney(Math.max(0, expectedValue - receivedValue), remittanceTargetOrder.currency)}<br />
-                    <strong>Cash week:</strong> this remittance will be counted on {remittanceReceivedDate || "the selected date"}.
-                  </p>
-                  <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
-                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button
-                      className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      onClick={recordRemittance}
-                      disabled={ownerApprovalRequired}
-                    >
-                      {ownerApprovalRequired ? "Admin / Owner Approval Required" : ownerApprovalGranted ? "Approve & Save Remittance" : adminVariancePending ? "Save (pending Owner approval)" : "Save Remittance"}
-                    </button>
+
+                  <div className="flex flex-col-reverse items-stretch gap-3 border-t border-gray-100 pt-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                    <span className="flex items-center gap-2 text-[11px] text-gray-400 dark:text-slate-500">
+                      <Lock className="h-3.5 w-3.5 shrink-0" />All changes are secure and logged.
+                    </span>
+                    <span className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
+                      <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-5 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto" onClick={closeModal}>Cancel</button>
+                      <button
+                        className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                        onClick={recordRemittance}
+                        disabled={ownerApprovalRequired}
+                      >
+                        <Lock className="h-3.5 w-3.5" />
+                        {ownerApprovalRequired ? "Admin / Owner Approval Required" : ownerApprovalGranted ? "Approve & Save Remittance" : adminVariancePending ? "Save (pending Owner approval)" : "Save Remittance"}
+                      </button>
+                    </span>
                   </div>
                 </div>
               );
