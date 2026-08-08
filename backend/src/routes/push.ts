@@ -14,6 +14,55 @@ import {
 } from "../lib/push.js";
 
 const router = Router();
+
+// ── POST /api/push/rotate ─────────────────────────────────
+// Declared BEFORE requireAuth on purpose. A service worker woken by
+// pushsubscriptionchange has no session - the page that held the token is not
+// running - so an authenticated route could never be called from there. Without
+// this, a rotated subscription stayed dead until somebody opened the app, which
+// is exactly the "push only works once I open the browser" complaint.
+//
+// Possession of the OLD endpoint is the credential. Endpoints are long
+// unguessable URLs issued by the push service, and this can only MOVE a
+// subscription that already exists - never create one, never change which user
+// it belongs to. Knowing an endpoint therefore grants nothing that endpoint did
+// not already grant.
+const RotateSchema = z.object({
+  oldEndpoint: z.string().url(),
+  subscription: z.object({
+    endpoint: z.string().url(),
+    keys: z.object({ p256dh: z.string().min(1), auth: z.string().min(1) })
+  })
+});
+
+router.post("/rotate", async (req, res) => {
+  const parsed = RotateSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+  const { oldEndpoint, subscription } = parsed.data;
+
+  const { data: existing } = await supabase
+    .from("push_subscriptions")
+    .select("id, org_id, user_id")
+    .eq("endpoint", oldEndpoint)
+    .maybeSingle();
+
+  // Deliberately the same answer whether the endpoint is unknown or simply
+  // already rotated - there is nothing to learn from the difference.
+  if (!existing) { res.status(404).json({ error: "That subscription is no longer registered." }); return; }
+
+  const { error } = await supabase
+    .from("push_subscriptions")
+    .update({
+      endpoint: subscription.endpoint,
+      p256dh: subscription.keys.p256dh,
+      auth: subscription.keys.auth
+    })
+    .eq("id", existing.id);
+
+  if (error) { res.status(500).json({ error: "Could not renew that subscription." }); return; }
+  res.json({ ok: true });
+});
+
 router.use(requireAuth);
 
 const SubscribeSchema = z.object({

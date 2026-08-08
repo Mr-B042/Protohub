@@ -1,7 +1,17 @@
 // ProtoHub Service Worker — Push Notifications + WebAPK install criteria
-const CACHE_NAME = "protohub-v9-simple-push-handler";
+const CACHE_NAME = "protohub-v10-subscription-renewal";
 const PUSH_BRANDING_CACHE = "protohub-push-branding-v1";
 const PUSH_BRANDING_KEY = "/__protohub_push_branding__";
+// The page writes the API origin and VAPID key here so the worker can renew a
+// rotated subscription ON ITS OWN. Without it the worker wakes with no way to
+// reach the server, which is why a dead subscription only ever came back when
+// somebody opened the app.
+const PUSH_CONFIG_CACHE = "protohub-push-config-v1";
+const PUSH_CONFIG_KEY = "/__protohub_push_config__";
+// Android caps an app at roughly 50 live notifications and silently drops new
+// ones past it - which is why nothing arrived until the tray was cleared. Keep
+// well under, newest first. The in-app list remains the full record.
+const MAX_LIVE_NOTIFICATIONS = 12;
 const DEFAULT_BRAND_NAME = "Protohub";
 const DEFAULT_BADGE = "/icons/icon-72.png";
 const DYNAMIC_MANIFEST_PATH = "/org-manifest.webmanifest";
@@ -256,8 +266,18 @@ self.addEventListener("push", (event) => {
   // below) + the brand name in the title, so identity is kept without hiding the glyph.
   const iconCandidate = payload.icon || presentation.icon || brandLogo || "/icons/icon-192.png";
   const title = withBrandTitle(payload.title || presentation.defaultTitle || DEFAULT_BRAND_NAME, brandName);
+  // A phone shows roughly one line of body collapsed, and 90% of these run past
+  // it - average 86 characters, longest 534. Truncating here at least breaks on
+  // a word rather than mid-syllable, and the full text is on the row the
+  // notification opens. The real fix is shorter bodies at the source; this
+  // stops the ones already in flight reading as a broken sentence.
+  const rawBody = String(payload.body || "");
+  const body = rawBody.length > 120
+    ? `${rawBody.slice(0, 117).replace(/[\s,;:·-]+\S*$/, "")}…`
+    : rawBody;
+
   const options = {
-    body: payload.body || "",
+    body,
     icon: iconCandidate,
     image: payload.image || brandLogo || undefined,
     badge: payload.badge || DEFAULT_BADGE,
@@ -275,8 +295,81 @@ self.addEventListener("push", (event) => {
 
   // Single waitUntil wrapping showNotification directly. Match Ordello's
   // pattern exactly — this is the form Android Chrome reliably honors.
-  event.waitUntil(self.registration.showNotification(title, options));
+  // Pruning is chained AFTER the show so nothing async precedes it.
+  event.waitUntil(
+    self.registration.showNotification(title, options).then(pruneOldNotifications)
+  );
 });
+
+// Android drops new notifications once an app has ~50 live ones, so a busy day
+// silently stopped delivering until somebody cleared the tray. Closing the
+// oldest keeps the newest arriving. Nothing is lost - the in-app list is the
+// record; the tray is a prompt.
+async function pruneOldNotifications() {
+  try {
+    const live = await self.registration.getNotifications();
+    if (live.length <= MAX_LIVE_NOTIFICATIONS) return;
+    live
+      .slice()
+      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+      .slice(0, live.length - MAX_LIVE_NOTIFICATIONS)
+      .forEach((n) => n.close());
+  } catch {
+    // Pruning is housekeeping - never let it fail a delivered notification.
+  }
+}
+
+// ── Subscription renewal ─────────────────────────────────
+// Browsers rotate push subscriptions periodically. Without this handler the old
+// endpoint simply dies: the server keeps sending to it, every send 410s, and
+// the device receives nothing until the user opens the app and the page
+// re-subscribes. That is the "it only works once I open the browser" symptom.
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(renewPushSubscription(event));
+});
+
+async function renewPushSubscription(event) {
+  try {
+    const cache = await caches.open(PUSH_CONFIG_CACHE);
+    const stored = await cache.match(PUSH_CONFIG_KEY);
+    if (!stored) return;
+    const config = await stored.json();
+    const apiBase = String(config?.apiBase || "").replace(/\/$/, "");
+    const vapidKey = String(config?.vapidPublicKey || "");
+    if (!apiBase || !vapidKey) return;
+
+    const oldEndpoint = event.oldSubscription?.endpoint || config.endpoint || null;
+    const fresh = await self.registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlToUint8Array(vapidKey)
+    });
+
+    // Rotation is authenticated by possession of the OLD endpoint - the worker
+    // has no session token. It can only move a subscription that already
+    // exists, never create one, so knowing an endpoint grants nothing new.
+    await fetch(`${apiBase}/api/push/rotate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ oldEndpoint, subscription: fresh.toJSON() })
+    });
+
+    await cache.put(PUSH_CONFIG_KEY, new Response(JSON.stringify({
+      ...config, endpoint: fresh.endpoint
+    }), { headers: { "Content-Type": "application/json" } }));
+  } catch {
+    // Nothing useful to do here - the page re-subscribes on next open, which is
+    // the behaviour we had before this handler existed.
+  }
+}
+
+function base64UrlToUint8Array(base64Url) {
+  const padding = "=".repeat((4 - (base64Url.length % 4)) % 4);
+  const base64 = (base64Url + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = self.atob(base64);
+  const output = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) output[i] = raw.charCodeAt(i);
+  return output;
+}
 
 // ── Notification Click ───────────────────────────────────
 self.addEventListener("notificationclick", (event) => {
