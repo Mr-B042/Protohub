@@ -7879,6 +7879,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [hashRoute, setHashRoute] = useState(() => (typeof window === "undefined" ? "" : window.location.hash));
+  // Mirrors activePage for the realtime effect. Reading the state directly there
+  // would make the page a dependency, and the channel would be torn down and
+  // rebuilt on every navigation - a new websocket each time somebody clicks.
+  const activePageRef = useRef<ActivePage>("Dashboard");
   const [activePage, setActivePage] = useState<ActivePage>(() => {
     const u = auth.getUser();
     if (!u) return "Dashboard";
@@ -8003,6 +8007,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
   const schedulePickerRef = useRef<HTMLDivElement | null>(null);
   const mainScrollRef = useRef<HTMLElement | null>(null);
+  useEffect(() => { activePageRef.current = activePage; }, [activePage]);
   useEffect(() => {
     if (!showSchedulePicker) return;
     const onDocClick = (e: MouseEvent) => {
@@ -24828,6 +24833,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }, 300);
     };
     let agentsReloadTimer: number | null = null;
+    // Realtime as an INVALIDATION signal rather than a data channel. These
+    // slices live in state shaped by their own loaders, and hand-merging a raw
+    // row into each would duplicate that shaping in a second place where it
+    // could drift. A change says "this is stale"; the loader that owns it
+    // decides what to fetch. Mirrors the products/agents pattern above.
+    //
+    // Debounced because a single act writes several rows - approving a KYC item
+    // touches the item and the application - and that should be one reload.
+    let workflowReloadTimer: number | null = null;
+    const queueWorkflowReload = (what: "pda" | "carts" | "followUp" | "finance") => {
+      if (workflowReloadTimer) return;
+      workflowReloadTimer = window.setTimeout(() => {
+        workflowReloadTimer = null;
+        if (cancelled) return;
+        // Only refetch what is actually on screen. A cash receipt logged while
+        // somebody is looking at KYC should cost that person nothing.
+        if (what === "pda" && activePageRef.current === "Personal Delivery Agents") void loadPdaApplications();
+        if (what === "carts") void loadCartFollowUpGrid();
+        if (what === "followUp") void loadFollowUpKpi();
+        if (what === "finance" && activePageRef.current === "Finance & Accounting") void loadFinanceSummaryData({ quiet: true });
+      }, 600);
+    };
+
     const queueAgentsReload = () => {
       if (realtimeIsMarketer) return;
       if (agentsReloadTimer) return;
@@ -25052,6 +25080,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     channel.on("postgres_changes", { event: "*", schema: "public", table: "agent_stock" }, () => {
       queueAgentsReload();
     });
+    // Newly published (see the realtime publication migration): these screens
+    // could previously only update on a manual refresh.
+    for (const table of ["personal_delivery_agents", "pda_kyc_items", "pda_guarantors"] as const) {
+      channel.on("postgres_changes", { event: "*", schema: "public", table }, () => queueWorkflowReload("pda"));
+    }
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "cart_contact_attempts" }, () => {
+      queueWorkflowReload("carts");
+    });
+    for (const table of ["order_contact_attempts", "follow_up_tasks"] as const) {
+      channel.on("postgres_changes", { event: "*", schema: "public", table }, () => queueWorkflowReload("followUp"));
+    }
+    channel.on("postgres_changes", { event: "*", schema: "public", table: "remittance_transactions" }, () => {
+      queueWorkflowReload("finance");
+    });
+
     channel.on("postgres_changes", { event: "*", schema: "public", table: "stock_movements" }, () => {
       queueStockMovementsReload();
     });
