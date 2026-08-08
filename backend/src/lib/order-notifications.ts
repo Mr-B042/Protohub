@@ -50,18 +50,22 @@ const orderNotificationSummary = (order: OrderContext) => {
 };
 
 /**
- * The same order, said in the space a phone actually gives us.
+ * The same order, ordered so the important part survives a small screen.
  *
- * The in-app row can carry the phone number and the package name because it has
- * a full line. A notification gets roughly one line collapsed - less on a phone
- * set to large text, which is why the same message reads fine on one handset and
- * is cut in half on another. Nothing exposes that setting to us, so the only
- * reliable move is to put the two facts that decide whether to act - WHO and HOW
- * MUCH - inside the first few words, and let everything else live behind the tap.
+ * A notification gets roughly one line collapsed - less on a phone set to large
+ * text, which is why the same message reads fine on one handset and is cut on
+ * another. Nothing exposes that setting to us, so instead of guessing we put the
+ * facts that decide whether to act FIRST: who, how much, then what they ordered.
+ * A phone that truncates still shows the decisive part; one that does not, and
+ * any phone once the notification is expanded, shows the product and package too.
+ *
+ * Only the phone number is dropped - it is the longest field and the least use
+ * at a glance, and it is one tap away on the row this opens.
  */
 const orderPushSummary = (order: OrderContext) => [
   order.customer,
-  formatNotificationMoney(order.amount, order.currency)
+  formatNotificationMoney(order.amount, order.currency),
+  orderDisplayName(order)
 ].filter(Boolean).join(" · ");
 
 const STATUS_CONFIG: Record<string, { type: string; title: string; recipientRoles: string[]; includeRep: boolean }> = {

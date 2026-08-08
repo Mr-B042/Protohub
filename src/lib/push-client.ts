@@ -261,6 +261,29 @@ function normalizeNativePermissionState(permission: { receive?: string } | null 
   return "default";
 }
 
+
+// Android stops showing new notifications once an app holds roughly 50 live
+// ones, and keeps dropping them until the tray is cleared by hand - which is
+// the 49 that was reported. The service worker prunes for the browser, but that
+// code never runs in the native app: FCM posts straight to the system tray and
+// the worker is not involved at all.
+const MAX_LIVE_NATIVE_NOTIFICATIONS = 12;
+
+export async function pruneDeliveredNativeNotifications(): Promise<void> {
+  if (!isNativeShell) return;
+  try {
+    const delivered = await PushNotifications.getDeliveredNotifications();
+    const list = delivered?.notifications ?? [];
+    if (list.length <= MAX_LIVE_NATIVE_NOTIFICATIONS) return;
+    // Newest first on Android, so the tail is the oldest.
+    const stale = list.slice(MAX_LIVE_NATIVE_NOTIFICATIONS);
+    if (stale.length === 0) return;
+    await PushNotifications.removeDeliveredNotifications({ notifications: stale });
+  } catch {
+    // Housekeeping - never let it interfere with a delivered notification.
+  }
+}
+
 async function ensureNativePushListeners(): Promise<void> {
   if (!isNativeShell || nativeListenersReady) return;
   nativeListenersReady = true;
@@ -286,7 +309,18 @@ async function ensureNativePushListeners(): Promise<void> {
 
   await PushNotifications.addListener("pushNotificationReceived", (_notification: PushNotificationSchema) => {
     // Keep the listener attached so native registration remains active.
+    // Only fires in the FOREGROUND on Android, so this trims while somebody is
+    // using the app; the backlog that builds while it is closed is handled on
+    // resume below.
+    void pruneDeliveredNativeNotifications();
   });
+
+  // Android never fires the listener above while the app is closed, so a tray
+  // that filled overnight would stay full and keep dropping new arrivals. Trim
+  // whenever the app comes back to the foreground.
+  await CapacitorApp.addListener("appStateChange", ({ isActive }) => {
+    if (isActive) void pruneDeliveredNativeNotifications();
+  }).catch(() => undefined);
 }
 
 async function getNativePermissionState(): Promise<NotificationPermission | "unsupported"> {
@@ -320,6 +354,9 @@ async function syncNativePushIfPossible(options: SaveSubscriptionOptions = {}): 
 export async function initializeNativePushBridge(): Promise<void> {
   if (!isNativeShell) return;
   await ensureNativePushListeners();
+  // Clear anything that piled up while the app was closed, before it blocks
+  // whatever arrives next.
+  await pruneDeliveredNativeNotifications().catch(() => undefined);
   const permission = await getNativePermissionState();
   if (permission === "granted") {
     await syncNativePushIfPossible().catch(() => undefined);
