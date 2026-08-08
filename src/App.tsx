@@ -3845,20 +3845,34 @@ const orderAuditActorFor = (entry: OrderAuditEntry) => {
 };
 const weekRangeLabel = (weekStart: string, weekEnd: string) => `${formatDateOnly(weekStart)} - ${formatDateOnly(weekEnd)}`;
 const USER_ACTIVE_WINDOW_MS = 2 * 60 * 1000;
-const userPresenceState = (user: Pick<ManagedUser, "active" | "lastSeenAt">): "Active" | "Offline" | "Inactive" => {
+// `now` is passed in rather than read here so a caller can re-evaluate on a
+// timer. Going ONLINE is an event - the heartbeat writes last_seen_at, realtime
+// carries the row, the badge flips. Going OFFLINE is the absence of one: the
+// browser simply stops writing, so nothing arrives to trigger a re-render and
+// somebody who shut their laptop an hour ago kept showing as Active until an
+// unrelated render happened to refresh the page.
+const userPresenceState = (
+  user: Pick<ManagedUser, "active" | "lastSeenAt">,
+  now: number = Date.now()
+): "Active" | "Offline" | "Inactive" => {
   if (!user.active) return "Inactive";
   if (!user.lastSeenAt) return "Offline";
   const seen = new Date(user.lastSeenAt).getTime();
   if (Number.isNaN(seen)) return "Offline";
-  return Date.now() - seen <= USER_ACTIVE_WINDOW_MS ? "Active" : "Offline";
+  return now - seen <= USER_ACTIVE_WINDOW_MS ? "Active" : "Offline";
 };
-const userPresenceMeta = (user: Pick<ManagedUser, "active" | "lastSeenAt">) => {
-  const presence = userPresenceState(user);
+const userPresenceMeta = (
+  user: Pick<ManagedUser, "active" | "lastSeenAt">,
+  now: number = Date.now()
+) => {
+  const presence = userPresenceState(user, now);
   if (presence === "Active") {
     return {
       label: "Active",
       tone: "bg-emerald-100 text-emerald-700",
-      dot: "bg-emerald-500",
+      // Pulses only while genuinely active, so "online" is legible at a glance
+      // rather than being a green dot that might be an hour stale.
+      dot: "bg-emerald-500 animate-pulse",
       lastSeen: "Active now"
     };
   }
@@ -12005,7 +12019,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const pagedFilteredUsers = filteredUsers.slice((clampedUserPage - 1) * USER_PAGE, clampedUserPage * USER_PAGE);
   const ownerCanSeeUserPresence = realRole === "Owner";
   const activeUserCount = users.filter((user) => user.active).length;
-  const onlineUserCount = users.filter((user) => userPresenceState(user) === "Active").length;
+  // Ticks only while User Management is open, and touches no network - the same
+  // pattern the follow-up countdowns use. The heartbeat is 45s and the active
+  // window 2 minutes, so 20s is fine-grained enough to catch someone dropping
+  // off without being busy work.
+  const [presenceNow, setPresenceNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (activePage !== "User Management") return;
+    setPresenceNow(Date.now());
+    const timer = window.setInterval(() => setPresenceNow(Date.now()), 20_000);
+    return () => window.clearInterval(timer);
+  }, [activePage]);
+  const onlineUserCount = users.filter((user) => userPresenceState(user, presenceNow) === "Active").length;
   const adminUserCount = users.filter((user) => user.role === "Admin" || user.role === "Owner").length;
   const managerUserCount = users.filter((user) => user.role === "Manager").length;
   const salesUserCount = users.filter((user) => user.role === "Sales Rep").length;
@@ -76518,7 +76543,7 @@ ${waybillLineItems(w).length > 1
                       const userPerms = resolvedPermissionsForRole(user.role, user.permissions);
                       const isOwner = user.role === "Owner";
                       const isExpanded = expandedPermissionsUserId === user.id;
-                      const presence = userPresenceMeta(user);
+                      const presence = userPresenceMeta(user, presenceNow);
                       return (
                         <article key={user.id} className="p-4 space-y-4">
                           <div className="flex items-start justify-between gap-3">
@@ -76626,7 +76651,7 @@ ${waybillLineItems(w).length > 1
                           const userPerms = resolvedPermissionsForRole(user.role, user.permissions);
                           const isOwner = user.role === "Owner";
                           const isExpanded = expandedPermissionsUserId === user.id;
-                          const presence = userPresenceMeta(user);
+                          const presence = userPresenceMeta(user, presenceNow);
                           return (
                             <Fragment key={user.id}>
                               <tr className="border-t border-gray-100 hover:bg-gray-50/60 transition-colors">
