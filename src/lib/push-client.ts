@@ -1,7 +1,7 @@
 import { App as CapacitorApp } from "@capacitor/app";
 import { PushNotifications, type PushNotificationSchema } from "@capacitor/push-notifications";
 import { auth } from "./auth";
-import { fetchWithApiFailover } from "./backend-origin";
+import { fetchWithApiFailover, getApiBaseCandidates } from "./backend-origin";
 import { isNativeShell, nativePlatform } from "./native-shell";
 const SERVICE_WORKER_SCOPE = "/";
 const SERVICE_WORKER_URL = "/sw.js";
@@ -125,8 +125,38 @@ export async function ensureServiceWorkerRegistration(): Promise<ServiceWorkerRe
   }
 }
 
+/**
+ * Hands the worker what it needs to renew a rotated subscription unaided: the
+ * API origin and the VAPID key, in the cache it already reads branding from.
+ *
+ * Browsers rotate push subscriptions periodically. The worker wakes on
+ * pushsubscriptionchange with no page, no token and - until now - no idea where
+ * the server is, so the subscription stayed dead until somebody opened the app.
+ * That is the "push only starts working when I open the browser" symptom.
+ */
+async function publishPushConfigForWorker(endpoint: string): Promise<void> {
+  try {
+    if (typeof caches === "undefined") return;
+    const vapidPublicKey = await getVapidPublicKey();
+    if (!vapidPublicKey) return;
+    const apiBase = getApiBaseCandidates()[0] ?? "";
+    if (!apiBase) return;
+    const cache = await caches.open("protohub-push-config-v1");
+    await cache.put(
+      "/__protohub_push_config__",
+      new Response(JSON.stringify({ apiBase, vapidPublicKey, endpoint }), {
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+  } catch {
+    // Best effort. Losing this only costs us the automatic renewal - the page
+    // still re-subscribes on next open, which is the old behaviour.
+  }
+}
+
 async function saveWebSubscription(subscription: PushSubscription, options: SaveSubscriptionOptions = {}): Promise<void> {
   const subJson = subscription.toJSON();
+  void publishPushConfigForWorker(String(subJson.endpoint ?? ""));
   const res = await fetchWithApiFailover("/api/push/subscribe", {
     method: "POST",
     headers: getAuthHeaders(),
