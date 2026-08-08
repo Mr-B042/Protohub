@@ -1,5 +1,5 @@
 // ProtoHub Service Worker — Push Notifications + WebAPK install criteria
-const CACHE_NAME = "protohub-v10-subscription-renewal";
+const CACHE_NAME = "protohub-v11-readable-notifications";
 const PUSH_BRANDING_CACHE = "protohub-push-branding-v1";
 const PUSH_BRANDING_KEY = "/__protohub_push_branding__";
 // The page writes the API origin and VAPID key here so the worker can renew a
@@ -279,7 +279,19 @@ self.addEventListener("push", (event) => {
   const options = {
     body,
     icon: iconCandidate,
-    image: payload.image || brandLogo || undefined,
+    // Only a DELIBERATE content image, never the brand logo as a fallback.
+    // Android renders a notification with an image as big-picture style, and in
+    // that style the body is capped at one line even when expanded - so
+    // attaching the logo to everything was spending the expanded view on a
+    // picture and making the message unreadable. With no image it uses big-text
+    // style instead, where expanding shows the WHOLE body. The brand is already
+    // in the title and the glyph is already the icon; the logo was buying
+    // nothing and costing the text.
+    //
+    // This is also the honest answer to "can it be smarter on phones that
+    // truncate": nothing exposes a device's font or display size to us, so we
+    // cannot adapt to it. What we can do is stop competing with our own text.
+    image: payload.image || undefined,
     badge: payload.badge || DEFAULT_BADGE,
     tag: payload.tag || `protohub-${kind}`,
     renotify: true,
