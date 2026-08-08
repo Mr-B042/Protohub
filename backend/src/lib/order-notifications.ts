@@ -49,6 +49,21 @@ const orderNotificationSummary = (order: OrderContext) => {
   ].filter(Boolean).join(" · ");
 };
 
+/**
+ * The same order, said in the space a phone actually gives us.
+ *
+ * The in-app row can carry the phone number and the package name because it has
+ * a full line. A notification gets roughly one line collapsed - less on a phone
+ * set to large text, which is why the same message reads fine on one handset and
+ * is cut in half on another. Nothing exposes that setting to us, so the only
+ * reliable move is to put the two facts that decide whether to act - WHO and HOW
+ * MUCH - inside the first few words, and let everything else live behind the tap.
+ */
+const orderPushSummary = (order: OrderContext) => [
+  order.customer,
+  formatNotificationMoney(order.amount, order.currency)
+].filter(Boolean).join(" · ");
+
 const STATUS_CONFIG: Record<string, { type: string; title: string; recipientRoles: string[]; includeRep: boolean }> = {
   New:          { type: "order_new",          title: "New Order",          recipientRoles: ["Owner", "Admin"], includeRep: true },
   Confirmed:    { type: "order_confirmed",    title: "Order Confirmed",    recipientRoles: ["Owner"], includeRep: false },
@@ -118,7 +133,7 @@ export async function notifyOrderEvent(orgId: string, order: OrderContext, toSta
       [...recipients.entries()].map(([recipientId, role]) =>
         sendPushToUser(orgId, recipientId, {
           title,
-          body,
+          body: orderPushSummary(order),
           kind: config.type,
           url: orderLinkForRole(role, order.id),
           tag: `order-${order.id}-${toStatus}`,
@@ -184,7 +199,9 @@ export async function notifyOutageRecoveredOrder(orgId: string, order: OrderCont
       [...recipients.entries()].map(([recipientId, role]) =>
         sendPushToUser(orgId, recipientId, {
           title,
-          body,
+          // Short form for the phone; the stored row above keeps the full
+          // explanation for the in-app list, which has room for it.
+          body: `${orderPushSummary(order)} — verify before dispatch`,
           kind: "order_new",
           url: orderLinkForRole(role, order.id),
           tag: `order-${order.id}-outage-recovered`,
