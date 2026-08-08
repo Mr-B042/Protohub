@@ -392,7 +392,16 @@ export async function sendNativePushToDevices(
                 // logo as the image — premium, recognisable per notification type.
                 icon: nativeIconForKind(payload.kind),
                 color: accentForKind(payload.kind),
-                image: payload.image ?? brandPushImage(payload.brandLogo)
+                // Only a deliberate content image, never the brand logo.
+                // Android renders ANY notification carrying an image as
+                // big-picture style, and in that style the body is capped at
+                // one line even when expanded - so attaching the logo made the
+                // message unreadable on exactly the phones that truncate. This
+                // is not about the logo's dimensions: a one-pixel image would
+                // do the same. Without an image Android uses big-text style,
+                // where expanding shows the whole body. The brand is already in
+                // the title and the per-event glyph is already the icon.
+                image: payload.image ?? undefined
               }
             },
             apns: {
