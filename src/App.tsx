@@ -24874,7 +24874,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (cancelled) return;
         // Only refetch what is actually on screen. A cash receipt logged while
         // somebody is looking at KYC should cost that person nothing.
-        if (what === "pda" && activePageRef.current === "Personal Delivery Agents") void loadPdaApplications();
+        if (what === "pda" && activePageRef.current === "Personal Delivery Agents") {
+          void loadPdaApplications();
+          // Availability is a switch the agent flips in their own portal, so the
+          // only way it reaches this screen is the row arriving. Without this
+          // the Active Agents list showed whatever it loaded on open - an agent
+          // could come Available and nobody watching would ever see it.
+          void loadPdaActiveAgents();
+        }
         if (what === "carts") void loadCartFollowUpGrid();
         if (what === "followUp") void loadFollowUpKpi();
         if (what === "finance" && activePageRef.current === "Finance & Accounting") void loadFinanceSummaryData({ quiet: true });
@@ -49774,7 +49781,7 @@ ${waybillLineItems(w).length > 1
     const pageRows = rows.slice((page - 1) * PAGE, page * PAGE);
 
     const availabilityDot = (availability: string) =>
-      availability === "Available" ? "bg-emerald-500"
+      availability === "Available" ? "bg-emerald-500 animate-pulse"
       : availability === "Busy" ? "bg-amber-500"
       : availability === "Unavailable" ? "bg-red-500" : "bg-gray-300";
 
@@ -55163,13 +55170,19 @@ ${waybillLineItems(w).length > 1
     const pageRows = agentRows.slice((page - 1) * PAGE, page * PAGE);
 
     const availabilityDot = (availability: string) =>
-      availability === "Available" ? "bg-emerald-500"
+      availability === "Available" ? "bg-emerald-500 animate-pulse"
       : availability === "Busy" ? "bg-amber-500"
       : availability === "Unavailable" ? "bg-red-500" : "bg-gray-300";
+    // "Offline" fell through to "Suspended", so every agent who had simply not
+    // come on shift was labelled as though they had been disciplined - all 32 of
+    // them. Availability is a switch the agent flips; it says nothing about
+    // whether their account is in good standing, which STATUS / KYC already
+    // shows beside it.
     const availabilitySub = (availability: string) =>
       availability === "Available" ? "Online"
       : availability === "Busy" ? "On delivery"
-      : availability === "Unavailable" ? "Offline" : "Suspended";
+      : availability === "Unavailable" ? "Not taking deliveries"
+      : "Not on shift";
 
     const kyc = pdaOverview?.kycBreakdown ?? { verified: 0, pending: 0, incomplete: 0, rejected: 0 };
     const kycTotal = kyc.verified + kyc.pending + kyc.incomplete + kyc.rejected;
