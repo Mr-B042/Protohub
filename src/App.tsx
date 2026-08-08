@@ -7137,6 +7137,37 @@ const followUpReasonBadgeClass = (attempt?: OrderContactAttempt | null) => {
   return followUpOutcomeToneClass(outcome?.group ?? attempt.outcomeGroup ?? "other");
 };
 
+// ── waybillFeeCell ────────────────────
+// A stored fee of 0 means two completely different things, and the column used
+// to show both as a bare "-".
+//
+// On a customer delivery it is correct and deliberate: the backend writes
+// waybill_fee 0 when an order is marked Delivered, because that delivery's cost
+// lives on the order's logistics cost and reaches the books through remittance.
+// A fee here would double-count it.
+//
+// On a manual transfer it means nobody typed a fee - the box is pre-filled with
+// "0" and is the one field the form never checks. That is not the same as free:
+// the cost may have been paid in a lump sum booked as its own Waybill expense
+// ("Lagos waybill cost from sending waybill to Lagos, Abuja, and River state"),
+// in which case this row simply does not carry it. Either way the honest label
+// is "not recorded here", not a dash that reads as a free move.
+const waybillFeeCell = (waybill: WaybillRecord, formatted: string) => {
+  if (waybill.waybillFee > 0) return <span className="text-gray-700">{formatted}</span>;
+  if (isCustomerDeliveryWaybill(waybill)) {
+    return (
+      <span className="text-gray-400" title="Customer deliveries carry no waybill fee - the delivery cost sits on the order's logistics cost and is booked through remittance.">
+        n/a
+      </span>
+    );
+  }
+  return (
+    <span className="font-medium text-amber-600" title="No fee was entered on this transfer. It may have moved free in-house, or the cost may have been booked separately as its own Waybill expense - this row does not say which. Use Edit to record it here.">
+      Not recorded
+    </span>
+  );
+};
+
 // ── getWaybillFlowLabel ────────────────────
 const getWaybillFlowLabel = (waybill: WaybillRecord) =>
   isCustomerDeliveryWaybill(waybill) ? "Customer Delivery" : "Manual Transfer";
@@ -69664,7 +69695,7 @@ ${waybillLineItems(w).length > 1
                           </div>
                           <div className="flex flex-col gap-0.5">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Fee</span>
-                            <span className="text-gray-700">{w.waybillFee > 0 ? formatMoney(w.waybillFee) : "-"}</span>
+                            {waybillFeeCell(w, formatMoney(w.waybillFee))}
                           </div>
                           <div className="flex flex-col gap-0.5 col-span-2">
                             <span className="font-semibold uppercase tracking-wide text-gray-400">Sent</span>
@@ -69725,7 +69756,7 @@ ${waybillLineItems(w).length > 1
                               <span className="text-gray-900 font-medium">{getWaybillDestinationLabel(w)}</span>
                             </td>
                             <td className="px-4 py-3 text-gray-700">{w.logisticsPartner}</td>
-                            <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{w.waybillFee > 0 ? formatMoney(w.waybillFee) : "-"}</td>
+                            <td className="px-4 py-3 whitespace-nowrap">{waybillFeeCell(w, formatMoney(w.waybillFee))}</td>
                             <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                               <span className="block">{formatMoment(w.createdAt) || formatDateOnly(w.dateSent)}</span>
                               <span className="block text-xs text-gray-400 mt-0.5">Dispatch date {formatDateOnly(w.dateSent)}</span>
