@@ -14412,7 +14412,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [agents, trackedOrders]);
 
   const provisionalLogisticsFor = (order: TrackedOrder): number => {
-    if (currentRole !== "Owner") return 0;
+    // Deliberately NOT gated to the Owner any more. It used to be, and the
+    // effect was that an Admin or Manager opening the same week saw a higher
+    // net profit than the Owner did, with nothing on screen explaining the
+    // difference. Two people comparing notes on one week and getting two
+    // answers is worse than one of them seeing an estimate they can read about
+    // - which is why the disclosure below now appears everywhere the accrual
+    // applies, not only on Finance.
+    //
+    // Safe to widen because this touches DISPLAYED profit only: the manager and
+    // upsell bonus gates compute netProfitOps on the backend from recorded
+    // fees, and no bonus, payroll or remittance figure reads this.
     if ((order.status ?? "New") !== "Delivered") return 0;
     if ((order.logisticsCost ?? 0) > 0) return 0;
     if (!order.agentId) return 0;
@@ -16841,6 +16851,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const dashboardBreakEven = computeBreakEven(dashboardOrders, dashboardExpenses, { includeManagerBonus: dashboardIncludesManagerBonus });
   // Empty on a single-day view: the manager bonus is weekly and is not charged
   // to a day. The Net Profit caption says so rather than leaving a silent gap.
+  const dashboardProvisionalLogistics = provisionalLogisticsSummary(dashboardDeliveredOrders);
   const dashboardManagerBonusWeeks = sundayWeeksForPeriod(period, dateRange);
   const dashboardProfitSummary = summarizeRecognizedProfit(dashboardDeliveredOrders, dashboardExpenses, {
     placedRows: dashboardOrders,
@@ -24019,7 +24030,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (card.label === "Net Profit") {
       const expenseHelper = dashboardOperatingExpense === 0
         ? "No operating costs counted this period"
-        : `${formatMoney(dashboardRecordedOperatingExpense)} expense rows${dashboardSalesBonusEstimate > 0 ? ` + ${formatMoney(dashboardSalesBonusEstimate)} sales bonus est.` : ""}${dashboardManagerBonusExpense > 0 ? ` + ${formatMoney(dashboardManagerBonusExpense)} manager bonus${dashboardManagerBonusWeeks.length > 1 ? ` (${dashboardManagerBonusWeeks.length} weeks)` : ""}` : ""}${dashboardManagerBonusExpense === 0 && dashboardIncludesManagerBonus && dashboardManagerBonusWeeks.length === 0 ? " · manager bonus is weekly, see This Week" : ""}${dashboardNewEngineBonusEstimate > 0 ? ` (${formatMoney(dashboardNewEngineBonusEstimate)} sales bonus engine)` : ""}`;
+        : `${formatMoney(dashboardRecordedOperatingExpense)} expense rows${dashboardSalesBonusEstimate > 0 ? ` + ${formatMoney(dashboardSalesBonusEstimate)} sales bonus est.` : ""}${dashboardManagerBonusExpense > 0 ? ` + ${formatMoney(dashboardManagerBonusExpense)} manager bonus${dashboardManagerBonusWeeks.length > 1 ? ` (${dashboardManagerBonusWeeks.length} weeks)` : ""}` : ""}${dashboardManagerBonusExpense === 0 && dashboardIncludesManagerBonus && dashboardManagerBonusWeeks.length === 0 ? " · manager bonus is weekly, see This Week" : ""}${dashboardNewEngineBonusEstimate > 0 ? ` (${formatMoney(dashboardNewEngineBonusEstimate)} sales bonus engine)` : ""}${dashboardProvisionalLogistics.orders > 0 ? ` · incl. ${formatMoney(dashboardProvisionalLogistics.total)} estimated delivery on ${dashboardProvisionalLogistics.orders} order${dashboardProvisionalLogistics.orders === 1 ? "" : "s"} not yet priced` : ""}`;
       return { ...card, value: formatMoney(dashboardNetProfit), trend: formatTrend(percentChange(dashboardNetProfit, dashboardPreviousNetProfit)), helper: expenseHelper };
     }
 
