@@ -14357,11 +14357,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // only costed the main/attributed product and ignored combo parts, add-ons
   // and gifts - which understated COGS (overstated profit) for combos.
   // ===== Provisional delivery fee (Owner-only accrual) =====
-  // Toolbox Rivers and 9jadoorstep Abia settle logistics monthly, so their
-  // delivered orders carry no logistics_cost until the breakdown arrives at
-  // month end. Cost incurred but not yet billed makes net profit look better
-  // than it is - measured 2026-08-01, 38 delivered orders across those two
-  // agents had no fee, spanning all of July.
+  // A delivered order with no logistics_cost yet is cost incurred but not
+  // recorded, and it makes net profit look better than it is.
+  //
+  // This began as a monthly-remit-only accrual, because Toolbox Rivers
+  // (Port Harcourt) and 9jadoorstep Abia settle at month end and their orders
+  // sit unpriced for weeks. But per-order agents flatter profit the same way in
+  // the gap between delivery and the fee being entered - measured 2026-08-09,
+  // 11 delivered orders since 1 Aug across Ideal Logistics, Lagos Agent 2,
+  // Oyebamiji, Protohub Northern 2, JMT and Edo Sekegor4real carried no fee and
+  // no accrual. So it now covers EVERY agent, not just the monthly ones.
   //
   // This accrues an estimate so the Owner's profit figures are not flattered
   // while waiting. Three deliberate constraints:
@@ -14374,14 +14379,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   //   3. Starts 2026-08-01 (Bright: "let the last month be at its be"). July's
   //      numbers are already reported and stay exactly as they were.
   const PROVISIONAL_LOGISTICS_START = "2026-08-01";
-  // The agent's OWN median from the fees they have actually charged, rather
-  // than one flat figure. Their real medians are both around N5,000 while a
-  // flat N4,000 guess would have left roughly N1,000 per order still hidden.
+  // Used only for an agent who has never priced a delivery, so there is no
+  // history to take a median from. Bright's own working average.
+  const PROVISIONAL_LOGISTICS_FALLBACK = 5000;
+  // The agent's OWN median from the fees they have actually charged, in
+  // preference to the flat figure. The monthly-remit agents' real medians are
+  // both around N5,000 while a flat N4,000 guess would have left roughly N1,000
+  // per order hidden - so a per-agent number is worth keeping.
   // Median, not mean, so one N8,000 outlier does not drag the estimate up.
-  const monthlyRemitAgentMedians = useMemo(() => {
+  const agentDeliveryFeeMedians = useMemo(() => {
     const feesByAgent = new Map<string, number[]>();
     for (const agent of agents) {
-      if (agent.monthlyRemittance) feesByAgent.set(agent.id, []);
+      feesByAgent.set(agent.id, []);
     }
     if (feesByAgent.size === 0) return new Map<string, number>();
     for (const order of trackedOrders) {
@@ -14392,7 +14401,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     const medians = new Map<string, number>();
     for (const [agentId, fees] of feesByAgent) {
-      if (fees.length === 0) continue;   // no priced delivery yet - do not invent one
+      if (fees.length === 0) continue;   // no history - the flat fallback covers it
       const sorted = [...fees].sort((a, b) => a - b);
       const mid = Math.floor(sorted.length / 2);
       medians.set(agentId, sorted.length % 2 === 0
@@ -14409,7 +14418,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!order.agentId) return 0;
     const deliveredKey = orderDeliveredKey(order);
     if (!deliveredKey || deliveredKey < PROVISIONAL_LOGISTICS_START) return 0;
-    return monthlyRemitAgentMedians.get(order.agentId) ?? 0;
+    // The agent's own median where they have priced deliveries before,
+    // otherwise the flat working average. Never zero for a delivered order with
+    // an agent - a delivery that happened cost something.
+    return agentDeliveryFeeMedians.get(order.agentId) ?? PROVISIONAL_LOGISTICS_FALLBACK;
   };
   // What every PROFIT calculation should use. Remittance deliberately does not.
   const effectiveLogisticsCost = (order: TrackedOrder): number =>
@@ -74836,7 +74848,7 @@ ${waybillLineItems(w).length > 1
                               Logistics / Delivery Fees
                               {financeProvisionalLogistics.orders > 0 && (
                                 <span className="mt-0.5 block text-[11px] font-semibold normal-case text-amber-700">
-                                  Includes {formatMoney(financeProvisionalLogistics.total)} estimated across {financeProvisionalLogistics.orders} delivery{financeProvisionalLogistics.orders === 1 ? "" : "s"} not yet billed by monthly-remit agents. Replaced automatically once they send the real breakdown.
+                                  Includes {formatMoney(financeProvisionalLogistics.total)} estimated across {financeProvisionalLogistics.orders} delivery{financeProvisionalLogistics.orders === 1 ? "" : "s"} delivered without a fee recorded yet. Each uses that agent&apos;s own median fee, or {formatMoney(PROVISIONAL_LOGISTICS_FALLBACK)} where they have not priced one before. Replaced automatically the moment the real fee is entered - by Batch Remittance or any other route.
                                 </span>
                               )}
                               {financeDeliveryExpenseNotCounted > 0 && (
