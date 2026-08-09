@@ -232,7 +232,7 @@ type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type FinanceTab = "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
-type ManagerDashboardTab = "Overview" | "Bonus" | "Upsell Bonus" | "Needs Attention";
+type ManagerDashboardTab = "Overview" | "Bonus" | "Upsell Bonus" | "Inventory" | "Needs Attention";
 type RecoveryRepDashboardTab = "Overview" | "Customer Retention";
 type RetentionSubPage = "Overview" | "Pipeline" | "Customers" | "Tasks" | "Calls & Outcomes" | "Reviews" | "Referrals" | "Repeat Sales" | "Win-back" | "Reports" | "Settings";
 // Rendered as a contextual sub-section in the MAIN app sidebar, directly
@@ -8785,6 +8785,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerNavSpan, setManagerNavSpan] = useState<NavSpan>("1W");
   const [managerRestockThreshold, setManagerRestockThreshold] = useState(7);
   const [managerDashboardTab, setManagerDashboardTab] = useState<ManagerDashboardTab>("Overview");
+  // Which state the Inventory tab's agent breakdown is showing. null = the
+  // state that needs attention most, so the panel opens on the problem.
+  const [managerInventoryState, setManagerInventoryState] = useState<string | null>(null);
+  const [managerInventoryShowAllStates, setManagerInventoryShowAllStates] = useState(false);
+  const [managerInventoryProductFilter, setManagerInventoryProductFilter] = useState("all");
   const [recoveryRepDashboardTab, setRecoveryRepDashboardTab] = useState<RecoveryRepDashboardTab>("Overview");
   const [recoveryCandidateSearch, setRecoveryCandidateSearch] = useState("");
   // Served by its own endpoint, not derived from trackedOrders: GET /api/orders
@@ -14623,6 +14628,237 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         || b.recentUnits - a.recentUnits
         || a.productName.localeCompare(b.productName);
     });
+  // ── Manager Dashboard · Inventory ────────────────────
+  // A state-level read of the SAME numbers the Smart Stock engine above already
+  // derives, rolled up per state and per agent hub. Nothing is refetched and no
+  // second definition of "cover" is introduced: velocity comes from
+  // smartStockDemandByKey (units in the last smartStockLookbackDays), supply
+  // from the agent hub rows, and the Critical/Restock thresholds are the
+  // Owner's own smartStockRules - so this tab and the Smart Stock banner can
+  // never disagree about which state is in trouble.
+  const managerInventoryUnitsInTransitByState = new Map<string, number>();
+  waybillRecords.forEach((waybill) => {
+    if (waybill.status !== "In Transit") return;
+    const state = normalizeAgentState(waybill.receivingState);
+    if (!state) return;
+    const units = waybill.items?.length
+      ? waybill.items.reduce((sum, item) => sum + Math.max(0, Number(item.quantity ?? 0)), 0)
+      : Math.max(0, Number(waybill.quantity ?? 0));
+    managerInventoryUnitsInTransitByState.set(state, (managerInventoryUnitsInTransitByState.get(state) ?? 0) + units);
+  });
+
+  type ManagerInventoryHubRow = {
+    agentId: string;
+    agentName: string;
+    locationId: string;
+    locationLabel: string;
+    unitsByProductId: Map<string, number>;
+    totalUnits: number;
+    ordersPerDay: number;
+    daysCover: number;
+  };
+  type ManagerInventoryStateRow = {
+    state: string;
+    agentCount: number;
+    hubs: ManagerInventoryHubRow[];
+    totalUnits: number;
+    productCount: number;
+    unitsByProductId: Map<string, number>;
+    avgDailySales: number;
+    inTransit: number;
+    daysCover: number;
+    status: "Critical" | "Restock Soon" | "Watch" | "Healthy";
+  };
+
+  const managerInventoryCoverStatus = (daysCover: number, hasDemand: boolean): ManagerInventoryStateRow["status"] => {
+    if (!hasDemand) return "Healthy";
+    if (daysCover <= smartStockCriticalDaysCover) return "Critical";
+    if (daysCover <= smartStockWatchDaysCover) return "Restock Soon";
+    // "Watch" is the band just above the Owner's restock threshold - still fine
+    // today, but close enough that it should not read as comfortably Healthy.
+    if (daysCover <= smartStockWatchDaysCover * 1.5) return "Watch";
+    return "Healthy";
+  };
+
+  const managerInventoryStateRows: ManagerInventoryStateRow[] = (() => {
+    const byState = new Map<string, { hubs: Map<string, ManagerInventoryHubRow>; agentIds: Set<string> }>();
+    inventoryStateHubRows.forEach(({ agent, location }) => {
+      const state = normalizeAgentState(location.state);
+      if (!state) return;
+      const bucket = byState.get(state) ?? { hubs: new Map<string, ManagerInventoryHubRow>(), agentIds: new Set<string>() };
+      bucket.agentIds.add(agent.id);
+      const hubKey = `${agent.id}::${location.id}`;
+      const hub = bucket.hubs.get(hubKey) ?? {
+        agentId: agent.id,
+        agentName: agent.name,
+        locationId: location.id,
+        locationLabel: agentLocationLabel(location) || state,
+        unitsByProductId: new Map<string, number>(),
+        totalUnits: 0,
+        ordersPerDay: 0,
+        daysCover: Number.POSITIVE_INFINITY
+      };
+      stockRowsForStateHub(agent, location).forEach((stock) => {
+        if (!smartStockProductIds.has(stock.productId)) return;
+        const quantity = Math.max(
+          0,
+          Number(stock.quantity ?? 0) - Number(stock.defective ?? 0) - Number(stock.missing ?? 0)
+        );
+        if (quantity <= 0) return;
+        hub.unitsByProductId.set(stock.productId, (hub.unitsByProductId.get(stock.productId) ?? 0) + quantity);
+        hub.totalUnits += quantity;
+      });
+      bucket.hubs.set(hubKey, hub);
+      byState.set(state, bucket);
+    });
+
+    return Array.from(byState.entries()).map(([state, bucket]) => {
+      const unitsByProductId = new Map<string, number>();
+      const hubs = Array.from(bucket.hubs.values());
+      hubs.forEach((hub) => {
+        hub.unitsByProductId.forEach((qty, productId) => {
+          unitsByProductId.set(productId, (unitsByProductId.get(productId) ?? 0) + qty);
+        });
+      });
+      const totalUnits = hubs.reduce((sum, hub) => sum + hub.totalUnits, 0);
+      // Daily demand for the state = every product's recent units over the same
+      // lookback window the Smart Stock rules use.
+      let avgDailySales = 0;
+      catalogProducts.forEach((product) => {
+        const demand = smartStockDemandByKey.get(smartStockKey(product.id, state));
+        if (demand) avgDailySales += (demand.recentUnits ?? 0) / Math.max(1, smartStockLookbackDays);
+      });
+      avgDailySales = Math.round(avgDailySales * 10) / 10;
+      const inTransit = managerInventoryUnitsInTransitByState.get(state) ?? 0;
+      const daysCover = avgDailySales > 0 ? (totalUnits + inTransit) / avgDailySales : Number.POSITIVE_INFINITY;
+      // Each hub's share of the state's daily demand, so one agent's cover is
+      // measured against the orders that agent is actually taking.
+      hubs.forEach((hub) => {
+        hub.ordersPerDay = totalUnits > 0
+          ? Math.round((avgDailySales * (hub.totalUnits / totalUnits)) * 10) / 10
+          : 0;
+        hub.daysCover = hub.ordersPerDay > 0 ? hub.totalUnits / hub.ordersPerDay : Number.POSITIVE_INFINITY;
+      });
+      hubs.sort((a, b) => a.daysCover - b.daysCover || b.totalUnits - a.totalUnits);
+      return {
+        state,
+        agentCount: bucket.agentIds.size,
+        hubs,
+        totalUnits,
+        productCount: unitsByProductId.size,
+        unitsByProductId,
+        avgDailySales,
+        inTransit,
+        daysCover,
+        status: managerInventoryCoverStatus(daysCover, avgDailySales > 0)
+      };
+    }).sort((a, b) => a.daysCover - b.daysCover || b.totalUnits - a.totalUnits);
+  })();
+
+  const managerInventoryTotals = (() => {
+    const agentIds = new Set<string>();
+    inventoryStateHubRows.forEach(({ agent, location }) => {
+      if (normalizeAgentState(location.state)) agentIds.add(agent.id);
+    });
+    const totalUnits = managerInventoryStateRows.reduce((sum, row) => sum + row.totalUnits, 0);
+    const inTransit = managerInventoryStateRows.reduce((sum, row) => sum + row.inTransit, 0);
+    const critical = managerInventoryStateRows.filter((row) => row.status === "Critical").length;
+    const restockSoon = managerInventoryStateRows.filter((row) => row.status === "Restock Soon").length;
+    // Health = the share of states that are not asking for anything. Stated as a
+    // count-of-states percentage rather than a weighted score, because a made-up
+    // composite would be impossible to check against the table below it.
+    const health = managerInventoryStateRows.length === 0
+      ? 100
+      : Math.round(((managerInventoryStateRows.length - critical - restockSoon) / managerInventoryStateRows.length) * 100);
+    return { agentCount: agentIds.size, stateCount: managerInventoryStateRows.length, totalUnits, inTransit, critical, restockSoon, health };
+  })();
+
+  // Transfers first: moving stock that is already in the state is same-day and
+  // free, so it should always be offered before a warehouse run.
+  const managerInventoryRecommendations = (() => {
+    const out: Array<{
+      kind: "transfer" | "restock";
+      state: string;
+      fromLabel: string;
+      toLabel: string;
+      productId: string;
+      productName: string;
+      units: number;
+      coverFrom: number;
+      coverTo: number;
+      fromAgentId?: string;
+      fromLocationId?: string;
+      toAgentId?: string;
+      toLocationId?: string;
+    }> = [];
+    managerInventoryStateRows.forEach((row) => {
+      if (row.avgDailySales <= 0) return;
+      const needy = row.hubs.filter((hub) => hub.daysCover <= smartStockWatchDaysCover);
+      needy.forEach((short) => {
+        const donor = row.hubs
+          .filter((hub) => hub.locationId !== short.locationId && hub.daysCover > smartStockWatchDaysCover * 2)
+          .sort((a, b) => b.daysCover - a.daysCover)[0];
+        // Biggest line the short hub is thinnest on.
+        const productId = Array.from(short.unitsByProductId.entries()).sort((a, b) => a[1] - b[1])[0]?.[0]
+          ?? Array.from(row.unitsByProductId.keys())[0];
+        const product = smartStockProductById.get(productId ?? "");
+        if (!product) return;
+        if (donor) {
+          // Move enough to bring the short hub to the Owner's watch threshold,
+          // without dragging the donor below it.
+          const target = Math.ceil(Math.max(0, smartStockWatchDaysCover - short.daysCover) * short.ordersPerDay);
+          const spare = Math.max(0, donor.totalUnits - Math.ceil(smartStockWatchDaysCover * donor.ordersPerDay));
+          const units = Math.max(0, Math.min(target, spare, donor.unitsByProductId.get(productId) ?? 0));
+          if (units > 0) {
+            out.push({
+              kind: "transfer",
+              state: row.state,
+              fromLabel: donor.agentName,
+              toLabel: `${short.agentName} (${row.state})`,
+              productId,
+              productName: product.name,
+              units,
+              coverFrom: short.daysCover,
+              coverTo: short.ordersPerDay > 0 ? (short.totalUnits + units) / short.ordersPerDay : Number.POSITIVE_INFINITY,
+              fromAgentId: donor.agentId,
+              fromLocationId: donor.locationId,
+              toAgentId: short.agentId,
+              toLocationId: short.locationId
+            });
+            return;
+          }
+        }
+        // Nothing spare in the state - it has to come from the warehouse.
+        const units = Math.max(1, Math.ceil(Math.max(0, smartStockWatchDaysCover - row.daysCover) * row.avgDailySales));
+        if (Number.isFinite(row.daysCover) && row.daysCover <= smartStockWatchDaysCover) {
+          out.push({
+            kind: "restock",
+            state: row.state,
+            fromLabel: "Warehouse",
+            toLabel: row.state,
+            productId,
+            productName: product.name,
+            units: Math.min(units, Math.max(0, Number(product.warehouseStock ?? 0))) || units,
+            coverFrom: row.daysCover,
+            coverTo: row.avgDailySales > 0 ? (row.totalUnits + row.inTransit + units) / row.avgDailySales : Number.POSITIVE_INFINITY,
+            toAgentId: short.agentId,
+            toLocationId: short.locationId
+          });
+        }
+      });
+    });
+    // One recommendation per state+product, transfers ranked first.
+    const seen = new Set<string>();
+    return out
+      .sort((a, b) => Number(a.kind === "restock") - Number(b.kind === "restock") || a.coverFrom - b.coverFrom)
+      .filter((row) => {
+        const key = `${row.kind}::${row.state}::${row.productId}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  })();
+
   const dormantLowStockSignals = Array.from(smartStockPhysicalSupplyByKey.entries())
     .map(([key, supply]) => {
       const [productId] = key.split("::");
@@ -27687,6 +27923,314 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const lines = (order.callOutcome ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return lines.length > 0 ? lines[lines.length - 1] : "";
   };
+  const renderManagerInventoryPanel = () => {
+    const rows = managerInventoryStateRows;
+    const totals = managerInventoryTotals;
+    const selected = rows.find((row) => row.state === managerInventoryState) ?? rows[0] ?? null;
+    const visibleRows = managerInventoryShowAllStates ? rows : rows.slice(0, 5);
+    const coverText = (days: number) => (Number.isFinite(days) ? `${Math.round(days * 10) / 10} days` : "No demand");
+    const coverTone = (status: ManagerInventoryStateRow["status"]) =>
+      status === "Critical" ? "text-rose-600" : status === "Restock Soon" ? "text-orange-600" : status === "Watch" ? "text-amber-600" : "text-emerald-600";
+    const statusChip = (status: ManagerInventoryStateRow["status"]) =>
+      status === "Critical" ? "bg-rose-50 text-rose-700 border-rose-200"
+        : status === "Restock Soon" ? "bg-orange-50 text-orange-700 border-orange-200"
+          : status === "Watch" ? "bg-amber-50 text-amber-700 border-amber-200"
+            : "bg-emerald-50 text-emerald-700 border-emerald-200";
+    // The breakdown's product columns follow whatever the selected state
+    // actually holds, so this works for two products or ten.
+    const breakdownProductIds = selected
+      ? Array.from(selected.unitsByProductId.entries())
+          .filter(([productId]) => managerInventoryProductFilter === "all" || productId === managerInventoryProductFilter)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 4)
+          .map(([productId]) => productId)
+      : [];
+    const stat = (value: string, label: string, helper: string, icon: ReactNode, tone: string) => (
+      <article className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-4">
+        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tone}`}>{icon}</span>
+        <span className="min-w-0">
+          <span className="block text-2xl font-black leading-tight text-gray-900">{value}</span>
+          <span className="block text-[13px] font-bold text-gray-700">{label}</span>
+          <span className="block text-[11px] text-gray-400">{helper}</span>
+        </span>
+      </article>
+    );
+
+    return (
+      <div className="space-y-5">
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="m-0 text-lg font-black text-gray-900">Inventory Health <span className="font-semibold text-gray-400">(All States)</span></h2>
+              <p className="m-0 mt-0.5 text-sm text-gray-500">Live overview of stock across agents and locations.</p>
+            </div>
+            {/* agents, products, agent_stock and waybill_records are all on the
+                realtime publication, so this panel updates itself. A Refresh
+                button here would be a button that does nothing. */}
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              Live
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {stat(totals.totalUnits.toLocaleString(), "Total Units in Network", `Across ${totals.stateCount} state${totals.stateCount === 1 ? "" : "s"} · ${totals.agentCount} agent${totals.agentCount === 1 ? "" : "s"}`, <Box className="h-5 w-5 text-indigo-600" />, "bg-indigo-50")}
+            {stat(String(totals.restockSoon), "States Need Restock Soon", `${smartStockCriticalDaysCover}-${smartStockWatchDaysCover} days of stock left`, <AlertTriangle className="h-5 w-5 text-amber-600" />, "bg-amber-50")}
+            {stat(String(totals.critical), totals.critical === 1 ? "State Critical" : "States Critical", `Under ${smartStockCriticalDaysCover} days of stock`, <AlertTriangle className="h-5 w-5 text-rose-600" />, "bg-rose-50")}
+            {stat(totals.inTransit.toLocaleString(), "Units in Transit", "Incoming transfers", <Truck className="h-5 w-5 text-violet-600" />, "bg-violet-50")}
+            {stat(`${totals.health}%`, "Inventory Health", "Overall stock stability", <ShieldCheck className="h-5 w-5 text-emerald-600" />, "bg-emerald-50")}
+          </div>
+        </section>
+
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 flex items-center gap-1.5 text-base font-black text-gray-900">
+              State Inventory Overview
+              <span title="Stock cover is calculated using avg. daily sales, confirmed orders and incoming transfers."><Info className="h-4 w-4 text-gray-300" /></span>
+            </h3>
+            <p className="m-0 mt-0.5 text-[12px] text-gray-500">Stock cover is calculated using avg. daily sales + confirmed orders + incoming transfers.</p>
+            {rows.length === 0 ? (
+              <p className="m-0 py-10 text-center text-sm italic text-gray-400">No agent hub is holding stock yet.</p>
+            ) : (
+              <>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full min-w-[620px] text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                        <th className="py-2 pr-3 font-semibold">State</th>
+                        <th className="py-2 pr-3 font-semibold">Agents</th>
+                        <th className="py-2 pr-3 font-semibold">Total Units</th>
+                        <th className="py-2 pr-3 font-semibold">Avg. Daily Sales</th>
+                        <th className="py-2 pr-3 font-semibold">Stock Cover</th>
+                        <th className="py-2 pr-3 font-semibold">Status</th>
+                        <th className="py-2 font-semibold">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleRows.map((row) => (
+                        <tr key={row.state} className={`border-b border-gray-50 ${selected?.state === row.state ? "bg-indigo-50/40" : ""}`}>
+                          <td className="py-3 pr-3">
+                            <span className="flex items-center gap-1.5 font-bold text-gray-900">
+                              <MapPin className="h-3.5 w-3.5 shrink-0 text-gray-400" />{row.state}
+                            </span>
+                          </td>
+                          <td className="py-3 pr-3">
+                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">
+                              {row.agentCount} agent{row.agentCount === 1 ? "" : "s"}
+                            </span>
+                          </td>
+                          <td className="py-3 pr-3">
+                            <span className="block font-semibold text-gray-900">{row.totalUnits.toLocaleString()} units</span>
+                            <span className="block text-[11px] text-gray-400">Across {row.productCount} product{row.productCount === 1 ? "" : "s"}</span>
+                          </td>
+                          <td className="py-3 pr-3 text-gray-700">{row.avgDailySales} / day</td>
+                          <td className={`py-3 pr-3 font-bold ${coverTone(row.status)}`}>{coverText(row.daysCover)}</td>
+                          <td className="py-3 pr-3">
+                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold ${statusChip(row.status)}`}>{row.status}</span>
+                          </td>
+                          <td className="py-3">
+                            <button
+                              className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                              onClick={() => setManagerInventoryState(row.state)}
+                            >
+                              View Agents<ChevronDown className="h-3 w-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {rows.length > 5 && (
+                  <button
+                    className="!min-h-0 mx-auto mt-3 flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold text-[#1F8FE0] transition-colors hover:bg-blue-50"
+                    onClick={() => setManagerInventoryShowAllStates((value) => !value)}
+                  >
+                    {managerInventoryShowAllStates ? "Show fewer states" : `View all states (${rows.length})`}
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${managerInventoryShowAllStates ? "rotate-180" : ""}`} />
+                  </button>
+                )}
+              </>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="m-0 text-base font-black text-gray-900">{selected ? `${selected.state} - Agent Breakdown` : "Agent Breakdown"}</h3>
+                <p className="m-0 mt-0.5 text-[12px] text-gray-500">
+                  {selected ? `${selected.hubs.length} agent hub${selected.hubs.length === 1 ? "" : "s"} holding our stock` : "Pick a state to see its agents"}
+                </p>
+              </div>
+              <select
+                className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700"
+                value={managerInventoryProductFilter}
+                onChange={(event) => setManagerInventoryProductFilter(event.target.value)}
+                aria-label="Filter agent breakdown by product"
+              >
+                <option value="all">All Products</option>
+                {selected && Array.from(selected.unitsByProductId.keys()).map((productId) => (
+                  <option key={productId} value={productId}>{smartStockProductById.get(productId)?.name ?? productId}</option>
+                ))}
+              </select>
+            </div>
+            {!selected ? (
+              <p className="m-0 py-10 text-center text-sm italic text-gray-400">No state selected.</p>
+            ) : (
+              <>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full min-w-[620px] text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                        <th className="py-2 pr-3 font-semibold">Agent</th>
+                        {breakdownProductIds.map((productId) => (
+                          <th key={productId} className="py-2 pr-3 font-semibold">{smartStockProductById.get(productId)?.name ?? "Product"} <span className="normal-case text-gray-300">(Units)</span></th>
+                        ))}
+                        <th className="py-2 pr-3 font-semibold">Orders / Day</th>
+                        <th className="py-2 pr-3 font-semibold">Stock Cover</th>
+                        <th className="py-2 pr-3 font-semibold">Status</th>
+                        <th className="py-2 font-semibold">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selected.hubs.map((hub) => {
+                        const hubStatus = managerInventoryCoverStatus(hub.daysCover, hub.ordersPerDay > 0);
+                        const canSupply = hub.daysCover > smartStockWatchDaysCover * 2;
+                        return (
+                          <tr key={`${hub.agentId}-${hub.locationId}`} className="border-b border-gray-50">
+                            <td className="py-3 pr-3 font-bold text-gray-900">{hub.agentName}</td>
+                            {breakdownProductIds.map((productId) => {
+                              const qty = hub.unitsByProductId.get(productId) ?? 0;
+                              return <td key={productId} className={`py-3 pr-3 font-semibold ${qty <= 0 ? "text-rose-600" : qty < 10 ? "text-orange-600" : "text-emerald-700"}`}>{qty}</td>;
+                            })}
+                            <td className="py-3 pr-3 text-gray-700">{hub.ordersPerDay}</td>
+                            <td className={`py-3 pr-3 font-bold ${coverTone(hubStatus)}`}>{coverText(hub.daysCover)}</td>
+                            <td className="py-3 pr-3">
+                              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold ${canSupply ? "bg-sky-50 text-sky-700 border-sky-200" : statusChip(hubStatus)}`}>
+                                {canSupply ? "Can Supply" : hubStatus === "Critical" || hubStatus === "Restock Soon" ? "Needs Stock" : hubStatus}
+                              </span>
+                            </td>
+                            <td className="py-3">
+                              <button
+                                className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                                onClick={() => { openCreateWaybill(); setWaybillToAgentId(hub.agentId); setWaybillToAgentLocationId(hub.locationId); setWaybillToState(selected.state); }}
+                              >
+                                {canSupply ? "Transfer Out" : "Transfer In"}<ArrowLeftRight className="h-3 w-3" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      <tr className="bg-gray-50/60">
+                        <td className="py-3 pr-3 font-black text-gray-900">{selected.state} Total</td>
+                        {breakdownProductIds.map((productId) => (
+                          <td key={productId} className="py-3 pr-3 font-black text-gray-900">{selected.unitsByProductId.get(productId) ?? 0}</td>
+                        ))}
+                        <td className="py-3 pr-3 font-black text-gray-900">{selected.avgDailySales}</td>
+                        <td className={`py-3 pr-3 font-black ${coverTone(selected.status)}`}>{coverText(selected.daysCover)}</td>
+                        <td className="py-3 pr-3">
+                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold ${statusChip(selected.status)}`}>{selected.status}</span>
+                        </td>
+                        <td className="py-3" />
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                {(() => {
+                  const short = selected.hubs.find((hub) => hub.daysCover <= smartStockWatchDaysCover);
+                  const donor = selected.hubs.find((hub) => hub.daysCover > smartStockWatchDaysCover * 2);
+                  return (
+                    <div className="mt-3 flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-[12px] text-blue-900">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+                      <span>
+                        {!short
+                          ? <><strong>{selected.state} is covered.</strong> No agent hub here is below {smartStockWatchDaysCover} days.</>
+                          : donor
+                            ? <><strong>{selected.state} has enough stock overall, but {short.agentName} is low.</strong><br />Best action: transfer from {donor.agentName} to {short.agentName} before restocking from warehouse.</>
+                            : <><strong>{selected.state} is short across every hub.</strong><br />Best action: restock from the warehouse - no agent here has spare cover to give.</>}
+                      </span>
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+          </section>
+        </div>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="m-0 flex items-center gap-1.5 text-base font-black text-gray-900">
+                Recommended Actions <Sparkles className="h-4 w-4 text-violet-500" />
+                <span className="text-[11px] font-semibold text-gray-400">(from your Smart Stock rules)</span>
+              </h3>
+              <p className="m-0 mt-0.5 text-[12px] text-gray-500">Smart recommendations to prevent stockouts and reduce emergency restocking.</p>
+            </div>
+            <span className="text-[11px] font-semibold text-gray-400">Auto-calculated</span>
+          </div>
+          {managerInventoryRecommendations.length === 0 ? (
+            <p className="m-0 py-8 text-center text-sm italic text-gray-400">Nothing to move right now - every state is above your {smartStockWatchDaysCover}-day restock threshold.</p>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {managerInventoryRecommendations.slice(0, 3).map((row, index) => (
+                <article key={`${row.kind}-${row.state}-${row.productId}-${index}`} className="rounded-2xl border border-gray-200 p-4">
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${row.kind === "transfer" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                    <ArrowLeftRight className="h-3 w-3" />{row.kind === "transfer" ? "Internal Transfer" : "State Restock"}
+                  </span>
+                  <p className="m-0 mt-2 text-[13px] font-black text-gray-900">{row.fromLabel} → {row.toLabel}</p>
+                  <p className="m-0 mt-2 text-[12px] font-semibold text-gray-700">{row.productName}</p>
+                  <p className="m-0 text-[13px] font-black text-gray-900">Send {row.units} units</p>
+                  <p className="m-0 mt-1 text-[11px] text-gray-400">
+                    Raises cover from {Math.round(row.coverFrom * 10) / 10} → {Number.isFinite(row.coverTo) ? Math.round(row.coverTo * 10) / 10 : "-"} days
+                  </p>
+                  <button
+                    className="!min-h-0 mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-[#1560a8]"
+                    onClick={() => {
+                      openCreateWaybill();
+                      setWaybillItems([{ productId: row.productId, quantity: String(row.units) }]);
+                      setWaybillToState(row.state);
+                      if (row.toAgentId) setWaybillToAgentId(row.toAgentId);
+                      if (row.toLocationId) setWaybillToAgentLocationId(row.toLocationId);
+                      if (row.kind === "transfer" && row.fromAgentId) {
+                        setWaybillFromType("Agent");
+                        setWaybillFromAgentId(row.fromAgentId);
+                        if (row.fromLocationId) setWaybillFromAgentLocationId(row.fromLocationId);
+                      }
+                    }}
+                  >
+                    {row.kind === "transfer" ? "Create Transfer" : "Create Waybill"}
+                  </button>
+                </article>
+              ))}
+              {managerInventoryRecommendations.length > 3 && (
+                <article className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-200 p-4 text-center">
+                  <p className="m-0 text-[13px] font-black text-[#1F8FE0]">View More Recommendations</p>
+                  <button
+                    className="!min-h-0 flex h-9 w-9 items-center justify-center rounded-full border border-[#1F8FE0] text-[#1F8FE0] transition-colors hover:bg-blue-50"
+                    onClick={() => { setActivePage("Inventory"); syncHashRoute("#/dashboard/admin/inventory"); }}
+                    aria-label="Open Inventory"
+                  >
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                  <p className="m-0 text-[11px] text-gray-400">{managerInventoryRecommendations.length - 3} more suggested transfers and restock plans.</p>
+                </article>
+              )}
+            </div>
+          )}
+        </section>
+
+        <section className="flex flex-wrap items-center gap-x-8 gap-y-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 text-[12px] text-gray-500">
+          <span className="inline-flex items-center gap-1.5 font-bold text-gray-700"><Info className="h-4 w-4 text-gray-400" />How it works</span>
+          <span>Stock cover = (Current Stock + Incoming) ÷ Avg. Daily Sales</span>
+          <span>Demand window: last {smartStockLookbackDays} days</span>
+          <span>Restock at {smartStockWatchDaysCover} days · Critical under {smartStockCriticalDaysCover}</span>
+        </section>
+      </div>
+    );
+  };
+
   const renderNeedsAttentionPanel = () => {
     // Matches the exact duplicate-hold check in public-orders.ts: last-10-digit
     // phone match, same product, prior order created within the 7 days before
@@ -63371,14 +63915,14 @@ ${waybillLineItems(w).length > 1
                 </header>
 
                 <div className="inline-flex w-full sm:w-auto items-center rounded-2xl bg-gray-100 p-1">
-                  {(["Overview", "Bonus", "Upsell Bonus", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
+                  {(["Overview", "Bonus", "Upsell Bonus", "Inventory", "Needs Attention"] as ManagerDashboardTab[]).map((tab) => (
                     <button
                       key={tab}
                       className={`!min-h-0 flex-1 sm:flex-none rounded-xl px-4 py-2 text-sm font-black transition-colors ${managerDashboardTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
                       onClick={() => setManagerDashboardTab(tab)}
                     >
                       <span className="inline-flex items-center gap-1.5">
-                        {tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
+                        {tab === "Bonus" ? "Bonus & Performance" : tab === "Upsell Bonus" ? "Upsell & Cross-Sell Bonus" : tab === "Inventory" ? "Inventory" : tab === "Needs Attention" ? "Needs Attention" : "Overview"}
                         {tab === "Needs Attention" && needsAttentionBadgeCount > 0 && (
                           <span
                             className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-black text-white shadow-[0_0_0_2px_rgba(225,29,72,0.25)] animate-bounce"
@@ -63392,7 +63936,7 @@ ${waybillLineItems(w).length > 1
                   ))}
                 </div>
 
-                {managerDashboardTab === "Bonus" ? renderManagerBonusPanel() : managerDashboardTab === "Upsell Bonus" ? renderUpsellBonusPanel() : managerDashboardTab === "Needs Attention" ? renderNeedsAttentionPanel() : (
+                {managerDashboardTab === "Bonus" ? renderManagerBonusPanel() : managerDashboardTab === "Upsell Bonus" ? renderUpsellBonusPanel() : managerDashboardTab === "Inventory" ? renderManagerInventoryPanel() : managerDashboardTab === "Needs Attention" ? renderNeedsAttentionPanel() : (
                   <>
 
                 {/* Period control — top of the page, drives every section below. */}
