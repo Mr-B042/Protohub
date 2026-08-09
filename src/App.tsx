@@ -128,7 +128,8 @@ import {
   getCurrentPushEndpoint,
   getPermissionState,
   getPushStatus,
-  sendTestPush
+  sendTestPush,
+  clearDeliveredPushNotifications
 } from "./lib/push-client";
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
@@ -20264,6 +20265,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const markAllNotificationsRead = () => {
     const prev = systemNotifications;
     setSystemNotifications((p) => p.map((n) => ({ ...n, read: true })));
+    void clearDeliveredPushNotifications();
     showToast("All notifications marked as read.");
     notificationsApi.markAllRead().catch((err: any) => {
       setSystemNotifications(prev);
@@ -23614,12 +23616,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   // Check push notification status on mount
   useEffect(() => {
-    void (async () => {
+    const PUSH_HEALTH_CHECK_MS = 6 * 60 * 60 * 1000;
+    let lastHealthCheckAt = 0;
+    const refreshPushHealth = async (force = false) => {
+      if (!force && Date.now() - lastHealthCheckAt < PUSH_HEALTH_CHECK_MS) return;
+      lastHealthCheckAt = Date.now();
       await initializeNativePushBridge().catch(() => null);
       await ensureServiceWorkerRegistration().catch(() => null);
       await ensurePushSubscriptionCurrent().catch(() => false);
       await refreshPushDiagnostics();
-    })();
+    };
+    void refreshPushHealth(true);
+
+    const handlePushResume = () => {
+      if (document.visibilityState === "visible" && navigator.onLine) {
+        void refreshPushHealth();
+      }
+    };
+    window.addEventListener("online", handlePushResume);
+    document.addEventListener("visibilitychange", handlePushResume);
     // Listen for SW navigation messages (notification click)
     const handleSwMessage = (event: MessageEvent) => {
       if (event.data?.type === "NAVIGATE" && event.data.url) {
@@ -23627,7 +23642,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
     };
     navigator.serviceWorker?.addEventListener("message", handleSwMessage);
-    return () => navigator.serviceWorker?.removeEventListener("message", handleSwMessage);
+    return () => {
+      window.removeEventListener("online", handlePushResume);
+      document.removeEventListener("visibilitychange", handlePushResume);
+      navigator.serviceWorker?.removeEventListener("message", handleSwMessage);
+    };
   }, [installGuidePlatform, isInstalled]);
 
   useEffect(() => {
@@ -79157,7 +79176,7 @@ ${waybillLineItems(w).length > 1
                     </button>
                   ))}
                 </nav>
-                <button className="flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 sm:py-1.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={scopedReadCount === 0} onClick={() => { const prev = systemNotifications; setSystemNotifications((p) => p.filter((n) => !n.read)); setNotifPage(1); showToast("Read notifications deleted."); notificationsApi.deleteRead().catch((err: any) => { setSystemNotifications(prev); showToast(`Failed to delete: ${err.message}`); }); }}><Trash2 className="w-4 h-4" /> Delete read</button>
+                <button className="flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 sm:py-1.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40" disabled={scopedReadCount === 0} onClick={() => { const prev = systemNotifications; setSystemNotifications((p) => p.filter((n) => !n.read)); setNotifPage(1); void clearDeliveredPushNotifications(); showToast("Read notifications deleted."); notificationsApi.deleteRead().catch((err: any) => { setSystemNotifications(prev); showToast(`Failed to delete: ${err.message}`); }); }}><Trash2 className="w-4 h-4" /> Delete read</button>
               </div>
 
               {scopedNotifications.length === 0 ? (

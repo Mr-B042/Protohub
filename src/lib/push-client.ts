@@ -7,6 +7,8 @@ const SERVICE_WORKER_SCOPE = "/";
 const SERVICE_WORKER_URL = "/sw.js";
 const NATIVE_PUSH_TOKEN_KEY = "protohub.nativePushToken";
 const NATIVE_PUSH_DEVICE_ID_KEY = "protohub.nativePushDeviceId";
+const PUSH_DELIVERY_POLICY_VERSION_KEY = "protohub.pushDeliveryPolicyVersion";
+const PUSH_DELIVERY_POLICY_VERSION = "2";
 
 type SaveSubscriptionOptions = {
   replaceOthers?: boolean;
@@ -267,7 +269,7 @@ function normalizeNativePermissionState(permission: { receive?: string } | null 
 // the 49 that was reported. The service worker prunes for the browser, but that
 // code never runs in the native app: FCM posts straight to the system tray and
 // the worker is not involved at all.
-const MAX_LIVE_NATIVE_NOTIFICATIONS = 12;
+const MAX_LIVE_NATIVE_NOTIFICATIONS = 16;
 
 export async function pruneDeliveredNativeNotifications(): Promise<void> {
   if (!isNativeShell) return;
@@ -282,6 +284,18 @@ export async function pruneDeliveredNativeNotifications(): Promise<void> {
   } catch {
     // Housekeeping - never let it interfere with a delivered notification.
   }
+}
+
+export async function clearDeliveredPushNotifications(): Promise<void> {
+  if (isNativeShell) {
+    await PushNotifications.removeAllDeliveredNotifications().catch(() => undefined);
+    return;
+  }
+
+  const registration = await ensureServiceWorkerRegistration().catch(() => null);
+  if (!registration) return;
+  const notifications = await registration.getNotifications().catch(() => []);
+  notifications.forEach((notification) => notification.close());
 }
 
 async function ensureNativePushListeners(): Promise<void> {
@@ -305,6 +319,7 @@ async function ensureNativePushListeners(): Promise<void> {
     if (url && typeof window !== "undefined") {
       window.location.hash = url;
     }
+    void pruneDeliveredNativeNotifications();
   });
 
   await PushNotifications.addListener("pushNotificationReceived", (_notification: PushNotificationSchema) => {
@@ -445,7 +460,29 @@ async function removeNativePushDevice(token: string | null): Promise<void> {
 
 export async function ensurePushSubscriptionCurrent(options: SaveSubscriptionOptions = {}): Promise<boolean> {
   if (isNativeShell) {
-    return syncNativePushIfPossible(options);
+    let nextOptions = options;
+    if (
+      nativePlatform === "android" &&
+      window.localStorage.getItem(PUSH_DELIVERY_POLICY_VERSION_KEY) !== PUSH_DELIVERY_POLICY_VERSION
+    ) {
+      const staleToken = getStoredNativePushToken();
+      if (staleToken) {
+        // Invalidate the old token once so messages queued under the former
+        // four-week FCM policy cannot arrive after this release. Android's
+        // unregister() deletes the Firebase token; register() below obtains a
+        // fresh one and saves it server-side.
+        await PushNotifications.unregister();
+        await removeNativePushDevice(staleToken);
+        setStoredNativePushToken(null);
+      }
+      nextOptions = { ...options, replaceOthers: true };
+    }
+
+    const subscribed = await syncNativePushIfPossible(nextOptions);
+    if (subscribed) {
+      window.localStorage.setItem(PUSH_DELIVERY_POLICY_VERSION_KEY, PUSH_DELIVERY_POLICY_VERSION);
+    }
+    return subscribed;
   }
   if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
     return false;
@@ -465,8 +502,9 @@ export async function ensurePushSubscriptionCurrent(options: SaveSubscriptionOpt
   const staleEndpoint = subscription?.endpoint ?? null;
   const currentKey = subscription ? getSubscriptionServerKey(subscription) : null;
   const keyMismatch = subscription && currentKey && !arraysEqual(currentKey, desiredKey);
+  const policyUpgrade = window.localStorage.getItem(PUSH_DELIVERY_POLICY_VERSION_KEY) !== PUSH_DELIVERY_POLICY_VERSION;
 
-  if (subscription && keyMismatch) {
+  if (subscription && (keyMismatch || policyUpgrade)) {
     await subscription.unsubscribe().catch(() => undefined);
     if (staleEndpoint) {
       await removeServerSubscription(staleEndpoint);
@@ -481,7 +519,8 @@ export async function ensurePushSubscriptionCurrent(options: SaveSubscriptionOpt
     });
   }
 
-  await saveWebSubscription(subscription, options);
+  await saveWebSubscription(subscription, policyUpgrade ? { ...options, replaceOthers: true } : options);
+  window.localStorage.setItem(PUSH_DELIVERY_POLICY_VERSION_KEY, PUSH_DELIVERY_POLICY_VERSION);
   return true;
 }
 

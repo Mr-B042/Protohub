@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import webpush from "web-push";
 import { supabase } from "./supabase.js";
+import { deliveryPolicyForPush, preparePushPayload } from "./push-policy.js";
 
 // VAPID config — set these in .env
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY ?? "";
@@ -112,15 +113,6 @@ export type StoredNativePushDevice = {
   user_id?: string;
 };
 
-function pushTopicForPayload(payload: PushPayload): string {
-  const raw = payload.tag ?? payload.kind ?? payload.title ?? "protohub";
-  const sanitized = raw
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "")
-    .slice(0, 32);
-  return sanitized || "protohub";
-}
-
 function pushPayloadData(payload: PushPayload): Record<string, string> {
   const data: Record<string, string> = {};
   const assign = (key: string, value: unknown) => {
@@ -227,7 +219,9 @@ export async function sendPushToSubscriptions(
   if (!isPushConfigured()) return { attempted: 0, delivered: 0, failed: 0 };
   if (!subscriptions || subscriptions.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
 
-  const message = JSON.stringify(payload);
+  const preparedPayload = preparePushPayload(payload);
+  const policy = deliveryPolicyForPush(preparedPayload);
+  const message = JSON.stringify(preparedPayload);
 
   const results = await Promise.allSettled(
     subscriptions.map(async (sub) => {
@@ -242,18 +236,14 @@ export async function sendPushToSubscriptions(
           },
           message,
           {
-            // FCM/Mozilla/Apple drop the message silently if TTL elapses
-            // before the device wakes. Samsung One UI's Adaptive Battery
-            // can keep a device in deep doze for hours; the previous
-            // 1-hour TTL meant pushes were silently dropped while the
-            // phone was asleep. 28 days (= 2419200s) is FCM's maximum;
-            // urgency:high asks the push service to wake the device.
-            // Topic header intentionally omitted — it triggers FCM
-            // collapse/replace behavior that can drop pushes when
-            // multiple share a topic, and the comparison app
-            // (ordellocrm) doesn't send one.
-            TTL: 28 * 24 * 60 * 60,
-            urgency: "high"
+            // Push is an immediate prompt, not the durable business record.
+            // Short TTLs prevent a stale order event from appearing hours or
+            // days later; Topic keeps only the newest waiting event in each
+            // class while the device is offline. The complete history remains
+            // in system_notifications.
+            TTL: policy.ttlSeconds,
+            urgency: "high",
+            topic: policy.collapseGroup
           }
         );
         // Verbose logging — every attempt prints the push-service response so
@@ -360,7 +350,10 @@ export async function sendNativePushToDevices(
   if (fcmDevices.length === 0) return { attempted: 0, delivered: 0, failed: 0 };
 
   const accessToken = await getFcmAccessToken();
-  const data = pushPayloadData(payload);
+  const preparedPayload = preparePushPayload(payload);
+  const policy = deliveryPolicyForPush(preparedPayload);
+  const data = pushPayloadData(preparedPayload);
+  const expiresAtSeconds = Math.floor(Date.now() / 1000) + policy.ttlSeconds;
 
   const results = await Promise.allSettled(
     fcmDevices.map(async (device) => {
@@ -374,12 +367,14 @@ export async function sendNativePushToDevices(
           message: {
             token: device.token,
             notification: {
-              title: payload.title,
-              body: payload.body
+              title: preparedPayload.title,
+              body: preparedPayload.body
             },
             data,
             android: {
               priority: "high",
+              ttl: `${policy.ttlSeconds}s`,
+              collapseKey: policy.collapseGroup,
               notification: {
                 // MUST match the channel the app registers in src/lib/native-push.ts
                 // (createChannel id "protohub-alerts", importance MAX). Posting to a
@@ -387,11 +382,15 @@ export async function sendNativePushToDevices(
                 // silent fallback channel or drop it — FCM still returns 200, so it
                 // looks "delivered" while the phone shows nothing.
                 channelId: "protohub-alerts",
-                tag: payload.tag,
+                // Four fixed slots per category keep the OS tray at 16 live
+                // notifications maximum even while the app is fully closed.
+                // Without this, Android stops accepting new notifications at
+                // roughly 49-50 until a person clears the tray.
+                tag: preparedPayload.tag,
                 // Per-event status-bar glyph + accent colour (tints it) + the brand
                 // logo as the image — premium, recognisable per notification type.
-                icon: nativeIconForKind(payload.kind),
-                color: accentForKind(payload.kind),
+                icon: nativeIconForKind(preparedPayload.kind),
+                color: accentForKind(preparedPayload.kind),
                 // Only a deliberate content image, never the brand logo.
                 // Android renders ANY notification carrying an image as
                 // big-picture style, and in that style the body is capped at
@@ -401,12 +400,16 @@ export async function sendNativePushToDevices(
                 // do the same. Without an image Android uses big-text style,
                 // where expanding shows the whole body. The brand is already in
                 // the title and the per-event glyph is already the icon.
-                image: payload.image ?? undefined
+                image: preparedPayload.image ?? undefined,
+                eventTime: new Date(preparedPayload.timestamp).toISOString()
               }
             },
             apns: {
               headers: {
-                "apns-priority": "10"
+                "apns-priority": "10",
+                "apns-push-type": "alert",
+                "apns-expiration": String(expiresAtSeconds),
+                "apns-collapse-id": policy.collapseGroup
               },
               payload: {
                 aps: {

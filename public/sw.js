@@ -1,5 +1,5 @@
 // ProtoHub Service Worker — Push Notifications + WebAPK install criteria
-const CACHE_NAME = "protohub-v11-readable-notifications";
+const CACHE_NAME = "protohub-v12-realtime-bounded-notifications";
 const PUSH_BRANDING_CACHE = "protohub-push-branding-v1";
 const PUSH_BRANDING_KEY = "/__protohub_push_branding__";
 // The page writes the API origin and VAPID key here so the worker can renew a
@@ -11,7 +11,7 @@ const PUSH_CONFIG_KEY = "/__protohub_push_config__";
 // Android caps an app at roughly 50 live notifications and silently drops new
 // ones past it - which is why nothing arrived until the tray was cleared. Keep
 // well under, newest first. The in-app list remains the full record.
-const MAX_LIVE_NOTIFICATIONS = 12;
+const MAX_LIVE_NOTIFICATIONS = 16;
 const DEFAULT_BRAND_NAME = "Protohub";
 const DEFAULT_BADGE = "/icons/icon-72.png";
 const DYNAMIC_MANIFEST_PATH = "/org-manifest.webmanifest";
@@ -49,6 +49,31 @@ function sanitizeBrandLogo(value) {
 
 function presentationForKind(kind) {
   return PUSH_PRESENTATION[kind] || PUSH_PRESENTATION.info;
+}
+
+function boundedNotificationTag(payload, kind) {
+  const supplied = typeof payload.tag === "string" ? payload.tag : "";
+  if (/^protohub-(orders|customer|operations|general)-[0-3]$/.test(supplied)) {
+    return supplied;
+  }
+
+  const orderKinds = new Set(["order_new", "order_assigned", "order_confirmed", "order_delivered", "order_failed", "order_cancelled", "order_rescheduled"]);
+  const customerKinds = new Set(["abandoned_cart_new", "order_follow_up", "stale_carts"]);
+  const operationsKinds = new Set(["low_stock", "remittance_overdue", "needs_attention", "waybill_dispatched", "waybill_updated", "waybill_status_changed"]);
+  const group = orderKinds.has(kind)
+    ? "orders"
+    : customerKinds.has(kind)
+      ? "customer"
+      : operationsKinds.has(kind)
+        ? "operations"
+        : "general";
+  const eventKey = supplied || `${kind}:${payload.title || DEFAULT_BRAND_NAME}`;
+  let hash = 2166136261;
+  for (let index = 0; index < eventKey.length; index += 1) {
+    hash ^= eventKey.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `protohub-${group}-${(hash >>> 0) % 4}`;
 }
 
 function withBrandTitle(title, brandName) {
@@ -188,8 +213,9 @@ self.addEventListener("install", (event) => {
 
 // ── Activate ─────────────────────────────────────────────
 self.addEventListener("activate", (event) => {
-  // Claim all clients so the SW takes effect immediately
-  event.waitUntil(self.clients.claim());
+  // Claim all clients and clean any old unbounded tray backlog as soon as this
+  // worker activates. No new push has to arrive first.
+  event.waitUntil(Promise.all([self.clients.claim(), pruneOldNotifications()]));
 });
 
 // ── Fetch ────────────────────────────────────────────────
@@ -293,7 +319,7 @@ self.addEventListener("push", (event) => {
     // cannot adapt to it. What we can do is stop competing with our own text.
     image: payload.image || undefined,
     badge: payload.badge || DEFAULT_BADGE,
-    tag: payload.tag || `protohub-${kind}`,
+    tag: boundedNotificationTag(payload, kind),
     renotify: true,
     requireInteraction: typeof payload.requireInteraction === "boolean" ? payload.requireInteraction : !!presentation.requireInteraction,
     vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : presentation.vibrate,
