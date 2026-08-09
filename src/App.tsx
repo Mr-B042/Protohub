@@ -22161,6 +22161,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const activeSalesBonusRules = salesBonusPrograms
     .filter((program) => program.status === "active")
     .flatMap((program) => program.rules.filter((rule) => rule.status === "active"));
+  // A product must not be paid by BOTH bonus systems for the same thing.
+  //
+  // Edge Brusher Max was, and it cost real money. The legacy config matched an
+  // exact upgrade pair while an engine rule matched a FLOOR (to >= toQtyMin), so
+  // a 3->10 order collected the legacy N2,000 AND the engine's 3->6+ payout;
+  // legacy also paid 10% of every cross-sell while the engine paid N1,500 a week
+  // for the same cross-sells. Net profit added both (bonusEstimate = legacy +
+  // engine), so the double was in the P&L as well as in the rep's pay.
+  //
+  // Nothing in the product editor or the bonus board showed the two configs
+  // side by side, so there was no way to notice. This flags the overlap wherever
+  // the settings are edited.
+  const productBonusSystemOverlap = (product: Product) => {
+    const config = product.bonusConfig;
+    if (!config) return null;
+    const rulesForProduct = activeSalesBonusRules.filter((rule) => rule.config?.scopeProductId === product.id);
+    if (rulesForProduct.length === 0) return null;
+    const clashes: string[] = [];
+    const hasEngine = (types: string[]) => rulesForProduct.some((rule) => types.includes(rule.type));
+    if ((config.upgradeBonuses?.length ?? 0) > 0 && hasEngine(["upgrade_count"])) {
+      clashes.push("upgrades");
+    }
+    if ((Number(config.crossSellPercent ?? 0) > 0 || Number(config.crossSellFixed ?? 0) > 0)
+      && hasEngine(["cross_sell_count", "cross_sell_offer"])) {
+      clashes.push("cross-sells");
+    }
+    return clashes.length > 0 ? { clashes, ruleCount: rulesForProduct.length } : null;
+  };
   const deliveryRateBoostRuleForProduct = (productId?: string) =>
     activeSalesBonusRules.find((rule) => rule.type === "delivery_rate_per_delivered" && rule.config?.scopeProductId === productId) ?? null;
 
@@ -95259,8 +95287,22 @@ ${waybillLineItems(w).length > 1
               if (!product) return null;
               const cfg = productBonusConfig(product);
               const moneyCode = primaryPricing(product)?.currency ?? "NGN";
+              const bonusOverlap = productBonusSystemOverlap(product);
               return (
                 <div className="px-6 py-5 flex flex-col gap-5">
+                  {bonusOverlap && (
+                    <div className="flex items-start gap-2.5 rounded-xl border border-rose-300 bg-rose-50 px-3 py-3">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+                      <div className="min-w-0">
+                        <p className="m-0 text-[13px] font-bold text-rose-900">
+                          Paid twice: {bonusOverlap.clashes.join(" and ")} on this product
+                        </p>
+                        <p className="m-0 mt-1 text-[11px] leading-4 text-rose-800">
+                          {bonusOverlap.ruleCount} active Sales Bonus Engine rule{bonusOverlap.ruleCount === 1 ? "" : "s"} already cover{bonusOverlap.ruleCount === 1 ? "s" : ""} {bonusOverlap.clashes.join(" and ")} for {product.name}, and the rules below pay for the same thing again. Both land in a rep&apos;s bonus and in net profit. Clear one side.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                   <header className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <h3 className="text-base font-semibold text-gray-900">{product.name}</h3>
@@ -95555,8 +95597,8 @@ ${waybillLineItems(w).length > 1
                   <section className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <div>
-                        <strong className="text-sm">4. Weekly AOV Bonus</strong>
-                        <p className="text-[11px] text-gray-500">Average order value tiers - one-time weekly payout when threshold reached.</p>
+                        <strong className="text-sm">4. Weekly AOV Bonus <span className="ml-1 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600">Not active</span></strong>
+                        <p className="text-[11px] text-gray-500">Average order value tiers. <strong>Nothing reads these</strong> - no calculation pays or costs them, so edits here change nothing. Use a Sales Bonus Engine rule instead.</p>
                       </div>
                       <button className="!min-h-0 text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, aovBonuses: [...c.aovBonuses, { id: makeBonusRuleId(), threshold: 0, amount: 0 }] }))}>+ Add</button>
                     </div>
@@ -95580,8 +95622,8 @@ ${waybillLineItems(w).length > 1
                   <section className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <div>
-                        <strong className="text-sm">5. Weekly Delivery Rate Bonus</strong>
-                        <p className="text-[11px] text-gray-500">Payout tiers for weekly delivery-rate bonuses, such as 70/80/90%.</p>
+                        <strong className="text-sm">5. Weekly Delivery Rate Bonus <span className="ml-1 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600">Not active</span></strong>
+                        <p className="text-[11px] text-gray-500">Payout tiers such as 70/80/90%. <strong>Nothing reads these</strong> - no calculation pays or costs them, so edits here change nothing. The Sales Bonus Engine&apos;s delivery-rate rule is the one that pays.</p>
                       </div>
                       <button className="!min-h-0 text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700" onClick={() => updateProductBonusConfig(product.id, (c) => ({ ...c, deliveryRateBonuses: [...c.deliveryRateBonuses, { id: makeBonusRuleId(), ratePercent: 60, amount: 0 }] }))}>+ Add</button>
                     </div>
