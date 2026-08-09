@@ -22431,6 +22431,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       logisticsCost: fee,
       notes: nextNotes
     } : o));
+    // Book the delivery cost as an expense, exactly as every other path that
+    // sets a delivery fee does.
+    //
+    // This was the ONE writer of logistics_cost that did not. Net profit reads
+    // the order's own logistics when it is set, so profit was never overstated -
+    // but the Expenses page, and anything else counting Delivery rows, was
+    // missing every fee a rep entered here and nothing later re-saved through
+    // another path. 149 delivered orders, N756,000 of real delivery cost,
+    // between 14 May and 8 Aug 2026.
+    syncOrderDeliveryExpense({ ...order, logisticsCost: fee });
     ordersApi.update(order.id, {
       logistics_cost: fee,
       timeline_notes: nextNotes
