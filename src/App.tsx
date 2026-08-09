@@ -1873,7 +1873,12 @@ type BonusBreakdownOrderLine = {
   crossSell: number;
   freeGift: number;
   manual: number;
-  total: number;
+  legacyTotal: number;
+  engineEarnedBeforeCompliance: number;
+  enginePayable: number;
+  engineComplianceReduction: number;
+  earnedTotal: number;
+  payableTotal: number;
   components: BonusBreakdownComponentLine[];
 };
 type BonusBreakdownData = {
@@ -22196,7 +22201,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     order: TrackedOrder,
     repWeeklyDeliveryRate: number,
     repWeeklyOrderCount: number,
-    weekRange: { start: string; end: string }
+    weekRange: { start: string; end: string },
+    engineSettlement?: SalesBonusOrderSettlement
   ): BonusBreakdownOrderLine => {
     const computed = computeOrderBonus(order, repWeeklyDeliveryRate, 0, repWeeklyOrderCount);
     const product = products.find((p) => p.id === order.productId);
@@ -22324,6 +22330,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       });
     }
 
+    const engineEarnedBeforeCompliance = Math.max(0, Number(engineSettlement?.earnedBeforeCompliance ?? 0));
+    const enginePayable = Math.max(0, Number(engineSettlement?.payable ?? 0));
+    const engineComplianceReduction = Math.max(
+      0,
+      Number(engineSettlement?.complianceReduction ?? (engineEarnedBeforeCompliance - enginePayable))
+    );
+    if (engineEarnedBeforeCompliance > 0 || enginePayable > 0 || engineComplianceReduction > 0) {
+      componentLines.push({
+        label: "Sales Bonus Engine allocation",
+        amount: enginePayable,
+        note: engineComplianceReduction > 0
+          ? `This order earned ${formatProductMoney(engineEarnedBeforeCompliance, order.currency)} from the weekly Sales Bonus Engine. ${formatProductMoney(engineComplianceReduction, order.currency)} is currently removed by logging compliance, leaving ${formatProductMoney(enginePayable, order.currency)} payable. This allocation is already counted once in the weekly total and net profit.`
+          : `This order earned ${formatProductMoney(enginePayable, order.currency)} from the weekly Sales Bonus Engine. It is shown here for attribution and is already counted once in the weekly total and net profit.`,
+        tone: engineEarnedBeforeCompliance > 0 ? "earned" : "info"
+      });
+    }
+
+    const legacyTotal = computed.total;
+
     return {
       orderId: order.id,
       customer: order.customer,
@@ -22343,7 +22368,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       crossSell: computed.crossSell,
       freeGift: computed.freeGift,
       manual: computed.manual,
-      total: computed.total,
+      legacyTotal,
+      engineEarnedBeforeCompliance,
+      enginePayable,
+      engineComplianceReduction,
+      earnedTotal: legacyTotal + engineEarnedBeforeCompliance,
+      payableTotal: legacyTotal + enginePayable,
       components: componentLines
     };
   };
@@ -73234,8 +73264,16 @@ ${waybillLineItems(w).length > 1
                         const cogs = cashOrders.reduce((s, o) => s + costForOrder(o), 0);
                         const logistics = cashOrders.reduce((s, o) => s + (o.logisticsCost ?? 0), 0);
                         const repRs   = getRepCohortStats(u.id);
-                        const bonusOrderBreakdowns = cashOrders.map((o) => buildOrderBonusBreakdownLine(o, repRs.rate, repRs.count, cashWeekRange));
-                        const legacyBonusEstimate = bonusOrderBreakdowns.reduce((s, o) => s + o.total, 0);
+                        const bonusOrderBreakdowns = cashOrders.map((o) => buildOrderBonusBreakdownLine(
+                          o,
+                          repRs.rate,
+                          repRs.count,
+                          cashWeekRange,
+                          newEngineBonusSettlementByOrderId[o.id]
+                        ));
+                        // Keep the two accounting sources separate here. The order card's
+                        // payableTotal is presentation-only and already contains both.
+                        const legacyBonusEstimate = bonusOrderBreakdowns.reduce((s, o) => s + o.legacyTotal, 0);
                         const newEngineBonusEstimate = cashOrders.reduce((s, o) => s + (newEngineBonusByOrderId[o.id] ?? 0), 0);
                         const bonusEstimate = legacyBonusEstimate + newEngineBonusEstimate;
                         const directCost = cogs + logistics + bonusEstimate;
@@ -95064,7 +95102,8 @@ ${waybillLineItems(w).length > 1
                 { label: "Upgrade", amount: bonusBreakdownData.orders.reduce((sum, order) => sum + order.upgrade, 0), tone: "text-violet-700 dark:text-violet-200" },
                 { label: "Cross-sell", amount: bonusBreakdownData.orders.reduce((sum, order) => sum + order.crossSell, 0), tone: "text-amber-700 dark:text-amber-200" },
                 { label: "Free gift", amount: bonusBreakdownData.orders.reduce((sum, order) => sum + order.freeGift, 0), tone: "text-emerald-700 dark:text-emerald-200" },
-                { label: "Manual override", amount: bonusBreakdownData.orders.reduce((sum, order) => sum + order.manual, 0), tone: "text-rose-700 dark:text-rose-200" }
+                { label: "Manual override", amount: bonusBreakdownData.orders.reduce((sum, order) => sum + order.manual, 0), tone: "text-rose-700 dark:text-rose-200" },
+                { label: "Sales Bonus Engine (allocated once)", amount: bonusBreakdownData.orders.reduce((sum, order) => sum + order.enginePayable, 0), tone: "text-pink-700 dark:text-pink-200" }
               ].filter((item) => item.amount > 0 || item.label !== "Manual override");
               const rateValue = bonusBreakdownData.finalRate ?? bonusBreakdownData.cohortRate;
               const totalCheck = componentTotals.reduce((sum, item) => sum + item.amount, 0);
@@ -95219,7 +95258,7 @@ ${waybillLineItems(w).length > 1
                   <section className="rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-[#101a24]">
                     <div className="border-b border-gray-100 px-4 py-3 dark:border-slate-800">
                       <h4 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Order-by-order breakdown</h4>
-                      <p className="m-0 mt-1 text-xs font-semibold text-gray-500 dark:text-slate-400">Each order below shows the exact components that rolled into the table amount.</p>
+                      <p className="m-0 mt-1 text-xs font-semibold text-gray-500 dark:text-slate-400">Each order below shows the exact payable components that rolled into the table amount. Sales Bonus Engine allocations are attributed for visibility, not added again.</p>
                       <div className="mt-2 flex flex-wrap gap-3 text-[11px] font-bold">
                         <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> Green = bonus earned on this order</span>
                         <span className="flex items-center gap-1.5 text-rose-700 dark:text-rose-300"><span className="h-2.5 w-2.5 rounded-full bg-rose-500" /> Red = eligible but ₦0 - see the note for why</span>
@@ -95247,8 +95286,13 @@ ${waybillLineItems(w).length > 1
                                 </p>
                               </div>
                               <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-right dark:border-emerald-500/30 dark:bg-emerald-500/10">
-                                <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-200">Order bonus</p>
-                                <p className="m-0 mt-1 text-2xl font-black text-emerald-700 dark:text-emerald-200">{formatProductMoney(order.total, order.currency)}</p>
+                                <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-200">Order bonus payable</p>
+                                <p className="m-0 mt-1 text-2xl font-black text-emerald-700 dark:text-emerald-200">{formatProductMoney(order.payableTotal, order.currency)}</p>
+                                {order.earnedTotal > order.payableTotal && (
+                                  <p className="m-0 mt-1 text-[11px] font-bold text-amber-700 dark:text-amber-200">
+                                    Earned {formatProductMoney(order.earnedTotal, order.currency)} before compliance
+                                  </p>
+                                )}
                               </div>
                             </div>
                             <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">

@@ -207,6 +207,24 @@ const checks = [
     ]
   },
   {
+    name: "Single-count bonus attribution",
+    why: "Order cards must show Sales Bonus Engine earnings without folding their combined display total back into legacy bonus expense and charging the bonus twice.",
+    required: [
+      "engineSettlement?: SalesBonusOrderSettlement",
+      "legacyTotal: number;",
+      "enginePayable: number;",
+      "payableTotal: number;",
+      "newEngineBonusSettlementByOrderId[o.id]",
+      "bonusOrderBreakdowns.reduce((s, o) => s + o.legacyTotal, 0)",
+      "const bonusEstimate = legacyBonusEstimate + newEngineBonusEstimate;",
+      "Sales Bonus Engine (allocated once)",
+      "Order bonus payable"
+    ],
+    forbidden: [
+      "bonusOrderBreakdowns.reduce((s, o) => s + o.payableTotal, 0)"
+    ]
+  },
+  {
     name: "Add-on completion bridge",
     why: "Customers who add an extra item must get an obvious next step to finish the order instead of getting stranded in the add-on chooser.",
     source: "public-form",
