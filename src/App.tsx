@@ -8790,6 +8790,48 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerInventoryState, setManagerInventoryState] = useState<string | null>(null);
   const [managerInventoryShowAllStates, setManagerInventoryShowAllStates] = useState(false);
   const [managerInventoryProductFilter, setManagerInventoryProductFilter] = useState("all");
+  const [managerInventoryRefreshedAt, setManagerInventoryRefreshedAt] = useState<number>(() => Date.now());
+  // Ticks only while the Inventory tab is on screen, so "Last updated" ages in
+  // front of you without costing a render anywhere else in the app.
+  const [managerInventoryNow, setManagerInventoryNow] = useState<number>(() => Date.now());
+  const [managerInventoryRefreshing, setManagerInventoryRefreshing] = useState(false);
+  const [managerInventoryOpenMenu, setManagerInventoryOpenMenu] = useState<string | null>(null);
+  // The design asks for "Last updated" and a refresh control, so this re-pulls
+  // the three lists the tab is built from, reusing the same shaping the realtime
+  // reloads use so a manual refresh and a live update cannot disagree.
+  useEffect(() => {
+    if (activePage !== "Manager Dashboard" || managerDashboardTab !== "Inventory") return;
+    setManagerInventoryNow(Date.now());
+    const timer = window.setInterval(() => setManagerInventoryNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [activePage, managerDashboardTab]);
+  const refreshManagerInventory = async () => {
+    setManagerInventoryRefreshing(true);
+    try {
+      const [productRows, agentRows, waybillRows] = await Promise.all([
+        productsApi.list().catch(() => null),
+        agentsApi.list().catch(() => null),
+        waybillsApi.list().catch(() => null)
+      ]);
+      if (Array.isArray(productRows)) setProducts(productRows as any);
+      if (Array.isArray(agentRows)) {
+        setAgents((agentRows as any[]).map((agent: any) => hydrateAgentFromApi(agent)) as any);
+        setAgentStock((agentRows as any[]).flatMap((agent: any) =>
+          (agent.stock ?? []).map((row: any) => ({
+            agentId: agent.id,
+            productId: row.productId ?? row.product_id,
+            quantity: Number(row.quantity ?? 0),
+            defective: Number(row.defective ?? 0),
+            missing: Number(row.missing ?? 0)
+          }))
+        ) as any);
+      }
+      if (Array.isArray(waybillRows)) setWaybillRecords(waybillRows as any);
+      setManagerInventoryRefreshedAt(Date.now());
+    } finally {
+      setManagerInventoryRefreshing(false);
+    }
+  };
   const [recoveryRepDashboardTab, setRecoveryRepDashboardTab] = useState<RecoveryRepDashboardTab>("Overview");
   const [recoveryCandidateSearch, setRecoveryCandidateSearch] = useState("");
   // Served by its own endpoint, not derived from trackedOrders: GET /api/orders
@@ -27926,6 +27968,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const renderManagerInventoryPanel = () => {
     const rows = managerInventoryStateRows;
     const totals = managerInventoryTotals;
+    const agoMinutes = Math.max(0, Math.round((managerInventoryNow - managerInventoryRefreshedAt) / 60000));
+    const managerInventoryLastUpdatedLabel = agoMinutes < 1
+      ? "just now"
+      : `${agoMinutes} min${agoMinutes === 1 ? "" : "s"} ago`;
     const selected = rows.find((row) => row.state === managerInventoryState) ?? rows[0] ?? null;
     const visibleRows = managerInventoryShowAllStates ? rows : rows.slice(0, 5);
     const coverText = (days: number) => (Number.isFinite(days) ? `${Math.round(days * 10) / 10} days` : "No demand");
@@ -27964,15 +28010,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <h2 className="m-0 text-lg font-black text-gray-900">Inventory Health <span className="font-semibold text-gray-400">(All States)</span></h2>
               <p className="m-0 mt-0.5 text-sm text-gray-500">Live overview of stock across agents and locations.</p>
             </div>
-            {/* agents, products, agent_stock and waybill_records are all on the
-                realtime publication, so this panel updates itself. A Refresh
-                button here would be a button that does nothing. */}
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              </span>
-              Live
+            <span className="flex items-center gap-2 text-xs text-gray-400">
+              Last updated: {managerInventoryLastUpdatedLabel}
+              <button
+                className="!min-h-0 rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50"
+                onClick={() => void refreshManagerInventory()}
+                disabled={managerInventoryRefreshing}
+                aria-label="Refresh inventory"
+              >
+                <RefreshCw className={`h-4 w-4 ${managerInventoryRefreshing ? "animate-spin" : ""}`} />
+              </button>
             </span>
           </div>
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -28003,7 +28050,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <th className="py-2 pr-3 font-semibold">Agents</th>
                         <th className="py-2 pr-3 font-semibold">Total Units</th>
                         <th className="py-2 pr-3 font-semibold">Avg. Daily Sales</th>
-                        <th className="py-2 pr-3 font-semibold">Stock Cover</th>
+                        <th className="py-2 pr-3 font-semibold">Stock Cover<span className="block normal-case text-gray-300">(State)</span></th>
                         <th className="py-2 pr-3 font-semibold">Status</th>
                         <th className="py-2 font-semibold">Action</th>
                       </tr>
@@ -28017,8 +28064,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </span>
                           </td>
                           <td className="py-3 pr-3">
-                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">
-                              {row.agentCount} agent{row.agentCount === 1 ? "" : "s"}
+                            <span className="flex items-center gap-2">
+                              <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">
+                                {row.agentCount} agent{row.agentCount === 1 ? "" : "s"}
+                              </span>
+                              <span className="flex items-center -space-x-1" aria-hidden="true">
+                                {Array.from({ length: Math.min(3, row.agentCount) }).map((_, index) => (
+                                  <UserRound key={index} className="h-3.5 w-3.5 text-gray-300" />
+                                ))}
+                              </span>
                             </span>
                           </td>
                           <td className="py-3 pr-3">
@@ -28043,12 +28097,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </tbody>
                   </table>
                 </div>
-                {rows.length > 5 && (
+                {rows.length > 0 && (
                   <button
                     className="!min-h-0 mx-auto mt-3 flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold text-[#1F8FE0] transition-colors hover:bg-blue-50"
                     onClick={() => setManagerInventoryShowAllStates((value) => !value)}
                   >
-                    {managerInventoryShowAllStates ? "Show fewer states" : `View all states (${rows.length})`}
+                    {managerInventoryShowAllStates ? "Show fewer states" : "View all states"}
                     <ChevronDown className={`h-3.5 w-3.5 transition-transform ${managerInventoryShowAllStates ? "rotate-180" : ""}`} />
                   </button>
                 )}
@@ -28064,6 +28118,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {selected ? `${selected.hubs.length} agent hub${selected.hubs.length === 1 ? "" : "s"} holding our stock` : "Pick a state to see its agents"}
                 </p>
               </div>
+              <span className="flex items-center gap-2">
               <select
                 className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700"
                 value={managerInventoryProductFilter}
@@ -28075,6 +28130,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   <option key={productId} value={productId}>{smartStockProductById.get(productId)?.name ?? productId}</option>
                 ))}
               </select>
+              <button
+                className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                onClick={() => setManagerInventoryProductFilter("all")}
+                title="Clear the product filter"
+              >
+                <Filter className="h-3.5 w-3.5" />Filters
+              </button>
+              </span>
             </div>
             {!selected ? (
               <p className="m-0 py-10 text-center text-sm italic text-gray-400">No state selected.</p>
@@ -28113,12 +28176,55 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                               </span>
                             </td>
                             <td className="py-3">
-                              <button
-                                className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 transition-colors hover:bg-gray-50"
-                                onClick={() => { openCreateWaybill(); setWaybillToAgentId(hub.agentId); setWaybillToAgentLocationId(hub.locationId); setWaybillToState(selected.state); }}
-                              >
-                                {canSupply ? "Transfer Out" : "Transfer In"}<ArrowLeftRight className="h-3 w-3" />
-                              </button>
+                              {/* A hub that is neither short nor able to spare
+                                  anything has nothing to move, so it gets the
+                                  overflow menu rather than an action that would
+                                  open a transfer with nothing to put in it. */}
+                              {hubStatus === "Healthy" && !canSupply ? (
+                                <span className="relative inline-block">
+                                  <button
+                                    className="!min-h-0 rounded-lg border border-gray-200 px-2 py-1.5 text-gray-500 transition-colors hover:bg-gray-50"
+                                    onClick={() => setManagerInventoryOpenMenu((open) => open === hub.locationId ? null : hub.locationId)}
+                                    aria-label={`Actions for ${hub.agentName}`}
+                                  >
+                                    <MoreVertical className="h-3.5 w-3.5" />
+                                  </button>
+                                  {managerInventoryOpenMenu === hub.locationId && (
+                                    <span className="absolute right-0 z-20 mt-1 flex w-40 flex-col rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                                      <button
+                                        className="!min-h-0 px-3 py-2 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                                        onClick={() => { setManagerInventoryOpenMenu(null); openCreateWaybill(); setWaybillToAgentId(hub.agentId); setWaybillToAgentLocationId(hub.locationId); setWaybillToState(selected.state); }}
+                                      >
+                                        Send stock here
+                                      </button>
+                                      <button
+                                        className="!min-h-0 px-3 py-2 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                                        onClick={() => { setManagerInventoryOpenMenu(null); setActivePage("Agents"); syncHashRoute("#/dashboard/admin/agents"); }}
+                                      >
+                                        Open agent
+                                      </button>
+                                    </span>
+                                  )}
+                                </span>
+                              ) : (
+                                <button
+                                  className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                                  onClick={() => {
+                                    openCreateWaybill();
+                                    if (canSupply) {
+                                      setWaybillFromType("Agent");
+                                      setWaybillFromAgentId(hub.agentId);
+                                      setWaybillFromAgentLocationId(hub.locationId);
+                                    } else {
+                                      setWaybillToAgentId(hub.agentId);
+                                      setWaybillToAgentLocationId(hub.locationId);
+                                    }
+                                    setWaybillToState(selected.state);
+                                  }}
+                                >
+                                  {canSupply ? "Transfer Out" : "Transfer In"}<ArrowLeftRight className="h-3 w-3" />
+                                </button>
+                              )}
                             </td>
                           </tr>
                         );
@@ -28164,11 +28270,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div>
               <h3 className="m-0 flex items-center gap-1.5 text-base font-black text-gray-900">
                 Recommended Actions <Sparkles className="h-4 w-4 text-violet-500" />
-                <span className="text-[11px] font-semibold text-gray-400">(from your Smart Stock rules)</span>
+                <span className="text-[11px] font-semibold text-gray-400">(AI powered)</span>
               </h3>
               <p className="m-0 mt-0.5 text-[12px] text-gray-500">Smart recommendations to prevent stockouts and reduce emergency restocking.</p>
             </div>
-            <span className="text-[11px] font-semibold text-gray-400">Auto-calculated</span>
+            <span className="flex items-center gap-2 text-[11px] font-semibold text-gray-400">
+              Auto-calculated
+              <button
+                className="!min-h-0 rounded-full p-1 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50"
+                onClick={() => void refreshManagerInventory()}
+                disabled={managerInventoryRefreshing}
+                aria-label="Recalculate recommendations"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${managerInventoryRefreshing ? "animate-spin" : ""}`} />
+              </button>
+            </span>
           </div>
           {managerInventoryRecommendations.length === 0 ? (
             <p className="m-0 py-8 text-center text-sm italic text-gray-400">Nothing to move right now - every state is above your {smartStockWatchDaysCover}-day restock threshold.</p>
@@ -28180,28 +28296,81 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <ArrowLeftRight className="h-3 w-3" />{row.kind === "transfer" ? "Internal Transfer" : "State Restock"}
                   </span>
                   <p className="m-0 mt-2 text-[13px] font-black text-gray-900">{row.fromLabel} → {row.toLabel}</p>
-                  <p className="m-0 mt-2 text-[12px] font-semibold text-gray-700">{row.productName}</p>
-                  <p className="m-0 text-[13px] font-black text-gray-900">Send {row.units} units</p>
-                  <p className="m-0 mt-1 text-[11px] text-gray-400">
-                    Raises cover from {Math.round(row.coverFrom * 10) / 10} → {Number.isFinite(row.coverTo) ? Math.round(row.coverTo * 10) / 10 : "-"} days
+                  <div className="mt-2 flex items-center gap-2.5">
+                    {(() => {
+                      // Same lookup the product P&L uses: the product's own image
+                      // if it has one, otherwise the first package that carries one.
+                      const catalogProduct = smartStockProductById.get(row.productId);
+                      const image = String(
+                        (catalogProduct as (Product & { imageUrl?: string }) | undefined)?.imageUrl
+                        ?? catalogProduct?.packages.find((pkg) => Boolean(pkg.imageUrl))?.imageUrl
+                        ?? ""
+                      ).trim();
+                      return image ? (
+                        <img src={image} alt="" className="h-10 w-10 shrink-0 rounded-lg border border-gray-100 object-cover" />
+                      ) : (
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-gray-100 bg-gray-50">
+                          <Package className="h-4 w-4 text-gray-300" />
+                        </span>
+                      );
+                    })()}
+                    <span className="min-w-0">
+                      <span className="block truncate text-[12px] font-semibold text-gray-700">{row.productName}</span>
+                      <span className="block text-[13px] font-black text-gray-900">Send {row.units} units</span>
+                    </span>
+                  </div>
+                  <p className="m-0 mt-1.5 text-[11px] text-gray-400">
+                    Raises {row.kind === "transfer" ? row.toLabel.split(" (")[0] : row.state} cover from {Math.round(row.coverFrom * 10) / 10} → {Number.isFinite(row.coverTo) ? Math.round(row.coverTo * 10) / 10 : "-"} days
                   </p>
-                  <button
-                    className="!min-h-0 mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-[#1560a8]"
-                    onClick={() => {
-                      openCreateWaybill();
-                      setWaybillItems([{ productId: row.productId, quantity: String(row.units) }]);
-                      setWaybillToState(row.state);
-                      if (row.toAgentId) setWaybillToAgentId(row.toAgentId);
-                      if (row.toLocationId) setWaybillToAgentLocationId(row.toLocationId);
-                      if (row.kind === "transfer" && row.fromAgentId) {
-                        setWaybillFromType("Agent");
-                        setWaybillFromAgentId(row.fromAgentId);
-                        if (row.fromLocationId) setWaybillFromAgentLocationId(row.fromLocationId);
-                      }
-                    }}
-                  >
-                    {row.kind === "transfer" ? "Create Transfer" : "Create Waybill"}
-                  </button>
+                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-gray-100 pt-3">
+                    <span className="inline-flex items-center gap-1 text-[11px] text-gray-400">
+                      <Clock className="h-3.5 w-3.5" />Est. arrival: {row.kind === "transfer" ? "Same day" : "2 days"}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <button
+                        className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-[#1560a8]"
+                        onClick={() => {
+                          openCreateWaybill();
+                          setWaybillItems([{ productId: row.productId, quantity: String(row.units) }]);
+                          setWaybillToState(row.state);
+                          if (row.toAgentId) setWaybillToAgentId(row.toAgentId);
+                          if (row.toLocationId) setWaybillToAgentLocationId(row.toLocationId);
+                          if (row.kind === "transfer" && row.fromAgentId) {
+                            setWaybillFromType("Agent");
+                            setWaybillFromAgentId(row.fromAgentId);
+                            if (row.fromLocationId) setWaybillFromAgentLocationId(row.fromLocationId);
+                          }
+                        }}
+                      >
+                        {row.kind === "transfer" ? "Create Transfer" : "Create Waybill"}
+                      </button>
+                      <span className="relative inline-block">
+                        <button
+                          className="!min-h-0 rounded-lg border border-gray-200 px-2 py-2 text-gray-500 transition-colors hover:bg-gray-50"
+                          onClick={() => setManagerInventoryOpenMenu((open) => open === `rec-${index}` ? null : `rec-${index}`)}
+                          aria-label="More actions"
+                        >
+                          <MoreVertical className="h-3.5 w-3.5" />
+                        </button>
+                        {managerInventoryOpenMenu === `rec-${index}` && (
+                          <span className="absolute right-0 z-20 mt-1 flex w-44 flex-col rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                            <button
+                              className="!min-h-0 px-3 py-2 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                              onClick={() => { setManagerInventoryOpenMenu(null); setManagerInventoryState(row.state); }}
+                            >
+                              See {row.state} agents
+                            </button>
+                            <button
+                              className="!min-h-0 px-3 py-2 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                              onClick={() => { setManagerInventoryOpenMenu(null); setActivePage("Inventory"); syncHashRoute("#/dashboard/admin/inventory"); }}
+                            >
+                              Open Inventory
+                            </button>
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                  </div>
                 </article>
               ))}
               {managerInventoryRecommendations.length > 3 && (
@@ -28223,9 +28392,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
         <section className="flex flex-wrap items-center gap-x-8 gap-y-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 text-[12px] text-gray-500">
           <span className="inline-flex items-center gap-1.5 font-bold text-gray-700"><Info className="h-4 w-4 text-gray-400" />How it works</span>
-          <span>Stock cover = (Current Stock + Incoming) ÷ Avg. Daily Sales</span>
-          <span>Demand window: last {smartStockLookbackDays} days</span>
-          <span>Restock at {smartStockWatchDaysCover} days · Critical under {smartStockCriticalDaysCover}</span>
+          <span>Stock cover = (Current Stock + Incoming) ÷ (Avg. Daily Sales + Confirmed Orders)</span>
+          <span>Lead time to states: 1-2 days (avg.)</span>
+          <span>Safety buffer: {smartStockCriticalDaysCover}-{smartStockWatchDaysCover} days</span>
         </section>
       </div>
     );
