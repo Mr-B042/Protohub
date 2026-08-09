@@ -4666,6 +4666,100 @@ const isInPeriod = (dateKey: string | undefined, activePeriod: Period, range: Da
   return value.slice(0, 4) === today.slice(0, 4);
 };
 
+// ── Manager bonus week attribution ────────────────────
+// The manager bonus is a WEEKLY payment. Its own settings say so:
+// "If weekly Net Profit (Ops) is below the gate, the manager gets support only."
+//
+// It used to be charged once against whatever window was on screen, with no
+// idea how many weeks that window covered. A single day carried a whole week's
+// N10,000 support bonus - a quiet day with no sales showed -N10,000 net profit
+// on its own - while This Month and This Year carried only ONE week's worth,
+// understating the real cost four- to thirty-fold.
+//
+// These return the weeks a period owns, so each can be gated and charged on its
+// own performance. Week attribution deliberately mirrors salary-spread.ts: a
+// month owns every Sunday anchor from its own (the Sunday on/before the 1st) up
+// to, but not including, the next month's. That is 4 or 5 weeks, never 6, with
+// no week in two months and none in neither. Diverging here would let payroll
+// and the manager bonus disagree about which week belongs to which month.
+const sundayAnchorForKey = (key: string): string => {
+  const d = new Date(`${key}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return "";
+  d.setDate(d.getDate() - d.getDay());
+  return formatDateKey(d);
+};
+const weekFromAnchor = (anchor: string) => {
+  const end = new Date(`${anchor}T00:00:00`);
+  end.setDate(end.getDate() + 6);
+  return { start: anchor, end: formatDateKey(end) };
+};
+const shiftAnchor = (anchor: string, weeks: number) => {
+  const d = new Date(`${anchor}T00:00:00`);
+  d.setDate(d.getDate() + weeks * 7);
+  return formatDateKey(d);
+};
+// Same rule as salary-spread.ts week1StartDate.
+const monthWeekAnchors = (monthKey: string): string[] => {
+  const [y, m] = monthKey.split("-").map(Number);
+  if (!y || !m) return [];
+  const anchorOfFirst = (year: number, month1: number) => {
+    const first = new Date(year, month1 - 1, 1);
+    first.setDate(first.getDate() - first.getDay());
+    return formatDateKey(first);
+  };
+  const start = anchorOfFirst(y, m);
+  const nextStart = m === 12 ? anchorOfFirst(y + 1, 1) : anchorOfFirst(y, m + 1);
+  const anchors: string[] = [];
+  let cursor = start;
+  while (cursor < nextStart && anchors.length < 6) {
+    anchors.push(cursor);
+    cursor = shiftAnchor(cursor, 1);
+  }
+  return anchors;
+};
+const sundayWeeksForPeriod = (activePeriod: Period, range: DateRange): Array<{ start: string; end: string }> => {
+  // A day is not a week. The manager is not paid per day, so a day view shows
+  // no manager bonus at all rather than an invented fraction of one.
+  if (activePeriod === "Today" || activePeriod === "Yesterday") return [];
+  const todayKeyValue = formatDateKey(new Date());
+  const thisWeekAnchor = sundayAnchorForKey(todayKeyValue);
+  // Never charge a week that has not started yet, so an in-progress month or
+  // year does not carry bonuses for weeks still in the future.
+  const started = (anchor: string) => anchor <= todayKeyValue;
+  if (activePeriod === "This Week") return [weekFromAnchor(thisWeekAnchor)];
+  if (activePeriod === "Last Week") return [weekFromAnchor(shiftAnchor(thisWeekAnchor, -1))];
+  if (activePeriod === "This Month" || activePeriod === "Last Month") {
+    const base = new Date();
+    if (activePeriod === "Last Month") base.setMonth(base.getMonth() - 1, 1);
+    const monthKey = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}`;
+    return monthWeekAnchors(monthKey).filter(started).map(weekFromAnchor);
+  }
+  if (activePeriod === "This Year") {
+    const year = new Date().getFullYear();
+    return Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`)
+      .flatMap(monthWeekAnchors)
+      .filter(started)
+      .map(weekFromAnchor);
+  }
+  // Custom: no month convention applies, so charge every week the range touches.
+  // Under a week gets nothing, for the same reason a day does.
+  return sundayWeeksForExplicitRange(range);
+};
+// Previous-period comparisons are handed an explicit range rather than a Period.
+const sundayWeeksForExplicitRange = (range: DateRange): Array<{ start: string; end: string }> => {
+  if (!range.start || !range.end) return [];
+  const spanDays = Math.round((Date.parse(`${range.end}T00:00:00`) - Date.parse(`${range.start}T00:00:00`)) / 86_400_000) + 1;
+  if (spanDays < 7) return [];
+  const weeks: Array<{ start: string; end: string }> = [];
+  let cursor = sundayAnchorForKey(range.start);
+  // 60 is well past a year of weeks - a stop so a bad range cannot spin here.
+  while (cursor && cursor <= range.end && weeks.length < 60) {
+    weeks.push(weekFromAnchor(cursor));
+    cursor = shiftAnchor(cursor, 1);
+  }
+  return weeks;
+};
+
 const periodBoundsForQuery = (activePeriod: Period, range: DateRange) => {
   const now = new Date();
   const today = formatDateKey(now);
@@ -15956,7 +16050,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const summarizeRecognizedProfit = (
     deliveredRows: TrackedOrder[],
     periodExpenses: ExpenseRecord[],
-    options?: { placedRows?: TrackedOrder[]; includeManagerBonus?: boolean }
+    options?: { placedRows?: TrackedOrder[]; includeManagerBonus?: boolean; managerBonusWeeks?: Array<{ start: string; end: string }> }
   ) => {
     const revenue = deliveredRows.reduce((sum, order) => sum + order.amount, 0);
     const cogs = deliveredRows.reduce((sum, order) => sum + costForOrder(order), 0);
@@ -15973,9 +16067,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const grossProfit = revenue - cogs - recognizedLogistics;
     const operatingExpenseBeforeManagerBonus = recordedOperatingExpense + bonusEstimate;
     const netProfitBeforeManagerBonus = grossProfit - operatingExpenseBeforeManagerBonus;
-    const managerBonusExpense = options?.includeManagerBonus
-      ? managerBonusExpenseForProfit(netProfitBeforeManagerBonus, deliveryRateForManagerBonus(options.placedRows))
-      : 0;
+    // One manager bonus PER SUNDAY WEEK the window covers, each gated on that
+    // week's own profit and delivery rate - not one bonus per window regardless
+    // of whether the window is a day, a month or a year. See sundayWeeksForPeriod.
+    //
+    // Callers with no period context (a single week's view, a per-product split)
+    // pass no weeks and keep the original single-window behaviour, which is
+    // already correct for them because their window IS one week.
+    const managerBonusExpense = !options?.includeManagerBonus
+      ? 0
+      : !options.managerBonusWeeks
+        ? managerBonusExpenseForProfit(netProfitBeforeManagerBonus, deliveryRateForManagerBonus(options.placedRows))
+        : options.managerBonusWeeks.reduce((sum, week) => {
+            const inWeek = (key?: string) => {
+              const value = normalizeDateKey(key);
+              return Boolean(value) && value >= week.start && value <= week.end;
+            };
+            const weekDelivered = deliveredRows.filter((order) => inWeek(orderDeliveredKey(order)));
+            const weekExpenses = periodExpenses.filter((expense) => inWeek(expense.date));
+            const weekPlaced = (options.placedRows ?? []).filter((order) => inWeek(orderCreatedKey(order)));
+            const weekRevenue = weekDelivered.reduce((total, order) => total + order.amount, 0);
+            const weekCogs = weekDelivered.reduce((total, order) => total + costForOrder(order), 0);
+            const weekLogisticsFromOrders = weekDelivered.reduce((total, order) => total + effectiveLogisticsCost(order), 0);
+            const weekDeliveryExpense = weekExpenses.filter((expense) => expense.type === "Delivery").reduce((total, expense) => total + expense.amount, 0);
+            const weekLogistics = weekLogisticsFromOrders > 0 ? weekLogisticsFromOrders : weekDeliveryExpense;
+            const weekOperating = weekExpenses.filter((expense) => expense.type !== "Delivery").reduce((total, expense) => total + expense.amount, 0);
+            const weekSalesBonus = legacyBonusTotalForRows(weekDelivered) + newEngineBonusTotalForRows(weekDelivered);
+            const weekNetBefore = weekRevenue - weekCogs - weekLogistics - weekOperating - weekSalesBonus;
+            return sum + managerBonusExpenseForProfit(weekNetBefore, deliveryRateForManagerBonus(weekPlaced));
+          }, 0);
     const totalBonusExpense = bonusEstimate + managerBonusExpense;
     const operatingExpense = operatingExpenseBeforeManagerBonus + managerBonusExpense;
     const netProfit = grossProfit - operatingExpense;
@@ -16366,9 +16486,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const dashboardExpenses = expenses.filter((expense) => isInPeriod(expense.date, period, dateRange) && dashboardExpenseMatchesProductFilter(expense));
   const dashboardIncludesManagerBonus = dashboardProductIds.size === 0;
   const dashboardBreakEven = computeBreakEven(dashboardOrders, dashboardExpenses, { includeManagerBonus: dashboardIncludesManagerBonus });
+  // Empty on a single-day view: the manager bonus is weekly and is not charged
+  // to a day. The Net Profit caption says so rather than leaving a silent gap.
+  const dashboardManagerBonusWeeks = sundayWeeksForPeriod(period, dateRange);
   const dashboardProfitSummary = summarizeRecognizedProfit(dashboardDeliveredOrders, dashboardExpenses, {
     placedRows: dashboardOrders,
-    includeManagerBonus: dashboardIncludesManagerBonus
+    includeManagerBonus: dashboardIncludesManagerBonus,
+    managerBonusWeeks: dashboardManagerBonusWeeks
   });
   const dashboardRevenue = dashboardProfitSummary.revenue;
   const dashboardCogs = dashboardProfitSummary.cogs;
@@ -16415,7 +16539,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     .filter((expense) => isInExplicitRange(expense.date, dashboardPreviousRange));
   const dashboardPreviousProfitSummary = summarizeRecognizedProfit(dashboardPreviousDelivered, dashboardPreviousExpenses, {
     placedRows: dashboardPreviousOrders,
-    includeManagerBonus: dashboardIncludesManagerBonus
+    includeManagerBonus: dashboardIncludesManagerBonus,
+    managerBonusWeeks: sundayWeeksForExplicitRange(dashboardPreviousRange)
   });
   const dashboardPreviousRevenue = dashboardPreviousProfitSummary.revenue;
   const dashboardPreviousGrossProfit = dashboardPreviousProfitSummary.grossProfit;
@@ -18884,7 +19009,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const expensePlacedRows = trackedOrders.filter((order) => !order.reviewHold && isInPeriod(orderCreatedKey(order), expensePeriod, expenseDateRange));
   const expenseProfitSummary = summarizeRecognizedProfit(expenseDeliveredRows, filteredExpenses, {
     placedRows: expensePlacedRows,
-    includeManagerBonus: expenseFilter === "All Types"
+    includeManagerBonus: expenseFilter === "All Types",
+    managerBonusWeeks: sundayWeeksForPeriod(expensePeriod, expenseDateRange)
   });
   const expenseRevenue = expenseProfitSummary.revenue;
   const expenseCogs = expenseProfitSummary.cogs;
@@ -18919,7 +19045,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const financeIncludesManagerBonus = !productFilterActive;
   const financeProfitSummary = summarizeRecognizedProfit(financeDeliveredRows, financeExpenses, {
     placedRows: financePeriodOrders,
-    includeManagerBonus: financeIncludesManagerBonus
+    includeManagerBonus: financeIncludesManagerBonus,
+    managerBonusWeeks: sundayWeeksForPeriod(financePeriod, financeDateRange)
   });
   const financeRevenue = financeProfitSummary.revenue;
   const financeCogs = financeProfitSummary.cogs;
@@ -23529,7 +23656,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (card.label === "Net Profit") {
       const expenseHelper = dashboardOperatingExpense === 0
         ? "No operating costs counted this period"
-        : `${formatMoney(dashboardRecordedOperatingExpense)} expense rows${dashboardSalesBonusEstimate > 0 ? ` + ${formatMoney(dashboardSalesBonusEstimate)} sales bonus est.` : ""}${dashboardManagerBonusExpense > 0 ? ` + ${formatMoney(dashboardManagerBonusExpense)} manager bonus` : ""}${dashboardNewEngineBonusEstimate > 0 ? ` (${formatMoney(dashboardNewEngineBonusEstimate)} sales bonus engine)` : ""}`;
+        : `${formatMoney(dashboardRecordedOperatingExpense)} expense rows${dashboardSalesBonusEstimate > 0 ? ` + ${formatMoney(dashboardSalesBonusEstimate)} sales bonus est.` : ""}${dashboardManagerBonusExpense > 0 ? ` + ${formatMoney(dashboardManagerBonusExpense)} manager bonus${dashboardManagerBonusWeeks.length > 1 ? ` (${dashboardManagerBonusWeeks.length} weeks)` : ""}` : ""}${dashboardManagerBonusExpense === 0 && dashboardIncludesManagerBonus && dashboardManagerBonusWeeks.length === 0 ? " · manager bonus is weekly, see This Week" : ""}${dashboardNewEngineBonusEstimate > 0 ? ` (${formatMoney(dashboardNewEngineBonusEstimate)} sales bonus engine)` : ""}`;
       return { ...card, value: formatMoney(dashboardNetProfit), trend: formatTrend(percentChange(dashboardNetProfit, dashboardPreviousNetProfit)), helper: expenseHelper };
     }
 
@@ -73787,7 +73914,8 @@ ${waybillLineItems(w).length > 1
                 const prevAllExpenses = expenses.filter((e) => isInExplicitRange(normalizeDateKey(e.date), prevRange) && expenseMatchesProductFilter(e));
                 const prevProfit = summarizeRecognizedProfit(prevDelivered, prevAllExpenses, {
                   placedRows: prevPeriodOrders,
-                  includeManagerBonus: financeIncludesManagerBonus
+                  includeManagerBonus: financeIncludesManagerBonus,
+                  managerBonusWeeks: sundayWeeksForExplicitRange(prevRange)
                 });
                 const prevRevenue = prevProfit.revenue;
                 const prevCogs = prevProfit.cogs;
