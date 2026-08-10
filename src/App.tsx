@@ -451,6 +451,42 @@ function mapWaybillItems(raw: any): WaybillItem[] | undefined {
     .filter((it) => it.productId && it.quantity > 0);
   return items.length > 0 ? items : undefined;
 }
+
+// The API speaks carrier / waybill_fee / from_location; the UI reads
+// logisticsPartner / waybillFee / sendingState. One place to translate.
+//
+// There used to be two: the page load mapped the fields, while the realtime
+// reload (and the Manager Dashboard's Inventory refresh) pushed raw rows
+// straight into state. So creating a waybill made its routing, logistics
+// partner and delivery fee vanish from the table - realtime fired on the
+// insert, reloaded with unmapped rows, and those three columns read from keys
+// that were not there. A manual refresh went through the mapping path and they
+// came back, which is exactly what it looked like from the outside.
+function normalizeWaybillRecord(w: any): WaybillRecord {
+  return {
+    id:                    w.id,
+    productId:             w.productId ?? w.product_id ?? "",
+    productName:           w.productName ?? w.product_name ?? "",
+    quantity:              w.quantity ?? 0,
+    items:                 mapWaybillItems(w.items),
+    waybillFee:            Number(w.waybillFee ?? w.waybill_fee ?? 0),
+    logisticsPartner:      w.logisticsPartner ?? w.carrier ?? "",
+    sendingState:          w.sendingState   ?? w.fromLocation ?? w.from_location ?? "",
+    receivingState:        w.receivingState ?? w.toLocation   ?? w.to_location   ?? "",
+    fromAgentId:           w.fromAgentId ?? w.from_agent_id ?? undefined,
+    toAgentId:             w.toAgentId   ?? w.agentId        ?? w.agent_id ?? undefined,
+    fromAgentLocationId:   w.fromAgentLocationId ?? w.from_agent_location_id ?? undefined,
+    toAgentLocationId:     w.toAgentLocationId ?? w.to_agent_location_id ?? undefined,
+    sendingLocationName:   w.sendingLocationName ?? w.fromLocation ?? w.from_location ?? undefined,
+    receivingLocationName: w.receivingLocationName ?? w.toLocation ?? w.to_location ?? undefined,
+    dateSent:              w.dateSent     ?? w.dispatchedDate ?? w.dispatched_date ?? "",
+    dateReceived:          w.dateReceived ?? w.receivedDate   ?? w.received_date ?? undefined,
+    status:                w.status ?? "In Transit",
+    note:                  w.note ?? w.notes ?? undefined,
+    createdBy:             w.createdBy ?? w.created_by ?? "System",
+    createdAt:             w.createdAt ?? w.created_at ?? new Date().toISOString()
+  } as WaybillRecord;
+}
 // The line items to display for a waybill: the full `items` list for multi-item
 // waybills, or a single synthetic line from the legacy columns. Tolerant of both
 // camelCase and snake_case item shapes (realtime reloads may skip normalization).
@@ -8831,7 +8867,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           }))
         ) as any);
       }
-      if (Array.isArray(waybillRows)) setWaybillRecords(waybillRows as any);
+      if (Array.isArray(waybillRows)) setWaybillRecords((waybillRows as any[]).map(normalizeWaybillRecord));
       setManagerInventoryRefreshedAt(Date.now());
     } finally {
       setManagerInventoryRefreshing(false);
@@ -25240,29 +25276,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       };
       const hydrateWaybills = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
-          setWaybillRecords((result.value as any[]).map((w: any) => ({
-            id:               w.id,
-            productId:        w.productId ?? w.product_id ?? "",
-            productName:      w.productName ?? w.product_name ?? "",
-            quantity:         w.quantity ?? 0,
-            items:            mapWaybillItems(w.items),
-            waybillFee:       Number(w.waybillFee ?? w.waybill_fee ?? 0),
-            logisticsPartner: w.logisticsPartner ?? w.carrier ?? "",
-            sendingState:     w.sendingState   ?? w.fromLocation ?? w.from_location ?? "",
-            receivingState:   w.receivingState ?? w.toLocation   ?? w.to_location   ?? "",
-            fromAgentId:      w.fromAgentId ?? w.from_agent_id ?? undefined,
-            toAgentId:        w.toAgentId   ?? w.agentId        ?? w.agent_id ?? undefined,
-            fromAgentLocationId: w.fromAgentLocationId ?? w.from_agent_location_id ?? undefined,
-            toAgentLocationId: w.toAgentLocationId ?? w.to_agent_location_id ?? undefined,
-            sendingLocationName: w.sendingLocationName ?? w.fromLocation ?? w.from_location ?? undefined,
-            receivingLocationName: w.receivingLocationName ?? w.toLocation ?? w.to_location ?? undefined,
-            dateSent:         w.dateSent     ?? w.dispatchedDate ?? w.dispatched_date ?? "",
-            dateReceived:     w.dateReceived ?? w.receivedDate   ?? w.received_date ?? undefined,
-            status:           w.status ?? "In Transit",
-            note:             w.note ?? w.notes ?? undefined,
-            createdBy:        w.createdBy ?? w.created_by ?? "System",
-            createdAt:        w.createdAt ?? w.created_at ?? new Date().toISOString()
-          })) as any);
+          setWaybillRecords((result.value as any[]).map(normalizeWaybillRecord));
         }
       };
       const hydrateNotifications = (result: PromiseSettledResult<any>) => {
@@ -25960,7 +25974,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         waybillsApi.list()
           .then((rows: any) => {
             if (cancelled || !Array.isArray(rows)) return;
-            setWaybillRecords(rows as any);
+            setWaybillRecords((rows as any[]).map(normalizeWaybillRecord));
           })
           .catch(() => undefined);
       }, 300);
