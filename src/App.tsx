@@ -56065,10 +56065,26 @@ ${waybillLineItems(w).length > 1
       if (!weekStartKey || !weekEndKey) return true;
       const arrived = row.createdKey >= weekStartKey && row.createdKey <= weekEndKey;
       const workedThisWeek = Object.keys(row.cells ?? {}).length > 0;
-      const neverCalled = (attemptsById.get(row.id) ?? 0) === 0;
-      return arrived || workedThisWeek || neverCalled;
+      // Carrying over only the NEVER-called ones dropped the carts most likely
+      // to rot: called once last week, then forgotten. Not arrived this week,
+      // no cell this week, and not never-called - so they vanished from the
+      // view entirely, and the only trace was "N older carts hidden" in grey
+      // 10px text. Nobody changes the week filter to go looking.
+      //
+      // needsLog is the backend's own rule (open, and either never contacted or
+      // untouched 2+ days), so anything still owed work carries forward and
+      // anything finished drops out.
+      const stillOwedWork = Boolean(row.needsLog) && !row.closed;
+      return arrived || workedThisWeek || stillOwedWork;
     });
     const hiddenOlder = statusFiltered.length - weekScoped.length;
+    // Carried in from an earlier week because it still needs a log - the rows a
+    // rep would otherwise never see again.
+    const carriedOver = weekScoped.filter((row) =>
+      Boolean(row.needsLog) && !row.closed && !(row.createdKey >= weekStartKey && row.createdKey <= weekEndKey));
+    const neglectedCount = weekScoped.filter((row) => Boolean(row.needsLog) && !row.closed).length;
+    const worstStale = weekScoped.reduce((worst, row) =>
+      (!row.closed && Boolean(row.needsLog) && (row.staleDays ?? 0) > worst) ? (row.staleDays ?? 0) : worst, 0);
 
     const rows = cartGridDayFilter === ""
       ? weekScoped
@@ -56116,10 +56132,22 @@ ${waybillLineItems(w).length > 1
             {/* Says what the table holds, not just what the columns are. The
                 week label used to describe the columns while every assigned
                 cart sat underneath it, which read as a broken date filter. */}
+            {neglectedCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-black text-amber-900"
+                title={`${carriedOver.length} of these came from an earlier week and still have no log. They stay on screen until they are worked or closed.`}>
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-600" />
+                </span>
+                {neglectedCount} need{neglectedCount === 1 ? "s" : ""} a log
+                {carriedOver.length > 0 && ` · ${carriedOver.length} from earlier weeks`}
+                {worstStale > 0 && ` · oldest ${worstStale}d`}
+              </span>
+            )}
             {hiddenOlder > 0 && (
               <span className="text-[10px] font-semibold text-gray-400"
-                title="Older carts appear when they were worked this week, or when nobody has called them yet.">
-                {hiddenOlder} older cart{hiddenOlder === 1 ? "" : "s"} hidden
+                title="Hidden carts are finished or already worked - nothing here is waiting on a log. Anything still owed work is carried into this week automatically.">
+                {hiddenOlder} finished cart{hiddenOlder === 1 ? "" : "s"} hidden
               </span>
             )}
           </div>
@@ -56266,6 +56294,17 @@ ${waybillLineItems(w).length > 1
                           title="Finished - no follow-up is being asked for. Logging still works if they come back.">
                           <CheckCircle2 className="h-2.5 w-2.5" />
                           Closed · {row.closedReason}
+                        </span>
+                      )}
+                      {/* Says this row is not from this week, so a rep can tell
+                          a genuinely fresh cart from one that has been waiting. */}
+                      {!row.closed && row.needsLog && !(row.createdKey >= weekStartKey && row.createdKey <= weekEndKey) && (
+                        <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-900"
+                          title={row.neverContacted
+                            ? "Nobody has called this customer yet. Carried into this week so it is not lost."
+                            : `Nothing logged for ${row.staleDays} days. Carried into this week so it is not lost.`}>
+                          <Clock className="h-2.5 w-2.5" />
+                          {row.neverContacted ? "Never called" : `Waiting ${row.staleDays}d`}
                         </span>
                       )}
                     </div>
