@@ -18712,6 +18712,44 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       showToast("Copy failed. Please retry.");
     }
   };
+  // An agent working several states has one hub row per state, and the only
+  // copy button gave you one hub at a time - so getting Bos Courier's whole
+  // position meant copying Ogun, then Lagos, then pasting them together by
+  // hand. These copy the same per-hub block, just more than one of it.
+  const joinInventoryBreakdowns = (groups: AgentWeeklyBalanceGroup[]) =>
+    groups
+      .map((group) => formatAgentRemainingInventoryBreakdown(group))
+      .join("\n\n--------------------\n\n");
+  const hubsForAgent = (agentId: string) => agentBalanceGroups.filter((group) => group.agentId === agentId);
+  const copyAgentAllHubsInventoryBreakdown = async (group: AgentWeeklyBalanceGroup) => {
+    const groups = hubsForAgent(group.agentId);
+    try {
+      await navigator.clipboard.writeText(joinInventoryBreakdowns(groups));
+      showToast(`Inventory breakdown copied for ${group.agentName} - all ${groups.length} hub${groups.length === 1 ? "" : "s"}.`);
+    } catch {
+      showToast("Copy failed. Please retry.");
+    }
+  };
+  const copyAllVisibleInventoryBreakdowns = async () => {
+    if (agentBalanceGroups.length === 0) {
+      showToast("No visible hubs to copy.");
+      return;
+    }
+    const stateCount = new Set(agentBalanceGroups.map((group) => normalizeAgentState(group.locationState) || group.locationState || "-")).size;
+    const combined = [
+      "Remaining stock - all states",
+      `${agentBalanceIsCustomRange ? "Period" : "Week"}: ${weekRangeLabel(agentBalanceWindowStart, agentBalanceWindowEnd)}`,
+      `${agentBalanceGroups.length} hub${agentBalanceGroups.length === 1 ? "" : "s"} across ${stateCount} state${stateCount === 1 ? "" : "s"}`,
+      "",
+      joinInventoryBreakdowns(agentBalanceGroups)
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(combined);
+      showToast(`Copied the stock breakdown for ${agentBalanceGroups.length} hubs.`);
+    } catch {
+      showToast("Copy failed. Please retry.");
+    }
+  };
   const copyAllVisibleWeekendStockSummaries = async () => {
     if (agentBalanceGroups.length === 0) {
       showToast("No visible weekend stock summaries to copy.");
@@ -68120,6 +68158,15 @@ ${waybillLineItems(w).length > 1
                         <ClipboardCheck className="w-4 h-4" />
                         Copy all visible
                       </button>
+                      <button
+                        className="!min-h-0 w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 transition-colors"
+                        onClick={() => void copyAllVisibleInventoryBreakdowns()}
+                        disabled={agentBalanceGroups.length === 0}
+                        title="Every visible hub's remaining stock, in one block"
+                      >
+                        <ClipboardCheck className="w-4 h-4" />
+                        Copy all stock breakdowns
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -68244,6 +68291,18 @@ ${waybillLineItems(w).length > 1
                             >
                               <ClipboardCheck className="w-4 h-4" /> Copy Inventory Breakdown
                             </button>
+                            {/* Only for an agent working more than one state -
+                                for a single-hub agent this button would copy
+                                exactly what the one beside it already does. */}
+                            {hubsForAgent(group.agentId).length > 1 && (
+                              <button
+                                className="!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-emerald-300 bg-white text-emerald-700 rounded-lg hover:bg-emerald-50 transition-colors"
+                                onClick={() => void copyAgentAllHubsInventoryBreakdown(group)}
+                                title={`All ${hubsForAgent(group.agentId).length} hubs ${group.agentName} holds stock in`}
+                              >
+                                <ClipboardCheck className="w-4 h-4" /> Copy All {hubsForAgent(group.agentId).length} Hubs
+                              </button>
+                            )}
                             <button
                               className={`!min-h-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${hasWhatsapp ? "bg-[#25D366] text-white hover:bg-[#1fb55a]" : "bg-gray-100 text-gray-400 cursor-not-allowed"}`}
                               onClick={() => openAgentBalanceWhatsapp(group)}
