@@ -56094,6 +56094,17 @@ ${waybillLineItems(w).length > 1
       : cartGridDayFilter === "unrecorded"
         ? weekScoped.filter((row) => !row.assignedAt)
         : weekScoped.filter((row) => assignedDayKey(row) === cartGridDayFilter);
+    // The day chips filter on the day a cart was ASSIGNED, which is the right
+    // question for "what did I hand out on Tuesday" and the wrong one for a
+    // backlog: a cart assigned in July is excluded from every chip, so picking
+    // a day re-hides exactly the rows the carry-over rule just rescued - while
+    // the header counter, which reads the whole week, still says they exist.
+    // A count with no rows behind it is worse than either. So when a day filter
+    // is hiding owed work, the table says so and offers one click to show it.
+    const urgentHiddenByDayFilter = cartGridDayFilter === ""
+      ? 0
+      : weekScoped.filter((row) => Boolean(row.needsLog) && !row.closed).length
+        - rows.filter((row) => Boolean(row.needsLog) && !row.closed).length;
     // Counts per day so an empty day is visible before you click it, and so
     // carts assigned before the date was recorded are never silently dropped.
     const assignedCountFor = (key: string) => weekScoped.filter((row) => assignedDayKey(row) === key).length;
@@ -56201,6 +56212,22 @@ ${waybillLineItems(w).length > 1
             )}
           </div>
         </div>
+
+        {urgentHiddenByDayFilter > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-amber-200 bg-amber-50 px-4 py-2.5">
+            <span className="cart-urgent-gap flex h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+            <span className="text-[12px] font-bold text-amber-900">
+              {urgentHiddenByDayFilter} cart{urgentHiddenByDayFilter === 1 ? "" : "s"} needing a log {urgentHiddenByDayFilter === 1 ? "is" : "are"} hidden by this day filter
+            </span>
+            <span className="text-[11px] text-amber-700">They were assigned on another day, so no chip shows them.</span>
+            <button
+              className="!min-h-0 ml-auto rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-black text-white transition-colors hover:bg-amber-700"
+              onClick={() => setCartGridDayFilter("")}
+            >
+              Show all {weekScoped.length} carts
+            </button>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1000px] border-collapse text-sm">
