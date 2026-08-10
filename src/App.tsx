@@ -8836,7 +8836,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // this one asks "can we actually fill what has already been sold". It is
   // driven by open orders in a chosen window, not by history, so it needs its
   // own period rather than borrowing the dashboard's.
-  const [managerCoveragePeriod, setManagerCoveragePeriod] = useState<Period>("This Week");
+  // Period plus two multi-week spans. Kept local rather than added to the shared
+  // Period union, because every consumer of that type - isInPeriod,
+  // periodBoundsForQuery, explicitPeriodRange, the manager-bonus week
+  // attribution - would have to grow a branch for spans only this panel offers.
+  const [managerCoveragePeriod, setManagerCoveragePeriod] = useState<Period | "2 Weeks" | "3 Weeks">("This Week");
   const [managerCoverageRange, setManagerCoverageRange] = useState<DateRange>({ start: "", end: "" });
   // Default to the products the embed link can actually sell. A retired product
   // with one stray open order is noise here - you cannot advertise your way out
@@ -14938,6 +14942,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // demandLinesForOrder is the same helper the Smart Stock engine uses, so a
   // package's components and any cross-sell lines are counted, not just the
   // headline product.
+  // Sunday-anchored and inclusive of the current week, so "2 Weeks" is last week
+  // plus this one - the span Bright reads these numbers in.
+  const managerCoverageSpan = (() => {
+    if (managerCoveragePeriod !== "2 Weeks" && managerCoveragePeriod !== "3 Weeks") return null;
+    const weeks = managerCoveragePeriod === "2 Weeks" ? 2 : 3;
+    const today = new Date();
+    const thisSunday = new Date(today);
+    thisSunday.setDate(today.getDate() - today.getDay());
+    const start = new Date(thisSunday);
+    start.setDate(thisSunday.getDate() - (weeks - 1) * 7);
+    return { start: formatDateKey(start), end: formatDateKey(today) };
+  })();
   const managerCoverageRows = (() => {
     const OPEN_EXCLUDES = new Set(["Delivered", "Cancelled", "Failed"]);
     const needByProduct = new Map<string, Map<string, number>>();
@@ -14945,7 +14961,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     trackedOrders.forEach((order) => {
       if (order.reviewHold) return;
       if (OPEN_EXCLUDES.has(order.status ?? "New")) return;
-      if (!isInPeriod(orderCreatedKey(order), managerCoveragePeriod, managerCoverageRange)) return;
+      const createdKey = orderCreatedKey(order);
+      const inWindow = managerCoverageSpan
+        ? isInExplicitRange(createdKey, managerCoverageSpan)
+        : isInPeriod(createdKey, managerCoveragePeriod as Period, managerCoverageRange);
+      if (!inWindow) return;
       const state = normalizeAgentState(order.state);
       if (!state) return;
       demandLinesForOrder(order).forEach((line) => {
@@ -28579,17 +28599,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              {(["Today", "Yesterday", "This Week", "Last Week", "This Month", "Custom"] as Period[]).map((option) => (
+              {(["Today", "Yesterday", "This Week", "Last Week", "2 Weeks", "3 Weeks", "This Month", "Custom"] as Array<Period | "2 Weeks" | "3 Weeks">).map((option) => (
                 <button
                   key={option}
                   className={`!min-h-0 rounded-lg px-2.5 py-1.5 text-xs font-bold transition-colors ${managerCoveragePeriod === option ? "bg-gray-900 text-white" : "border border-gray-200 text-gray-600 hover:bg-gray-50"}`}
                   onClick={() => setManagerCoveragePeriod(option)}
+                  title={option === "2 Weeks" ? "Last week and this week" : option === "3 Weeks" ? "The last two weeks and this one" : undefined}
                 >
                   {option}
                 </button>
               ))}
             </div>
           </div>
+          {managerCoverageSpan && (
+            <p className="m-0 mt-2 text-[11px] text-gray-400">
+              Orders placed {displayDateFromKey(managerCoverageSpan.start)} - {displayDateFromKey(managerCoverageSpan.end)} · Sunday-anchored, including this week.
+            </p>
+          )}
           {managerCoveragePeriod === "Custom" && (
             <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
               <span className="text-[11px] font-semibold text-gray-500">From</span>
