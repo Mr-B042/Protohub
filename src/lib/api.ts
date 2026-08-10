@@ -2338,8 +2338,13 @@ export type CartGridRow = {
   /** Finished: order delivered, customer said no, or the number was wrong.
    *  A display state only - logging stays possible if they come back. */
   closed?: boolean; closedReason?: string | null;
-  /** Untouched for 2+ days, or never contacted. Drives the nudge. */
+  /** Untouched for 2+ days, never contacted, or a promised callback is due. */
   needsLog?: boolean; neverContacted?: boolean; staleDays?: number;
+  /** When the rep told the customer they would ring back. */
+  nextActionAt?: string | null;
+  /** Ranked worst-first. A missed promise outranks a gap, because the
+   *  customer was actually told a day and it passed. */
+  urgency?: "promise-overdue" | "promise-today" | "never-contacted" | "stale" | null;
   cells: Record<string, CartGridCell>;
 };
 export type CartFollowUpGrid = {

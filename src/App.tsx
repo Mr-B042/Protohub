@@ -56083,6 +56083,9 @@ ${waybillLineItems(w).length > 1
     const carriedOver = weekScoped.filter((row) =>
       Boolean(row.needsLog) && !row.closed && !(row.createdKey >= weekStartKey && row.createdKey <= weekEndKey));
     const neglectedCount = weekScoped.filter((row) => Boolean(row.needsLog) && !row.closed).length;
+    const promisesDue = weekScoped.filter((row) => !row.closed
+      && (row.urgency === "promise-overdue" || row.urgency === "promise-today")).length;
+    const promisesMissed = weekScoped.filter((row) => !row.closed && row.urgency === "promise-overdue").length;
     const worstStale = weekScoped.reduce((worst, row) =>
       (!row.closed && Boolean(row.needsLog) && (row.staleDays ?? 0) > worst) ? (row.staleDays ?? 0) : worst, 0);
 
@@ -56132,6 +56135,16 @@ ${waybillLineItems(w).length > 1
             {/* Says what the table holds, not just what the columns are. The
                 week label used to describe the columns while every assigned
                 cart sat underneath it, which read as a broken date filter. */}
+            {/* A promise the customer was given ranks above a generic gap, so
+                it gets its own counter rather than being folded into the total. */}
+            {promisesDue > 0 && (
+              <span className="cart-urgent-promise inline-flex items-center gap-1.5 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-black text-rose-900"
+                title="These customers were told a day someone would ring them back.">
+                <CalendarClock className="h-3 w-3" />
+                {promisesDue} callback{promisesDue === 1 ? "" : "s"} due
+                {promisesMissed > 0 && ` · ${promisesMissed} already missed`}
+              </span>
+            )}
             {neglectedCount > 0 && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-black text-amber-900"
                 title={`${carriedOver.length} of these came from an earlier week and still have no log. They stay on screen until they are worked or closed.`}>
@@ -56298,14 +56311,22 @@ ${waybillLineItems(w).length > 1
                       )}
                       {/* Says this row is not from this week, so a rep can tell
                           a genuinely fresh cart from one that has been waiting. */}
-                      {!row.closed && row.needsLog && !(row.createdKey >= weekStartKey && row.createdKey <= weekEndKey) && (
-                        <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-900"
-                          title={row.neverContacted
-                            ? "Nobody has called this customer yet. Carried into this week so it is not lost."
-                            : `Nothing logged for ${row.staleDays} days. Carried into this week so it is not lost.`}>
-                          <Clock className="h-2.5 w-2.5" />
-                          {row.neverContacted ? "Never called" : `Waiting ${row.staleDays}d`}
-                        </span>
+                      {!row.closed && row.urgency && (
+                        (row.urgency === "promise-overdue" || row.urgency === "promise-today") ? (
+                          <span className="cart-urgent-promise inline-flex items-center gap-1 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-black text-rose-900"
+                            title={`The customer was told someone would call on ${displayDateFromKey(String(row.nextActionAt).slice(0, 10))}.`}>
+                            <CalendarClock className="h-2.5 w-2.5" />
+                            {row.urgency === "promise-overdue" ? "Callback missed" : "Callback due today"}
+                          </span>
+                        ) : !(row.createdKey >= weekStartKey && row.createdKey <= weekEndKey) ? (
+                          <span className="cart-urgent-gap inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-900"
+                            title={row.neverContacted
+                              ? "Nobody has called this customer yet. Carried into this week so it is not lost."
+                              : `Nothing logged for ${row.staleDays} days. Carried into this week so it is not lost.`}>
+                            <Clock className="h-2.5 w-2.5" />
+                            {row.neverContacted ? "Never called" : `Waiting ${row.staleDays}d`}
+                          </span>
+                        ) : null
                       )}
                     </div>
                   </td>
@@ -56334,14 +56355,26 @@ ${waybillLineItems(w).length > 1
                           // among rows that need nothing.
                           <span className="text-gray-200">·</span>
                         ) : (
-                          <button type="button" onClick={() => openCartFollowUpFromGrid(row)}
-                            className={`!min-h-0 rounded px-1.5 py-0.5 text-[12px] font-bold hover:underline ${
-                              day.isToday && row.needsLog ? "animate-pulse bg-amber-100 text-amber-800" : "text-[#1F8FE0]"}`}
-                            title={day.isToday && row.needsLog
-                              ? (row.neverContacted ? "Never contacted - nobody has called this customer yet" : `Nothing logged for ${row.staleDays} days`)
-                              : undefined}>
-                            + log
-                          </button>
+                          (() => {
+                            const promise = row.urgency === "promise-overdue" || row.urgency === "promise-today";
+                            const urgentHere = day.isToday && Boolean(row.urgency);
+                            const tone = !urgentHere ? "text-[#1F8FE0]"
+                              : promise ? "cart-urgent-promise bg-rose-100 text-rose-900 ring-1 ring-rose-300"
+                                : "cart-urgent-gap bg-amber-100 text-amber-900 ring-1 ring-amber-300";
+                            const why = row.urgency === "promise-overdue"
+                              ? `Callback promised for ${displayDateFromKey(String(row.nextActionAt).slice(0, 10))} and missed`
+                              : row.urgency === "promise-today" ? "Callback promised for today"
+                                : row.urgency === "never-contacted" ? "Never contacted - nobody has called this customer yet"
+                                  : row.urgency === "stale" ? `Nothing logged for ${row.staleDays} days`
+                                    : undefined;
+                            return (
+                              <button type="button" onClick={() => openCartFollowUpFromGrid(row)}
+                                className={`!min-h-0 rounded px-1.5 py-0.5 text-[12px] font-bold hover:underline ${tone}`}
+                                title={urgentHere ? why : undefined}>
+                                {urgentHere && promise ? "call now" : "+ log"}
+                              </button>
+                            );
+                          })()
                         )}
                       </td>
                     );

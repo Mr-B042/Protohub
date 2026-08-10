@@ -1743,7 +1743,7 @@ router.get("/follow-up-grid",
       // interested this week. So the closed/stale signals need the latest
       // attempt whenever it happened, not just one week of them.
       const { data: latestAttempts } = await supabase.from(CART_ATTEMPTS)
-        .select("cart_id, outcome_code, attempted_at")
+        .select("cart_id, outcome_code, attempted_at, next_action_at")
         .eq("org_id", orgId).in("cart_id", cartIds)
         .order("attempted_at", { ascending: false });
       const latestEverByCart = new Map<string, any>();
@@ -1776,6 +1776,19 @@ router.get("/follow-up-grid",
           const staleDays = closedReason || !lastTouch
             ? 0
             : Math.max(0, Math.floor((Date.now() - new Date(lastTouch).getTime()) / 86400000));
+
+          // A promised callback is a different kind of debt from a cart nobody
+          // has got to yet. The customer was TOLD someone would ring on a day,
+          // so missing it costs more than a generically stale row - it is
+          // ranked accordingly rather than lumped in with "needs a log".
+          const nextActionAt = latestEver?.next_action_at ?? null;
+          const nextActionKey = nextActionAt ? lagosDateKey(nextActionAt) : null;
+          const urgency = closedReason ? null
+            : nextActionKey && nextActionKey < todayKey ? "promise-overdue"
+            : nextActionKey && nextActionKey === todayKey ? "promise-today"
+            : !latestEver ? "never-contacted"
+            : staleDays >= 2 ? "stale"
+            : null;
           return {
             id: row.id,
             customer: row.customer,
@@ -1805,7 +1818,11 @@ router.get("/follow-up-grid",
             closedReason,
             neverContacted: !latestEver && !closedReason,
             staleDays,
-            needsLog: !closedReason && (!latestEver || staleDays >= 2),
+            nextActionAt,
+            urgency,
+            // A promised callback that is due or missed needs working even if
+            // the cart was touched yesterday, so it counts as needing a log.
+            needsLog: Boolean(urgency),
             cells
           };
         })
