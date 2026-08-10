@@ -8838,6 +8838,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // own period rather than borrowing the dashboard's.
   const [managerCoveragePeriod, setManagerCoveragePeriod] = useState<Period>("This Week");
   const [managerCoverageRange, setManagerCoverageRange] = useState<DateRange>({ start: "", end: "" });
+  // Default to the products the embed link can actually sell. A retired product
+  // with one stray open order is noise here - you cannot advertise your way out
+  // of its shortfall. Off by default is wrong though, so this stays a toggle and
+  // the header says how many products it is hiding rather than hiding silently.
+  const [managerCoverageEmbedOnly, setManagerCoverageEmbedOnly] = useState(true);
   const [managerInventoryRefreshedAt, setManagerInventoryRefreshedAt] = useState<number>(() => Date.now());
   // Ticks only while the Inventory tab is on screen, so "Last updated" ages in
   // front of you without costing a render anywhere else in the app.
@@ -14955,6 +14960,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const stockByState = new Map<string, Map<string, number>>();
     managerInventoryStateRows.forEach((row) => stockByState.set(row.state, row.unitsByProductId));
 
+    const embedProductIds = new Set(readyEmbedProducts.map((product) => product.id));
     return Array.from(needByProduct.entries()).map(([productId, byState]) => {
       const product = smartStockProductById.get(productId);
       const states = Array.from(byState.entries())
@@ -14969,6 +14975,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return {
         productId,
         productName: product?.name ?? productId,
+        onEmbed: embedProductIds.has(productId),
         states,
         unitsShort,
         warehouse,
@@ -28605,18 +28612,44 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             </div>
           )}
 
-          {managerCoverageRows.length === 0 ? (
+          {(() => {
+            const shownCoverage = managerCoverageEmbedOnly
+              ? managerCoverageRows.filter((row) => row.onEmbed)
+              : managerCoverageRows;
+            const hiddenCoverage = managerCoverageRows.length - shownCoverage.length;
+            return (
+          <>
+          <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-[11px] font-semibold text-gray-600">
+            <input
+              type="checkbox"
+              className="!min-h-0 h-3.5 w-3.5 accent-[#1F8FE0]"
+              checked={managerCoverageEmbedOnly}
+              onChange={(event) => setManagerCoverageEmbedOnly(event.target.checked)}
+            />
+            Only products the embed link is selling
+            {hiddenCoverage > 0 && (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-500">
+                {managerCoverageEmbedOnly ? `${hiddenCoverage} hidden` : `${hiddenCoverage} not on the form`}
+              </span>
+            )}
+          </label>
+          {shownCoverage.length === 0 ? (
             <p className="m-0 py-10 text-center text-sm italic text-gray-400">
-              Every state can fill the open orders placed in this window. Nothing short.
+              {managerCoverageRows.length > 0 && managerCoverageEmbedOnly
+                ? `Nothing the embed link sells is short. ${hiddenCoverage} retired product${hiddenCoverage === 1 ? "" : "s"} still short - untick above to see ${hiddenCoverage === 1 ? "it" : "them"}.`
+                : "Every state can fill the open orders placed in this window. Nothing short."}
             </p>
           ) : (
             <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-              {managerCoverageRows.map((row) => (
+              {shownCoverage.map((row) => (
                 <article key={row.productId} className="rounded-xl border border-gray-200">
                   <header className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3">
                     <div className="min-w-0">
                       <h4 className="m-0 truncate text-[13px] font-black text-gray-900">{row.productName}</h4>
-                      <p className="m-0 text-[11px] text-gray-400">{row.openOrders} open order{row.openOrders === 1 ? "" : "s"} in this window</p>
+                      <p className="m-0 text-[11px] text-gray-400">
+                        {row.openOrders} open order{row.openOrders === 1 ? "" : "s"} in this window
+                        {!row.onEmbed && <span className="ml-1.5 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-gray-500">not on the form</span>}
+                      </p>
                     </div>
                     <span className="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-black text-rose-700">
                       {row.unitsShort} unit{row.unitsShort === 1 ? "" : "s"} short
@@ -28657,6 +28690,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               ))}
             </div>
           )}
+          </>
+            );
+          })()}
         </section>
 
         <section className="rounded-2xl border border-gray-200 bg-white p-5">
