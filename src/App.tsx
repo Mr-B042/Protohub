@@ -56258,6 +56258,16 @@ ${waybillLineItems(w).length > 1
                           assign date not recorded
                         </span>
                       )}
+                      {/* Says WHY nothing is being asked of this row. A bare
+                          empty cell reads as "nobody has called", which is the
+                          opposite of what a delivered cart means. */}
+                      {row.closed && (
+                        <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700"
+                          title="Finished - no follow-up is being asked for. Logging still works if they come back.">
+                          <CheckCircle2 className="h-2.5 w-2.5" />
+                          Closed · {row.closedReason}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="border-r border-gray-200 px-3 py-3 align-top text-[12px] text-gray-500">{row.repName}</td>
