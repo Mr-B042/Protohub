@@ -1881,7 +1881,7 @@ export default function PublicOrderFormPage() {
     cartsApi.trackPublicJourney(
       cartId,
       {
-        productId: publicProduct.id,
+        productId: chosenProductId || publicProduct.id,
         packageId: options?.packageId ?? chosenPackage?.id ?? undefined,
         state: options?.state ?? (orderFormState.trim() || undefined),
         eventType,
@@ -2584,6 +2584,14 @@ export default function PublicOrderFormPage() {
           embedLabel: publicEmbedLabel || null,
           formContext: buildPublicFormContext("draft_capture")
         }
+      }).then((result) => {
+        const canonicalId = typeof result?.id === "string" ? result.id.trim() : "";
+        if (!result?.merged || !canonicalId || canonicalId === cartId) return;
+        // The backend may merge a fresh browser cart into an existing survivor.
+        // Adopt that survivor immediately so later journey events and submission
+        // cannot continue under a discarded cart id.
+        abandonedDraftCartIdRef.current = canonicalId;
+        setAbandonedDraftCartId(canonicalId);
       }).catch(() => {
         // Draft capture is best-effort only.
       });

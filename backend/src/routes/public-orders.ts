@@ -132,6 +132,42 @@ const clientIpFromRequest = (req: Request) => {
   return req.ip;
 };
 
+async function resolveCanonicalAbandonedCartId(orgId: string, requestedId: string) {
+  let currentId = requestedId;
+  const visited = new Set<string>();
+
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (visited.has(currentId)) {
+      logger.warn("public-orders: abandoned cart merge cycle detected", {
+        orgId,
+        requestedId,
+        currentId
+      });
+      return { exists: true, id: currentId };
+    }
+    visited.add(currentId);
+
+    const { data: cart } = await supabase
+      .from("abandoned_carts")
+      .select("id, merged_into")
+      .eq("id", currentId)
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (!cart) return { exists: false, id: requestedId };
+
+    const nextId = typeof cart.merged_into === "string" ? cart.merged_into.trim() : "";
+    if (!nextId) return { exists: true, id: cart.id as string };
+    currentId = nextId;
+  }
+
+  logger.warn("public-orders: abandoned cart merge chain exceeded safety depth", {
+    orgId,
+    requestedId,
+    currentId
+  });
+  return { exists: true, id: currentId };
+}
+
 type CompanionOverride = {
   companionId?: string;
   productId: string;
@@ -1387,14 +1423,25 @@ router.post("/", submitRateLimit, async (req, res) => {
   // doesn't exist, search for the surviving cart by phone and repair the link.
   if (d.cartId) {
     let effectiveCartId = d.cartId;
-    const { data: cartExists } = await supabase
-      .from("abandoned_carts")
-      .select("id")
-      .eq("id", d.cartId)
-      .eq("org_id", product.org_id)
-      .maybeSingle();
+    const resolvedCart = await resolveCanonicalAbandonedCartId(product.org_id, d.cartId);
 
-    if (!cartExists && d.phone) {
+    if (resolvedCart.exists) {
+      effectiveCartId = resolvedCart.id;
+      if (effectiveCartId !== d.cartId) {
+        await supabase.from("orders")
+          .update({ source_cart_id: effectiveCartId })
+          .eq("id", order.id)
+          .eq("org_id", product.org_id)
+          .then(() => undefined, () => undefined);
+        logger.info("public-orders: repaired merged cart link", {
+          orderId: order.id,
+          submittedCartId: d.cartId,
+          survivingCartId: effectiveCartId
+        });
+      }
+    }
+
+    if (!resolvedCart.exists && d.phone) {
       // Ghost cart — find the surviving merged cart by customer phone
       const n = d.phone.replace(/\D/g, "");
       const { data: phoneCart } = await supabase
@@ -1438,23 +1485,16 @@ router.post("/", submitRateLimit, async (req, res) => {
       .eq("id", effectiveCartId)
       .eq("org_id", product.org_id);
 
-    // Close sibling phantom carts: a single session can spawn several cart IDs
-    // (browser reloads, dedup re-keying). Mark any OTHER non-Converted cart with
-    // the same normalized phone, created within ±2h, as Converted too — otherwise
-    // it lingers as a phantom "Open abandoned" cart for a customer who ordered.
-    if (d.phone) {
-      const n = d.phone.replace(/\D/g, "");
-      const windowStart = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-      await supabase
-        .from("abandoned_carts")
-        .update({ status: "Converted", last_activity: new Date().toISOString() })
-        .eq("org_id", product.org_id)
-        .neq("id", effectiveCartId)
-        .not("status", "eq", "Converted")
-        .or(`phone.eq.${d.phone.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`)
-        .gte("created_at", windowStart)
-        .then(() => undefined, () => undefined);
-    }
+    // Only close carts the dedupe engine explicitly linked to this survivor.
+    // Phone alone is not enough: one customer can legitimately open or submit
+    // separate products within the same two-hour window.
+    await supabase
+      .from("abandoned_carts")
+      .update({ status: "Converted", last_activity: new Date().toISOString() })
+      .eq("org_id", product.org_id)
+      .eq("merged_into", effectiveCartId)
+      .not("status", "eq", "Converted")
+      .then(() => undefined, () => undefined);
 
     // effectiveCartId is used in place of d.cartId for journey events below
 
