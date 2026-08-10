@@ -2345,6 +2345,11 @@ export type CartGridRow = {
   /** Ranked worst-first. A missed promise outranks a gap, because the
    *  customer was actually told a day and it passed. */
   urgency?: "promise-overdue" | "promise-today" | "never-contacted" | "stale" | null;
+  /** Every attempt ever, and the most recent one - so a cart carried in from
+   *  an earlier week shows what was already said without opening it. */
+  attempts?: number;
+  lastOutcome?: string | null; lastOutcomeNote?: string | null;
+  lastAttemptAt?: string | null; lastAttemptBy?: string | null;
   cells: Record<string, CartGridCell>;
 };
 export type CartFollowUpGrid = {
@@ -2366,6 +2371,10 @@ export const cartsApi = {
     post<{ row: CartAttemptRow; statusMovedTo: string | null }>(`/api/carts/${cartId}/contact-attempts`, body),
   followUpOverview: () => get<{ rows: CartFollowUpRow[] }>("/api/carts/follow-up-overview"),
   list: () => get<any[]>("/api/carts"),
+  changes: (after: string) => {
+    const qs = new URLSearchParams({ after });
+    return get<{ rows: any[]; serverTime: string; truncated: boolean }>(`/api/carts/changes?${qs.toString()}`);
+  },
   create: (body: unknown) => post<any>("/api/carts", body),
   // Public capture endpoint - no auth required, derives org from product_id.
   // Use this from the embed form so it works inside customer-facing iframes.

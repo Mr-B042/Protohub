@@ -1236,6 +1236,9 @@ type AbandonedCartRecord = {
   dedupSignal?: "phone" | "email" | "ip" | "localStorage" | null;
   // Per-ad touchpoints preserved across merged duplicate carts (each visit's ad).
   touchpoints?: CartTouchpoint[] | null;
+  // Set only when this cart was absorbed into another cart. Delta syncs carry
+  // the row once so every open screen can remove the obsolete card.
+  mergedInto?: string | null;
 };
 type CartTouchpoint = {
   at?: string | null; cartId?: string | null; source?: string | null;
@@ -6549,6 +6552,7 @@ const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
     phone: cart.phone ?? "",
     whatsapp: cart.whatsapp ?? undefined,
     email: cart.email ?? undefined,
+    address: cart.address ?? undefined,
     city: cart.city ?? undefined,
     state: cart.state ?? undefined,
     productId: cart.productId ?? undefined,
@@ -6567,6 +6571,10 @@ const normalizeRealtimeCart = (value: any): AbandonedCartRecord => {
     capturePayload: cart.capturePayload && typeof cart.capturePayload === "object" && !Array.isArray(cart.capturePayload)
       ? cart.capturePayload
       : undefined,
+    dedupMergedFrom: Array.isArray(cart.dedupMergedFrom) ? cart.dedupMergedFrom : undefined,
+    dedupSignal: cart.dedupSignal ?? undefined,
+    touchpoints: Array.isArray(cart.touchpoints) ? cart.touchpoints : undefined,
+    mergedInto: cart.mergedInto ?? null,
     lastActivity: cart.lastActivity ?? cart.createdAt ?? "",
     createdAt: cart.createdAt ?? ""
   };
@@ -12601,63 +12609,89 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return () => { cancelled = true; };
   }, [modal, selectedCartId, abandonedCarts]);
 
-  // Live merge-refresh for the Abandoned Carts page. Realtime is blocked by RLS +
-  // custom JWT, so we gently re-fetch every 12s and MERGE - only rows that actually
-  // changed update (React keys keep the table stable: no reload, no flicker, no
-  // scroll jump). Pauses when the tab is hidden.
+  // Reconcile abandoned-cart websocket gaps without downloading the full cart
+  // history. Realtime remains the instant path; this small delta feed repairs a
+  // missed event after reconnect/backgrounding and is shared by desktop + mobile.
   useEffect(() => {
     if (activePage !== "Abandoned Carts") return;
     let cancelled = false;
-    const mapRow = (c: any): AbandonedCartRecord => ({
-      id: c.id, customer: c.customer ?? "", phone: c.phone ?? "",
-      whatsapp: c.whatsapp ?? undefined, email: c.email ?? undefined, address: c.address ?? undefined,
-      city: c.city ?? undefined, state: c.state ?? undefined,
-      productId: c.productId ?? c.product_id ?? undefined, packageId: c.packageId ?? c.package_id ?? undefined,
-      productName: c.productName ?? c.product_name ?? "", packageName: c.packageName ?? c.package_name ?? "",
-      amount: Number(c.amount ?? 0), currency: c.currency ?? "NGN",
-      source: c.source ?? "Website", status: c.status ?? "Open abandoned",
-      assignedRepId: c.assignedRepId ?? c.assigned_rep_id ?? undefined,
-      lastActivity: c.lastActivity ?? c.last_activity ?? c.createdAt ?? c.created_at ?? "",
-      createdAt: c.createdAt ?? c.created_at ?? "",
-      embedLabel: c.embedLabel ?? c.embed_label ?? undefined,
-      capturePayload: c.capturePayload ?? c.capture_payload ?? undefined,
-      dedupMergedFrom: c.dedupMergedFrom ?? c.dedup_merged_from ?? undefined,
-      dedupSignal: c.dedupSignal ?? c.dedup_signal ?? undefined,
-      touchpoints: Array.isArray(c.touchpoints) ? c.touchpoints : undefined,
-    } as AbandonedCartRecord);
-    const pull = () => {
-      if (document.hidden) return;
-      void cartsApi.list().then((rows) => {
-        if (cancelled || !Array.isArray(rows)) return;
-        const fresh = rows.map(mapRow);
-        setAbandonedCarts((prev) => {
-          // Only update if something genuinely changed, to avoid needless renders.
-          if (prev.length === fresh.length) {
-            const prevById = new Map(prev.map((c) => [c.id, c]));
+    let pullInFlight = false;
+
+    const pull = async () => {
+      if (cancelled || pullInFlight || document.visibilityState !== "visible") return;
+      pullInFlight = true;
+      try {
+        const currentCursor = latestCartSyncAt.current;
+        const baseMs = currentCursor && Number.isFinite(Date.parse(currentCursor))
+          ? Date.parse(currentCursor)
+          : Date.now() - 24 * 60 * 60_000;
+        // A five-second overlap protects timestamp boundaries and is cheap:
+        // merges are keyed by cart id and last_activity.
+        const after = new Date(baseMs - 5_000).toISOString();
+        const result = await cartsApi.changes(after);
+        if (cancelled || !Array.isArray(result?.rows)) return;
+
+        if (result.rows.length > 0) {
+          setAbandonedCarts((prev) => {
+            const byId = new Map(prev.map((cart) => [cart.id, cart]));
             let changed = false;
-            for (const f of fresh) {
-              const p = prevById.get(f.id);
-              if (!p || p.status !== f.status || p.lastActivity !== f.lastActivity || p.customer !== f.customer || p.assignedRepId !== f.assignedRepId) { changed = true; break; }
+
+            for (const raw of result.rows) {
+              const next = normalizeRealtimeCart(raw);
+              if (!next.id) continue;
+              if (next.mergedInto) {
+                changed = byId.delete(next.id) || changed;
+                continue;
+              }
+              const existing = byId.get(next.id);
+              if (!existing) {
+                byId.set(next.id, next);
+                changed = true;
+                continue;
+              }
+              if (existing.lastActivity !== next.lastActivity) {
+                byId.set(next.id, { ...existing, ...next });
+                changed = true;
+              }
             }
+
             if (!changed) return prev;
-          }
-          return fresh;
-        });
-      }).catch(() => {});
+            return Array.from(byId.values()).sort((a, b) =>
+              (b.createdAt || b.lastActivity).localeCompare(a.createdAt || a.lastActivity)
+            );
+          });
+        }
+
+        if (typeof result.serverTime === "string" && Number.isFinite(Date.parse(result.serverTime))) {
+          latestCartSyncAt.current = result.serverTime;
+        }
+      } catch {
+        // Keep the cursor unchanged. The next tick/focus will retry the same
+        // window, so a transient network failure cannot create a data gap.
+      } finally {
+        pullInFlight = false;
+      }
     };
-    // Every tick re-downloads the whole cart list (~6.8MB uncompressed today).
-    // The comparison below only avoids a re-render - the bytes are already
-    // spent by then - so the interval itself is the thing that has to be
-    // sensible. Assigning or converting a cart refreshes the list directly,
-    // so this is a safety net, not the main path.
-    // Realtime now delivers cart inserts, updates and deletes as they happen -
-    // the replication slot is active and caught up - so this full-list pull is a
-    // reconciliation net for websocket gaps, not the mechanism. At 45s it was
-    // re-fetching every cart (~2,100 rows) 1,920 times a day per open tab, the
-    // most expensive thing left after the caching work. Five minutes still
-    // repairs a gap long before anybody notices one.
-    const handle = window.setInterval(pull, 5 * 60_000);
-    return () => { cancelled = true; window.clearInterval(handle); };
+
+    const pullWhenVisible = () => {
+      if (document.visibilityState === "visible") void pull();
+    };
+
+    void pull();
+    const handle = window.setInterval(pullWhenVisible, 15_000);
+    window.addEventListener("focus", pullWhenVisible);
+    window.addEventListener("online", pullWhenVisible);
+    window.addEventListener("protohub:realtime-subscribed", pullWhenVisible as EventListener);
+    document.addEventListener("visibilitychange", pullWhenVisible);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+      window.removeEventListener("focus", pullWhenVisible);
+      window.removeEventListener("online", pullWhenVisible);
+      window.removeEventListener("protohub:realtime-subscribed", pullWhenVisible as EventListener);
+      document.removeEventListener("visibilitychange", pullWhenVisible);
+    };
   }, [activePage]);
 
   useEffect(() => {
@@ -25193,6 +25227,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // and merge it into state (API data wins over localStorage cache).
   const retryLoadData = useRef<() => void>(() => {});
   const lastAutoResyncAt = useRef(Date.now());
+  const latestCartSyncAt = useRef<string>("");
   useEffect(() => {
     if (!auth.isLoggedIn()) {
       setDataLoading(false);
@@ -25412,27 +25447,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       };
       const hydrateCarts = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
-          setAbandonedCarts((result.value as any[]).map((c: any) => ({
-            id:           c.id,
-            customer:     c.customer ?? "",
-            phone:        c.phone ?? "",
-            whatsapp:     c.whatsapp ?? undefined,
-            email:        c.email ?? undefined,
-            address:      c.address ?? undefined,
-            city:         c.city ?? undefined,
-            state:        c.state ?? undefined,
-            productId:    c.productId ?? c.product_id ?? undefined,
-            packageId:    c.packageId ?? c.package_id ?? undefined,
-            productName:  c.productName ?? c.product_name ?? "",
-            packageName:  c.packageName ?? c.package_name ?? "",
-            amount:       Number(c.amount ?? 0),
-            currency:     c.currency ?? "NGN",
-            source:       c.source ?? "Website",
-            status:       c.status ?? "Open abandoned",
-            assignedRepId: c.assignedRepId ?? c.assigned_rep_id ?? undefined,
-            lastActivity: c.lastActivity ?? c.last_activity ?? c.createdAt ?? c.created_at ?? "",
-            createdAt:    c.createdAt ?? c.created_at ?? ""
-          })) as any);
+          setAbandonedCarts((result.value as any[]).map(normalizeRealtimeCart));
+          // Leave a small overlap because the full request may have crossed a
+          // database write while it was in flight. Delta reconciliation is
+          // idempotent, so seeing those few rows twice is safer than a gap.
+          latestCartSyncAt.current = new Date(Date.now() - 5_000).toISOString();
         }
       };
       const hydrateSalesTeams = (result: PromiseSettledResult<any>) => {
@@ -26129,6 +26148,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
 
       const nextCart = normalizeRealtimeCart(row);
+      if (nextCart.mergedInto) {
+        setAbandonedCarts((prev) => prev.filter((cart) => cart.id !== nextCart.id));
+        return;
+      }
       if (realtimeIsMarketer && !realtimeCartMatchesMarketer(nextCart)) {
         setAbandonedCarts((prev) => prev.filter((cart) => cart.id !== nextCart.id));
         return;
@@ -26236,6 +26259,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // a fresh one. The REST poll (updatedSince) backfills anything missed while
       // the channel was down.
       channel.subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          window.dispatchEvent(new Event("protohub:realtime-subscribed"));
+          return;
+        }
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           void syncRealtimeAuth();
         }
@@ -56338,6 +56365,25 @@ ${waybillLineItems(w).length > 1
                       )}
                       {/* Says this row is not from this week, so a rep can tell
                           a genuinely fresh cart from one that has been waiting. */}
+                      {/* What was already said. Without it a rep opens a cart
+                          they called last week to find out they called it last
+                          week - or worse, rings someone who already said no. */}
+                      {(row.attempts ?? 0) > 0 && row.lastOutcome && (
+                        <span className="inline-flex max-w-full items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700"
+                          title={[
+                            `Last logged by ${row.lastAttemptBy ?? "a rep"}`,
+                            row.lastAttemptAt ? new Date(row.lastAttemptAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : null,
+                            row.lastOutcomeNote ? `Note: ${row.lastOutcomeNote}` : null,
+                            `${row.attempts} attempt${row.attempts === 1 ? "" : "s"} in total - open the cart for the full trail`
+                          ].filter(Boolean).join("\n")}>
+                          <History className="h-2.5 w-2.5 shrink-0" />
+                          <span className="truncate">
+                            {row.lastOutcome}
+                            {row.lastAttemptAt && ` · ${new Date(row.lastAttemptAt).toLocaleDateString([], { day: "numeric", month: "short" })}`}
+                            {(row.attempts ?? 0) > 1 && ` · ${row.attempts} tries`}
+                          </span>
+                        </span>
+                      )}
                       {!row.closed && row.urgency && (
                         (row.urgency === "promise-overdue" || row.urgency === "promise-today") ? (
                           <span className="cart-urgent-promise inline-flex items-center gap-1 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-black text-rose-900"

@@ -43,6 +43,60 @@ router.get("/", async (req, res) => {
   res.json(all);
 });
 
+// ── GET /api/carts/changes ───────────────────────────────
+// Small reconciliation feed for websocket gaps. The abandoned-cart screen used
+// to download every historical cart every five minutes; that was both slow and
+// expensive, and still left a long period where a missed realtime event was not
+// visible. This endpoint returns only rows whose activity changed after the
+// caller's cursor. Rows absorbed by deduplication are intentionally included so
+// the browser can remove the old card immediately.
+router.get("/changes", async (req, res) => {
+  const rawAfter = typeof req.query.after === "string" ? req.query.after.trim() : "";
+  const afterMs = Date.parse(rawAfter);
+  if (!rawAfter || !Number.isFinite(afterMs)) {
+    res.status(400).json({ error: "A valid after timestamp is required." });
+    return;
+  }
+
+  // Capture the cursor before querying. Any write that lands after this point
+  // will have a later last_activity and is therefore guaranteed to appear in
+  // the next request rather than falling into a request/response race.
+  const serverTime = new Date().toISOString();
+  const PAGE = 1000;
+  const SAFETY_CAP = 10_000;
+  const rows: any[] = [];
+
+  for (let from = 0; from < SAFETY_CAP; from += PAGE) {
+    let query = supabase
+      .from("abandoned_carts")
+      .select("*")
+      .eq("org_id", req.user!.orgId)
+      .gt("last_activity", new Date(afterMs).toISOString())
+      .lte("last_activity", serverTime)
+      .order("last_activity", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+
+    if (req.user!.role === "Marketer") {
+      query = applyCartMarketingScope(query, req.user!.marketingAttributionTags, req.user!.id);
+    } else if (scopeOf(req).role === "Sales Rep") {
+      query = query.eq("assigned_rep_id", scopeOf(req).id);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json({ rows, serverTime, truncated: rows.length >= SAFETY_CAP });
+});
+
 // ── GET /api/carts/by-label/:label ───────────────────────
 // Returns carts + linked order status for a specific embed_label.
 // Powers the link detail drill-down in Links & Tracking.
@@ -1743,12 +1797,17 @@ router.get("/follow-up-grid",
       // interested this week. So the closed/stale signals need the latest
       // attempt whenever it happened, not just one week of them.
       const { data: latestAttempts } = await supabase.from(CART_ATTEMPTS)
-        .select("cart_id, outcome_code, attempted_at, next_action_at")
+        .select("cart_id, outcome_code, custom_outcome, outcome_note, attempted_at, next_action_at, rep_name")
         .eq("org_id", orgId).in("cart_id", cartIds)
         .order("attempted_at", { ascending: false });
       const latestEverByCart = new Map<string, any>();
+      // Every attempt ever, not just this week's - a cart carried in from an
+      // earlier week would otherwise read as untouched on the row, and a rep
+      // would call someone who already told them the price was too high.
+      const attemptsEverByCart = new Map<string, number>();
       for (const attempt of (latestAttempts ?? []) as any[]) {
         if (!latestEverByCart.has(attempt.cart_id)) latestEverByCart.set(attempt.cart_id, attempt);
+        attemptsEverByCart.set(attempt.cart_id, (attemptsEverByCart.get(attempt.cart_id) ?? 0) + 1);
       }
 
       res.json({
@@ -1820,6 +1879,14 @@ router.get("/follow-up-grid",
             staleDays,
             nextActionAt,
             urgency,
+            // What was already said, carried onto the row so the history is
+            // readable without opening every cart. The modal still holds the
+            // full trail.
+            attempts: attemptsEverByCart.get(row.id) ?? 0,
+            lastOutcome: latestEver?.custom_outcome || latestEver?.outcome_code || null,
+            lastOutcomeNote: latestEver?.outcome_note ?? null,
+            lastAttemptAt: latestEver?.attempted_at ?? null,
+            lastAttemptBy: latestEver?.rep_name ?? null,
             // A promised callback that is due or missed needs working even if
             // the cart was touched yesterday, so it counts as needing a log.
             needsLog: Boolean(urgency),
