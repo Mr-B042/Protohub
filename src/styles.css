@@ -9609,3 +9609,31 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
 @media (prefers-reduced-motion: reduce) {
   .redated-badge { animation: none; }
 }
+
+/* ── Cart follow-up urgency ────────────────────────────────
+   Reps work the freshest carts and let older ones rot, so the ones that
+   are actually owed something have to out-shout a screen full of rows.
+   Two tiers, because a promise has a different weight from a gap:
+
+   .cart-urgent-promise  a callback the customer was TOLD would happen and
+                         has been missed - the loudest thing on the page,
+                         a ring plus a warm glow.
+   .cart-urgent-gap      never called, or nothing logged for days. Present
+                         and moving, but it must not drown the promise.
+
+   Both stop entirely under prefers-reduced-motion; the colour and the
+   border carry the meaning on their own, so nothing is lost. */
+@keyframes cartUrgentPromise {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55), 0 0 6px 0 rgba(220, 38, 38, 0.25); }
+  50%      { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0), 0 0 14px 2px rgba(220, 38, 38, 0.45); }
+}
+@keyframes cartUrgentGap {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.45); }
+  50%      { box-shadow: 0 0 0 5px rgba(217, 119, 6, 0); }
+}
+.cart-urgent-promise { animation: cartUrgentPromise 1.5s ease-out infinite; }
+.cart-urgent-gap     { animation: cartUrgentGap 2.2s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .cart-urgent-promise,
+  .cart-urgent-gap { animation: none; }
+}
