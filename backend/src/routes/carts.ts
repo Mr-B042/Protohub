@@ -1737,6 +1737,20 @@ router.get("/follow-up-grid",
         .select("id, source_cart_id, status").eq("org_id", orgId).in("source_cart_id", cartIds);
       const orderByCart = new Map((linkedOrders ?? []).map((o: any) => [o.source_cart_id, o]));
 
+      // The grid's own attempts query is scoped to the displayed week, which is
+      // right for drawing the cells and wrong for deciding whether a cart is
+      // finished. A customer who said "not interested" last month is still not
+      // interested this week. So the closed/stale signals need the latest
+      // attempt whenever it happened, not just one week of them.
+      const { data: latestAttempts } = await supabase.from(CART_ATTEMPTS)
+        .select("cart_id, outcome_code, attempted_at")
+        .eq("org_id", orgId).in("cart_id", cartIds)
+        .order("attempted_at", { ascending: false });
+      const latestEverByCart = new Map<string, any>();
+      for (const attempt of (latestAttempts ?? []) as any[]) {
+        if (!latestEverByCart.has(attempt.cart_id)) latestEverByCart.set(attempt.cart_id, attempt);
+      }
+
       res.json({
         weekStart,
         isCurrentWeek: weekStart === mondayOfWeek(todayKey),
@@ -1749,6 +1763,19 @@ router.get("/follow-up-grid",
             if (cell) cells[day.key] = cell;
           }
           const order = orderByCart.get(row.id) ?? null;
+          // Same rule as the overview endpoint: a cart stops asking for logs
+          // once the order landed, the customer said no, or the number was
+          // never theirs. Everything else stays workable and keeps asking.
+          const latestEver = latestEverByCart.get(row.id) ?? null;
+          const lastOutcomeCode = latestEver?.outcome_code ?? null;
+          const closedReason = order?.status === "Delivered" ? "Delivered"
+            : (lastOutcomeCode === "Not interested" || row.status === "Not interested") ? "Not interested"
+            : lastOutcomeCode === "Wrong number" ? "Wrong number"
+            : null;
+          const lastTouch = latestEver?.attempted_at ?? row.assigned_at ?? row.created_at ?? null;
+          const staleDays = closedReason || !lastTouch
+            ? 0
+            : Math.max(0, Math.floor((Date.now() - new Date(lastTouch).getTime()) / 86400000));
           return {
             id: row.id,
             customer: row.customer,
@@ -1774,6 +1801,11 @@ router.get("/follow-up-grid",
             createdKey: lagosDateKey(row.left_at || row.created_at),
             convertedOrderId: order?.id ?? null,
             convertedOrderStatus: order?.status ?? null,
+            closed: Boolean(closedReason),
+            closedReason,
+            neverContacted: !latestEver && !closedReason,
+            staleDays,
+            needsLog: !closedReason && (!latestEver || staleDays >= 2),
             cells
           };
         })
