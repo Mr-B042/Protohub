@@ -8831,6 +8831,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerInventoryState, setManagerInventoryState] = useState<string | null>(null);
   const [managerInventoryShowAllStates, setManagerInventoryShowAllStates] = useState(false);
   const [managerInventoryProductFilter, setManagerInventoryProductFilter] = useState("all");
+  // Order Coverage is a different question from the cover-days table above it.
+  // That one asks "how long will this state's stock last at its recent rate";
+  // this one asks "can we actually fill what has already been sold". It is
+  // driven by open orders in a chosen window, not by history, so it needs its
+  // own period rather than borrowing the dashboard's.
+  const [managerCoveragePeriod, setManagerCoveragePeriod] = useState<Period>("This Week");
+  const [managerCoverageRange, setManagerCoverageRange] = useState<DateRange>({ start: "", end: "" });
   const [managerInventoryRefreshedAt, setManagerInventoryRefreshedAt] = useState<number>(() => Date.now());
   // Ticks only while the Inventory tab is on screen, so "Last updated" ages in
   // front of you without costing a render anywhere else in the app.
@@ -14917,6 +14924,61 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         status: managerInventoryCoverStatus(daysCover, avgDailySales > 0)
       };
     }).sort((a, b) => a.daysCover - b.daysCover || b.totalUnits - a.totalUnits);
+  })();
+
+  // What open orders in the chosen window require, per product per state,
+  // against the stock that state actually holds. "Open" means placed and not
+  // yet Delivered, Cancelled or Failed - a commitment still to be met.
+  //
+  // demandLinesForOrder is the same helper the Smart Stock engine uses, so a
+  // package's components and any cross-sell lines are counted, not just the
+  // headline product.
+  const managerCoverageRows = (() => {
+    const OPEN_EXCLUDES = new Set(["Delivered", "Cancelled", "Failed"]);
+    const needByProduct = new Map<string, Map<string, number>>();
+    const ordersByProduct = new Map<string, Set<string>>();
+    trackedOrders.forEach((order) => {
+      if (order.reviewHold) return;
+      if (OPEN_EXCLUDES.has(order.status ?? "New")) return;
+      if (!isInPeriod(orderCreatedKey(order), managerCoveragePeriod, managerCoverageRange)) return;
+      const state = normalizeAgentState(order.state);
+      if (!state) return;
+      demandLinesForOrder(order).forEach((line) => {
+        const byState = needByProduct.get(line.productId) ?? new Map<string, number>();
+        byState.set(state, (byState.get(state) ?? 0) + line.quantity);
+        needByProduct.set(line.productId, byState);
+        const seen = ordersByProduct.get(line.productId) ?? new Set<string>();
+        seen.add(order.id);
+        ordersByProduct.set(line.productId, seen);
+      });
+    });
+    const stockByState = new Map<string, Map<string, number>>();
+    managerInventoryStateRows.forEach((row) => stockByState.set(row.state, row.unitsByProductId));
+
+    return Array.from(needByProduct.entries()).map(([productId, byState]) => {
+      const product = smartStockProductById.get(productId);
+      const states = Array.from(byState.entries())
+        .map(([state, needed]) => {
+          const inState = stockByState.get(state)?.get(productId) ?? 0;
+          return { state, needed, inState, shortfall: inState - needed };
+        })
+        .filter((row) => row.shortfall < 0)
+        .sort((a, b) => a.shortfall - b.shortfall || a.state.localeCompare(b.state));
+      const unitsShort = states.reduce((sum, row) => sum + Math.abs(row.shortfall), 0);
+      const warehouse = Math.max(0, Number(product?.warehouseStock ?? 0));
+      return {
+        productId,
+        productName: product?.name ?? productId,
+        states,
+        unitsShort,
+        warehouse,
+        // Can the warehouse close the whole gap, or does this need buying?
+        warehouseCovers: warehouse >= unitsShort,
+        openOrders: ordersByProduct.get(productId)?.size ?? 0
+      };
+    })
+      .filter((row) => row.states.length > 0)
+      .sort((a, b) => b.unitsShort - a.unitsShort || a.productName.localeCompare(b.productName));
   })();
 
   const managerInventoryTotals = (() => {
@@ -28499,6 +28561,103 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             )}
           </section>
         </div>
+
+        {/* Order Coverage - can we fill what has already been sold? */}
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="m-0 text-base font-black text-gray-900">Order Coverage by State</h3>
+              <p className="m-0 mt-0.5 text-[12px] text-gray-500">
+                What open orders need against what each state is holding. Open = placed, not yet delivered, cancelled or failed.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(["Today", "Yesterday", "This Week", "Last Week", "This Month", "Custom"] as Period[]).map((option) => (
+                <button
+                  key={option}
+                  className={`!min-h-0 rounded-lg px-2.5 py-1.5 text-xs font-bold transition-colors ${managerCoveragePeriod === option ? "bg-gray-900 text-white" : "border border-gray-200 text-gray-600 hover:bg-gray-50"}`}
+                  onClick={() => setManagerCoveragePeriod(option)}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
+          {managerCoveragePeriod === "Custom" && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+              <span className="text-[11px] font-semibold text-gray-500">From</span>
+              <input
+                type="date"
+                className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs"
+                value={managerCoverageRange.start}
+                onChange={(event) => setManagerCoverageRange((prev) => ({ ...prev, start: event.target.value }))}
+              />
+              <span className="text-[11px] font-semibold text-gray-500">to</span>
+              <input
+                type="date"
+                className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs"
+                value={managerCoverageRange.end}
+                onChange={(event) => setManagerCoverageRange((prev) => ({ ...prev, end: event.target.value }))}
+              />
+              {(!managerCoverageRange.start || !managerCoverageRange.end) && (
+                <span className="text-[11px] italic text-amber-600">Pick both dates to see the shortfall.</span>
+              )}
+            </div>
+          )}
+
+          {managerCoverageRows.length === 0 ? (
+            <p className="m-0 py-10 text-center text-sm italic text-gray-400">
+              Every state can fill the open orders placed in this window. Nothing short.
+            </p>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {managerCoverageRows.map((row) => (
+                <article key={row.productId} className="rounded-xl border border-gray-200">
+                  <header className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3">
+                    <div className="min-w-0">
+                      <h4 className="m-0 truncate text-[13px] font-black text-gray-900">{row.productName}</h4>
+                      <p className="m-0 text-[11px] text-gray-400">{row.openOrders} open order{row.openOrders === 1 ? "" : "s"} in this window</p>
+                    </div>
+                    <span className="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-black text-rose-700">
+                      {row.unitsShort} unit{row.unitsShort === 1 ? "" : "s"} short
+                    </span>
+                  </header>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[380px] text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                          <th className="px-4 py-2 font-semibold">State</th>
+                          <th className="px-4 py-2 text-right font-semibold">Needed</th>
+                          <th className="px-4 py-2 text-right font-semibold">In state</th>
+                          <th className="px-4 py-2 text-right font-semibold">Short</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {row.states.map((entry) => (
+                          <tr key={entry.state} className={`border-b border-gray-50 ${entry.inState === 0 ? "bg-rose-50/40" : ""}`}>
+                            <td className={`px-4 py-2.5 ${entry.inState === 0 ? "font-black text-rose-900" : "font-semibold text-gray-900"}`}>
+                              {entry.state}
+                              {entry.inState === 0 && <span className="ml-1.5 text-[10px] font-bold uppercase text-rose-500">none held</span>}
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-gray-700">{entry.needed}</td>
+                            <td className={`px-4 py-2.5 text-right font-semibold ${entry.inState === 0 ? "text-rose-600" : "text-gray-700"}`}>{entry.inState}</td>
+                            <td className="px-4 py-2.5 text-right font-black text-rose-600">{entry.shortfall}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* Whether this is a redistribution problem or a buying one. */}
+                  <p className={`m-0 border-t px-4 py-2.5 text-[11px] leading-4 ${row.warehouseCovers ? "border-emerald-100 bg-emerald-50/60 text-emerald-800" : "border-rose-100 bg-rose-50/60 text-rose-800"}`}>
+                    {row.warehouseCovers
+                      ? <><strong>Warehouse has {row.warehouse}</strong> - enough to cover all {row.unitsShort}. Send it out.</>
+                      : <><strong>Warehouse has only {row.warehouse}</strong> against {row.unitsShort} short. {row.unitsShort - row.warehouse} unit{row.unitsShort - row.warehouse === 1 ? "" : "s"} cannot be covered from stock anywhere - this one needs restocking, not moving.</>}
+                  </p>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="rounded-2xl border border-gray-200 bg-white p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
