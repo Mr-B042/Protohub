@@ -16,6 +16,46 @@ const API_BASE = (import.meta as any).env?.VITE_API_URL ?? "";
 type Item = {
   key: string; label: string; status: string; mandatory: boolean;
   note: string | null; canUpload: boolean;
+  /** Data items - personal details, bank, guarantors - are corrected by typing,
+   *  not by uploading a file. Open only while the office has asked for it. */
+  canEdit?: boolean;
+  values?: Record<string, string> | null;
+};
+
+// The fields each data item asks for, in the order they read. Kept here rather
+// than derived, so the labels are the applicant's words and the required ones
+// match what the server insists on.
+const EDIT_FIELDS: Record<string, Array<{ name: string; label: string; required?: boolean; type?: string }>> = {
+  personal_information: [
+    { name: "fullName", label: "Full name", required: true },
+    { name: "phone", label: "Phone number", required: true, type: "tel" },
+    { name: "whatsappPhone", label: "WhatsApp number", type: "tel" },
+    { name: "email", label: "Email", type: "email" },
+    { name: "residentialAddress", label: "Home address", required: true },
+    { name: "city", label: "City / town" },
+    { name: "state", label: "State", required: true }
+  ],
+  bank_account: [
+    { name: "bankName", label: "Bank name", required: true },
+    { name: "bankAccountNumber", label: "Account number (10 digits)", required: true },
+    { name: "bankAccountName", label: "Account name", required: true }
+  ],
+  guarantor_one: [
+    { name: "fullName", label: "Guarantor's full name", required: true },
+    { name: "relationship", label: "How do you know them?", required: true },
+    { name: "phone", label: "Their phone number", required: true, type: "tel" },
+    { name: "whatsappPhone", label: "Their WhatsApp number", type: "tel" },
+    { name: "occupation", label: "What they do" },
+    { name: "address", label: "Their address" }
+  ],
+  guarantor_two: [
+    { name: "fullName", label: "Guarantor's full name", required: true },
+    { name: "relationship", label: "How do you know them?", required: true },
+    { name: "phone", label: "Their phone number", required: true, type: "tel" },
+    { name: "whatsappPhone", label: "Their WhatsApp number", type: "tel" },
+    { name: "occupation", label: "What they do" },
+    { name: "address", label: "Their address" }
+  ]
 };
 type AgreementSection = { heading: string; paragraphs: string[]; bullets?: string[] };
 type AgreementContent = {
@@ -73,6 +113,9 @@ export default function PublicAgentStatusPage() {
   const [data, setData] = useState<StatusPayload | null>(null);
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState("");
+  const [savingDetails, setSavingDetails] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Record<string, boolean>>({});
+  const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>({});
   const [justSent, setJustSent] = useState<string[]>([]);
   const [selectedAgreement, setSelectedAgreement] = useState<Agreement | null>(null);
   const [agreementDraft, setAgreementDraft] = useState({ typedName: "", confirmedRead: false, agreed: false });
@@ -105,6 +148,26 @@ export default function PublicAgentStatusPage() {
   };
 
   useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [token]);
+
+  const sendDetails = async (item: Item, values: Record<string, string>) => {
+    setSavingDetails(item.key);
+    setError("");
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/public/agent-application/status/${encodeURIComponent(token)}/details/${encodeURIComponent(item.key)}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) }
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(body?.error ?? "Could not save those details."); return; }
+      setJustSent((list) => [...list, item.key]);
+      setEditing((open) => ({ ...open, [item.key]: false }));
+      await load();
+    } catch {
+      setError("Could not save those details. Check your connection and try again.");
+    } finally {
+      setSavingDetails(null);
+    }
+  };
 
   const sendItem = async (item: Item, file: File) => {
     if (file.size > 25 * 1024 * 1024) { setError("That file is larger than 25MB."); return; }
@@ -261,6 +324,54 @@ export default function PublicAgentStatusPage() {
                       className="mt-2 h-16 w-16 rounded-lg border border-emerald-200 object-cover" />
                   )}
                   {sent && <p className="m-0 mt-1.5 text-[12px] font-bold text-emerald-700">✓ Sent. We will check it.</p>}
+                  {/* Data items are corrected by typing. Prefilled from what is
+                      on file so one wrong field is one edit, not a retype. */}
+                  {item.canEdit && (() => {
+                    const fields = EDIT_FIELDS[item.key] ?? [];
+                    const draft = drafts[item.key] ?? item.values ?? {};
+                    const setField = (name: string, value: string) =>
+                      setDrafts((all) => ({ ...all, [item.key]: { ...(all[item.key] ?? item.values ?? {}), [name]: value } }));
+                    if (!editing[item.key]) {
+                      return (
+                        <button type="button"
+                          className="mt-2 w-full rounded-xl bg-blue-50 px-4 py-2.5 text-[13px] font-bold text-[#1F8FE0]"
+                          onClick={() => setEditing((open) => ({ ...open, [item.key]: true }))}>
+                          Correct these details
+                        </button>
+                      );
+                    }
+                    return (
+                      <div className="mt-2 flex flex-col gap-2 rounded-xl border border-blue-100 bg-blue-50/50 p-3">
+                        {fields.map((field) => (
+                          <label key={field.name} className="flex flex-col gap-1">
+                            <span className="text-[12px] font-semibold text-gray-600">
+                              {field.label}{field.required && <span className="text-rose-500"> *</span>}
+                            </span>
+                            <input
+                              type={field.type ?? "text"}
+                              inputMode={field.name === "bankAccountNumber" ? "numeric" : undefined}
+                              className="rounded-lg border border-gray-200 px-3 py-2 text-[14px]"
+                              value={draft[field.name] ?? ""}
+                              onChange={(e) => setField(field.name, e.target.value)}
+                            />
+                          </label>
+                        ))}
+                        <div className="mt-1 flex gap-2">
+                          <button type="button"
+                            className="flex-1 rounded-xl bg-[#1F8FE0] px-4 py-2.5 text-[13px] font-bold text-white disabled:opacity-60"
+                            disabled={savingDetails === item.key}
+                            onClick={() => void sendDetails(item, { ...(item.values ?? {}), ...draft })}>
+                            {savingDetails === item.key ? "Sending…" : "Send correction"}
+                          </button>
+                          <button type="button"
+                            className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[13px] font-bold text-gray-600"
+                            onClick={() => { setEditing((open) => ({ ...open, [item.key]: false })); setDrafts((all) => ({ ...all, [item.key]: item.values ?? {} })); }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {item.canUpload && (() => {
                     // The liveness check is the one item a photo cannot satisfy.
                     // Narrowing `accept` puts the camera first on a phone; the

@@ -79,6 +79,24 @@ const STATUS_ITEM_UPLOADABLE = new Set([
   "government_id", "government_id_back", "proof_of_address", "selfie_with_id", "live_verification_video"
 ]);
 
+// The four items that are DATA, not documents. All 44 applicants have zero
+// files against them - they are name, phone, address, bank details and the two
+// guarantors, typed on the application form.
+//
+// They were absent from STATUS_ITEM_UPLOADABLE, which is correct (a photo
+// cannot fix a mistyped account number) but left an applicant with no way to
+// act at all: the status page renders its control as {item.canUpload && ...},
+// so a "Replacement Requested" on any of these showed the rejection note and
+// no button. Seven applicants were in exactly that position.
+//
+// Editable ONLY while the office has the item open for replacement. Deliberate:
+// it stops anyone quietly changing where their money goes after approval, and
+// it means opening the item is itself the authorisation.
+const STATUS_ITEM_EDITABLE = new Set([
+  "personal_information", "bank_account", "guarantor_one", "guarantor_two"
+]);
+const STATUS_EDIT_OPEN_STATUSES = ["Rejected", "Replacement Requested"];
+
 // Statuses the applicant sees, in their words rather than ours.
 const APPLICANT_STAGE: Record<string, { label: string; tone: string; detail: string }> = {
   "KYC Submitted":  { label: "Under review", tone: "review", detail: "We have your application and are checking your documents." },
@@ -117,6 +135,48 @@ async function ensureAgentAgreements(agent: { id: string; org_id: string }) {
     status: "Awaiting Acceptance"
   })));
 }
+
+const guarantorSlotFor = (itemKey: string) => (itemKey === "guarantor_one" ? 1 : 2);
+
+// What the applicant sees prefilled in the edit form.
+function statusEditValues(itemKey: string, agent: any, guarantors: any[]) {
+  if (itemKey === "personal_information") {
+    return {
+      fullName: agent.full_name ?? "",
+      phone: agent.phone ?? "",
+      whatsappPhone: agent.whatsapp_phone ?? "",
+      email: agent.email ?? "",
+      residentialAddress: agent.residential_address ?? "",
+      city: agent.city ?? "",
+      state: agent.state ?? ""
+    };
+  }
+  if (itemKey === "bank_account") {
+    return {
+      bankName: agent.bank_name ?? "",
+      bankAccountNumber: agent.bank_account_number ?? "",
+      bankAccountName: agent.bank_account_name ?? ""
+    };
+  }
+  const slot = guarantorSlotFor(itemKey);
+  const guarantor = guarantors.find((row: any) => Number(row.slot) === slot) ?? {};
+  return {
+    fullName: guarantor.full_name ?? "",
+    relationship: guarantor.relationship ?? "",
+    phone: guarantor.phone ?? "",
+    whatsappPhone: guarantor.whatsapp_phone ?? "",
+    address: guarantor.address ?? "",
+    occupation: guarantor.occupation ?? ""
+  };
+}
+
+// Trims, and refuses a value that is only whitespace.
+const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+const requireFields = (values: Record<string, string>, required: Array<[string, string]>) => {
+  for (const [key, label] of required) {
+    if (!values[key]) throw Object.assign(new Error(`${label} is required.`), { status: 400 });
+  }
+};
 
 router.get("/status/:statusToken", readLimiter, async (req, res) => {
   const found = await resolveApplicant(String(req.params.statusToken ?? ""));
@@ -157,7 +217,14 @@ router.get("/status/:statusToken", readLimiter, async (req, res) => {
       // Why it was turned down, so they can fix it rather than guess.
       note: item.status === "Rejected" || item.status === "Replacement Requested" ? item.rejection_reason ?? null : null,
       canUpload: STATUS_ITEM_UPLOADABLE.has(item.item_key)
-        && ["Pending", "Rejected", "Replacement Requested"].includes(item.status)
+        && ["Pending", "Rejected", "Replacement Requested"].includes(item.status),
+      canEdit: STATUS_ITEM_EDITABLE.has(item.item_key)
+        && STATUS_EDIT_OPEN_STATUSES.includes(item.status),
+      // Prefilled so an applicant corrects one field rather than retyping
+      // everything and introducing a new mistake.
+      values: STATUS_ITEM_EDITABLE.has(item.item_key) && STATUS_EDIT_OPEN_STATUSES.includes(item.status)
+        ? statusEditValues(item.item_key, agent, guarantors ?? [])
+        : null
       })),
     agreements: (documents ?? [])
       .filter((doc: any) => isPdaAgreementKey(String(doc.document_key)))
@@ -345,6 +412,109 @@ router.post("/status/:statusToken/items/:itemKey", uploadLimiter, async (req, re
   }
 
   res.status(201).json({ ok: true });
+});
+
+
+// ── POST /api/public/agent-application/status/:token/details/:itemKey ──
+// Correct a DATA item - personal details, bank account, or a guarantor.
+//
+// Only while the office has that item open for replacement. Not a general
+// "edit your application" door: once an item is Submitted or Approved it is
+// closed again, so a bank account cannot be changed after the fact, and the
+// act of opening it is the authorisation.
+router.post("/status/:statusToken/details/:itemKey", uploadLimiter, async (req, res) => {
+  const found = await resolveApplicant(String(req.params.statusToken ?? ""));
+  if ("error" in found) { res.status(404).json({ error: found.error }); return; }
+  const agent = found.agent;
+
+  if (["Rejected", "Terminated", "Approved", "Probation", "Active"].includes(agent.account_status)) {
+    res.status(409).json({ error: "This application is already decided. Please contact the office." });
+    return;
+  }
+
+  const itemKey = String(req.params.itemKey ?? "");
+  if (!STATUS_ITEM_EDITABLE.has(itemKey)) { res.status(400).json({ error: "That item cannot be edited here." }); return; }
+
+  const { data: item } = await supabase.from(KYC)
+    .select("id, status").eq("agent_id", agent.id).eq("item_key", itemKey).maybeSingle();
+  if (!item) { res.status(404).json({ error: "That item is not part of your application." }); return; }
+  if (!STATUS_EDIT_OPEN_STATUSES.includes(item.status)) {
+    res.status(409).json({ error: "This one is not open for changes. The office has to ask for it first." });
+    return;
+  }
+
+  const body = req.body ?? {};
+  try {
+    if (itemKey === "personal_information") {
+      const values = {
+        fullName: text(body.fullName), phone: text(body.phone),
+        whatsappPhone: text(body.whatsappPhone), email: text(body.email),
+        residentialAddress: text(body.residentialAddress), city: text(body.city), state: text(body.state)
+      };
+      requireFields(values, [["fullName", "Full name"], ["phone", "Phone number"], ["residentialAddress", "Residential address"], ["state", "State"]]);
+      await supabase.from(AGENTS).update({
+        full_name: values.fullName, phone: values.phone,
+        whatsapp_phone: values.whatsappPhone || values.phone,
+        email: values.email || null, residential_address: values.residentialAddress,
+        city: values.city || null, state: values.state, updated_at: new Date().toISOString()
+      }).eq("id", agent.id);
+    } else if (itemKey === "bank_account") {
+      const values = {
+        bankName: text(body.bankName), bankAccountNumber: text(body.bankAccountNumber),
+        bankAccountName: text(body.bankAccountName)
+      };
+      requireFields(values, [["bankName", "Bank name"], ["bankAccountNumber", "Account number"], ["bankAccountName", "Account name"]]);
+      // A Nigerian NUBAN is ten digits. Catching it here saves a rejection
+      // round-trip over a typo.
+      if (!/^\d{10}$/.test(values.bankAccountNumber)) {
+        res.status(400).json({ error: "An account number is 10 digits. Check it and try again." });
+        return;
+      }
+      await supabase.from(AGENTS).update({
+        bank_name: values.bankName, bank_account_number: values.bankAccountNumber,
+        bank_account_name: values.bankAccountName, updated_at: new Date().toISOString()
+      }).eq("id", agent.id);
+    } else {
+      const slot = guarantorSlotFor(itemKey);
+      const values = {
+        fullName: text(body.fullName), relationship: text(body.relationship),
+        phone: text(body.phone), whatsappPhone: text(body.whatsappPhone),
+        address: text(body.address), occupation: text(body.occupation)
+      };
+      requireFields(values, [["fullName", "Guarantor name"], ["phone", "Guarantor phone"], ["relationship", "Relationship"]]);
+      const { data: existing } = await supabase.from(GUARANTORS)
+        .select("id").eq("agent_id", agent.id).eq("slot", slot).maybeSingle();
+      const patch = {
+        full_name: values.fullName, relationship: values.relationship,
+        phone: values.phone, whatsapp_phone: values.whatsappPhone || values.phone,
+        address: values.address || null, occupation: values.occupation || null,
+        // The details changed, so any prior verification no longer describes
+        // this person. It goes back in the queue rather than staying "Verified".
+        verification_status: "Pending", verified_by: null, verified_at: null,
+        updated_at: new Date().toISOString()
+      };
+      if (existing?.id) {
+        await supabase.from(GUARANTORS).update(patch).eq("id", existing.id);
+      } else {
+        await supabase.from(GUARANTORS).insert({ ...patch, org_id: agent.org_id, agent_id: agent.id, slot });
+      }
+    }
+  } catch (error: any) {
+    res.status(error?.status ?? 400).json({ error: error?.message ?? "Check the details and try again." });
+    return;
+  }
+
+  // Same handling as a re-upload: back in the queue, never auto-approved.
+  await supabase.from(KYC).update({
+    status: "Submitted", rejection_reason: null, reviewed_by: null, reviewed_at: null,
+    updated_at: new Date().toISOString()
+  }).eq("id", item.id);
+
+  if (agent.account_status === "KYC Incomplete") {
+    await supabase.from(AGENTS).update({ account_status: "KYC Submitted", status_reason: null }).eq("id", agent.id);
+  }
+
+  res.status(200).json({ ok: true });
 });
 
 
