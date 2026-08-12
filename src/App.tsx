@@ -40224,8 +40224,10 @@ ${waybillLineItems(w).length > 1
       case "dashboard":
         openInventoryOperationsRoute();
         return;
+      // Renders in place now. It used to bounce to the old Inventory dashboard,
+      // which is why the sidebar highlighted a section you never arrived at.
       case "stock-products":
-        openInventoryDashboard();
+        openInventoryOperationsRoute();
         return;
       case "stock-states":
       case "coverage":
@@ -84301,6 +84303,10 @@ ${waybillLineItems(w).length > 1
             </div>
           ) : activePage === "Inventory & Logistics Operations" ? (
             <InventoryLogisticsOperationsPage
+              section={inventoryOperationsSection}
+              lookbackDays={smartStockLookbackDays}
+              criticalDays={smartStockCriticalDaysCover}
+              watchDays={smartStockWatchDaysCover}
               products={catalogProducts.map((product) => ({
                 id: product.id,
                 name: product.name,
