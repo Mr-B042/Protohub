@@ -78797,7 +78797,15 @@ ${waybillLineItems(w).length > 1
                                   <div className="flex items-center gap-2">
                                     <span className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold shrink-0">{userInitials(user.name)}</span>
                                     <div>
-                                      <div className="font-bold text-gray-900">{user.name}</div>
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <span className="font-bold text-gray-900">{user.name}</span>
+                                        {user.isDemo && (
+                                          <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-violet-700"
+                                            title="Testing account. Excluded from payroll, round-robin, bonuses, leaderboards, assignment and headcounts.">
+                                            Demo · not counted
+                                          </span>
+                                        )}
+                                      </div>
                                       <div className="text-xs text-gray-400">{user.email}</div>
                                     </div>
                                   </div>
@@ -78841,6 +78849,19 @@ ${waybillLineItems(w).length > 1
                                         aria-label={`View app as ${user.name}`}
                                         onClick={() => enterSpy(user)}
                                       ><Eye className="w-4 h-4" /></button>
+                                    )}
+                                    {/* Same control as the card view above. It
+                                        was only on the card, which is the mobile
+                                        layout - so on a desktop it did not exist. */}
+                                    {realRole === "Owner" && user.role !== "Owner" && (
+                                      <button
+                                        className={`w-8 h-8 flex items-center justify-center rounded border transition-colors ${user.isDemo ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100" : "border-gray-200 text-gray-400 hover:bg-gray-100"}`}
+                                        title={user.isDemo
+                                          ? `${user.name} is a demo account - excluded from payroll, round-robin, bonuses, leaderboards and headcounts. Click to make it a normal account.`
+                                          : `Mark ${user.name} as a demo account - removes them from payroll, round-robin, bonuses, leaderboards and headcounts.`}
+                                        aria-label={user.isDemo ? `Stop ${user.name} being a demo account` : `Mark ${user.name} as a demo account`}
+                                        onClick={() => toggleManagedUserDemo(user)}
+                                      ><Bot className="w-4 h-4" /></button>
                                     )}
                                     <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit user" aria-label={`Edit ${user.name}`} onClick={() => openAdminUserEditRoute(user.id)}><Pencil className="w-4 h-4" /></button>
                                     <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Reset password" aria-label={`Reset password for ${user.name}`} onClick={() => openAdminUserResetPasswordRoute(user.id)}><KeyRound className="w-4 h-4" /></button>
