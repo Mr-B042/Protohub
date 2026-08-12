@@ -330,6 +330,8 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
     roleNotes: {
       "Inventory Manager":
         "This is your main workspace - you manage all stock levels, agent distribution, and stock reconciliation.",
+      "Inventory Manager & Logistics Operations":
+        "This is your main workspace - you manage network stock, transfers, dispatch, receiving, logistics, and stock reconciliation.",
     },
   },
 
@@ -489,6 +491,8 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
         "You have full access: add, edit, and delete agents, and manage all their assignments and inventory.",
       "Inventory Manager":
         "You can view all agents and their stock, assign inventory to hubs, and reconcile stock movements, but you cannot add, edit, or delete agent records.",
+      "Inventory Manager & Logistics Operations":
+        "You can view all agents and stock, assign inventory to hubs, plan transfers, manage logistics movements, and reconcile stock, but you cannot delete agent records.",
     },
   },
 
@@ -758,7 +762,7 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       {
         heading: "What you can do here",
         points: [
-          "Add new staff and set their role (Owner, Admin, Manager, Sales Rep, Inventory Manager, Viewer).",
+          "Add new staff and set their role (Owner, Admin, Manager, Sales Rep, Inventory Manager & Logistics Operations, Viewer).",
           "View all users and their activity - how many are active, new this month, and online now.",
           "Search and filter users by name, email, role, or status (enabled or disabled).",
           "See each person's permissions and enable or disable their account.",
@@ -935,6 +939,8 @@ export const PAGE_HELP: Record<string, HelpEntry> = {
       "Sales Rep": "You have access to Workspace settings (push notifications) only.",
       "Inventory Manager":
         "You have access to Workspace settings (push notifications) only.",
+      "Inventory Manager & Logistics Operations":
+        "You have access to Workspace settings (push notifications) and the inventory and logistics operations workspace.",
       Viewer: "You have access to Workspace settings (push notifications) only.",
     },
   },

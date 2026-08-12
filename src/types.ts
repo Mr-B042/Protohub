@@ -7,7 +7,7 @@ export type ModalType = "createTeam" | "notifications" | "help" | "signout" | "c
 
 export type ActivePage =
   | "Dashboard" | "Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries"
-  | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents"
+  | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Workspace" | "Call Rep Console" | "Weekend Stock Summary" | "Agents"
   | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting"
   | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form"
   | "Notifications" | "Settings";
@@ -26,7 +26,7 @@ export type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" 
 export type FinanceTab = "Financial Overview" | "Sales Rep Finance" | "Agent Costs" | "Remittance" | "Profit & Loss" | "Product Profitability" | "State Performance";
 export type ExpenseType = "Ad Spend" | "Delivery" | "Salary" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Other";
 export type ExpenseFilter = "All Types" | ExpenseType;
-export type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer";
+export type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer";
 export type UserStatus = "All Status" | "Active" | "Inactive";
 export type RoundRobinTab = "Active Sequence" | "Temporarily Excluded";
 export type EmbedTab = "Create Order Form" | "Generate";
@@ -91,7 +91,7 @@ export type SystemNotification = { id: string; type: "low_stock" | "remittance_o
 export type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 export type CreateOrderContext = "admin" | "rep";
 export type DateRange = { start: string; end: string };
-export type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer";
+export type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer";
 export type UserPermission =
   | "create_orders" | "edit_orders" | "delete_orders" | "change_order_status" | "reassign_orders"
   | "manage_inventory" | "manage_products"

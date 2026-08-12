@@ -9,6 +9,12 @@ import { logger } from "../lib/logger.js";
 import { normalizeWorkingDays } from "../lib/business-schedule.js";
 import { loadAssignedAgentIdsByUser } from "../lib/user-agent-assignments.js";
 import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
+import {
+  canFallbackToLegacyInventoryRole,
+  INVENTORY_OPERATIONS_ROLE,
+  LEGACY_INVENTORY_ROLE,
+  publicUserRole
+} from "../lib/user-role.js";
 
 const router = Router();
 
@@ -117,6 +123,7 @@ const sanitizeSmartStockRules = (value: unknown) => {
 
 const sanitizeTeamMemberPayload = <T extends Record<string, unknown>>(row: T) => ({
   ...row,
+  role: publicUserRole(String(row.role ?? "Viewer")),
   permissions: sanitizeStoredPermissionList(row.permissions),
   extra_pages: sanitizeStoredPageList(row.extra_pages),
   marketing_attribution_tags: sanitizeMarketingAttributionTags(row.marketing_attribution_tags)
@@ -317,7 +324,7 @@ router.post("/login", async (req, res) => {
       id: profile.id,
       orgId: profile.org_id,
       name: profile.name,
-      role: profile.role,
+      role: publicUserRole(profile.role),
       email: data.user.email,
       marketingAttributionTags: sanitizeMarketingAttributionTags(profile.marketing_attribution_tags)
     }
@@ -625,7 +632,7 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
   }
   // Frontend sends camelCase (e.g. extraPages); DB columns are snake_case.
   // Allow-list the DB column names and accept either casing on input.
-  const VALID_ROLES = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep"] as const;
+  const VALID_ROLES = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep"] as const;
   const VALID_AGENT_BALANCE_SCOPE_MODES = ["all", "states", "agents", "assigned_agents"] as const;
   if (req.body.role !== undefined && !VALID_ROLES.includes(req.body.role)) {
     res.status(400).json({ error: { role: [`Invalid role. Must be one of: ${VALID_ROLES.join(", ")}.`] } });
@@ -686,13 +693,25 @@ router.patch("/team/:id", requireAuth, async (req, res) => {
   if (updates.marketing_attribution_tags !== undefined) {
     updates.marketing_attribution_tags = sanitizeMarketingAttributionTags(updates.marketing_attribution_tags);
   }
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("users")
     .update(updates)
     .eq("id", req.params.id)
     .eq("org_id", req.user!.orgId)
     .select()
     .single();
+  if (error && updates.role === INVENTORY_OPERATIONS_ROLE && canFallbackToLegacyInventoryRole(error)) {
+    updates.role = LEGACY_INVENTORY_ROLE;
+    const fallback = await supabase
+      .from("users")
+      .update(updates)
+      .eq("id", req.params.id)
+      .eq("org_id", req.user!.orgId)
+      .select()
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
   if (error) {
     if (error.code === "PGRST116") { res.status(404).json({ error: "User not found." }); return; }
     res.status(500).json({ error: error.message }); return;
@@ -849,7 +868,7 @@ router.post("/invite", requireAuth, async (req, res) => {
     email: z.string().email().max(254),
     phone: z.string().trim().max(40).optional(),
     password: z.string().min(8).max(200),
-    role: z.enum(["Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep"]),
+    role: z.enum(["Admin", "Manager", "Sales Rep", "Inventory Manager", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep"]),
     marketingAttributionTags: z.union([z.array(z.string()), z.string()]).optional(),
     marketing_attribution_tags: z.union([z.array(z.string()), z.string()]).optional()
   });
@@ -872,7 +891,7 @@ router.post("/invite", requireAuth, async (req, res) => {
     return;
   }
 
-  const { error: profileError } = await supabase
+  let { error: profileError } = await supabase
     .from("users")
     .insert({
       id: authData.user.id,
@@ -883,6 +902,20 @@ router.post("/invite", requireAuth, async (req, res) => {
       role,
       marketing_attribution_tags: marketingAttributionTags
     });
+  if (profileError && role === INVENTORY_OPERATIONS_ROLE && canFallbackToLegacyInventoryRole(profileError)) {
+    const fallback = await supabase
+      .from("users")
+      .insert({
+        id: authData.user.id,
+        org_id: req.user!.orgId,
+        name,
+        email,
+        phone: phone?.trim() || null,
+        role: LEGACY_INVENTORY_ROLE,
+        marketing_attribution_tags: marketingAttributionTags
+      });
+    profileError = fallback.error;
+  }
   if (profileError) {
     // Rollback the auth user so the email can be reused on retry.
     await supabase.auth.admin.deleteUser(authData.user.id).catch(() => {});

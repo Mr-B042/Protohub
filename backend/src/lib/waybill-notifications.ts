@@ -17,7 +17,7 @@ type WaybillContext = {
 
 type WaybillEvent = "dispatched" | "updated" | "status_changed";
 
-const RECIPIENT_ROLES = ["Owner", "Admin", "Inventory Manager"];
+const RECIPIENT_ROLES = ["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"];
 
 function buildRouteLabel(waybill: WaybillContext): string {
   const route = [waybill.fromLocation, waybill.toLocation].filter(Boolean).join(" -> ");

@@ -9,7 +9,7 @@ import { sendPushToUsers } from "../lib/push.js";
 const router = Router();
 router.use(requireAuth);
 
-const SMART_STOCK_ADMIN_ROLES = ["Owner", "Admin", "Inventory Manager"] as const;
+const SMART_STOCK_ADMIN_ROLES = ["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"] as const;
 const SMART_STOCK_PRIVILEGED_ROLES = new Set<string>(SMART_STOCK_ADMIN_ROLES);
 const SMART_STOCK_SIGNAL_LIMIT = 6;
 const SMART_STOCK_DIGEST_TITLE = "Stock risk summary";
@@ -38,7 +38,7 @@ const NOTIFICATION_AUDIENCE_RULES: Array<{ test: RegExp; roles: readonly string[
   // already strips financials server-side, and the bell must not undo that.
   { test: /remittance|sms balance|payout|salary|bonus pool/i, roles: NOTIFICATION_MANAGEMENT },
   // Stock and waybill movement belongs to whoever owns inventory.
-  { test: /stock|waybill|inventory/i, roles: [...NOTIFICATION_MANAGEMENT, "Inventory Manager"] },
+  { test: /stock|waybill|inventory/i, roles: [...NOTIFICATION_MANAGEMENT, "Inventory Manager", "Inventory Manager & Logistics Operations"] },
   // Cart supervision: sales reps work carts, recovery reps do not.
   { test: /cart/i, roles: [...NOTIFICATION_MANAGEMENT, "Sales Rep"] }
 ];

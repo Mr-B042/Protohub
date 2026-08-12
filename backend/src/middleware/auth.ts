@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { supabase } from "../lib/supabase.js";
 import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
 import { TtlCache } from "../lib/ttl-cache.js";
+import { publicUserRole } from "../lib/user-role.js";
 
 type UserProfile = {
   id: string; org_id: string; role: import("../types/index.js").UserRole;
@@ -73,7 +74,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   req.user = {
     id: profile.id,
     orgId: profile.org_id,
-    role: profile.role,
+    role: publicUserRole(profile.role),
     email: profile.email,
     name: profile.name,
     marketingAttributionTags: sanitizeMarketingAttributionTags(profile.marketing_attribution_tags)
@@ -93,7 +94,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       .maybeSingle();
     if (spyProfile) {
       req.user.effectiveUserId = spyProfile.id as string;
-      req.user.effectiveUserRole = spyProfile.role as import("../types/index.js").UserRole;
+      req.user.effectiveUserRole = publicUserRole(spyProfile.role);
     }
   }
 
@@ -121,7 +122,9 @@ export function scopeOf(req: Request): { role: string; id: string } {
 // Role guard — use after requireAuth
 export function requireRole(...roles: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    const acceptsLegacyInventoryGuard = roles.includes("Inventory Manager")
+      && req.user?.role === "Inventory Manager & Logistics Operations";
+    if (!req.user || (!roles.includes(req.user.role) && !acceptsLegacyInventoryGuard)) {
       res.status(403).json({ error: `Requires one of: ${roles.join(", ")}.` });
       return;
     }
@@ -148,7 +151,7 @@ export async function applySpyHeader(req: Request, _res: Response, next: NextFun
     .maybeSingle();
   if (profile) {
     req.user.effectiveUserId = profile.id as string;
-    req.user.effectiveUserRole = profile.role as import("../types/index.js").UserRole;
+    req.user.effectiveUserRole = publicUserRole(profile.role);
   }
   next();
 }

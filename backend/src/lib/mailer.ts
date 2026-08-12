@@ -1063,7 +1063,7 @@ export async function sendLowStockEmail(
     current_stock: String(product.currentStock),
     reorder_point: String(product.reorderPoint)
   };
-  await sendToStaff(orgId, "internal_low_stock", vars, ["Owner", "Admin", "Inventory Manager"]);
+  await sendToStaff(orgId, "internal_low_stock", vars, ["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"]);
 }
 
 export async function sendLowSmsBalanceEmail(

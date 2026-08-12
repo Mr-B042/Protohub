@@ -182,6 +182,10 @@ import {
   rectSortingStrategy
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import {
+  InventoryLogisticsOperationsPage,
+  type InventoryOperationsAction,
+} from "./pages/InventoryLogisticsOperationsPage";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
 // These screens monitor trends rather than a single live cart. They load the
@@ -214,7 +218,7 @@ type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" |
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | null;
-type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
+type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -309,6 +313,42 @@ const RETENTION_SUBNAV_ITEMS: Array<{ key: RetentionSubPage; label: string; icon
   { key: "Settings", label: "Settings", icon: Settings, ownerOnly: true }
 ];
 
+type InventoryOperationsNavGroup = {
+  label?: string;
+  items: Array<{ action: InventoryOperationsAction; label: string; icon: typeof LayoutPanelTop }>;
+};
+
+const INVENTORY_OPERATIONS_NAV: InventoryOperationsNavGroup[] = [
+  { items: [
+    { action: "dashboard", label: "Dashboard", icon: LayoutPanelTop },
+    { action: "stock-products", label: "Stock by Product", icon: Boxes },
+    { action: "stock-states", label: "Stock by State", icon: MapPin },
+    { action: "stock-agents", label: "Stock by Agent", icon: Users },
+    { action: "coverage", label: "State / Order Coverage", icon: ShieldCheck },
+    { action: "forecast", label: "Restock Forecast", icon: TrendingUp },
+    { action: "recommended-transfers", label: "Recommended Transfers", icon: ArrowLeftRight },
+  ] },
+  { label: "Movements & Logistics", items: [
+    { action: "dispatch", label: "Dispatch Queue", icon: Clock },
+    { action: "waybills", label: "Waybills", icon: FileText },
+    { action: "shipments", label: "Shipments / In Transit", icon: Truck },
+    { action: "receiving", label: "Receiving Confirmations", icon: PackageCheck },
+    { action: "transfers", label: "Transfers", icon: ArrowLeftRight },
+    { action: "carriers", label: "Carriers & Rate Comparison", icon: Scale },
+    { action: "expenses", label: "Expenses", icon: WalletCards },
+  ] },
+  { label: "Control & Reconciliation", items: [
+    { action: "movements", label: "Stock Movements", icon: History },
+    { action: "counts", label: "Stock Counts & Reconciliation", icon: ClipboardCheck },
+    { action: "discrepancies", label: "Discrepancies / Incidents", icon: AlertTriangle },
+    { action: "alerts", label: "Inventory Alerts", icon: Bell },
+  ] },
+  { label: "Reports & Settings", items: [
+    { action: "reports", label: "Reports", icon: BarChart3 },
+    { action: "settings", label: "Settings", icon: Settings },
+  ] },
+];
+
 // The Tasks page is a task-shaped VIEW over the same derived worklist that
 // drives Pipeline and the bonus math - there is no separate task record.
 // A "task type" is the concrete action a row is asking for right now,
@@ -348,7 +388,7 @@ const RETENTION_TASK_TYPES: Array<{ key: RetentionTaskTypeKey; label: string; ic
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Stock Loss" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
-type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent";
+type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent";
 type UserStatus = "All Status" | "Active" | "Inactive";
 type RoundRobinTab = "Active Sequence" | "Temporarily Excluded" | "Dedicated Products";
 type EmbedTab = "Create Order Form" | "Extra Offers" | "Generate" | "Meta & Ads" | "Links & Tracking";
@@ -625,7 +665,7 @@ type SmsInboundMessage = {
 type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 type CreateOrderContext = "admin" | "rep";
 type DateRange = { start: string; end: string };
-type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent";
+type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent";
 type UserPermission =
   | "create_orders" | "edit_orders" | "delete_orders" | "change_order_status" | "reassign_orders"
   | "manage_inventory" | "manage_products"
@@ -2193,8 +2233,8 @@ const financeLensToneClasses: Record<FinanceLens, string> = {
 };
 const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Failed Delivery", "Salary", "Clearing & Shipping", "Waybill", "Airtime & Data", "Stock Loss", "Other"];
 const expenseFilters: ExpenseFilter[] = ["All Types", ...expenseTypes];
-const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent"];
-const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent"];
+const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent"];
+const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent"];
 const userStatuses: UserStatus[] = ["All Status", "Active", "Inactive"];
 const roundRobinTabs: RoundRobinTab[] = ["Active Sequence", "Temporarily Excluded", "Dedicated Products"];
 const embedTabs: EmbedTab[] = ["Create Order Form", "Extra Offers", "Generate", "Meta & Ads", "Links & Tracking"];
@@ -2488,6 +2528,7 @@ const defaultPermsByRole: Record<EditableUserRole, UserPermission[]> = {
   "Manager":           ["create_orders", "edit_orders", "change_order_status", "reassign_orders", "view_weekend_stock_summary", "manage_inventory", "manage_products", "view_finance", "view_reports"],
   "Sales Rep":         ["create_orders", "change_order_status", "reassign_orders", "view_weekend_stock_summary"],
   "Inventory Manager": ["view_weekend_stock_summary", "manage_inventory", "manage_products", "view_reports"],
+  "Inventory Manager & Logistics Operations": ["view_weekend_stock_summary", "manage_inventory", "manage_products", "manage_agents", "view_reports"],
   "Marketer":          ["view_reports"],
   "Viewer":            ["view_finance", "view_reports"],
   // Recovery-only: no fresh-order creation, no weekend stock/inventory access -
@@ -2519,13 +2560,13 @@ type AccessiblePage = ActivePage; // alias for readability
 const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
     "Dashboard", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
+    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Marketing", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Admin": [
     "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
+    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
@@ -2537,7 +2578,10 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     "Sales Rep Workspace", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
   ],
   "Inventory Manager": [
-    "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Notifications", "Settings", "WhatsApp"
+    "Inventory & Logistics Operations", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Expenses", "Notifications", "Settings", "WhatsApp"
+  ],
+  "Inventory Manager & Logistics Operations": [
+    "Inventory & Logistics Operations", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Expenses", "Notifications", "Settings", "WhatsApp"
   ],
   "Marketer": [
     "Orders", "Marketing", "Embed Form", "Notifications", "Settings", "WhatsApp"
@@ -2570,7 +2614,8 @@ const defaultLandingByRole: Record<EditableUserRole, AccessiblePage> = {
   "Admin":             "Manager Dashboard",
   "Manager":           "Manager Dashboard",
   "Sales Rep":         "Sales Rep Workspace",
-  "Inventory Manager": "Inventory",
+  "Inventory Manager": "Inventory & Logistics Operations",
+  "Inventory Manager & Logistics Operations": "Inventory & Logistics Operations",
   "Marketer":          "Marketing",
   "Viewer":            "Orders",
   "Recovery Rep":      "Recovery Rep Dashboard",
@@ -2586,6 +2631,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Abandoned Carts": "#/dashboard/admin/abandoned-carts",
   "Scheduled Deliveries": "#/dashboard/admin/scheduled-deliveries",
   Deliveries: "#/dashboard/admin/deliveries",
+  "Inventory & Logistics Operations": "#/dashboard/admin/inventory-logistics-operations",
   Inventory: "#/dashboard/admin/inventory",
   "Sales Reps": "#/dashboard/admin/sales-reps",
   "Sales Teams": "#/dashboard/admin/sales-teams",
@@ -6716,19 +6762,23 @@ const addJourneyRecoveredOrderLinks = (
   }
 };
 
+const normalizeManagedUserRole = (role: unknown): EditableUserRole =>
+  (role === "Inventory Manager" ? "Inventory Manager & Logistics Operations" : (role ?? "Viewer")) as EditableUserRole;
+
 const normalizeRealtimeUser = (value: any): ManagedUser => {
   const user = snakeToCamel<any>(value);
+  const role = normalizeManagedUserRole(user.role);
   return {
     id: user.id,
     name: user.name ?? "",
     email: user.email ?? "",
     phone: user.phone ?? "",
-    role: user.role ?? "Viewer",
+    role,
     active: user.active !== false,
     created: user.createdAt ?? user.created ?? "",
     lastSeenAt: user.lastSeenAt ?? undefined,
     permissions: resolvedPermissionsForRole(
-      (user.role ?? "Viewer") as EditableUserRole,
+      role,
       Array.isArray(user.permissions) ? user.permissions : undefined
     ),
     marketingAttributionTags: sanitizeMarketingAttributionTags(user.marketingAttributionTags ?? user.marketing_attribution_tags),
@@ -8296,6 +8346,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     );
     return stored === "pricing" || stored === "packages" ? "dashboard" : stored;
   });
+  const [inventoryOperationsSection, setInventoryOperationsSection] = useState<InventoryOperationsAction>("dashboard");
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
   const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>(() =>
     readPref("protohub.inventory.expandedSets", {} as Record<string, boolean>, (raw) => {
@@ -9458,9 +9509,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // uses viewerScopeRepId / currentRole). ─────────────────────────────
   const realManagedUser: ManagedUser | undefined =
     (authUser ? users.find((u) => u.id === authUser.id) : undefined) as ManagedUser | undefined;
-  const realRole: EditableUserRole = (realManagedUser?.role
-    ?? (authUser?.role as EditableUserRole | undefined)
-    ?? "Viewer");
+  const realRole: EditableUserRole = normalizeManagedUserRole(
+    realManagedUser?.role ?? authUser?.role ?? "Viewer"
+  );
 
   // Every signed-in user writes one tiny heartbeat while their tab is active.
   // The returned timestamp is also applied locally so the current user does
@@ -12252,7 +12303,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (!auth.getAccessToken()) return;
     if (activePage !== "Finance & Accounting" || financeTab !== "Delivery Fee Audit") return;
-    if (!["Owner", "Admin", "Manager", "Inventory Manager"].includes(currentRole)) return;
+    if (!["Owner", "Admin", "Manager", "Inventory Manager", "Inventory Manager & Logistics Operations"].includes(currentRole)) return;
     let cancelled = false;
     deliveryDistanceAuditsApi.list()
       .then((rows) => {
@@ -12346,7 +12397,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const adminUserCount = operationalUsers.filter((user) => user.role === "Admin" || user.role === "Owner").length;
   const managerUserCount = operationalUsers.filter((user) => user.role === "Manager").length;
   const salesUserCount = operationalUsers.filter((user) => user.role === "Sales Rep").length;
-  const inventoryUserCount = operationalUsers.filter((user) => user.role === "Inventory Manager").length;
+  const inventoryUserCount = operationalUsers.filter((user) => user.role === "Inventory Manager" || user.role === "Inventory Manager & Logistics Operations").length;
   const marketerUserCount = operationalUsers.filter((user) => user.role === "Marketer").length;
   const viewerUserCount = operationalUsers.filter((user) => user.role === "Viewer").length;
   const selectedProduct = products.find((product) => product.id === selectedProductId);
@@ -23604,7 +23655,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const repSmartStockSignals = smartStockDemandSignals
     .filter((signal) => repSmartStockStates.size === 0 || repSmartStockStates.has(signal.state))
     .slice(0, 3);
-  const canTriggerTeamStockRiskNotifications = realRole === "Owner" || realRole === "Admin" || realRole === "Inventory Manager";
+  const canTriggerTeamStockRiskNotifications = realRole === "Owner" || realRole === "Admin" || realRole === "Inventory Manager" || realRole === "Inventory Manager & Logistics Operations";
   const repSmartStockSignalKey = repSmartStockSignals.map((signal) => `${signal.productId}\u0000${signal.state}`).join("\u0001");
   const smartStockNotificationPayload = useMemo(() => {
     const repSignalKeys = new Set(repSmartStockSignalKey ? repSmartStockSignalKey.split("\u0001") : []);
@@ -24629,6 +24680,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "abandoned-carts": "Abandoned Carts",
       "scheduled-deliveries": "Scheduled Deliveries",
       deliveries: "Deliveries",
+      "inventory-logistics-operations": "Inventory & Logistics Operations",
       inventory: "Inventory",
       "sales-reps": "Sales Reps",
       "sales-teams": "Sales Teams",
@@ -25462,18 +25514,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       };
       const hydrateTeam = (result: PromiseSettledResult<any>) => {
         if (result.status === "fulfilled" && Array.isArray(result.value)) {
-          setUsers(result.value.map((u: any) => ({
+          setUsers(result.value.map((u: any) => {
+            const role = normalizeManagedUserRole(u.role);
+            return ({
             id: u.id,
             name: u.name,
             email: u.email,
             phone: u.phone ?? "",
-            role: u.role,
+            role,
             active: u.active,
             isDemo: Boolean(u.isDemo ?? u.is_demo),
             created: u.createdAt ?? u.created_at ?? "",
             lastSeenAt: u.lastSeenAt ?? u.last_seen_at ?? undefined,
             permissions: resolvedPermissionsForRole(
-              (u.role ?? "Viewer") as EditableUserRole,
+              role,
               Array.isArray(u.permissions) ? u.permissions : undefined
             ),
             marketingAttributionTags: sanitizeMarketingAttributionTags(u.marketingAttributionTags ?? u.marketing_attribution_tags),
@@ -25490,7 +25544,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             assignedAgentIds: Array.isArray(u.assignedAgentIds ?? u.assigned_agent_ids) ? (u.assignedAgentIds ?? u.assigned_agent_ids) : [],
             roundRobinPosition: u.roundRobinPosition ?? u.round_robin_position ?? 0,
             roundRobinExcluded: (u.roundRobinExcluded ?? u.round_robin_excluded) === true
-          })));
+          });
+          }));
         }
       };
       const hydrateCarts = (result: PromiseSettledResult<any>) => {
@@ -31561,6 +31616,7 @@ ${waybillLineItems(w).length > 1
       "Abandoned Carts": "#/dashboard/admin/abandoned-carts",
       "Scheduled Deliveries": "#/dashboard/admin/scheduled-deliveries",
       Deliveries: "#/dashboard/admin/deliveries",
+      "Inventory & Logistics Operations": "#/dashboard/admin/inventory-logistics-operations",
       Inventory: "#/dashboard/admin/inventory",
       "Sales Reps": "#/dashboard/admin/sales-reps",
       "Sales Teams": "#/dashboard/admin/sales-teams",
@@ -31634,7 +31690,10 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
+      if (label === "Inventory & Logistics Operations") {
+        setInventoryOperationsSection("dashboard");
+      }
       if (label === "Inventory") {
         setInventoryView("dashboard");
       }
@@ -40151,6 +40210,82 @@ ${waybillLineItems(w).length > 1
     setInventoryView("agent-hubs");
     setModal(null);
     syncHashRoute("#/dashboard/admin/inventory/agent-hubs");
+  };
+  const openInventoryOperationsRoute = () => {
+    setActivePage("Inventory & Logistics Operations");
+    setInventoryOperationsSection("dashboard");
+    setModal(null);
+    syncHashRoute("#/dashboard/admin/inventory-logistics-operations");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const handleInventoryOperationsAction = (action: InventoryOperationsAction) => {
+    setInventoryOperationsSection(action);
+    switch (action) {
+      case "dashboard":
+        openInventoryOperationsRoute();
+        return;
+      case "stock-products":
+        openInventoryDashboard();
+        return;
+      case "stock-states":
+      case "coverage":
+      case "forecast":
+        openInventoryStateStockRoute();
+        return;
+      case "stock-agents":
+        openInventoryAgentHubsRoute();
+        return;
+      case "movements":
+        openInventoryHistoryRoute();
+        return;
+      case "counts":
+      case "discrepancies":
+        openInventoryStockCountRoute();
+        return;
+      case "recommended-transfers":
+      case "transfers":
+      case "dispatch":
+      case "waybills":
+      case "shipments":
+      case "receiving":
+      case "carriers":
+        setActivePage("Waybill");
+        setModal(null);
+        syncHashRoute("#/dashboard/admin/waybill");
+        return;
+      case "expenses":
+        setActivePage("Expenses");
+        setModal(null);
+        syncHashRoute("#/dashboard/admin/expenses");
+        return;
+      case "alerts":
+        setActivePage("Notifications");
+        setModal(null);
+        syncHashRoute("#/dashboard/admin/notifications");
+        return;
+      case "reports":
+        setActivePage("Weekend Stock Summary");
+        setModal(null);
+        syncHashRoute("#/dashboard/admin/weekend-stock-summary");
+        return;
+      case "settings":
+        setActivePage("Settings");
+        setModal(null);
+        syncHashRoute("#/dashboard/admin/settings");
+        return;
+      case "create-transfer":
+      case "create-waybill":
+        openCreateWaybill();
+        return;
+      case "create-count":
+        openNewStockCount();
+        return;
+      case "create-expense":
+        setActivePage("Expenses");
+        openAddExpenseModal();
+        syncHashRoute("#/dashboard/admin/expenses/new");
+        return;
+    }
   };
   const openInventoryHistoryWithFilters = (filters: {
     productId?: string;
@@ -62125,6 +62260,9 @@ ${waybillLineItems(w).length > 1
             const showPdaSubnav = item.label === "Personal Delivery Agents"
               && activePage === "Personal Delivery Agents"
               && !collapsed;
+            const showInventoryOperationsSubnav = item.label === "Inventory & Logistics Operations"
+              && activePage === "Inventory & Logistics Operations"
+              && !collapsed;
             return (
               <Fragment key={item.label}>
                 <button
@@ -62146,6 +62284,69 @@ ${waybillLineItems(w).length > 1
                   <item.icon className={`w-5 h-5 shrink-0 ${isActive ? "text-[#1F8FE0]" : "text-gray-400"}`} />
                   {!collapsed && <span className="truncate">{item.label}</span>}
                 </button>
+                {showInventoryOperationsSubnav && (
+                  <div className="ml-4 mt-1 mb-2 pl-3.5 border-l border-white/10 space-y-3">
+                    {INVENTORY_OPERATIONS_NAV.map((group, groupIndex) => (
+                      <div key={group.label ?? `inventory-ops-${groupIndex}`} className="space-y-1">
+                        {group.label && (
+                          <p className="px-3 pt-1 text-[9px] font-bold uppercase text-gray-500">{group.label}</p>
+                        )}
+                        {group.items.map((sub) => {
+                          const SubIcon = sub.icon;
+                          const subActive = inventoryOperationsSection === sub.action;
+                          const badge = sub.action === "dispatch"
+                            ? waybillRecords.filter((row) => ["pending", "awaiting dispatch", "assigned"].includes(row.status.toLowerCase())).length
+                            : sub.action === "shipments"
+                              ? waybillRecords.filter((row) => row.status === "In Transit").length
+                              : sub.action === "receiving"
+                                ? waybillRecords.filter((row) => row.status === "Received" && !row.dateReceived).length
+                                : sub.action === "discrepancies"
+                                  ? stockCounts.reduce((sum, session) => sum + session.entries.filter((entry) => entry.status === "Discrepancy" || Number(entry.variance ?? 0) !== 0).length, 0)
+                                  : 0;
+                          return (
+                            <button
+                              key={`${groupIndex}-${sub.action}-${sub.label}`}
+                              type="button"
+                              onClick={() => {
+                                handleInventoryOperationsAction(sub.action);
+                                if (window.matchMedia("(max-width: 1024px)").matches) setMobileMenuOpen(false);
+                              }}
+                              className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-[12px] transition-colors ${subActive ? "bg-[#1F8FE0]/20 text-[#39a9f5] font-bold" : "text-gray-400 font-medium hover:bg-white/5 hover:text-white"}`}
+                            >
+                              <SubIcon className="w-4 h-4 shrink-0" />
+                              <span className="flex-1 text-left leading-4">{sub.label}</span>
+                              {badge > 0 && <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[9px] font-bold text-white">{badge}</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))}
+                    <div className="rounded-lg border border-white/10 bg-white/[0.04] p-2.5">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-gray-300">Quick Create</span>
+                        <Plus className="h-3.5 w-3.5 text-gray-500" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {([
+                          ["create-transfer", "Transfer", ArrowLeftRight],
+                          ["create-waybill", "Waybill", FileText],
+                          ["create-count", "Stock Count", ClipboardCheck],
+                          ["create-expense", "Expense", ReceiptText],
+                        ] as Array<[InventoryOperationsAction, string, typeof LayoutPanelTop]>).map(([action, label, QuickIcon]) => (
+                          <button
+                            key={action}
+                            type="button"
+                            onClick={() => handleInventoryOperationsAction(action)}
+                            className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-lg bg-white/[0.06] px-1.5 py-2 text-[10px] font-semibold text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+                          >
+                            <QuickIcon className="h-4 w-4" />
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {showPdaSubnav && (
                   <div className="ml-4 mt-1 mb-1.5 pl-3.5 border-l border-white/10 space-y-1">
                     {PDA_SUBNAV_ITEMS.filter((sub) => !sub.ownerOnly || currentRole === "Owner").map((sub) => {
@@ -84098,6 +84299,68 @@ ${waybillLineItems(w).length > 1
               )}
 
             </div>
+          ) : activePage === "Inventory & Logistics Operations" ? (
+            <InventoryLogisticsOperationsPage
+              products={catalogProducts.map((product) => ({
+                id: product.id,
+                name: product.name,
+                warehouseStock: Math.max(0, Number(product.warehouseStock ?? 0)),
+                agentStock: agentStock
+                  .filter((row) => row.productId === product.id)
+                  .reduce((sum, row) => sum + Math.max(0, Number(row.quantity ?? 0) - Number(row.defective ?? 0) - Number(row.missing ?? 0)), 0),
+                reorderPoint: Math.max(0, Number(product.reorderPoint ?? 0)),
+              }))}
+              stateHubs={inventoryStateHubRows.map(({ agent, location }) => ({
+                state: normalizeAgentState(location.state) || agentPrimaryBaseState(agent) || "Unassigned",
+                agentName: agent.name,
+                stocks: stockRowsForStateHub(agent, location).map((stock) => ({
+                  productId: stock.productId,
+                  quantity: Math.max(0, Number(stock.quantity ?? 0) - Number(stock.defective ?? 0) - Number(stock.missing ?? 0)),
+                })),
+              }))}
+              orders={trackedOrders.map((order) => ({
+                productId: order.productId,
+                productName: order.productName,
+                state: order.state,
+                location: order.location,
+                quantity: quantityForOrder(order),
+                status: order.status,
+                createdAt: order.createdAt,
+              }))}
+              waybills={waybillRecords.map((waybill) => ({
+                id: waybill.id,
+                productName: waybill.productName,
+                quantity: Math.max(0, Number(waybill.quantity ?? 0)),
+                items: waybill.items?.map((item) => ({
+                  productName: item.productName,
+                  quantity: Math.max(0, Number(item.quantity ?? 0)),
+                })),
+                fee: Math.max(0, Number(waybill.waybillFee ?? 0)),
+                carrier: waybill.logisticsPartner || "Not assigned",
+                from: waybill.sendingLocationName || waybill.sendingState || "Warehouse",
+                to: waybill.receivingLocationName || waybill.receivingState || "Unassigned",
+                dateSent: waybill.dateSent,
+                dateReceived: waybill.dateReceived,
+                status: waybill.status,
+              }))}
+              expenses={expenses.map((expense) => ({
+                type: expense.type,
+                amount: Math.max(0, Number(expense.amount ?? 0)),
+                date: expense.date || expense.createdAt || "",
+              }))}
+              discrepancies={stockCounts.flatMap((session) => session.entries
+                .filter((entry) => entry.status === "Discrepancy" || Number(entry.variance ?? 0) !== 0)
+                .map((entry) => ({
+                  id: entry.id,
+                  productName: entry.productName,
+                  agentName: entry.agentName,
+                  variance: Number(entry.variance ?? ((entry.adminCount ?? entry.agentCount ?? entry.systemQty) - entry.systemQty)),
+                  status: entry.status,
+                })))}
+              activeAgentCount={agents.filter((agent) => agent.active).length}
+              canManage={["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"].includes(currentRole)}
+              onAction={handleInventoryOperationsAction}
+            />
           ) : activePage === "Inventory" ? (
             inventoryView === "combos" ? (
               <div className="space-y-6">
@@ -92577,7 +92840,8 @@ ${waybillLineItems(w).length > 1
                 "Recovery Rep": "Works only recovered/returning-customer orders transferred to them - no fresh round-robin leads.",
                 "Delivery Agent": "An outside individual who holds stock and collects cash. Sees only their own deliveries - no customer list, no company figures. After creating the login, link it to their approved agent record from Active Agents.",
                 "Admin": "Full access except billing - can manage users, products, payroll.",
-                "Inventory Manager": "Manages products, stock movements, and waybills."
+                "Inventory Manager": "Legacy inventory role with stock and waybill access.",
+                "Inventory Manager & Logistics Operations": "Runs inventory coverage, transfers, logistics, reconciliation, alerts, and reporting."
               };
               return (
                 <div className="px-6 py-5 flex flex-col gap-5">
@@ -92637,7 +92901,7 @@ ${waybillLineItems(w).length > 1
                   <section className="space-y-3">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Role</h4>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {(["Sales Rep", "Admin", "Inventory Manager"] as EditableUserRole[]).map((r) => {
+                      {(["Sales Rep", "Admin", "Inventory Manager & Logistics Operations"] as EditableUserRole[]).map((r) => {
                         const selected = salesRepRole === r;
                         return (
                           <button
@@ -94595,7 +94859,8 @@ ${waybillLineItems(w).length > 1
                 "Sales Rep": "Receives orders via round-robin and confirms them with customers.",
                 "Recovery Rep": "Works only recovered/returning-customer orders transferred to them - no fresh round-robin leads.",
                 "Delivery Agent": "An outside individual who holds stock and collects cash. Sees only their own deliveries - no customer list, no company figures. After creating the login, link it to their approved agent record from Active Agents.",
-                "Inventory Manager": "Manages products, stock movements, and waybills.",
+                "Inventory Manager": "Legacy inventory role with stock and waybill access.",
+                "Inventory Manager & Logistics Operations": "Runs inventory coverage, transfers, logistics, reconciliation, alerts, and reporting.",
                 "Marketer": "Sees their attributed orders, campaign performance, and personal tracked embed links.",
                 "Viewer": "Read-only - can see dashboards but not change anything."
               };
@@ -94814,7 +95079,8 @@ ${waybillLineItems(w).length > 1
                 "Sales Rep": "Receives orders via round-robin and confirms them with customers.",
                 "Recovery Rep": "Works only recovered/returning-customer orders transferred to them - no fresh round-robin leads.",
                 "Delivery Agent": "An outside individual who holds stock and collects cash. Sees only their own deliveries - no customer list, no company figures. After creating the login, link it to their approved agent record from Active Agents.",
-                "Inventory Manager": "Manages products, stock movements, and waybills.",
+                "Inventory Manager": "Legacy inventory role with stock and waybill access.",
+                "Inventory Manager & Logistics Operations": "Runs inventory coverage, transfers, logistics, reconciliation, alerts, and reporting.",
                 "Marketer": "Sees their attributed orders, campaign performance, and personal tracked embed links.",
                 "Viewer": "Read-only - can see dashboards but not change anything."
               };

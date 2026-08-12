@@ -158,7 +158,7 @@ router.post("/update",
         title:      "Low Stock Alert",
         link:       "/dashboard/admin/inventory/state-stock"
       });
-      await sendPushToRoles(req.user!.orgId, ["Owner", "Admin", "Inventory Manager"], {
+      await sendPushToRoles(req.user!.orgId, ["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"], {
         title: "Low Stock Alert",
         body: message,
         kind: "low_stock",

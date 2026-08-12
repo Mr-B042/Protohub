@@ -22,7 +22,7 @@ const DAYS_OF_STOCK_THRESHOLD = 3;
 const MIN_RECENT_UNITS = 3;
 const RECENT_DAYS_WINDOW = 7;
 const DEDUPE_WINDOW_HOURS = 24;
-const RECIPIENT_ROLES = ["Owner", "Admin", "Manager", "Inventory Manager", "Call Rep"] as const;
+const RECIPIENT_ROLES = ["Owner", "Admin", "Manager", "Inventory Manager", "Inventory Manager & Logistics Operations", "Call Rep"] as const;
 
 type AgentRow = { id: string; org_id: string; name: string; primary_base_state: string | null; status: string | null };
 type StockRow = { agent_id: string; product_id: string; quantity: number; defective: number; missing: number };
