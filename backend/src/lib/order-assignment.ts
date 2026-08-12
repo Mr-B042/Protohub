@@ -15,6 +15,8 @@ async function pickAndAdvance(orgId: string): Promise<string | null> {
     .from("users")
     .select("id, round_robin_position, name")
     .eq("org_id", orgId)
+    // A demo account must never be handed a real customer's order.
+    .eq("is_demo", false)
     .eq("active", true)
     .eq("round_robin_excluded", false)
     .eq("role", "Sales Rep")

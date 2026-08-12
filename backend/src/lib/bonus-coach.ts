@@ -289,6 +289,7 @@ export const buildRepBonusSnapshot = async (
       .from("users")
       .select("id, org_id, name, role, active")
       .eq("org_id", orgId)
+      .eq("is_demo", false)
       .eq("id", repId)
       .single(),
     supabase

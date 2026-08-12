@@ -644,6 +644,8 @@ type ManagedUser = {
   lastSeenAt?: string;
   permissions?: UserPermission[];
   marketingAttributionTags?: string[];
+  /** Testing account. Fully usable in-app, invisible to operations. */
+  isDemo?: boolean;
   // Owner-granted page-level overrides on top of the role's defaults.
   extraPages?: ActivePage[];
   agentBalanceScopeMode?: "all" | "states" | "agents" | "assigned_agents";
@@ -12310,6 +12312,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   })();
   const selectedCurrency = currencies[currency];
   const selectedUser = users.find((user) => user.id === selectedUserId) ?? users[0];
+  // Demo accounts are excluded from every operational list. Not by naming
+  // convention - by the flag - so a demo rep can never be picked for a real
+  // order, counted in a team, or appear in a leaderboard.
+  const operationalUsers = users.filter((user) => !user.isDemo);
   const filteredUsers = users.filter((user) => {
     const search = userSearch.trim().toLowerCase();
     const matchesSearch = !search || `${user.name} ${user.email}`.toLowerCase().includes(search);
@@ -12324,7 +12330,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const clampedUserPage = Math.min(userPage, filteredUsersTotalPages);
   const pagedFilteredUsers = filteredUsers.slice((clampedUserPage - 1) * USER_PAGE, clampedUserPage * USER_PAGE);
   const ownerCanSeeUserPresence = realRole === "Owner";
-  const activeUserCount = users.filter((user) => user.active).length;
+  const activeUserCount = operationalUsers.filter((user) => user.active).length;
   // Ticks only while User Management is open, and touches no network - the same
   // pattern the follow-up countdowns use. The heartbeat is 45s and the active
   // window 2 minutes, so 20s is fine-grained enough to catch someone dropping
@@ -12336,13 +12342,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const timer = window.setInterval(() => setPresenceNow(Date.now()), 20_000);
     return () => window.clearInterval(timer);
   }, [activePage]);
-  const onlineUserCount = users.filter((user) => userPresenceState(user, presenceNow) === "Active").length;
-  const adminUserCount = users.filter((user) => user.role === "Admin" || user.role === "Owner").length;
-  const managerUserCount = users.filter((user) => user.role === "Manager").length;
-  const salesUserCount = users.filter((user) => user.role === "Sales Rep").length;
-  const inventoryUserCount = users.filter((user) => user.role === "Inventory Manager").length;
-  const marketerUserCount = users.filter((user) => user.role === "Marketer").length;
-  const viewerUserCount = users.filter((user) => user.role === "Viewer").length;
+  const onlineUserCount = operationalUsers.filter((user) => userPresenceState(user, presenceNow) === "Active").length;
+  const adminUserCount = operationalUsers.filter((user) => user.role === "Admin" || user.role === "Owner").length;
+  const managerUserCount = operationalUsers.filter((user) => user.role === "Manager").length;
+  const salesUserCount = operationalUsers.filter((user) => user.role === "Sales Rep").length;
+  const inventoryUserCount = operationalUsers.filter((user) => user.role === "Inventory Manager").length;
+  const marketerUserCount = operationalUsers.filter((user) => user.role === "Marketer").length;
+  const viewerUserCount = operationalUsers.filter((user) => user.role === "Viewer").length;
   const selectedProduct = products.find((product) => product.id === selectedProductId);
   const selectedPackage = selectedProduct?.packages.find((item) => item.id === selectedPackageId);
   const currentPackageFormIsComboLike = isComboLikePackage({
@@ -14066,7 +14072,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
     throw lastError ?? new Error("This product is still syncing to the public order form.");
   };
-  const salesRepUsers = users.filter((user) => user.role === "Sales Rep");
+  const salesRepUsers = operationalUsers.filter((user) => user.role === "Sales Rep");
   // Round-robin eligibility = signed-in AND not paused from rotation. `active`
   // stays login/visibility; `roundRobinExcluded` only pauses auto-assignment.
   // Manual assignment uses `assignableUsers` (active-only) so paused reps can
@@ -14291,7 +14297,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     Object.values(orderUpsellSaveTimerRef.current).forEach((timerId) => window.clearTimeout(timerId));
   }, []);
   // All active users available for order assignment - Sales Reps first, then other roles
-  const assignableUsers = users.filter((u) => u.active).sort((a, b) => {
+  const assignableUsers = operationalUsers.filter((u) => u.active).sort((a, b) => {
     const rank = (r: string) => r === "Sales Rep" ? 0 : 1;
     return rank(a.role) - rank(b.role) || a.name.localeCompare(b.name);
   });
@@ -25463,6 +25469,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             phone: u.phone ?? "",
             role: u.role,
             active: u.active,
+            isDemo: Boolean(u.isDemo ?? u.is_demo),
             created: u.createdAt ?? u.created_at ?? "",
             lastSeenAt: u.lastSeenAt ?? u.last_seen_at ?? undefined,
             permissions: resolvedPermissionsForRole(
@@ -39236,6 +39243,19 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  const toggleManagedUserDemo = (user: ManagedUser) => {
+    const next = !user.isDemo;
+    const previous = users;
+    setUsers((list) => list.map((row) => row.id === user.id ? { ...row, isDemo: next } : row));
+    usersApi.update(user.id, { isDemo: next } as any)
+      .then(() => showToast(next
+        ? `${user.name} is now a demo account - removed from payroll, round-robin, bonuses and headcounts.`
+        : `${user.name} is a normal account again and counts everywhere.`))
+      .catch((err: any) => {
+        setUsers(previous);
+        showToast(`Could not change that: ${err?.message ?? "please retry"}.`);
+      });
+  };
   const toggleManagedUserActive = (user: ManagedUser) => {
     if (isTemporaryUserId(user.id)) {
       showToast("This user is still syncing. Try again in a moment.");
@@ -78687,7 +78707,31 @@ ${waybillLineItems(w).length > 1
                             <div>
                               <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Account</span>
                               <strong className={`text-sm ${user.active ? "text-green-600" : "text-gray-500"}`}>{user.active ? "Enabled" : "Disabled"}</strong>
+                              {/* Says it on the record itself. A demo account
+                                  that reads like staff is how a phantom employee
+                                  ends up in a decision. */}
+                              {user.isDemo && (
+                                <span className="mt-1 inline-flex items-center gap-1 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-violet-700"
+                                  title="Testing account. Excluded from payroll, round-robin, bonuses, leaderboards, assignment and headcounts.">
+                                  Demo · not counted
+                                </span>
+                              )}
                             </div>
+                            {/* Owner only. Flipping a real person to demo would
+                                take them out of payroll and their own bonuses
+                                without them ever knowing. */}
+                            {realRole === "Owner" && user.role !== "Owner" && (
+                              <button
+                                type="button"
+                                className={`!min-h-0 shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-colors ${user.isDemo ? "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100" : "border-gray-200 bg-white text-gray-500 hover:bg-gray-50"}`}
+                                onClick={() => toggleManagedUserDemo(user)}
+                                title={user.isDemo
+                                  ? "Make this a normal account again - it will count in payroll, bonuses and headcounts."
+                                  : "Mark as a testing account - removed from payroll, round-robin, bonuses, leaderboards, assignment and headcounts."}
+                              >
+                                {user.isDemo ? "Demo account" : "Mark as demo"}
+                              </button>
+                            )}
                             <button type="button" className="flex items-center gap-2 text-sm" onClick={() => toggleManagedUserActive(user)}>
                               <span className={`w-8 h-4 rounded-full transition-colors relative ${user.active ? "bg-[#1F8FE0]" : "bg-gray-200"}`}>
                                 <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${user.active ? "left-4" : "left-0.5"}`} />
@@ -78698,10 +78742,10 @@ ${waybillLineItems(w).length > 1
                           <div className="grid grid-cols-2 gap-2">
                             {realRole === "Owner" && user.id !== authUser?.id && (
                               <button
-                                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-amber-200 text-amber-600 bg-amber-50 text-xs font-semibold"
+                                className={`inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold ${user.isDemo ? "border-violet-200 bg-violet-50 text-violet-700" : "border-amber-200 bg-amber-50 text-amber-600"}`}
                                 onClick={() => enterSpy(user)}
                               >
-                                <Eye className="w-4 h-4" /> View as
+                                <Eye className="w-4 h-4" /> {user.isDemo ? "Test as" : "View as"}
                               </button>
                             )}
                             <button className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold" onClick={() => openAdminUserEditRoute(user.id)}><Pencil className="w-4 h-4" /> Edit</button>

@@ -790,6 +790,8 @@ export const getSalesBonusProgress = async (
       .from("users")
       .select("id, name, email, role, active")
       .eq("org_id", orgId)
+      // No bonus is ever computed for a demo account.
+      .eq("is_demo", false)
       .eq("role", "Sales Rep")
       .eq("active", true),
     supabase

@@ -14,7 +14,7 @@ router.use(requireAuth);
 router.get("/", async (req, res) => {
   let query = supabase
     .from("users")
-    .select("id, name, email, phone, role, active, round_robin_excluded, created_at, last_seen_at, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids, marketing_attribution_tags")
+    .select("id, name, email, phone, role, active, round_robin_excluded, is_demo, created_at, last_seen_at, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids, marketing_attribution_tags")
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: true });
 
@@ -65,7 +65,10 @@ const UserPatchSchema = z.object({
   name:   z.string().min(1).max(120).optional(),
   email:  z.string().email().optional(),
   phone:  z.string().trim().max(40).optional(),
-  active: z.boolean().optional()
+  active: z.boolean().optional(),
+  // Marks an account as a testing one: still fully usable in-app, removed from
+  // payroll, round-robin, bonuses, leaderboards, assignment and headcounts.
+  isDemo: z.boolean().optional()
 }).strict();
 
 router.patch("/:id",
@@ -82,6 +85,15 @@ router.patch("/:id",
     if (parsed.data.email !== undefined)  updates.email  = parsed.data.email;
     if (parsed.data.phone !== undefined)  updates.phone  = parsed.data.phone.trim() || null;
     if (parsed.data.active !== undefined) updates.active = parsed.data.active;
+    // Owner only. Turning a real person into a demo account would silently take
+    // them out of payroll and their own bonuses, so an Admin cannot do it.
+    if (parsed.data.isDemo !== undefined) {
+      if (req.user!.role !== "Owner") {
+        res.status(403).json({ error: "Only the Owner can mark an account as a demo account." });
+        return;
+      }
+      updates.is_demo = parsed.data.isDemo;
+    }
 
     if (Object.keys(updates).length === 0) {
       res.status(400).json({ error: "No fields to update." });

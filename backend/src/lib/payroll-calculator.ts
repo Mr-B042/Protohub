@@ -372,7 +372,8 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     penaltiesResult,
     productsResult
   ] = await Promise.all([
-    supabase.from("users").select("id, name, role").eq("org_id", orgId).eq("active", true),
+    // Demo accounts are not people and are not paid.
+    supabase.from("users").select("id, name, role").eq("org_id", orgId).eq("active", true).eq("is_demo", false),
     supabase.from("pay_structures").select("*").eq("org_id", orgId),
     supabase.from("organizations").select("top_performer_bonus_enabled, top_performer_bonus_amount").eq("id", orgId).maybeSingle(),
     supabase
