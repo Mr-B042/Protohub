@@ -1,5 +1,9 @@
 import { useMemo, useState } from "react";
 import InventoryOpsStockByProduct from "./InventoryOpsStockByProduct";
+import InventoryOpsStockByState from "./InventoryOpsStockByState";
+import InventoryOpsStockByAgent from "./InventoryOpsStockByAgent";
+import InventoryOpsCoverage from "./InventoryOpsCoverage";
+import InventoryOpsRestockForecast from "./InventoryOpsRestockForecast";
 import {
   AlertTriangle,
   ArrowRight,
@@ -55,11 +59,20 @@ export type OpsProduct = {
   warehouseStock: number;
   agentStock: number;
   reorderPoint: number;
+  sku?: string;
+  /** Products have no category field. Derived from catalogType so the column
+   *  in the design has an honest source rather than an invented taxonomy. */
+  category?: string;
+  /** Selling price per unit, for valuing agent-held stock. */
+  sellingPrice?: number;
 };
 
 export type OpsStateHub = {
   state: string;
   agentName: string;
+  agentId?: string;
+  agentPhone?: string;
+  city?: string;
   stocks: Array<{ productId: string; quantity: number }>;
 };
 
@@ -338,19 +351,24 @@ export function InventoryLogisticsOperationsPage({
     { label: "Logistics Spend", value: money(model.logisticsSpend), helper: "This week", icon: WalletCards, tone: "amber" },
   ] as const;
 
-  if (section === "stock-products") {
+  const shared = { products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays };
+  if (section === "stock-products") return <InventoryOpsStockByProduct {...shared} />;
+  if (section === "stock-states") return <InventoryOpsStockByState {...shared} onOpenForecast={() => onAction("forecast")} />;
+  if (section === "stock-agents") {
     return (
-      <InventoryOpsStockByProduct
+      <InventoryOpsStockByAgent
         products={products}
         stateHubs={stateHubs}
         orders={orders}
         waybills={waybills}
-        lookbackDays={lookbackDays}
+        discrepancies={discrepancies}
         criticalDays={criticalDays}
         watchDays={watchDays}
       />
     );
   }
+  if (section === "coverage") return <InventoryOpsCoverage {...shared} onOpenTransfers={() => onAction("recommended-transfers")} />;
+  if (section === "forecast") return <InventoryOpsRestockForecast {...shared} onOpenTransfers={() => onAction("recommended-transfers")} />;
 
   return (
     <div className="space-y-5 pb-8 text-gray-900" data-testid="inventory-logistics-operations-page">
