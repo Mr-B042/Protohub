@@ -40229,13 +40229,14 @@ ${waybillLineItems(w).length > 1
       case "stock-products":
         openInventoryOperationsRoute();
         return;
+      // All four now render inside the operations page. They used to redirect
+      // to the old Inventory views, which is why the sub-nav highlighted a
+      // section you never arrived at.
       case "stock-states":
       case "coverage":
       case "forecast":
-        openInventoryStateStockRoute();
-        return;
       case "stock-agents":
-        openInventoryAgentHubsRoute();
+        openInventoryOperationsRoute();
         return;
       case "movements":
         openInventoryHistoryRoute();
@@ -84315,10 +84316,19 @@ ${waybillLineItems(w).length > 1
                   .filter((row) => row.productId === product.id)
                   .reduce((sum, row) => sum + Math.max(0, Number(row.quantity ?? 0) - Number(row.defective ?? 0) - Number(row.missing ?? 0)), 0),
                 reorderPoint: Math.max(0, Number(product.reorderPoint ?? 0)),
+                sku: product.sku,
+                // No category field exists on products. catalogType is the only
+                // real grouping, so the column shows that rather than an
+                // invented taxonomy.
+                category: product.catalogType === "combo_only" ? "Combo" : "Standard",
+                sellingPrice: Math.max(0, Number(primaryPricing(product)?.sellingPrice ?? 0)),
               }))}
               stateHubs={inventoryStateHubRows.map(({ agent, location }) => ({
                 state: normalizeAgentState(location.state) || agentPrimaryBaseState(agent) || "Unassigned",
                 agentName: agent.name,
+                agentId: agent.id,
+                agentPhone: agent.phone ?? "",
+                city: location.city ?? "",
                 stocks: stockRowsForStateHub(agent, location).map((stock) => ({
                   productId: stock.productId,
                   quantity: Math.max(0, Number(stock.quantity ?? 0) - Number(stock.defective ?? 0) - Number(stock.missing ?? 0)),
