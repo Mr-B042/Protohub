@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import InventoryOpsStockByProduct from "./InventoryOpsStockByProduct";
 import {
   AlertTriangle,
   ArrowRight,
@@ -48,7 +49,7 @@ export type InventoryOperationsAction =
   | "create-count"
   | "create-expense";
 
-type OpsProduct = {
+export type OpsProduct = {
   id: string;
   name: string;
   warehouseStock: number;
@@ -56,13 +57,13 @@ type OpsProduct = {
   reorderPoint: number;
 };
 
-type OpsStateHub = {
+export type OpsStateHub = {
   state: string;
   agentName: string;
   stocks: Array<{ productId: string; quantity: number }>;
 };
 
-type OpsOrder = {
+export type OpsOrder = {
   productId?: string;
   productName?: string;
   state?: string;
@@ -72,7 +73,7 @@ type OpsOrder = {
   createdAt?: string;
 };
 
-type OpsWaybill = {
+export type OpsWaybill = {
   id: string;
   productName: string;
   quantity: number;
@@ -86,8 +87,8 @@ type OpsWaybill = {
   status: string;
 };
 
-type OpsExpense = { type: string; amount: number; date: string };
-type OpsDiscrepancy = {
+export type OpsExpense = { type: string; amount: number; date: string };
+export type OpsDiscrepancy = {
   id: string;
   productName: string;
   agentName: string;
@@ -96,6 +97,12 @@ type OpsDiscrepancy = {
 };
 
 type Props = {
+  /** Which sub-page to render. The sidebar already tracks this; before now it
+   *  was only styling the nav while every section fell back to the dashboard. */
+  section?: InventoryOperationsAction;
+  lookbackDays?: number;
+  criticalDays?: number;
+  watchDays?: number;
   products: OpsProduct[];
   stateHubs: OpsStateHub[];
   orders: OpsOrder[];
@@ -154,6 +161,10 @@ function EmptyRow({ columns, text }: { columns: number; text: string }) {
 }
 
 export function InventoryLogisticsOperationsPage({
+  section = "dashboard",
+  lookbackDays = 7,
+  criticalDays = 3,
+  watchDays = 7,
   products,
   stateHubs,
   orders,
@@ -166,6 +177,9 @@ export function InventoryLogisticsOperationsPage({
 }: Props) {
   const [showFilters, setShowFilters] = useState(false);
   const [riskFilter, setRiskFilter] = useState<"all" | "risk" | "transit">("all");
+  // Sub-pages render in place. Hooks above must run first, so this returns
+  // after them rather than before - a section switch must never change how many
+  // hooks this component calls.
   const [query, setQuery] = useState("");
 
   const model = useMemo(() => {
@@ -323,6 +337,20 @@ export function InventoryLogisticsOperationsPage({
     { label: "Overall Coverage", value: `${model.overallCover.toFixed(1)} Days`, helper: "Average stock cover", icon: ShieldCheck, tone: "blue" },
     { label: "Logistics Spend", value: money(model.logisticsSpend), helper: "This week", icon: WalletCards, tone: "amber" },
   ] as const;
+
+  if (section === "stock-products") {
+    return (
+      <InventoryOpsStockByProduct
+        products={products}
+        stateHubs={stateHubs}
+        orders={orders}
+        waybills={waybills}
+        lookbackDays={lookbackDays}
+        criticalDays={criticalDays}
+        watchDays={watchDays}
+      />
+    );
+  }
 
   return (
     <div className="space-y-5 pb-8 text-gray-900" data-testid="inventory-logistics-operations-page">
