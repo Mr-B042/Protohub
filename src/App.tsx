@@ -135,7 +135,9 @@ import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi,
-  setApiSpyUserId
+  setApiSpyUserId,
+  setApiPreviewReadOnly,
+  PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
 import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
@@ -2617,6 +2619,7 @@ const dashboardHashForRolePage = (page: ActivePage, role: EditableUserRole): str
 };
 
 const SPY_AS_STORAGE_KEY = "protohub.viewAsUserId";
+const PREVIEW_ROLE_STORAGE_KEY = "protohub.previewRole";
 
 const allowedPagesFor = (role: EditableUserRole | undefined, extraPages: AccessiblePage[] = []): AccessiblePage[] => {
   if (!role) return roleAllowedPages["Viewer"];
@@ -9555,6 +9558,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [spyAsUserId, setSpyAsUserId] = useState<string | null>(() =>
     readPref<string | null>(SPY_AS_STORAGE_KEY, null, (raw) => raw.trim() || null)
   );
+  // Preview a ROLE without becoming another person. No account is created, so
+  // there is nothing to keep out of payroll, round-robin or the leaderboards -
+  // the commonest thing you want ("how does this screen look to a rep") costs
+  // nothing and risks nothing.
+  const [previewRole, setPreviewRole] = useState<EditableUserRole | null>(() =>
+    readPref<EditableUserRole | null>(PREVIEW_ROLE_STORAGE_KEY, null, (raw) => (raw.trim() || null) as EditableUserRole | null)
+  );
+  // Real data, but writes blocked. On by default whenever a preview starts,
+  // because browsing is the common case and a stray click on live orders is
+  // not recoverable by undo.
+  const [previewReadOnly, setPreviewReadOnly] = useState(true);
   const spiedUser = spyAsUserId ? (users.find((u) => u.id === spyAsUserId) as ManagedUser | undefined) : undefined;
   const isSpying = realRole === "Owner" && Boolean(spiedUser);
 
@@ -9563,8 +9577,35 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setApiSpyUserId(isSpying && spiedUser?.id ? spiedUser.id : null);
   }, [isSpying, spiedUser?.id]);
 
+  // A role preview only applies to the Owner, and only when not already
+  // viewing-as a specific person - two previews at once would be unreadable.
+  const isPreviewingRole = realRole === "Owner" && !isSpying && Boolean(previewRole);
+  const isPreviewing = isSpying || isPreviewingRole;
   const currentManagedUser = isSpying ? spiedUser : realManagedUser;
-  const currentRole: EditableUserRole = isSpying ? (spiedUser!.role) : realRole;
+  const currentRole: EditableUserRole = isSpying
+    ? (spiedUser!.role)
+    : isPreviewingRole ? previewRole! : realRole;
+  useEffect(() => { writePref(PREVIEW_ROLE_STORAGE_KEY, previewRole ?? ""); }, [previewRole]);
+  // A blocked write throws from the API layer. Most callers catch and show
+  // their own "failed to save" - which would be a lie here, since nothing was
+  // attempted. This says what actually happened, wherever it happened.
+  useEffect(() => {
+    const onRejection = (event: PromiseRejectionEvent) => {
+      if (event.reason instanceof PreviewReadOnlyError) {
+        event.preventDefault();
+        setToast("Preview is read-only. Switch it off in the bar at the top to make real changes.");
+      }
+    };
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => window.removeEventListener("unhandledrejection", onRejection);
+  }, []);
+  // Guard follows the preview, not the toggle alone: leaving a preview must
+  // never leave the app in a state where real work silently fails.
+  useEffect(() => {
+    setApiPreviewReadOnly(isPreviewing && previewReadOnly);
+  }, [isPreviewing, previewReadOnly]);
+  // Every new preview starts safe, whichever kind it is.
+  useEffect(() => { if (isPreviewing) setPreviewReadOnly(true); }, [isPreviewing, previewRole, spyAsUserId]);
   const currentAllowedPages = allowedPagesFor(currentRole, currentManagedUser?.extraPages ?? []);
   // Page-aware + role-aware Help: the (?) modal explains the page you're on,
   // with an optional role-specific note. Content lives in src/help-content.ts.
@@ -61945,16 +61986,32 @@ ${waybillLineItems(w).length > 1
   })();
 
   return (
-    <div className={`app-shell !flex min-h-[100dvh] lg:min-h-screen bg-[hsl(var(--surface-page))] overflow-x-hidden ${isSpying ? "pt-9" : ""} ${collapsed ? "is-collapsed" : ""}`} data-theme={theme} data-density={density}>
-      {isSpying && spiedUser && (
-        <div className="fixed top-0 left-0 right-0 z-[60] h-9 bg-amber-500 text-amber-950 px-4 flex items-center justify-center gap-3 shadow-md text-sm font-semibold">
-          <Eye className="w-4 h-4" />
-          <span>Viewing as <strong>{spiedUser.name}</strong> ({spiedUser.role})</span>
+    <div className={`app-shell !flex min-h-[100dvh] lg:min-h-screen bg-[hsl(var(--surface-page))] overflow-x-hidden ${isPreviewing ? "pt-9" : ""} ${collapsed ? "is-collapsed" : ""}`} data-theme={theme} data-density={density}>
+      {isPreviewing && (
+        <div className={`fixed top-0 left-0 right-0 z-[60] h-9 px-4 flex items-center justify-center gap-3 shadow-md text-sm font-semibold ${previewReadOnly ? "bg-amber-500 text-amber-950" : "bg-rose-600 text-white"}`}>
+          <Eye className="w-4 h-4 shrink-0" />
+          <span className="truncate">
+            {isSpying && spiedUser
+              ? <>Viewing as <strong>{spiedUser.name}</strong> ({spiedUser.role})</>
+              : <>Previewing as <strong>{previewRole}</strong> - your own account, that role&apos;s view</>}
+          </span>
+          {/* The state that decides whether a click changes a real order is the
+              one thing that must never be guessed at, so it is spelled out
+              rather than shown as an icon. */}
           <button
-            onClick={exitSpy}
-            className="!min-h-0 ml-2 px-3 py-1 rounded-md bg-amber-950/90 text-amber-50 text-xs font-bold hover:bg-amber-900 transition-colors"
+            onClick={() => setPreviewReadOnly((value) => !value)}
+            className={`!min-h-0 shrink-0 px-2.5 py-1 rounded-md text-xs font-bold transition-colors ${previewReadOnly ? "bg-amber-950/90 text-amber-50 hover:bg-amber-900" : "bg-white/20 text-white hover:bg-white/30"}`}
+            title={previewReadOnly
+              ? "Nothing you click can change real data. Turn off to test saving."
+              : "Careful: saves are going to real records."}
           >
-            Exit view-as
+            {previewReadOnly ? "Read-only" : "LIVE EDITS ON"}
+          </button>
+          <button
+            onClick={() => { if (isSpying) exitSpy(); else setPreviewRole(null); }}
+            className={`!min-h-0 shrink-0 px-3 py-1 rounded-md text-xs font-bold transition-colors ${previewReadOnly ? "bg-amber-950/90 text-amber-50 hover:bg-amber-900" : "bg-white text-rose-700 hover:bg-rose-50"}`}
+          >
+            Exit preview
           </button>
         </div>
       )}
@@ -78441,6 +78498,47 @@ ${waybillLineItems(w).length > 1
                   </button>
                 </div>
               </header>
+
+              {/* Preview a role without becoming a person. No account is created,
+                  so nothing here can land in payroll, round-robin or a
+                  leaderboard - which is the whole reason it exists alongside
+                  "View as", rather than instead of it. */}
+              {realRole === "Owner" && (
+                <section className="rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 className="m-0 flex items-center gap-2 text-sm font-black text-gray-900">
+                        <Eye className="h-4 w-4 text-[#1F8FE0]" />Preview as a role
+                      </h2>
+                      <p className="m-0 mt-0.5 text-xs text-gray-500">
+                        See the whole app as that role would, still signed in as yourself. Starts read-only - flip the switch in the top bar when you want to test a save.
+                      </p>
+                    </div>
+                    {previewRole && (
+                      <button
+                        className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-xs font-bold text-gray-600 transition-colors hover:bg-gray-50"
+                        onClick={() => setPreviewRole(null)}
+                      >
+                        Exit preview
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(["Admin", "Manager", "Sales Rep", "Recovery Rep", "Marketer", "Viewer"] as EditableUserRole[]).map((role) => (
+                      <button
+                        key={role}
+                        className={`!min-h-0 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${previewRole === role ? "bg-gray-900 text-white" : "border border-gray-200 text-gray-700 hover:bg-gray-50"}`}
+                        onClick={() => { setPreviewRole(previewRole === role ? null : role); setActivePage("Dashboard"); }}
+                      >
+                        {role}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="m-0 mt-3 text-[11px] text-gray-400">
+                    Data stays scoped to your own account, so a rep-only list may look emptier than it would for a real rep. Use <strong>View as</strong> on a specific person below when you need their actual workload.
+                  </p>
+                </section>
+              )}
 
               <DataErrorBanner />
               {dataLoading && <TableSkeleton cols={5} rows={5} />}

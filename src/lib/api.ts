@@ -197,6 +197,25 @@ export function setApiSpyUserId(userId: string | null) {
   _spyUserId = userId;
 }
 
+// ── Preview read-only ──────────────────────────────────────
+// While the Owner is previewing a role, every screen shows REAL data - which is
+// the point, since an empty screen tells you nothing about layout under load.
+// The risk is that clicking anything then changes a real order.
+//
+// Enforced here rather than by disabling buttons: there are hundreds of write
+// paths and one of them would always be missed. Every non-GET goes through this
+// function, so a single check covers all of them, including any added later.
+let _previewReadOnly = false;
+export function setApiPreviewReadOnly(readOnly: boolean) {
+  _previewReadOnly = readOnly;
+}
+export class PreviewReadOnlyError extends Error {
+  constructor() {
+    super("Preview is read-only. Turn it off in the preview bar to make real changes.");
+    this.name = "PreviewReadOnlyError";
+  }
+}
+
 // ── Core request helper ────────────────────────────────────
 async function request<T>(
   method: string,
@@ -205,6 +224,11 @@ async function request<T>(
   retried = false,
   transientAttempt = 0
 ): Promise<T> {
+  // Reads always pass. Auth endpoints pass too - refreshing a token or signing
+  // out is not a change to the business.
+  if (_previewReadOnly && method !== "GET" && !SESSION_START_ENDPOINTS.has(path) && !path.startsWith("/api/auth/")) {
+    throw new PreviewReadOnlyError();
+  }
   const isSessionStartEndpoint = SESSION_START_ENDPOINTS.has(path);
   let token = auth.getAccessToken();
   if (token && !isSessionStartEndpoint && auth.isAccessTokenExpiringWithin(PRE_REQUEST_REFRESH_SKEW_MS)) {
