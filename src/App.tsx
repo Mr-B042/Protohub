@@ -40211,9 +40211,12 @@ ${waybillLineItems(w).length > 1
     setModal(null);
     syncHashRoute("#/dashboard/admin/inventory/agent-hubs");
   };
-  const openInventoryOperationsRoute = () => {
+  // Takes the section it should land on. It used to hardcode "dashboard", so
+  // every sub-page set its section and then immediately had it reset one line
+  // later - which is why none of them opened.
+  const openInventoryOperationsRoute = (section: InventoryOperationsAction = "dashboard") => {
     setActivePage("Inventory & Logistics Operations");
-    setInventoryOperationsSection("dashboard");
+    setInventoryOperationsSection(section);
     setModal(null);
     syncHashRoute("#/dashboard/admin/inventory-logistics-operations");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -40227,7 +40230,7 @@ ${waybillLineItems(w).length > 1
       // Renders in place now. It used to bounce to the old Inventory dashboard,
       // which is why the sidebar highlighted a section you never arrived at.
       case "stock-products":
-        openInventoryOperationsRoute();
+        openInventoryOperationsRoute(action);
         return;
       // All four now render inside the operations page. They used to redirect
       // to the old Inventory views, which is why the sub-nav highlighted a
@@ -40236,7 +40239,7 @@ ${waybillLineItems(w).length > 1
       case "coverage":
       case "forecast":
       case "stock-agents":
-        openInventoryOperationsRoute();
+        openInventoryOperationsRoute(action);
         return;
       case "movements":
         openInventoryHistoryRoute();
