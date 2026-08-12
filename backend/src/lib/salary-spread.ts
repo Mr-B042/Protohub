@@ -33,7 +33,7 @@ export const salariedFixed = (structure: { type?: string | null; fixed_salary?: 
 
 export async function totalMonthlySalary(orgId: string): Promise<number> {
   const [{ data: users }, { data: structures }] = await Promise.all([
-    supabase.from("users").select("id").eq("org_id", orgId).eq("active", true),
+    supabase.from("users").select("id").eq("org_id", orgId).eq("active", true).eq("is_demo", false),
     supabase.from("pay_structures").select("user_id, type, fixed_salary").eq("org_id", orgId)
   ]);
   const activeIds = new Set((users ?? []).map((u: any) => u.id as string));
