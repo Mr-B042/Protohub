@@ -11783,6 +11783,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaActiveSearch, setPdaActiveSearch] = useState("");
   const [pdaActiveAvailability, setPdaActiveAvailability] = useState("All");
   const [pdaActiveVehicle, setPdaActiveVehicle] = useState("All");
+  const [pdaActiveStateFilter, setPdaActiveStateFilter] = useState("All");
   const [pdaActivePage, setPdaActivePage] = useState(1);
   const [pdaDispatchSummary, setPdaDispatchSummary] = useState<PdaDispatchSummary | null>(null);
   const [pdaDispatchAgent, setPdaDispatchAgent] = useState("All");
@@ -11792,6 +11793,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaInvTab, setPdaInvTab] = useState<"Agent Stock Overview" | "Stock Movement Ledger">("Agent Stock Overview");
   const [pdaInvSearch, setPdaInvSearch] = useState("");
   const [pdaInvDiscrepancy, setPdaInvDiscrepancy] = useState("All");
+  const [pdaInvStateFilter, setPdaInvStateFilter] = useState("All");
   const [pdaInvPage, setPdaInvPage] = useState(1);
   const [pdaLedgerSearch, setPdaLedgerSearch] = useState("");
   const [pdaLedgerMovement, setPdaLedgerMovement] = useState("All");
@@ -11801,6 +11803,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaCodTab, setPdaCodTab] = useState<"Collections Overview" | "Agent Remittance" | "Payment History" | "Discrepancies">("Collections Overview");
   const [pdaCodSearch, setPdaCodSearch] = useState("");
   const [pdaCodStatus, setPdaCodStatus] = useState("All");
+  const [pdaCodStateFilter, setPdaCodStateFilter] = useState("All");
   const [pdaCodPage, setPdaCodPage] = useState(1);
   const [pdaAgentRemittance, setPdaAgentRemittance] = useState<PdaAgentRemittance | null>(null);
   const [pdaRemitSearch, setPdaRemitSearch] = useState("");
@@ -11817,6 +11820,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaIncType, setPdaIncType] = useState("All");
   const [pdaIncStatus, setPdaIncStatus] = useState("All");
   const [pdaIncAgent, setPdaIncAgent] = useState("All");
+  const [pdaIncStateFilter, setPdaIncStateFilter] = useState("All");
   const [pdaIncPage, setPdaIncPage] = useState(1);
   const [pdaReportsView, setPdaReportsView] = useState<PdaReportsView | null>(null);
   const [pdaReportSearch, setPdaReportSearch] = useState("");
@@ -11839,6 +11843,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaOverviewSearch, setPdaOverviewSearch] = useState("");
   const [pdaOverviewStatus, setPdaOverviewStatus] = useState("All");
   const [pdaOverviewAvailability, setPdaOverviewAvailability] = useState("All");
+  const [pdaOverviewStateFilter, setPdaOverviewStateFilter] = useState("All");
   const [pdaOverviewPage, setPdaOverviewPage] = useState(1);
   const [pdaApplications, setPdaApplications] = useState<PdaApplicationsView | null>(null);
   const [pdaAppTab, setPdaAppTab] = useState<PdaAppTab>("All Applications");
@@ -11908,6 +11913,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaGuarantorQueue, setPdaGuarantorQueue] = useState<{ rows: PdaGuarantorQueueRow[]; counts: { total: number; outstanding: number } } | null>(null);
   const [pdaGuarantorDetail, setPdaGuarantorDetail] = useState<PdaGuarantorDetail | null>(null);
   const [pdaGuarantorSearch, setPdaGuarantorSearch] = useState("");
+  const [pdaGuarantorStateFilter, setPdaGuarantorStateFilter] = useState("All");
+  const [pdaGuarantorStatusFilter, setPdaGuarantorStatusFilter] = useState("All");
   const [pdaGuarantorTab, setPdaGuarantorTab] = useState<"Guarantor Information" | "Reference Check" | "Documents" | "Call History">("Guarantor Information");
   const [pdaCod, setPdaCod] = useState<PdaCodView | null>(null);
   const [pdaRemittanceDraft, setPdaRemittanceDraft] = useState({ amount: "", method: "Cash", reference: "" });
@@ -50874,10 +50881,14 @@ ${waybillLineItems(w).length > 1
       : status === "Open" ? "bg-rose-50 text-rose-700"
       : "bg-amber-50 text-amber-700";
 
+    const pdaIncStates = Array.from(
+      new Set((view?.rows ?? []).map((row) => row.agentState).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b));
     const rows = (view?.rows ?? []).filter((row) => {
       if (pdaIncType !== "All" && row.incidentType !== pdaIncType) return false;
       if (pdaIncStatus !== "All" && row.status !== pdaIncStatus) return false;
       if (pdaIncAgent !== "All" && row.agentId !== pdaIncAgent) return false;
+      if (pdaIncStateFilter !== "All" && row.agentState !== pdaIncStateFilter) return false;
       if (!pdaIncSearch.trim()) return true;
       const q = pdaIncSearch.trim().toLowerCase();
       return row.code.toLowerCase().includes(q)
@@ -51005,7 +51016,12 @@ ${waybillLineItems(w).length > 1
             <option value="All">Status: All</option>
             {["Open", "In Progress", "Resolved", "Closed"].map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <button type="button" onClick={() => { setPdaIncSearch(""); setPdaIncType("All"); setPdaIncStatus("All"); setPdaIncAgent("All"); setPdaIncPage(1); }}
+          <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+            value={pdaIncStateFilter} onChange={(e) => { setPdaIncStateFilter(e.target.value); setPdaIncPage(1); }}>
+            <option value="All">State: All</option>
+            {pdaIncStates.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button type="button" onClick={() => { setPdaIncSearch(""); setPdaIncType("All"); setPdaIncStatus("All"); setPdaIncAgent("All"); setPdaIncStateFilter("All"); setPdaIncPage(1); }}
             className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
             <RefreshCw className="h-4 w-4" /> Reset
           </button>
@@ -51792,9 +51808,13 @@ ${waybillLineItems(w).length > 1
     const view = pdaActiveAgents;
     const counts = view?.counts ?? null;
 
+    const pdaActiveStates = Array.from(
+      new Set((view?.rows ?? []).map((row) => row.state).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b));
     const rows = (view?.rows ?? []).filter((row) => {
       if (pdaActiveAvailability !== "All" && row.availability !== pdaActiveAvailability) return false;
       if (pdaActiveVehicle !== "All" && (row.transportMethod ?? "") !== pdaActiveVehicle) return false;
+      if (pdaActiveStateFilter !== "All" && row.state !== pdaActiveStateFilter) return false;
       if (!pdaActiveSearch.trim()) return true;
       const q = pdaActiveSearch.trim().toLowerCase();
       return row.fullName.toLowerCase().includes(q) || row.agentCode.toLowerCase().includes(q) || (row.phone ?? "").includes(q);
@@ -51881,8 +51901,13 @@ ${waybillLineItems(w).length > 1
             <option value="All">Vehicle Type: All</option>
             {["Motorcycle", "Car", "Public transport", "Bicycle", "Walking", "Hired dispatch", "Other"].map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
+          <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+            value={pdaActiveStateFilter} onChange={(e) => { setPdaActiveStateFilter(e.target.value); setPdaActivePage(1); }}>
+            <option value="All">State: All</option>
+            {pdaActiveStates.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
           <button type="button"
-            onClick={() => { setPdaActiveSearch(""); setPdaActiveAvailability("All"); setPdaActiveVehicle("All"); setPdaActivePage(1); }}
+            onClick={() => { setPdaActiveSearch(""); setPdaActiveAvailability("All"); setPdaActiveVehicle("All"); setPdaActiveStateFilter("All"); setPdaActivePage(1); }}
             className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
             <RefreshCw className="h-4 w-4" /> Reset
           </button>
@@ -53122,8 +53147,12 @@ ${waybillLineItems(w).length > 1
       : status === "Overdue" ? "bg-rose-50 text-rose-700"
       : "bg-gray-100 text-gray-600";
 
+    const pdaCodStates = Array.from(
+      new Set((view?.agents ?? []).map((row) => row.agentState).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b));
     const agentRows = (view?.agents ?? []).filter((row) => {
       if (pdaCodStatus !== "All" && row.status !== pdaCodStatus) return false;
+      if (pdaCodStateFilter !== "All" && row.agentState !== pdaCodStateFilter) return false;
       if (!pdaCodSearch.trim()) return true;
       const q = pdaCodSearch.trim().toLowerCase();
       return row.fullName.toLowerCase().includes(q) || row.agentCode.toLowerCase().includes(q);
@@ -53197,7 +53226,12 @@ ${waybillLineItems(w).length > 1
             <option value="All">Status: All</option>
             {["Remitted", "Partial", "Overdue", "Cash Held"].map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <button type="button" onClick={() => { setPdaCodSearch(""); setPdaCodStatus("All"); setPdaCodPage(1); }}
+          <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+            value={pdaCodStateFilter} onChange={(e) => { setPdaCodStateFilter(e.target.value); setPdaCodPage(1); }}>
+            <option value="All">State: All</option>
+            {pdaCodStates.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button type="button" onClick={() => { setPdaCodSearch(""); setPdaCodStatus("All"); setPdaCodStateFilter("All"); setPdaCodPage(1); }}
             className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
             <RefreshCw className="h-4 w-4" /> Reset
           </button>
@@ -53610,9 +53644,13 @@ ${waybillLineItems(w).length > 1
     const pctOf = (value: number) =>
       counts && counts.totalUnits > 0 ? `${Math.round((value / counts.totalUnits) * 1000) / 10}% of total` : "—";
 
+    const pdaInvStates = Array.from(
+      new Set((view?.agents ?? []).map((row) => row.state).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b));
     const agentRows = (view?.agents ?? []).filter((row) => {
       if (pdaInvDiscrepancy === "With issues" && row.openIssues === 0) return false;
       if (pdaInvDiscrepancy === "Clean" && row.openIssues > 0) return false;
+      if (pdaInvStateFilter !== "All" && row.state !== pdaInvStateFilter) return false;
       if (!pdaInvSearch.trim()) return true;
       const q = pdaInvSearch.trim().toLowerCase();
       return row.fullName.toLowerCase().includes(q) || row.location.toLowerCase().includes(q) || (row.phone ?? "").includes(q);
@@ -53767,12 +53805,19 @@ ${waybillLineItems(w).length > 1
             )}
           </div>
           {pdaInvTab === "Agent Stock Overview" ? (
-            <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
-              value={pdaInvDiscrepancy} onChange={(e) => { setPdaInvDiscrepancy(e.target.value); setPdaInvPage(1); }}>
-              <option value="All">Discrepancy: All</option>
-              <option value="With issues">With open issues</option>
-              <option value="Clean">No issues</option>
-            </select>
+            <>
+              <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+                value={pdaInvDiscrepancy} onChange={(e) => { setPdaInvDiscrepancy(e.target.value); setPdaInvPage(1); }}>
+                <option value="All">Discrepancy: All</option>
+                <option value="With issues">With open issues</option>
+                <option value="Clean">No issues</option>
+              </select>
+              <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+                value={pdaInvStateFilter} onChange={(e) => { setPdaInvStateFilter(e.target.value); setPdaInvPage(1); }}>
+                <option value="All">State: All</option>
+                {pdaInvStates.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </>
           ) : (
             <>
               <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
@@ -55253,16 +55298,22 @@ ${waybillLineItems(w).length > 1
 
   // Guarantor Verification: the whole queue worked as its own job, rather than
   // hunted for application by application.
+  const PDA_GUARANTOR_STATUSES = ["Not Contacted", "Call Scheduled", "Reached", "Confirmed", "Information Mismatch", "Declined Responsibility", "Unable to Verify", "Approved", "Rejected"];
+
   const renderPdaGuarantorVerification = () => {
     const detail = pdaGuarantorDetail;
+    const guarantorStates = Array.from(
+      new Set((pdaGuarantorQueue?.rows ?? []).map((row) => row.applicantState).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b));
     const rows = (pdaGuarantorQueue?.rows ?? []).filter((row) => {
+      if (pdaGuarantorStateFilter !== "All" && row.applicantState !== pdaGuarantorStateFilter) return false;
+      if (pdaGuarantorStatusFilter !== "All" && row.verificationStatus !== pdaGuarantorStatusFilter) return false;
       if (!pdaGuarantorSearch.trim()) return true;
       const q = pdaGuarantorSearch.trim().toLowerCase();
       return row.fullName.toLowerCase().includes(q)
         || (row.applicantName ?? "").toLowerCase().includes(q)
         || (row.phone ?? "").includes(q);
     });
-    const outstanding = pdaGuarantorQueue?.counts.outstanding ?? 0;
 
     const chip = (status: string) =>
       status === "Approved" ? "bg-emerald-50 text-emerald-700"
@@ -55303,7 +55354,7 @@ ${waybillLineItems(w).length > 1
           <section className="self-start rounded-xl border border-gray-200 bg-white shadow-sm">
             <div className="flex items-center justify-between gap-2 px-4 py-3">
               <h3 className="m-0 text-sm font-bold text-gray-900">Guarantor Queue</h3>
-              <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">{outstanding}</span>
+              <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">{rows.length}</span>
             </div>
             <div className="px-4 pb-3">
               <div className="relative">
@@ -55311,6 +55362,18 @@ ${waybillLineItems(w).length > 1
                 <input className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm"
                   placeholder="Search by name, phone or ID..." value={pdaGuarantorSearch}
                   onChange={(e) => setPdaGuarantorSearch(e.target.value)} />
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <select className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs font-semibold text-gray-700"
+                  value={pdaGuarantorStateFilter} onChange={(e) => setPdaGuarantorStateFilter(e.target.value)}>
+                  <option value="All">All States</option>
+                  {guarantorStates.map((state) => <option key={state} value={state}>{state}</option>)}
+                </select>
+                <select className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs font-semibold text-gray-700"
+                  value={pdaGuarantorStatusFilter} onChange={(e) => setPdaGuarantorStatusFilter(e.target.value)}>
+                  <option value="All">All Status</option>
+                  {PDA_GUARANTOR_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+                </select>
               </div>
             </div>
             <div className="max-h-[560px] divide-y divide-gray-100 overflow-y-auto border-t border-gray-100">
@@ -57349,9 +57412,13 @@ ${waybillLineItems(w).length > 1
       }
     ];
 
+    const pdaOverviewStates = Array.from(
+      new Set((pdaOverview?.agents ?? []).map((agent) => agent.state).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b));
     const agentRows = (pdaOverview?.agents ?? []).filter((agent) => {
       if (pdaOverviewStatus !== "All" && agent.accountStatus !== pdaOverviewStatus) return false;
       if (pdaOverviewAvailability !== "All" && agent.availability !== pdaOverviewAvailability) return false;
+      if (pdaOverviewStateFilter !== "All" && agent.state !== pdaOverviewStateFilter) return false;
       if (!pdaOverviewSearch.trim()) return true;
       const q = pdaOverviewSearch.trim().toLowerCase();
       return agent.fullName.toLowerCase().includes(q)
@@ -57490,6 +57557,11 @@ ${waybillLineItems(w).length > 1
                 value={pdaOverviewAvailability} onChange={(e) => { setPdaOverviewAvailability(e.target.value); setPdaOverviewPage(1); }}>
                 <option value="All">Availability: All</option>
                 {["Available", "Busy", "Unavailable", "Offline"].map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+                value={pdaOverviewStateFilter} onChange={(e) => { setPdaOverviewStateFilter(e.target.value); setPdaOverviewPage(1); }}>
+                <option value="All">State: All</option>
+                {pdaOverviewStates.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
 
