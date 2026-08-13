@@ -8894,6 +8894,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // state that needs attention most, so the panel opens on the problem.
   const [managerInventoryState, setManagerInventoryState] = useState<string | null>(null);
   const [managerInventoryShowAllStates, setManagerInventoryShowAllStates] = useState(false);
+  const [managerInventoryStateSearch, setManagerInventoryStateSearch] = useState("");
+  const [managerInventoryStateStatusFilter, setManagerInventoryStateStatusFilter] = useState("All");
   const [managerInventoryProductFilter, setManagerInventoryProductFilter] = useState("all");
   // Order Coverage is a different question from the cover-days table above it.
   // That one asks "how long will this state's stock last at its recent rate";
@@ -28411,7 +28413,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       ? "just now"
       : `${agoMinutes} min${agoMinutes === 1 ? "" : "s"} ago`;
     const selected = rows.find((row) => row.state === managerInventoryState) ?? rows[0] ?? null;
-    const visibleRows = managerInventoryShowAllStates ? rows : rows.slice(0, 5);
+    const filteredStateRows = rows.filter((row) => {
+      if (managerInventoryStateStatusFilter !== "All" && row.status !== managerInventoryStateStatusFilter) return false;
+      if (!managerInventoryStateSearch.trim()) return true;
+      return row.state.toLowerCase().includes(managerInventoryStateSearch.trim().toLowerCase());
+    });
+    const managerInventoryStateFiltering = Boolean(managerInventoryStateSearch.trim()) || managerInventoryStateStatusFilter !== "All";
+    const visibleRows = managerInventoryShowAllStates || managerInventoryStateFiltering ? filteredStateRows : filteredStateRows.slice(0, 5);
     const coverText = (days: number) => (Number.isFinite(days) ? `${Math.round(days * 10) / 10} days` : "No demand");
     const coverTone = (status: ManagerInventoryStateRow["status"]) =>
       status === "Critical" ? "text-rose-600" : status === "Restock Soon" ? "text-orange-600" : status === "Watch" ? "text-amber-600" : "text-emerald-600";
@@ -28501,6 +28509,39 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <p className="m-0 py-10 text-center text-sm italic text-gray-400">No agent hub is holding stock yet.</p>
             ) : (
               <>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <div className="relative min-w-[160px] flex-1">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                    <input
+                      className="w-full rounded-lg border border-gray-200 py-1.5 pl-8 pr-2.5 text-xs"
+                      placeholder="Search state..."
+                      value={managerInventoryStateSearch}
+                      onChange={(event) => setManagerInventoryStateSearch(event.target.value)}
+                    />
+                  </div>
+                  <select
+                    className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-700"
+                    value={managerInventoryStateStatusFilter}
+                    onChange={(event) => setManagerInventoryStateStatusFilter(event.target.value)}
+                  >
+                    <option value="All">Status: All</option>
+                    {["Critical", "Restock Soon", "Watch", "Healthy"].map((status) => (
+                      <option key={status} value={status}>{status}</option>
+                    ))}
+                  </select>
+                  {managerInventoryStateFiltering && (
+                    <button
+                      className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                      onClick={() => { setManagerInventoryStateSearch(""); setManagerInventoryStateStatusFilter("All"); }}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />Reset
+                    </button>
+                  )}
+                </div>
+                {filteredStateRows.length === 0 ? (
+                  <p className="m-0 py-10 text-center text-sm italic text-gray-400">No state matches those filters.</p>
+                ) : (
+                <>
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full min-w-[620px] text-left text-sm">
                     <thead>
@@ -28556,7 +28597,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </tbody>
                   </table>
                 </div>
-                {rows.length > 0 && (
+                {!managerInventoryStateFiltering && filteredStateRows.length > 5 && (
                   <button
                     className="!min-h-0 mx-auto mt-3 flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold text-[#1F8FE0] transition-colors hover:bg-blue-50"
                     onClick={() => setManagerInventoryShowAllStates((value) => !value)}
@@ -28564,6 +28605,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     {managerInventoryShowAllStates ? "Show fewer states" : "View all states"}
                     <ChevronDown className={`h-3.5 w-3.5 transition-transform ${managerInventoryShowAllStates ? "rotate-180" : ""}`} />
                   </button>
+                )}
+                </>
                 )}
               </>
             )}
