@@ -8896,6 +8896,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerInventoryShowAllStates, setManagerInventoryShowAllStates] = useState(false);
   const [managerInventoryStateSearch, setManagerInventoryStateSearch] = useState("");
   const [managerInventoryStateStatusFilter, setManagerInventoryStateStatusFilter] = useState("All");
+  // null = the default sort (lowest cover first, the states needing attention).
+  // Clicking a header cycles that column desc -> asc -> off.
+  const [managerInventoryStateSortKey, setManagerInventoryStateSortKey] = useState<"avgDailySales" | "daysCover" | null>(null);
+  const [managerInventoryStateSortDir, setManagerInventoryStateSortDir] = useState<"desc" | "asc">("desc");
   const [managerInventoryProductFilter, setManagerInventoryProductFilter] = useState("all");
   // Order Coverage is a different question from the cover-days table above it.
   // That one asks "how long will this state's stock last at its recent rate";
@@ -28419,7 +28423,27 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return row.state.toLowerCase().includes(managerInventoryStateSearch.trim().toLowerCase());
     });
     const managerInventoryStateFiltering = Boolean(managerInventoryStateSearch.trim()) || managerInventoryStateStatusFilter !== "All";
-    const visibleRows = managerInventoryShowAllStates || managerInventoryStateFiltering ? filteredStateRows : filteredStateRows.slice(0, 5);
+    const sortedStateRows = managerInventoryStateSortKey === null
+      ? filteredStateRows
+      : [...filteredStateRows].sort((a, b) => {
+          const diff = a[managerInventoryStateSortKey] - b[managerInventoryStateSortKey];
+          if (Number.isNaN(diff)) return 0;
+          return (managerInventoryStateSortDir === "asc" ? diff : -diff) || (b.totalUnits - a.totalUnits);
+        });
+    // Cycles: off -> highest first -> lowest first -> off.
+    const toggleManagerInventoryStateSort = (key: "avgDailySales" | "daysCover") => {
+      if (managerInventoryStateSortKey !== key) {
+        setManagerInventoryStateSortKey(key);
+        setManagerInventoryStateSortDir("desc");
+      } else if (managerInventoryStateSortDir === "desc") {
+        setManagerInventoryStateSortDir("asc");
+      } else {
+        setManagerInventoryStateSortKey(null);
+      }
+    };
+    const stateSortIndicator = (key: "avgDailySales" | "daysCover") =>
+      managerInventoryStateSortKey !== key ? "↕" : managerInventoryStateSortDir === "desc" ? "▼" : "▲";
+    const visibleRows = managerInventoryShowAllStates || managerInventoryStateFiltering ? sortedStateRows : sortedStateRows.slice(0, 5);
     const coverText = (days: number) => (Number.isFinite(days) ? `${Math.round(days * 10) / 10} days` : "No demand");
     const coverTone = (status: ManagerInventoryStateRow["status"]) =>
       status === "Critical" ? "text-rose-600" : status === "Restock Soon" ? "text-orange-600" : status === "Watch" ? "text-amber-600" : "text-emerald-600";
@@ -28549,8 +28573,21 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         <th className="py-2 pr-3 font-semibold">State</th>
                         <th className="py-2 pr-3 font-semibold">Agents</th>
                         <th className="py-2 pr-3 font-semibold">Total Units</th>
-                        <th className="py-2 pr-3 font-semibold">Avg. Daily Sales</th>
-                        <th className="py-2 pr-3 font-semibold">Stock Cover<span className="block normal-case text-gray-300">(State)</span></th>
+                        <th className="py-2 pr-3 font-semibold">
+                          <button type="button" onClick={() => toggleManagerInventoryStateSort("avgDailySales")}
+                            title="Click to sort by average daily sales - highest first, then lowest first, then off"
+                            className={`!min-h-0 inline-flex items-center gap-1 font-semibold uppercase text-[11px] tracking-wider transition-colors ${managerInventoryStateSortKey === "avgDailySales" ? "text-[#1F8FE0]" : "text-gray-400 hover:text-gray-700"}`}>
+                            Avg. Daily Sales<span className="text-[9px] leading-none">{stateSortIndicator("avgDailySales")}</span>
+                          </button>
+                        </th>
+                        <th className="py-2 pr-3 font-semibold">
+                          <button type="button" onClick={() => toggleManagerInventoryStateSort("daysCover")}
+                            title="Click to sort by stock cover - highest first, then lowest first, then off"
+                            className={`!min-h-0 inline-flex items-center gap-1 font-semibold uppercase text-[11px] tracking-wider transition-colors ${managerInventoryStateSortKey === "daysCover" ? "text-[#1F8FE0]" : "text-gray-400 hover:text-gray-700"}`}>
+                            Stock Cover<span className="text-[9px] leading-none">{stateSortIndicator("daysCover")}</span>
+                          </button>
+                          <span className="block normal-case text-gray-300">(State)</span>
+                        </th>
                         <th className="py-2 pr-3 font-semibold">Status</th>
                         <th className="py-2 font-semibold">Action</th>
                       </tr>
