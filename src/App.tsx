@@ -11845,6 +11845,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaAppSearch, setPdaAppSearch] = useState("");
   const [pdaAppStatusFilter, setPdaAppStatusFilter] = useState("All");
   const [pdaAppGuarantorFilter, setPdaAppGuarantorFilter] = useState("All");
+  const [pdaAppStateFilter, setPdaAppStateFilter] = useState("All");
   const [pdaAppPage, setPdaAppPage] = useState(1);
   const [pdaAppLinks, setPdaAppLinks] = useState<PdaApplicationLink[]>([]);
   const [pdaBlockedApplicants, setPdaBlockedApplicants] = useState<PdaBlockedApplicant[]>([]);
@@ -11857,6 +11858,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     { agentId: string; name: string; phone: string; reason: string; blockApplicant: boolean } | null
   >(null);
   const [pdaReviewSearch, setPdaReviewSearch] = useState("");
+  // Shared by the KYC Review, Document Review and Pending Approval queues -
+  // one applicant list, so a filter picked on one screen means the same
+  // thing if you switch tabs, rather than resetting each time.
+  const [pdaReviewStateFilter, setPdaReviewStateFilter] = useState("All");
+  const [pdaReviewStatusFilter, setPdaReviewStatusFilter] = useState("All");
   // KYC Review: which non-file item has its stored answers open. Items that
   // carry a file still open the file instead.
   const [pdaKycDetailItemId, setPdaKycDetailItemId] = useState<string | null>(null);
@@ -54297,10 +54303,20 @@ ${waybillLineItems(w).length > 1
     </section>
   );
 
+  // Distinct states across every application - feeds the State filter on
+  // each queue below, so a reviewer working one region isn't scrolling past
+  // the rest of the country to find their next applicant.
+  const pdaApplicationStates = Array.from(
+    new Set((pdaApplications?.rows ?? []).map((row) => row.state).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
+  const PDA_APPLICATION_STATUSES = ["Draft", "Submitted", "KYC Incomplete", "Guarantor Pending", "Ready for Approval", "Approved", "Rejected", "Terminated"];
+
   // The queue panel and right rail are identical on all four worked screens,
   // so they are built once here rather than copied per tab.
   const pdaApplicationQueue = (title: string, sortLabel: string, sortValue: string, onSort: (v: string) => void) => {
     const queue = (pdaApplications?.rows ?? []).filter((row) => {
+      if (pdaReviewStateFilter !== "All" && row.state !== pdaReviewStateFilter) return false;
+      if (pdaReviewStatusFilter !== "All" && row.status !== pdaReviewStatusFilter) return false;
       if (!pdaReviewSearch.trim()) return true;
       const q = pdaReviewSearch.trim().toLowerCase();
       return row.fullName.toLowerCase().includes(q) || row.applicationId.toLowerCase().includes(q) || (row.phone ?? "").includes(q);
@@ -54335,6 +54351,18 @@ ${waybillLineItems(w).length > 1
               <option>Oldest First</option>
             </select>
           </label>
+          <div className="grid grid-cols-2 gap-2">
+            <select className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs font-semibold text-gray-700"
+              value={pdaReviewStateFilter} onChange={(e) => setPdaReviewStateFilter(e.target.value)}>
+              <option value="All">All States</option>
+              {pdaApplicationStates.map((state) => <option key={state} value={state}>{state}</option>)}
+            </select>
+            <select className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs font-semibold text-gray-700"
+              value={pdaReviewStatusFilter} onChange={(e) => setPdaReviewStatusFilter(e.target.value)}>
+              <option value="All">All Status</option>
+              {PDA_APPLICATION_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+            </select>
+          </div>
         </div>
         <div className="max-h-[560px] divide-y divide-gray-100 overflow-y-auto border-t border-gray-100">
           {sorted.length === 0 ? (
@@ -54797,6 +54825,8 @@ ${waybillLineItems(w).length > 1
   const renderPdaKycReview = () => {
     const view = pdaReview;
     const queue = (pdaApplications?.rows ?? []).filter((row) => {
+      if (pdaReviewStateFilter !== "All" && row.state !== pdaReviewStateFilter) return false;
+      if (pdaReviewStatusFilter !== "All" && row.status !== pdaReviewStatusFilter) return false;
       if (!pdaReviewSearch.trim()) return true;
       const q = pdaReviewSearch.trim().toLowerCase();
       return row.fullName.toLowerCase().includes(q) || row.applicationId.toLowerCase().includes(q) || (row.phone ?? "").includes(q);
@@ -54959,6 +54989,18 @@ ${waybillLineItems(w).length > 1
                   <option>Oldest First</option>
                 </select>
               </label>
+              <div className="grid grid-cols-2 gap-2">
+                <select className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs font-semibold text-gray-700"
+                  value={pdaReviewStateFilter} onChange={(e) => setPdaReviewStateFilter(e.target.value)}>
+                  <option value="All">All States</option>
+                  {pdaApplicationStates.map((state) => <option key={state} value={state}>{state}</option>)}
+                </select>
+                <select className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs font-semibold text-gray-700"
+                  value={pdaReviewStatusFilter} onChange={(e) => setPdaReviewStatusFilter(e.target.value)}>
+                  <option value="All">All Status</option>
+                  {PDA_APPLICATION_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+                </select>
+              </div>
             </div>
             <div className="max-h-[560px] divide-y divide-gray-100 overflow-y-auto border-t border-gray-100">
               {sorted.length === 0 ? (
@@ -55764,6 +55806,7 @@ ${waybillLineItems(w).length > 1
       if (!inTab(row)) return false;
       if (pdaAppStatusFilter !== "All" && row.status !== pdaAppStatusFilter) return false;
       if (pdaAppGuarantorFilter !== "All" && row.guarantorStatus !== pdaAppGuarantorFilter) return false;
+      if (pdaAppStateFilter !== "All" && row.state !== pdaAppStateFilter) return false;
       if (!pdaAppSearch.trim()) return true;
       const q = pdaAppSearch.trim().toLowerCase();
       return row.fullName.toLowerCase().includes(q)
@@ -56049,8 +56092,13 @@ ${waybillLineItems(w).length > 1
             <option value="All">Guarantor Status: All</option>
             {["Not started", "One pending", "Verified", "Problem"].map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
+          <select className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700"
+            value={pdaAppStateFilter} onChange={(e) => { setPdaAppStateFilter(e.target.value); setPdaAppPage(1); }}>
+            <option value="All">State: All</option>
+            {pdaApplicationStates.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
           <button type="button"
-            onClick={() => { setPdaAppSearch(""); setPdaAppStatusFilter("All"); setPdaAppGuarantorFilter("All"); setPdaAppPage(1); }}
+            onClick={() => { setPdaAppSearch(""); setPdaAppStatusFilter("All"); setPdaAppGuarantorFilter("All"); setPdaAppStateFilter("All"); setPdaAppPage(1); }}
             className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
             <RefreshCw className="h-4 w-4" /> Reset
           </button>

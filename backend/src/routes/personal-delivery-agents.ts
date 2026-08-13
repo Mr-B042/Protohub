@@ -754,6 +754,7 @@ router.get("/applications", requireRole(...MANAGEMENT_ROLES), async (req, res) =
         fullName: agent.full_name,
         phone: agent.phone,
         location: [agent.city, agent.state].filter(Boolean).join(", "),
+        state: agent.state ?? "",
         photoUrl: agent.photo_url ?? null,
         status,
         accountStatus: agent.account_status,
