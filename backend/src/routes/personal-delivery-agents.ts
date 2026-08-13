@@ -371,6 +371,7 @@ router.get("/overview", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
         accountStatus: row.account_status,
         kycStatus: row.kyc_status,
         availability: row.availability,
+        state: row.state ?? "",
         serviceArea: [row.city, row.state].filter(Boolean).join(", ")
           || (Array.isArray(row.service_areas) ? row.service_areas.join(", ") : ""),
         serviceRadiusKm: row.service_radius_km === null || row.service_radius_km === undefined
@@ -1043,7 +1044,7 @@ router.get("/guarantors/queue", requireRole(...MANAGEMENT_ROLES), async (req, re
       .select("*").eq("org_id", orgId).order("created_at", { ascending: false });
     const agentIds = [...new Set((guarantors ?? []).map((g: any) => g.agent_id))];
     const { data: agents } = agentIds.length
-      ? await supabase.from(AGENTS).select("id, full_name, agent_code, account_status").eq("org_id", orgId).in("id", agentIds)
+      ? await supabase.from(AGENTS).select("id, full_name, agent_code, account_status, state").eq("org_id", orgId).in("id", agentIds)
       : { data: [] as any[] };
     const agentById = new Map((agents ?? []).map((a: any) => [a.id, a]));
 
@@ -1051,7 +1052,8 @@ router.get("/guarantors/queue", requireRole(...MANAGEMENT_ROLES), async (req, re
       ...mapGuarantorFull(g),
       agentId: g.agent_id,
       applicantName: agentById.get(g.agent_id)?.full_name ?? null,
-      applicationId: `PDA-APP-${String(agentById.get(g.agent_id)?.agent_code ?? "").replace(/^PDA-/, "")}`
+      applicationId: `PDA-APP-${String(agentById.get(g.agent_id)?.agent_code ?? "").replace(/^PDA-/, "")}`,
+      applicantState: agentById.get(g.agent_id)?.state ?? ""
     }));
     res.json({
       rows,
@@ -1193,6 +1195,7 @@ router.get("/active-agents", requireRole(...MANAGEMENT_ROLES), async (req, res) 
         fullName: agent.full_name,
         phone: agent.phone,
         location: [agent.city, agent.state].filter(Boolean).join(", "),
+        state: agent.state ?? "",
         accountStatus: agent.account_status,
         availability: agent.availability,
         trustLevel: agent.trust_level,
@@ -1408,6 +1411,7 @@ router.get("/inventory-overview", requireRole(...MANAGEMENT_ROLES), async (req, 
         fullName: agent?.full_name ?? "Unknown agent",
         phone: agent?.phone ?? "",
         location: [agent?.city, agent?.state].filter(Boolean).join(", "),
+        state: agent?.state ?? "",
         accountStatus: agent?.account_status ?? "",
         productsHeld: rows.filter((row) =>
           Number(row.available ?? 0) + Number(row.reserved ?? 0) + Number(row.out_for_delivery ?? 0) > 0).length,
@@ -1549,7 +1553,7 @@ router.get("/cod-overview", requireRole(...MANAGEMENT_ROLES), async (req, res) =
     const [{ data: assignments }, { data: agentRows }, { data: remittances }, { data: incidents }, { data: settingsRow }] =
       await Promise.all([
         supabase.from(ASSIGNMENTS).select("*").eq("org_id", orgId),
-        supabase.from(AGENTS).select("id, agent_code, full_name, phone").eq("org_id", orgId),
+        supabase.from(AGENTS).select("id, agent_code, full_name, phone, state").eq("org_id", orgId),
         supabase.from(REMITTANCES).select("*").eq("org_id", orgId).order("received_at", { ascending: false }).limit(200),
         supabase.from(INCIDENTS).select("*").eq("org_id", orgId).eq("incident_type", "Missing COD"),
         supabase.from(SETTINGS).select("remittance_grace_days").eq("org_id", orgId).maybeSingle()
@@ -1609,6 +1613,7 @@ router.get("/cod-overview", requireRole(...MANAGEMENT_ROLES), async (req, res) =
         agentId,
         agentCode: agent?.agent_code ?? "",
         fullName: agent?.full_name ?? "Unknown agent",
+        agentState: agent?.state ?? "",
         ordersDelivered: mine.length,
         codCollected: agentCollected,
         // Refunds are NOT tracked anywhere in Protohub, so this is null rather
@@ -1691,7 +1696,7 @@ router.get("/incidents-overview", requireRole(...MANAGEMENT_ROLES), async (req, 
 
     const [{ data: incidents }, { data: agentRows }] = await Promise.all([
       supabase.from(INCIDENTS).select("*").eq("org_id", orgId).order("created_at", { ascending: false }).limit(500),
-      supabase.from(AGENTS).select("id, agent_code, full_name").eq("org_id", orgId)
+      supabase.from(AGENTS).select("id, agent_code, full_name, state").eq("org_id", orgId)
     ]);
     const rows = (incidents ?? []) as any[];
     const agentById = new Map((agentRows ?? []).map((a: any) => [a.id, a]));
@@ -1726,6 +1731,7 @@ router.get("/incidents-overview", requireRole(...MANAGEMENT_ROLES), async (req, 
         agentId: row.agent_id,
         agentName: agentById.get(row.agent_id)?.full_name ?? "Unknown agent",
         agentCode: agentById.get(row.agent_id)?.agent_code ?? "",
+        agentState: agentById.get(row.agent_id)?.state ?? "",
         orderId: row.order_id ?? null,
         incidentType: row.incident_type,
         severity: row.severity,

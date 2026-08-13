@@ -619,7 +619,7 @@ export type PersonalDeliveryAgentRow = {
 
 export type PdaOverviewAgent = {
   id: string; agentCode: string; fullName: string; phone: string; photoUrl?: string | null;
-  accountStatus: string; kycStatus: string; availability: string;
+  accountStatus: string; kycStatus: string; availability: string; state: string;
   serviceArea: string; serviceRadiusKm: number | null;
   activeOrders: number; inProgress: number;
   inventoryUnits: number; inventoryValue: number;
@@ -873,7 +873,7 @@ export type PdaGuarantorFull = PdaGuarantor & {
 };
 
 export type PdaGuarantorQueueRow = PdaGuarantorFull & {
-  agentId: string; applicantName?: string | null; applicationId: string;
+  agentId: string; applicantName?: string | null; applicationId: string; applicantState: string;
 };
 
 export type PdaDocumentViewRow = {
@@ -913,7 +913,7 @@ export type PdaGuarantorDetail = {
 };
 
 export type PdaActiveAgentRow = {
-  id: string; agentCode: string; fullName: string; phone: string; location: string;
+  id: string; agentCode: string; fullName: string; phone: string; location: string; state: string;
   accountStatus: string; availability: string; trustLevel: string;
   transportMethod?: string | null; hasPortalLogin?: boolean;
   vehicleModel?: string | null; vehiclePlate?: string | null;
@@ -947,7 +947,7 @@ export type PdaDispatchSummary = {
 };
 
 export type PdaInventoryAgentRow = {
-  agentId: string; fullName: string; phone: string; location: string; accountStatus: string;
+  agentId: string; fullName: string; phone: string; location: string; state: string; accountStatus: string;
   productsHeld: number; totalUnits: number; available: number; reserved: number;
   outForDelivery: number; damagedMissing: number; stockValue: number;
   openIssues: number;
@@ -984,7 +984,7 @@ export type PdaStockLedgerView = {
 };
 
 export type PdaCodAgentRow = {
-  agentId: string; agentCode: string; fullName: string;
+  agentId: string; agentCode: string; fullName: string; agentState: string;
   ordersDelivered: number; codCollected: number;
   /** null - Protohub does not record refunds. Not the same as zero refunds. */
   refunds: number | null;
@@ -1049,7 +1049,7 @@ export type PdaCodDiscrepancyView = {
 };
 
 export type PdaIncidentRow = {
-  id: string; code: string; agentId: string; agentName: string; agentCode: string;
+  id: string; code: string; agentId: string; agentName: string; agentCode: string; agentState: string;
   orderId?: string | null; incidentType: string; severity: string; status: string;
   description: string; amountAtRisk: number; reportedByName?: string | null;
   resolution?: string | null; createdAt: string; resolvedAt?: string | null;
