@@ -840,7 +840,7 @@ export type PdaSettings = {
 };
 
 export type PdaApplicationRow = {
-  id: string; applicationId: string; fullName: string; phone: string; location: string;
+  id: string; applicationId: string; fullName: string; phone: string; location: string; state: string;
   photoUrl?: string | null; status: string; accountStatus: string;
   kycApproved: number; kycTotal: number; kycPct: number;
   /** What the APPLICANT supplied. kycPct above is what the reviewer approved -
