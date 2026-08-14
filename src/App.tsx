@@ -13549,6 +13549,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       location
     }))
   );
+  const latestStockCountAtForAgent = (agentId: string) => {
+    const timestamps = stockCounts.flatMap((session) => session.entries
+      .filter((entry) => entry.agentId === agentId)
+      .map((entry) => entry.verifiedAt
+        || entry.adminConfirmedAt
+        || entry.agentSubmittedAt
+        || (session.status === "Closed" ? session.closedAt : undefined))
+      .filter((value): value is string => Boolean(value)))
+      .map((value) => new Date(value).getTime())
+      .filter(Number.isFinite);
+    return timestamps.length > 0 ? new Date(Math.max(...timestamps)).toISOString() : undefined;
+  };
   const agentHasLocationStockRowForProduct = (agent: DeliveryAgentRecord, productId: string) =>
     agentLocationRows(agent).some((location) =>
       location.stock.some((stock) => stock.productId === productId)
@@ -84533,6 +84545,9 @@ ${waybillLineItems(w).length > 1
                 locationId: location.id,
                 agentPhone: agent.phone ?? "",
                 city: location.city ?? "",
+                active: agent.active,
+                joinedAt: agent.created,
+                lastCountAt: latestStockCountAtForAgent(agent.id),
                 stocks: stockRowsForStateHub(agent, location).map((stock) => ({
                   productId: stock.productId,
                   quantity: Math.max(0, Number(stock.quantity ?? 0) - Number(stock.defective ?? 0) - Number(stock.missing ?? 0)),
@@ -84598,6 +84613,9 @@ ${waybillLineItems(w).length > 1
               activeAgentCount={agents.filter((agent) => agent.active).length}
               canManage={["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"].includes(currentRole)}
               onOpenProduct={openInventoryProductDetailRoute}
+              onOpenAgent={openAdminAgentDetail}
+              onEditAgent={openAdminAgentEditRoute}
+              onViewAgentHistory={(agentId) => openInventoryHistoryWithFilters({ agentId })}
               onAction={handleInventoryOperationsAction}
             />
           ) : activePage === "Inventory" ? (

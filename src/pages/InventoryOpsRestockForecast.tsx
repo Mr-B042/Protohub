@@ -8,9 +8,9 @@
 // "Est. units needed (14 days)" is demand for the next fortnight minus what is
 // available now, so it is the gap to close, not the total to hold.
 import { useMemo, useState } from "react";
-import { AlertTriangle, ArrowDownWideNarrow, Boxes, CheckCircle2, MapPin, Package, Search } from "lucide-react";
+import { AlertTriangle, ArrowDownWideNarrow, Boxes, CalendarDays, CheckCircle2, Download, MapPin, Package, Search } from "lucide-react";
 import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
-import { buildProductRows, buildStateRows, coverText, num, statusText } from "./inventory-ops-model";
+import { buildProductRows, buildStateRows, coverText, downloadCsv, num, runRateText, statusText } from "./inventory-ops-model";
 
 type Props = {
   products: OpsProduct[];
@@ -23,29 +23,31 @@ type Props = {
   onOpenTransfers?: () => void;
 };
 
-type Priority = "Critical" | "High" | "Medium" | "Healthy";
+type Priority = "Critical" | "High" | "Medium" | "Healthy" | "No Data";
 
 export default function InventoryOpsRestockForecast({
   products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays, onOpenTransfers
 }: Props) {
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [atRiskOnly, setAtRiskOnly] = useState(false);
+  const [windowDays, setWindowDays] = useState(lookbackDays);
 
   const stateRows = useMemo(
-    () => buildStateRows(stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays),
-    [stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays]
+    () => buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays),
+    [stateHubs, orders, waybills, windowDays, criticalDays, watchDays]
   );
   const rows = useMemo(
-    () => buildProductRows(products, stateRows, orders, lookbackDays, criticalDays, watchDays),
-    [products, stateRows, orders, lookbackDays, criticalDays, watchDays]
+    () => buildProductRows(products, stateRows, orders, windowDays, criticalDays, watchDays, waybills),
+    [products, stateRows, orders, windowDays, criticalDays, watchDays, waybills]
   );
 
   // Urgency reads off whichever runs out first - the state, or the network.
   const priorityOf = (row: typeof rows[number]): Priority => {
     const shortest = row.shortestState?.coverDays ?? row.coverDays;
     const days = Math.min(shortest, row.coverDays);
-    if (row.dailySales <= 0) return "Healthy";
+    if (row.dailySales <= 0) return "No Data";
     if (days <= criticalDays) return "Critical";
     if (days <= watchDays) return "High";
     if (days <= watchDays * 2) return "Medium";
@@ -55,44 +57,53 @@ export default function InventoryOpsRestockForecast({
     priority === "Critical" ? "bg-rose-50 text-rose-700"
       : priority === "High" ? "bg-orange-50 text-orange-700"
         : priority === "Medium" ? "bg-amber-50 text-amber-700"
-          : "bg-emerald-50 text-emerald-700";
+          : priority === "No Data" ? "bg-gray-100 text-gray-600"
+            : "bg-emerald-50 text-emerald-700";
 
   const enriched = rows.map((row) => ({ ...row, priority: priorityOf(row) }));
-  const visible = enriched.filter((row) => {
-    if (search && !row.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+  const scoped = enriched.filter((row) => {
     if (stateFilter !== "all" && row.shortestState?.state !== stateFilter) return false;
+    if (categoryFilter !== "all" && row.category !== categoryFilter) return false;
+    return true;
+  });
+  const visible = scoped.filter((row) => {
+    if (search && !row.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
     if (atRiskOnly && row.priority !== "Critical" && row.priority !== "High") return false;
     return true;
   });
 
-  const atRisk = enriched.filter((row) => row.priority === "Critical").length;
-  const low = enriched.filter((row) => row.priority === "High").length;
-  const medium = enriched.filter((row) => row.priority === "Medium").length;
-  const healthy = enriched.filter((row) => row.priority === "Healthy").length;
-  const unitsNeeded = enriched.reduce((sum, row) => sum + row.unitsNeeded14d, 0);
+  const atRisk = scoped.filter((row) => row.priority === "Critical").length;
+  const low = scoped.filter((row) => row.priority === "High").length;
+  const medium = scoped.filter((row) => row.priority === "Medium").length;
+  const healthy = scoped.filter((row) => row.priority === "Healthy").length;
+  const noData = scoped.filter((row) => row.priority === "No Data").length;
+  const unitsNeeded = scoped.reduce((sum, row) => sum + row.unitsNeeded14d, 0);
 
   // Which states need the most, summed across every product short there.
   const statesNeeding = useMemo(() => {
     const need = new Map<string, { products: number; units: number }>();
-    for (const row of enriched) {
-      if (row.unitsNeeded14d <= 0 || !row.shortestState) continue;
-      const bucket = need.get(row.shortestState.state) ?? { products: 0, units: 0 };
-      bucket.products += 1;
-      bucket.units += row.unitsNeeded14d;
-      need.set(row.shortestState.state, bucket);
+    for (const row of scoped) {
+      for (const shortage of row.stateNeeds14d) {
+        const bucket = need.get(shortage.state) ?? { products: 0, units: 0 };
+        bucket.products += 1;
+        bucket.units += shortage.units;
+        need.set(shortage.state, bucket);
+      }
     }
     return Array.from(need.entries())
       .map(([state, value]) => ({ state, ...value }))
       .sort((a, b) => b.units - a.units)
       .slice(0, 5);
-  }, [enriched]);
+  }, [scoped]);
 
   const states = Array.from(new Set(enriched.map((row) => row.shortestState?.state).filter(Boolean) as string[])).sort();
+  const categories = Array.from(new Set(enriched.map((row) => row.category))).sort();
   const donut = [
     { label: `Critical (≤ ${criticalDays} days)`, value: atRisk, tone: "bg-rose-500" },
     { label: `High (${criticalDays}-${watchDays} days)`, value: low, tone: "bg-orange-500" },
     { label: `Medium (${watchDays}-${watchDays * 2} days)`, value: medium, tone: "bg-amber-400" },
-    { label: "Healthy / no demand", value: healthy, tone: "bg-emerald-500" }
+    { label: "Healthy", value: healthy, tone: "bg-emerald-500" },
+    { label: "No demand data", value: noData, tone: "bg-gray-300" }
   ];
   const donutTotal = donut.reduce((sum, band) => sum + band.value, 0) || 1;
 
@@ -121,16 +132,28 @@ export default function InventoryOpsRestockForecast({
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="m-0 text-2xl font-bold text-gray-950">Restock Forecast</h1>
-        <p className="m-0 mt-0.5 text-sm text-gray-500">Predict stock depletion and plan restocking across states and agents.</p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div><h1 className="m-0 text-2xl font-bold text-gray-950">Restock Forecast</h1>
+        <p className="m-0 mt-0.5 text-sm text-gray-500">Forecast from {windowDays}-day delivered demand, reserved stock and incoming shipments.</p></div>
+        <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700">
+          <CalendarDays className="h-4 w-4 text-blue-600" />
+          <select className="!min-h-0 border-0 bg-transparent p-0 outline-none" value={windowDays} onChange={(event) => setWindowDays(Number(event.target.value))}>
+            <option value={7}>Last 7 days</option><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option>
+          </select>
+        </label>
+        <button className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700"
+          onClick={() => downloadCsv("restock-forecast.csv", visible.map((row) => ({ Product: row.name, Category: row.category, Stock: row.totalStock, Reserved: row.reserved, Available: row.available, "Daily sales": runRateText(row.dailySales), "Overall cover": coverText(row.coverDays), "Shortest state": row.shortestState?.state ?? "-", "Shortest cover": row.shortestState ? coverText(row.shortestState.coverDays) : "-", "Units needed 14d": row.unitsNeeded14d, Priority: row.priority })))}>
+          <Download className="h-4 w-4" /> Export
+        </button>
+        </div>
       </header>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        {card("Total Products", num(enriched.length), "Across network", Package, "bg-indigo-50 text-indigo-600")}
+        {card("Total Products", num(scoped.length), categoryFilter === "all" ? "Across network" : "In selected category", Package, "bg-indigo-50 text-indigo-600")}
         {card(`At Risk (≤ ${criticalDays} days)`, num(atRisk), "Products", AlertTriangle, "bg-rose-50 text-rose-600")}
         {card(`Low (${criticalDays}-${watchDays} days)`, num(low), "Products", ArrowDownWideNarrow, "bg-orange-50 text-orange-600")}
-        {card("Healthy", num(healthy), "Products", CheckCircle2, "bg-emerald-50 text-emerald-600")}
+        {card("Healthy", num(healthy), noData > 0 ? `${noData} without demand data` : "Products", CheckCircle2, "bg-emerald-50 text-emerald-600")}
         {card("States With Forecast", num(states.length), "With a shortest state", MapPin, "bg-sky-50 text-sky-600")}
         {card("Est. Units Needed", num(unitsNeeded), "Next 14 days", Boxes, "bg-violet-50 text-violet-600")}
       </section>
@@ -146,6 +169,9 @@ export default function InventoryOpsRestockForecast({
             <select className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}>
               <option value="all">All States</option>
               {states.map((state) => <option key={state} value={state}>{state}</option>)}
+            </select>
+            <select className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+              <option value="all">All Categories</option>{categories.map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
             <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-gray-600">
               <input type="checkbox" className="!min-h-0 h-4 w-4 accent-[#1F8FE0]" checked={atRiskOnly} onChange={(event) => setAtRiskOnly(event.target.checked)} />
@@ -165,17 +191,18 @@ export default function InventoryOpsRestockForecast({
                   <th className="px-3 py-3">Trend</th>
                   <th className="px-3 py-3 text-right">Est. units<span className="block normal-case text-gray-400">(14 days)</span></th>
                   <th className="px-3 py-3">Priority</th>
+                  <th className="px-3 py-3 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.length === 0 ? (
-                  <tr><td colSpan={9} className="px-4 py-10 text-center text-sm italic text-gray-400">No product matches those filters.</td></tr>
+                  <tr><td colSpan={10} className="px-4 py-10 text-center text-sm italic text-gray-400">No product matches those filters.</td></tr>
                 ) : visible.map((row) => (
                   <tr key={row.id} className="border-b border-gray-50">
                     <td className="px-4 py-3 font-bold text-gray-900">{row.name}</td>
                     <td className="px-3 py-3 text-gray-500">{row.category}</td>
                     <td className="px-3 py-3 text-right font-bold text-gray-900">{num(row.totalStock)}</td>
-                    <td className="px-3 py-3 text-right text-gray-700">{row.dailySales}</td>
+                    <td className="px-3 py-3 text-right text-gray-700">{runRateText(row.dailySales)}</td>
                     <td className={`px-3 py-3 text-right font-bold ${statusText(row.status)}`}>{coverText(row.coverDays)}</td>
                     <td className="px-3 py-3">
                       {row.shortestState ? (
@@ -188,13 +215,18 @@ export default function InventoryOpsRestockForecast({
                     <td className="px-3 py-3">{sparkline(row.trend)}</td>
                     <td className="px-3 py-3 text-right font-bold text-gray-900">{num(row.unitsNeeded14d)}</td>
                     <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${priorityTone(row.priority)}`}>{row.priority}</span></td>
+                    <td className="px-3 py-3 text-right">
+                      {onOpenTransfers && row.unitsNeeded14d > 0 ? (
+                        <button type="button" className="!min-h-0 rounded-lg border border-blue-200 px-2.5 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50" onClick={onOpenTransfers}>View plan</button>
+                      ) : <span className="text-xs text-gray-300">-</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <p className="m-0 border-t border-gray-100 px-4 py-3 text-xs text-gray-400">
-            Showing {visible.length} of {enriched.length} products · Priority follows the state that runs out first, because that is the state that loses the order.
+            Showing {visible.length} of {enriched.length} products · Priority follows the state that runs out first. Purchase need subtracts units already in transit to prevent duplicate replenishment.
           </p>
         </section>
 

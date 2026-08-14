@@ -5,9 +5,9 @@
 // decision rather than a layout one - so that slot carries the same legend and
 // the state counts behind it. Every band is clickable, which the map was not.
 import { useMemo, useState } from "react";
-import { AlertTriangle, Boxes, Calendar, MapPin, Rocket, Search, TrendingUp } from "lucide-react";
+import { AlertTriangle, Boxes, Calendar, CalendarDays, Download, Eye, MapPin, Rocket, Search, TrendingUp } from "lucide-react";
 import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
-import { buildStateRows, coverText, num, statusText, statusTone, type StockStatus } from "./inventory-ops-model";
+import { buildStateRows, coverText, downloadCsv, num, runRateText, statusText, statusTone, type StockStatus } from "./inventory-ops-model";
 
 type Props = {
   products: OpsProduct[];
@@ -25,28 +25,41 @@ export default function InventoryOpsCoverage({
 }: Props) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"all" | StockStatus>("all");
+  const [category, setCategory] = useState("all");
   const [lowOnly, setLowOnly] = useState(false);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [windowDays, setWindowDays] = useState(lookbackDays);
+
+  const categories = useMemo(() => Array.from(new Set(products.map((product) => product.category ?? "Uncategorised"))).sort(), [products]);
+  const includedProductIds = useMemo(() => category === "all"
+    ? undefined
+    : new Set(products.filter((product) => (product.category ?? "Uncategorised") === category).map((product) => product.id)), [products, category]);
 
   const rows = useMemo(
-    () => buildStateRows(stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays),
-    [stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays]
+    () => buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds),
+    [stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds]
   );
   const nameById = useMemo(() => new Map(products.map((product) => [product.id, product.name])), [products]);
 
   // The products each state is thinnest on - what a restock should carry.
   const lowProductsFor = (row: typeof rows[number]) =>
-    Array.from(row.unitsByProductId.entries())
-      .map(([productId, units]) => ({ name: nameById.get(productId) ?? productId, units }))
-      .filter((entry) => entry.units <= Math.max(2, Math.ceil(row.dailySales)))
-      .sort((a, b) => a.units - b.units)
+    Array.from(new Set([...row.unitsByProductId.keys(), ...row.dailySalesByProductId.keys()]))
+      .map((productId) => {
+        const units = Math.max(0, (row.unitsByProductId.get(productId) ?? 0) - (row.openUnitsByProductId.get(productId) ?? 0));
+        const daily = row.dailySalesByProductId.get(productId) ?? 0;
+        return { name: nameById.get(productId) ?? productId, units, cover: daily > 0 ? units / daily : Number.POSITIVE_INFINITY };
+      })
+      .filter((entry) => Number.isFinite(entry.cover) && entry.cover <= watchDays * 1.5)
+      .sort((a, b) => a.cover - b.cover)
       .slice(0, 2);
 
   const visible = rows.filter((row) => {
     if (search && !row.state.toLowerCase().includes(search.trim().toLowerCase())) return false;
     if (status !== "all" && row.status !== status) return false;
-    if (lowOnly && (row.status === "Healthy" || row.status === "Watch")) return false;
+    if (lowOnly && row.status !== "Critical" && row.status !== "Restock Soon") return false;
     return true;
   }).sort((a, b) => b.openOrders - a.openOrders);
+  const selected = rows.find((row) => row.key === selectedKey) ?? null;
 
   const withStock = rows.filter((row) => row.totalUnits > 0).length;
   const needRestock = rows.filter((row) => row.status === "Critical" || row.status === "Restock Soon").length;
@@ -63,7 +76,7 @@ export default function InventoryOpsCoverage({
     { label: `Watch (${watchDays}-${watchDays * 1.5} days)`, test: (row) => row.status === "Watch", dot: "bg-amber-400", status: "Watch" },
     { label: `Restock soon (${criticalDays}-${watchDays} days)`, test: (row) => row.status === "Restock Soon", dot: "bg-orange-500", status: "Restock Soon" },
     { label: `Critical (under ${criticalDays} days)`, test: (row) => row.status === "Critical", dot: "bg-rose-500", status: "Critical" },
-    { label: "No sales recorded", test: (row) => row.dailySales <= 0, dot: "bg-gray-300" }
+    { label: "No sales recorded", test: (row) => row.status === "No Data", dot: "bg-gray-300", status: "No Data" }
   ];
 
   const topByOrders = [...rows].sort((a, b) => b.openOrders - a.openOrders).slice(0, 5);
@@ -84,9 +97,21 @@ export default function InventoryOpsCoverage({
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="m-0 text-2xl font-bold text-gray-950">State / Order Coverage</h1>
-        <p className="m-0 mt-0.5 text-sm text-gray-500">Track order demand and stock coverage across all states.</p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div><h1 className="m-0 text-2xl font-bold text-gray-950">State / Order Coverage</h1>
+        <p className="m-0 mt-0.5 text-sm text-gray-500">Track committed order demand against sellable stock and {windowDays}-day delivered demand.</p></div>
+        <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700">
+          <CalendarDays className="h-4 w-4 text-blue-600" />
+          <select className="!min-h-0 border-0 bg-transparent p-0 outline-none" value={windowDays} onChange={(event) => setWindowDays(Number(event.target.value))}>
+            <option value={7}>Last 7 days</option><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option>
+          </select>
+        </label>
+        <button className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700"
+          onClick={() => downloadCsv("state-order-coverage.csv", visible.map((row) => ({ State: row.state, "Open orders": row.openOrders, "Open units": row.openUnits, Stock: row.totalUnits, Available: row.available, "Daily sales": runRateText(row.dailySales), "Days cover": coverText(row.coverDays), "In transit": row.inTransit, Status: row.status })))}>
+          <Download className="h-4 w-4" /> Export
+        </button>
+        </div>
       </header>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
@@ -106,12 +131,16 @@ export default function InventoryOpsCoverage({
               <input className="!min-h-0 w-full border-0 p-0 text-sm outline-none" placeholder="Search state..."
                 value={search} onChange={(event) => setSearch(event.target.value)} />
             </label>
+            <select className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={category} onChange={(event) => setCategory(event.target.value)}>
+              <option value="all">All Categories</option>{categories.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
             <select className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={status} onChange={(event) => setStatus(event.target.value as typeof status)}>
               <option value="all">All Status</option>
               <option value="Healthy">Healthy</option>
               <option value="Watch">Watch</option>
               <option value="Restock Soon">Restock Soon</option>
               <option value="Critical">Critical</option>
+              <option value="No Data">No Data</option>
             </select>
             <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-gray-600">
               <input type="checkbox" className="!min-h-0 h-4 w-4 accent-[#1F8FE0]" checked={lowOnly} onChange={(event) => setLowOnly(event.target.checked)} />
@@ -119,7 +148,7 @@ export default function InventoryOpsCoverage({
             </label>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-sm">
+            <table className="w-full min-w-[850px] text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/70 text-[10px] uppercase tracking-wider text-gray-500">
                   <th className="px-4 py-3">State</th>
@@ -127,11 +156,12 @@ export default function InventoryOpsCoverage({
                   <th className="px-3 py-3 text-right">Stock cover<span className="block normal-case text-gray-400">(days)</span></th>
                   <th className="px-3 py-3">Status</th>
                   <th className="px-3 py-3">Top low stock products</th>
+                  <th className="px-3 py-3 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.length === 0 ? (
-                  <tr><td colSpan={5} className="px-4 py-10 text-center text-sm italic text-gray-400">No state matches those filters.</td></tr>
+                  <tr><td colSpan={6} className="px-4 py-10 text-center text-sm italic text-gray-400">No state matches those filters.</td></tr>
                 ) : visible.map((row) => {
                   const low = lowProductsFor(row);
                   return (
@@ -155,6 +185,12 @@ export default function InventoryOpsCoverage({
                           </span>
                         )}
                       </td>
+                      <td className="px-3 py-3 text-right">
+                        <button type="button" className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-blue-200 px-2.5 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50"
+                          onClick={() => setSelectedKey(selectedKey === row.key ? null : row.key)}>
+                          <Eye className="h-3.5 w-3.5" /> Details
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -167,6 +203,32 @@ export default function InventoryOpsCoverage({
         </section>
 
         <aside className="space-y-4">
+          {selected && (
+            <section className="rounded-xl border border-blue-200 bg-blue-50/30 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div><p className="m-0 text-[10px] font-bold uppercase tracking-wider text-blue-600">Coverage detail</p><h2 className="m-0 mt-1 text-base font-black text-gray-950">{selected.state}</h2></div>
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${statusTone(selected.status)}`}>{selected.status}</span>
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                {([
+                  ["Physical stock", num(selected.totalUnits)],
+                  ["Open demand", `${num(selected.openOrders)} orders / ${num(selected.openUnits)} units`],
+                  ["Sellable now", num(selected.available)],
+                  ["Incoming", num(selected.inTransit)],
+                  ["Daily run rate", runRateText(selected.dailySales)],
+                  ["Days cover", Number.isFinite(selected.coverDays) ? coverText(selected.coverDays) : "No demand data"]
+                ] as Array<[string, string]>).map(([label, value]) => (
+                  <div key={label} className="rounded-lg border border-white bg-white/80 px-2.5 py-2"><dt className="text-gray-400">{label}</dt><dd className="m-0 mt-0.5 font-bold text-gray-900">{value}</dd></div>
+                ))}
+              </dl>
+              <h3 className="m-0 mt-4 text-xs font-bold uppercase tracking-wider text-gray-500">Most urgent products</h3>
+              {lowProductsFor(selected).length === 0 ? <p className="m-0 mt-2 text-xs italic text-gray-400">No product has enough demand history to forecast a shortage.</p> : (
+                <ul className="m-0 mt-2 list-none space-y-2 p-0">
+                  {lowProductsFor(selected).map((entry) => <li key={entry.name} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs"><span className="text-gray-700">{entry.name}</span><strong className="text-rose-600">{entry.units} available</strong></li>)}
+                </ul>
+              )}
+            </section>
+          )}
           <section className="rounded-xl border border-gray-200 bg-white p-4">
             <h2 className="m-0 text-sm font-bold text-gray-900">Coverage Overview</h2>
             <p className="m-0 mt-0.5 text-[11px] text-gray-400">Click a band to filter the table.</p>

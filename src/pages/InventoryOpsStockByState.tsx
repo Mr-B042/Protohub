@@ -3,9 +3,9 @@
 // Uses the shared model so this page, Stock by Product and Restock Forecast
 // cannot disagree about what "cover" means.
 import { useMemo, useState } from "react";
-import { AlertTriangle, Boxes, ClipboardList, MapPin, Search, Truck } from "lucide-react";
+import { AlertTriangle, Boxes, CalendarDays, ClipboardList, Download, Eye, MapPin, Search, Truck } from "lucide-react";
 import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
-import { buildStateRows, coverText, num, statusText, statusTone } from "./inventory-ops-model";
+import { buildStateRows, coverText, downloadCsv, num, runRateText, statusText, statusTone } from "./inventory-ops-model";
 
 type Props = {
   products: OpsProduct[];
@@ -23,20 +23,50 @@ export default function InventoryOpsStockByState({
 }: Props) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const [category, setCategory] = useState("all");
   const [lowOnly, setLowOnly] = useState(false);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [windowDays, setWindowDays] = useState(lookbackDays);
+
+  const categories = useMemo(() => Array.from(new Set(products.map((product) => product.category ?? "Uncategorised"))).sort(), [products]);
+  const includedProductIds = useMemo(() => category === "all"
+    ? undefined
+    : new Set(products.filter((product) => (product.category ?? "Uncategorised") === category).map((product) => product.id)), [products, category]);
 
   const rows = useMemo(
-    () => buildStateRows(stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays),
-    [stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays]
+    () => buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds),
+    [stateHubs, orders, waybills, windowDays, criticalDays, watchDays, includedProductIds]
   );
   const nameById = useMemo(() => new Map(products.map((product) => [product.id, product.name])), [products]);
 
   const visible = rows.filter((row) => {
     if (search && !row.state.toLowerCase().includes(search.trim().toLowerCase())) return false;
     if (status !== "all" && row.status !== status) return false;
-    if (lowOnly && (row.status === "Healthy" || row.status === "Watch")) return false;
+    if (lowOnly && row.status !== "Critical" && row.status !== "Restock Soon") return false;
     return true;
   });
+  const selected = rows.find((row) => row.key === selectedKey) ?? null;
+  const selectedProducts = selected
+    ? Array.from(new Set([
+      ...selected.unitsByProductId.keys(),
+      ...selected.openUnitsByProductId.keys(),
+      ...selected.inTransitByProductId.keys(),
+      ...selected.dailySalesByProductId.keys()
+    ])).map((productId) => {
+      const stock = selected.unitsByProductId.get(productId) ?? 0;
+      const reserved = selected.openUnitsByProductId.get(productId) ?? 0;
+      const daily = selected.dailySalesByProductId.get(productId) ?? 0;
+      return {
+        productId,
+        name: nameById.get(productId) ?? productId,
+        stock,
+        reserved,
+        available: Math.max(0, stock - reserved),
+        incoming: selected.inTransitByProductId.get(productId) ?? 0,
+        daily
+      };
+    }).sort((a, b) => b.stock - a.stock || b.reserved - a.reserved)
+    : [];
 
   const totals = rows.reduce((acc, row) => ({
     stock: acc.stock + row.totalUnits,
@@ -75,9 +105,21 @@ export default function InventoryOpsStockByState({
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="m-0 text-2xl font-bold text-gray-950">Stock by State</h1>
-        <p className="m-0 mt-0.5 text-sm text-gray-500">View total stock and coverage by state.</p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div><h1 className="m-0 text-2xl font-bold text-gray-950">Stock by State</h1>
+        <p className="m-0 mt-0.5 text-sm text-gray-500">Physical stock, exact open demand and {windowDays}-day delivered run rate by state.</p></div>
+        <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700">
+          <CalendarDays className="h-4 w-4 text-blue-600" />
+          <select className="!min-h-0 border-0 bg-transparent p-0 outline-none" value={windowDays} onChange={(event) => setWindowDays(Number(event.target.value))}>
+            <option value={7}>Last 7 days</option><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option>
+          </select>
+        </label>
+        <button className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700"
+          onClick={() => downloadCsv("stock-by-state.csv", visible.map((row) => ({ State: row.state, Agents: row.agents, Stock: row.totalUnits, Available: row.available, "Daily sales": runRateText(row.dailySales), "Days cover": coverText(row.coverDays), "In transit": row.inTransit, "Open orders": row.openOrders, "Open units": row.openUnits, Status: row.status })))}>
+          <Download className="h-4 w-4" /> Export
+        </button>
+        </div>
       </header>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
@@ -96,12 +138,16 @@ export default function InventoryOpsStockByState({
               <input className="!min-h-0 w-full border-0 p-0 text-sm outline-none" placeholder="Search state..."
                 value={search} onChange={(event) => setSearch(event.target.value)} />
             </label>
+            <select className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={category} onChange={(event) => setCategory(event.target.value)}>
+              <option value="all">All Categories</option>{categories.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
             <select className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={status} onChange={(event) => setStatus(event.target.value)}>
               <option value="all">All Status</option>
               <option value="Healthy">Healthy</option>
               <option value="Watch">Watch</option>
               <option value="Restock Soon">Restock Soon</option>
               <option value="Critical">Critical</option>
+              <option value="No Data">No Data</option>
             </select>
             <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-gray-600">
               <input type="checkbox" className="!min-h-0 h-4 w-4 accent-[#1F8FE0]" checked={lowOnly} onChange={(event) => setLowOnly(event.target.checked)} />
@@ -109,7 +155,7 @@ export default function InventoryOpsStockByState({
             </label>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] text-left text-sm">
+            <table className="w-full min-w-[900px] text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/70 text-[10px] uppercase tracking-wider text-gray-500">
                   <th className="px-4 py-3">State</th>
@@ -120,13 +166,14 @@ export default function InventoryOpsStockByState({
                   <th className="px-3 py-3 text-right">In transit</th>
                   <th className="px-3 py-3 text-right">Open orders</th>
                   <th className="px-3 py-3">Status</th>
+                  <th className="px-3 py-3 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.length === 0 ? (
-                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm italic text-gray-400">No state matches those filters.</td></tr>
+                  <tr><td colSpan={9} className="px-4 py-10 text-center text-sm italic text-gray-400">No state matches those filters.</td></tr>
                 ) : visible.map((row) => (
-                  <tr key={row.state} className="border-b border-gray-50">
+                  <tr key={row.state} className={`border-b border-gray-50 ${selectedKey === row.key ? "bg-blue-50/40" : ""}`}>
                     <td className="px-4 py-3">
                       <span className="flex items-center gap-1.5 font-bold text-gray-900">
                         <MapPin className="h-3.5 w-3.5 shrink-0 text-gray-400" />{row.state}
@@ -134,22 +181,70 @@ export default function InventoryOpsStockByState({
                     </td>
                     <td className="px-3 py-3 text-right text-gray-700">{row.agents}</td>
                     <td className="px-3 py-3 text-right font-bold text-gray-900">{num(row.totalUnits)}</td>
-                    <td className="px-3 py-3 text-right text-gray-700">{row.dailySales}</td>
+                    <td className="px-3 py-3 text-right text-gray-700">{runRateText(row.dailySales)}</td>
                     <td className={`px-3 py-3 text-right font-bold ${statusText(row.status)}`}>{coverText(row.coverDays)}</td>
                     <td className="px-3 py-3 text-right text-violet-700">{num(row.inTransit)}</td>
                     <td className="px-3 py-3 text-right text-orange-600">{num(row.openOrders)}</td>
                     <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${statusTone(row.status)}`}>{row.status}</span></td>
+                    <td className="px-3 py-3 text-right">
+                      <button type="button" className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-blue-200 px-2.5 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50"
+                        onClick={() => setSelectedKey(selectedKey === row.key ? null : row.key)}>
+                        <Eye className="h-3.5 w-3.5" /> View
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <p className="m-0 border-t border-gray-100 px-4 py-3 text-xs text-gray-400">
-            Showing {visible.length} of {rows.length} states · Days cover uses stock left after open orders are set aside.
+            Showing {visible.length} of {rows.length} states · Aliases such as Abuja and FCT are merged. Days cover uses stock left after every component on open orders is set aside.
           </p>
         </section>
 
         <aside className="space-y-4">
+          {selected && (
+            <section className="rounded-xl border border-blue-200 bg-blue-50/30 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="m-0 text-[10px] font-bold uppercase tracking-wider text-blue-600">Selected state</p>
+                  <h2 className="m-0 mt-1 text-base font-black text-gray-950">{selected.state}</h2>
+                </div>
+                <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${statusTone(selected.status)}`}>{selected.status}</span>
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                {([
+                  ["Physical stock", num(selected.totalUnits)],
+                  ["Reserved", num(selected.openUnits)],
+                  ["Available", num(selected.available)],
+                  ["Incoming", num(selected.inTransit)],
+                  ["Open orders", num(selected.openOrders)],
+                  ["Days cover", Number.isFinite(selected.coverDays) ? `${coverText(selected.coverDays)} days` : "No recent demand"]
+                ] as Array<[string, string]>).map(([label, value]) => (
+                  <div key={label} className="rounded-lg border border-white bg-white/80 px-2.5 py-2">
+                    <dt className="text-gray-400">{label}</dt><dd className="m-0 mt-0.5 font-bold text-gray-900">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <h3 className="m-0 mt-4 text-xs font-bold uppercase tracking-wider text-gray-500">Stock by product</h3>
+              {selectedProducts.length === 0 ? (
+                <p className="m-0 mt-2 text-xs italic text-gray-400">No stock or demand lines for this state.</p>
+              ) : (
+                <ul className="m-0 mt-2 max-h-56 list-none space-y-2 overflow-y-auto p-0">
+                  {selectedProducts.map((entry) => (
+                    <li key={entry.productId} className="rounded-lg border border-gray-100 bg-white px-3 py-2 text-xs">
+                      <strong className="block text-gray-900">{entry.name}</strong>
+                      <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-gray-500">
+                        <span>{num(entry.available)} available</span>
+                        <span>{num(entry.reserved)} reserved</span>
+                        <span>{num(entry.incoming)} incoming</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
           <section className="rounded-xl border border-gray-200 bg-white p-4">
             <h2 className="m-0 text-sm font-bold text-gray-900">State Summary</h2>
             <dl className="mt-3 space-y-2 text-sm">

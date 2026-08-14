@@ -12,8 +12,9 @@
 // with Reserved being open order demand, and In Transit shown alongside rather
 // than inside it, because it cannot be sold from today.
 import { useMemo, useState } from "react";
-import { Box, ChevronRight, Search, X } from "lucide-react";
+import { Box, CalendarDays, ChevronRight, Download, Search, X } from "lucide-react";
 import type { OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
+import { buildProductRows, buildStateRows, coverText, downloadCsv, runRateText, type ProductRow } from "./inventory-ops-model";
 
 type Props = {
   products: OpsProduct[];
@@ -29,22 +30,9 @@ type Props = {
 };
 
 const num = (value: number) => Math.max(0, Math.round(value)).toLocaleString("en-NG");
-const norm = (value?: string) => String(value ?? "").trim().toLowerCase();
-const CLOSED = new Set(["delivered", "cancelled", "failed"]);
-
-type Row = {
-  id: string;
-  name: string;
-  warehouse: number;
-  agents: number;
-  inTransit: number;
-  reserved: number;
-  available: number;
+type Row = ProductRow & {
   total: number;
-  dailySales: number;
-  coverDays: number;
-  status: "Healthy" | "Watch" | "Restock Soon" | "Critical";
-  byState: Array<{ state: string; units: number; coverDays: number }>;
+  byState: Array<{ state: string; units: number; available: number; dailySales: number; coverDays: number }>;
   reorderPoint: number;
 };
 
@@ -53,85 +41,36 @@ export default function InventoryOpsStockByProduct({
 }: Props) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const [category, setCategory] = useState("all");
   const [lowOnly, setLowOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [windowDays, setWindowDays] = useState(lookbackDays);
 
   const rows = useMemo<Row[]>(() => {
-    const nameById = new Map(products.map((product) => [product.id, product.name]));
+    const stateRows = buildStateRows(stateHubs, orders, waybills, windowDays, criticalDays, watchDays);
+    const modelRows = buildProductRows(products, stateRows, orders, windowDays, criticalDays, watchDays, waybills);
+    const productById = new Map(products.map((product) => [product.id, product]));
+    return modelRows.map((row) => ({
+      ...row,
+      total: row.totalStock,
+      reorderPoint: productById.get(row.id)?.reorderPoint ?? 0,
+      byState: stateRows.map((state) => {
+        const units = state.unitsByProductId.get(row.id) ?? 0;
+        const reserved = state.openUnitsByProductId.get(row.id) ?? 0;
+        const available = Math.max(0, units - reserved);
+        const dailySales = state.dailySalesByProductId.get(row.id) ?? 0;
+        return { state: state.state, units, available, dailySales, coverDays: dailySales > 0 ? available / dailySales : Number.POSITIVE_INFINITY };
+      }).filter((entry) => entry.units > 0 || entry.dailySales > 0).sort((a, b) => b.units - a.units)
+    }));
+  }, [products, stateHubs, orders, waybills, windowDays, criticalDays, watchDays]);
 
-    // Units on their way in, matched by product name because a waybill line
-    // carries the name rather than the id.
-    const transitByName = new Map<string, number>();
-    for (const waybill of waybills) {
-      if (norm(waybill.status) !== "in transit") continue;
-      const lines = waybill.items?.length
-        ? waybill.items
-        : [{ productName: waybill.productName, quantity: waybill.quantity }];
-      for (const line of lines) {
-        const key = norm(line.productName);
-        transitByName.set(key, (transitByName.get(key) ?? 0) + Math.max(0, line.quantity));
-      }
-    }
-
-    // Sold (delivered) in the window drives the run rate; open orders are the
-    // committed units that must not be counted as available.
-    const soldById = new Map<string, number>();
-    const reservedById = new Map<string, number>();
-    for (const order of orders) {
-      if (!order.productId) continue;
-      const state = String(order.status ?? "").toLowerCase();
-      if (state === "delivered") {
-        soldById.set(order.productId, (soldById.get(order.productId) ?? 0) + Math.max(0, order.quantity));
-      } else if (!CLOSED.has(state)) {
-        reservedById.set(order.productId, (reservedById.get(order.productId) ?? 0) + Math.max(0, order.quantity));
-      }
-    }
-
-    const stateUnits = new Map<string, Map<string, number>>();
-    for (const hub of stateHubs) {
-      for (const stock of hub.stocks) {
-        const byState = stateUnits.get(stock.productId) ?? new Map<string, number>();
-        byState.set(hub.state, (byState.get(hub.state) ?? 0) + Math.max(0, stock.quantity));
-        stateUnits.set(stock.productId, byState);
-      }
-    }
-
-    return products.map((product) => {
-      const warehouse = product.warehouseStock;
-      const agents = product.agentStock;
-      const inTransit = transitByName.get(norm(nameById.get(product.id))) ?? 0;
-      const reserved = reservedById.get(product.id) ?? 0;
-      const total = warehouse + agents;
-      const available = Math.max(0, total - reserved);
-      const dailySales = Math.round(((soldById.get(product.id) ?? 0) / Math.max(1, lookbackDays)) * 10) / 10;
-      const coverDays = dailySales > 0 ? Math.round((available / dailySales) * 10) / 10 : Number.POSITIVE_INFINITY;
-      const rowStatus: Row["status"] = dailySales <= 0
-        ? "Healthy"
-        : coverDays <= criticalDays ? "Critical"
-          : coverDays <= watchDays ? "Restock Soon"
-            : coverDays <= watchDays * 1.5 ? "Watch" : "Healthy";
-      const byState = Array.from(stateUnits.get(product.id) ?? new Map<string, number>())
-        .map(([state, units]) => ({
-          state,
-          units,
-          // A state's share of the run rate, so its cover is comparable.
-          coverDays: dailySales > 0 && total > 0
-            ? Math.round((units / (dailySales * (units / total || 1))) * 10) / 10
-            : Number.POSITIVE_INFINITY
-        }))
-        .sort((a, b) => b.units - a.units);
-      return {
-        id: product.id, name: product.name, warehouse, agents, inTransit, reserved,
-        available, total, dailySales, coverDays, status: rowStatus, byState,
-        reorderPoint: product.reorderPoint
-      };
-    }).sort((a, b) => b.total - a.total);
-  }, [products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays]);
+  const categories = Array.from(new Set(rows.map((row) => row.category))).sort();
 
   const visible = rows.filter((row) => {
     if (search && !row.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    if (category !== "all" && row.category !== category) return false;
     if (status !== "all" && row.status !== status) return false;
-    if (lowOnly && (row.status === "Healthy" || row.status === "Watch")) return false;
+    if (lowOnly && row.status !== "Critical" && row.status !== "Restock Soon") return false;
     return true;
   });
 
@@ -147,17 +86,19 @@ export default function InventoryOpsStockByProduct({
   }), { products: 0, total: 0, warehouse: 0, agents: 0, inTransit: 0, coverSum: 0, coverCount: 0 });
   const avgCover = totals.coverCount > 0 ? Math.round((totals.coverSum / totals.coverCount) * 10) / 10 : 0;
   const pct = (part: number) => (totals.total > 0 ? `${Math.round((part / totals.total) * 1000) / 10}% of total` : "-");
-  const cover = (days: number) => (Number.isFinite(days) ? `${days}` : "-");
+  const cover = coverText;
 
   const tone = (rowStatus: Row["status"]) =>
     rowStatus === "Critical" ? "bg-rose-50 text-rose-700"
       : rowStatus === "Restock Soon" ? "bg-orange-50 text-orange-700"
         : rowStatus === "Watch" ? "bg-amber-50 text-amber-700"
-          : "bg-emerald-50 text-emerald-700";
+          : rowStatus === "No Data" ? "bg-gray-100 text-gray-600"
+            : "bg-emerald-50 text-emerald-700";
   const coverTone = (rowStatus: Row["status"]) =>
     rowStatus === "Critical" ? "text-rose-600"
       : rowStatus === "Restock Soon" ? "text-orange-600"
-        : rowStatus === "Watch" ? "text-amber-600" : "text-emerald-600";
+        : rowStatus === "Watch" ? "text-amber-600"
+          : rowStatus === "No Data" ? "text-gray-500" : "text-emerald-600";
 
   const card = (label: string, value: string, foot: string, tint: string) => (
     <article className="rounded-xl border border-gray-200 bg-white px-4 py-4">
@@ -170,9 +111,21 @@ export default function InventoryOpsStockByProduct({
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="m-0 text-2xl font-bold text-gray-950">Stock by Product</h1>
-        <p className="m-0 mt-0.5 text-sm text-gray-500">View stock position of all products across the network.</p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div><h1 className="m-0 text-2xl font-bold text-gray-950">Stock by Product</h1>
+        <p className="m-0 mt-0.5 text-sm text-gray-500">Live physical stock, committed orders and {windowDays}-day delivered demand.</p></div>
+        <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700">
+          <CalendarDays className="h-4 w-4 text-blue-600" />
+          <select className="!min-h-0 border-0 bg-transparent p-0 outline-none" value={windowDays} onChange={(event) => setWindowDays(Number(event.target.value))}>
+            <option value={7}>Last 7 days</option><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option>
+          </select>
+        </label>
+        <button className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700"
+          onClick={() => downloadCsv("stock-by-product.csv", visible.map((row) => ({ Product: row.name, Category: row.category, Total: row.total, Warehouse: row.warehouse, Agents: row.agents, "In transit": row.inTransit, Reserved: row.reserved, Available: row.available, "Daily sales": runRateText(row.dailySales), "Days cover": cover(row.coverDays), Status: row.status })))}>
+          <Download className="h-4 w-4" /> Export
+        </button>
+        </div>
       </header>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
@@ -192,12 +145,17 @@ export default function InventoryOpsStockByProduct({
               <input className="!min-h-0 w-full border-0 p-0 text-sm outline-none" placeholder="Search product..."
                 value={search} onChange={(event) => setSearch(event.target.value)} />
             </label>
+            <select className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={category} onChange={(event) => setCategory(event.target.value)}>
+              <option value="all">All Categories</option>
+              {categories.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
             <select className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={status} onChange={(event) => setStatus(event.target.value)}>
               <option value="all">All Status</option>
               <option value="Healthy">Healthy</option>
               <option value="Watch">Watch</option>
               <option value="Restock Soon">Restock Soon</option>
               <option value="Critical">Critical</option>
+              <option value="No Data">No Data</option>
             </select>
             <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-gray-600">
               <input type="checkbox" className="!min-h-0 h-4 w-4 accent-[#1F8FE0]" checked={lowOnly} onChange={(event) => setLowOnly(event.target.checked)} />
@@ -209,6 +167,7 @@ export default function InventoryOpsStockByProduct({
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/70 text-[10px] uppercase tracking-wider text-gray-500">
                   <th className="px-4 py-3">Product</th>
+                  <th className="px-3 py-3">Category</th>
                   <th className="px-3 py-3 text-right">Total stock<span className="block normal-case text-gray-400">(units)</span></th>
                   <th className="px-3 py-3 text-right">Warehouse</th>
                   <th className="px-3 py-3 text-right">Agents</th>
@@ -222,10 +181,11 @@ export default function InventoryOpsStockByProduct({
               </thead>
               <tbody>
                 {visible.length === 0 ? (
-                  <tr><td colSpan={10} className="px-4 py-10 text-center text-sm italic text-gray-400">No product matches those filters.</td></tr>
+                  <tr><td colSpan={11} className="px-4 py-10 text-center text-sm italic text-gray-400">No product matches those filters.</td></tr>
                 ) : visible.map((row) => (
                   <tr key={row.id} className={`border-b border-gray-50 ${selectedId === row.id ? "bg-blue-50/40" : ""}`}>
                     <td className="px-4 py-3 font-bold text-gray-900">{row.name}</td>
+                    <td className="px-3 py-3 text-gray-500">{row.category}</td>
                     <td className="px-3 py-3 text-right font-bold text-gray-900">{num(row.total)}</td>
                     <td className="px-3 py-3 text-right text-sky-700">{num(row.warehouse)}</td>
                     <td className="px-3 py-3 text-right text-amber-700">{num(row.agents)}</td>
@@ -246,7 +206,7 @@ export default function InventoryOpsStockByProduct({
             </table>
           </div>
           <p className="m-0 border-t border-gray-100 px-4 py-3 text-xs text-gray-400">
-            Showing {visible.length} of {rows.length} products · Available = warehouse + agents − reserved. In transit is shown separately because it cannot be sold today.
+            Showing {visible.length} of {rows.length} products · Package components, add-ons and gifts are included in reserved demand. In transit is not sellable yet.
           </p>
         </section>
 
@@ -269,7 +229,7 @@ export default function InventoryOpsStockByProduct({
                 ["In transit", num(selected.inTransit)],
                 ["Reserved", num(selected.reserved)],
                 ["Available", num(selected.available)],
-                ["Avg. daily sales", `${selected.dailySales}`],
+                ["Avg. daily sales", runRateText(selected.dailySales)],
                 ["Stock cover", Number.isFinite(selected.coverDays) ? `${selected.coverDays} days` : "No sales in window"],
                 ["Reorder point", num(selected.reorderPoint)]
               ] as Array<[string, string]>).map(([label, value]) => (
@@ -287,7 +247,7 @@ export default function InventoryOpsStockByProduct({
                 {selected.byState.slice(0, 5).map((entry) => (
                   <li key={entry.state} className="flex items-center justify-between text-sm">
                     <span className="text-gray-600">{entry.state}</span>
-                    <span className="font-bold text-gray-900">{num(entry.units)} units</span>
+                    <span className="text-right"><strong className="block text-gray-900">{num(entry.available)} available</strong><small className="text-gray-400">{Number.isFinite(entry.coverDays) ? `${Math.round(entry.coverDays * 10) / 10} days` : "no recent sales"}</small></span>
                   </li>
                 ))}
               </ul>

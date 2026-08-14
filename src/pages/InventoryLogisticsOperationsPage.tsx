@@ -4,6 +4,7 @@ import InventoryOpsStockByState from "./InventoryOpsStockByState";
 import InventoryOpsStockByAgent from "./InventoryOpsStockByAgent";
 import InventoryOpsCoverage from "./InventoryOpsCoverage";
 import InventoryOpsRestockForecast from "./InventoryOpsRestockForecast";
+import { buildProductRows, buildStateRows, coverText, isInTransitWaybill, waybillInventoryLines } from "./inventory-ops-model";
 import {
   AlertTriangle,
   ArrowRight,
@@ -71,8 +72,12 @@ export type OpsStateHub = {
   state: string;
   agentName: string;
   agentId?: string;
+  locationId?: string;
   agentPhone?: string;
   city?: string;
+  active?: boolean;
+  joinedAt?: string;
+  lastCountAt?: string;
   stocks: Array<{ productId: string; quantity: number }>;
 };
 
@@ -84,17 +89,31 @@ export type OpsOrder = {
   quantity: number;
   status?: string;
   createdAt?: string;
+  deliveredAt?: string;
+  assignedAgentId?: string;
+  assignedAgentLocationId?: string;
+  assignedAgentName?: string;
+  /** Exact stock lines consumed by the package, add-ons and gifts. */
+  inventoryItems?: Array<{ productId: string; quantity: number }>;
 };
 
 export type OpsWaybill = {
   id: string;
+  productId?: string;
   productName: string;
   quantity: number;
-  items?: Array<{ productName: string; quantity: number }>;
+  items?: Array<{ productId?: string; productName: string; quantity: number }>;
   fee: number;
   carrier: string;
   from: string;
   to: string;
+  fromState?: string;
+  toState?: string;
+  fromAgentId?: string;
+  toAgentId?: string;
+  fromAgentLocationId?: string;
+  toAgentLocationId?: string;
+  toAgentName?: string;
   dateSent: string;
   dateReceived?: string;
   status: string;
@@ -125,6 +144,10 @@ type Props = {
   activeAgentCount: number;
   canManage: boolean;
   onAction: (action: InventoryOperationsAction) => void;
+  onOpenProduct?: (productId: string) => void;
+  onOpenAgent?: (agentId: string) => void;
+  onEditAgent?: (agentId: string) => void;
+  onViewAgentHistory?: (agentId: string) => void;
 };
 
 const money = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
@@ -147,13 +170,6 @@ const WORKFLOW_STEPS: Array<{ label: string; icon: typeof BarChart3 }> = [
   { label: "Reconcile", icon: BadgeCheck },
 ];
 const dayDiff = (later: Date, earlier: Date) => Math.max(0, (later.getTime() - earlier.getTime()) / 86_400_000);
-
-const stockStatus = (days: number) => {
-  if (days < 1) return { label: "Critical", tone: "rose" as const };
-  if (days < 3) return { label: "Restock Soon", tone: "orange" as const };
-  if (days < 7) return { label: "Watch", tone: "amber" as const };
-  return { label: "Healthy", tone: "emerald" as const };
-};
 
 const statusClasses = {
   rose: "bg-rose-50 text-rose-700 border-rose-200",
@@ -187,6 +203,10 @@ export function InventoryLogisticsOperationsPage({
   activeAgentCount,
   canManage,
   onAction,
+  onOpenProduct,
+  onOpenAgent,
+  onEditAgent,
+  onViewAgentHistory,
 }: Props) {
   const [showFilters, setShowFilters] = useState(false);
   const [riskFilter, setRiskFilter] = useState<"all" | "risk" | "transit">("all");
@@ -198,61 +218,41 @@ export function InventoryLogisticsOperationsPage({
   const model = useMemo(() => {
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
-    const activeOrders = orders.filter((order) => !["cancelled", "failed"].includes(normalized(order.status)));
-    const weeklyOrders = activeOrders.filter((order) => {
-      const date = validDate(order.createdAt);
-      return date ? date >= weekAgo && date <= now : false;
-    });
-    const weeklyDemandByProduct = new Map<string, number>();
-    weeklyOrders.forEach((order) => {
-      const key = order.productId || normalized(order.productName);
-      weeklyDemandByProduct.set(key, (weeklyDemandByProduct.get(key) ?? 0) + Math.max(1, order.quantity));
-    });
-
-    const productRows = products.map((product) => {
-      const totalStock = Math.max(0, product.warehouseStock) + Math.max(0, product.agentStock);
-      const weeklyDemand = weeklyDemandByProduct.get(product.id) ?? weeklyDemandByProduct.get(normalized(product.name)) ?? 0;
-      const dailyDemand = weeklyDemand / 7;
-      const coverDays = dailyDemand > 0 ? totalStock / dailyDemand : totalStock > 0 ? 30 : 0;
-      return { ...product, totalStock, weeklyDemand, coverDays, status: stockStatus(coverDays) };
-    }).sort((a, b) => b.totalStock - a.totalStock);
-
-    const stateMap = new Map<string, { state: string; agents: Set<string>; stock: number; byProduct: Map<string, number> }>();
-    stateHubs.forEach((hub) => {
-      const state = hub.state.trim() || "Unassigned";
-      const key = normalized(state);
-      const current = stateMap.get(key) ?? { state, agents: new Set<string>(), stock: 0, byProduct: new Map<string, number>() };
-      current.agents.add(hub.agentName);
-      hub.stocks.forEach((stock) => {
-        const qty = Math.max(0, stock.quantity);
-        current.stock += qty;
-        current.byProduct.set(stock.productId, (current.byProduct.get(stock.productId) ?? 0) + qty);
-      });
-      stateMap.set(key, current);
-    });
-    const stateRows = Array.from(stateMap.values()).map((row) => {
-      const weeklyDemand = weeklyOrders
-        .filter((order) => normalized(order.state || order.location) === normalized(row.state))
-        .reduce((sum, order) => sum + Math.max(1, order.quantity), 0);
-      const coverDays = weeklyDemand > 0 ? row.stock / (weeklyDemand / 7) : row.stock > 0 ? 30 : 0;
-      const risks = productRows
-        .filter((product) => {
-          const stateQty = row.byProduct.get(product.id) ?? 0;
-          const stateDemand = weeklyOrders
-            .filter((order) => normalized(order.state || order.location) === normalized(row.state) && (order.productId === product.id || normalized(order.productName) === normalized(product.name)))
-            .reduce((sum, order) => sum + Math.max(1, order.quantity), 0);
-          return stateDemand > 0 && stateQty / (stateDemand / 7) < 3;
+    const exactStateRows = buildStateRows(stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays);
+    const exactProductRows = buildProductRows(products, exactStateRows, orders, lookbackDays, criticalDays, watchDays, waybills);
+    const toneFor = (label: string) => label === "Critical" ? "rose" as const
+      : label === "Restock Soon" ? "orange" as const
+        : label === "Watch" ? "amber" as const
+          : label === "No Data" ? "gray" as const : "emerald" as const;
+    const productRows = exactProductRows.map((row) => ({
+      ...row,
+      weeklyDemand: row.dailySales * lookbackDays,
+      status: { label: row.status, tone: toneFor(row.status) },
+    })).sort((a, b) => b.totalStock - a.totalStock);
+    const productNameById = new Map(products.map((product) => [product.id, product.name]));
+    const stateRows = exactStateRows.map((row) => {
+      const risks = Array.from(row.dailySalesByProductId.entries())
+        .filter(([productId, daily]) => {
+          const available = Math.max(0, (row.unitsByProductId.get(productId) ?? 0) - (row.openUnitsByProductId.get(productId) ?? 0));
+          return daily > 0 && available / daily <= criticalDays;
         })
-        .map((product) => product.name);
-      return { ...row, agents: Array.from(row.agents), weeklyDemand, coverDays, risks, status: stockStatus(coverDays) };
-    }).sort((a, b) => a.coverDays - b.coverDays || a.stock - b.stock);
+        .map(([productId]) => productNameById.get(productId) ?? "Unknown product");
+      return {
+        ...row,
+        stock: row.totalUnits,
+        weeklyDemand: row.dailySales * lookbackDays,
+        risks,
+        status: { label: row.status, tone: toneFor(row.status) },
+      };
+    }).sort((a, b) => a.coverDays - b.coverDays || a.totalUnits - b.totalUnits);
 
     const totalStock = productRows.reduce((sum, row) => sum + row.totalStock, 0);
-    const warehouseStock = productRows.reduce((sum, row) => sum + Math.max(0, row.warehouseStock), 0);
-    const agentStock = productRows.reduce((sum, row) => sum + Math.max(0, row.agentStock), 0);
-    const weeklyDemand = productRows.reduce((sum, row) => sum + row.weeklyDemand, 0);
-    const overallCover = weeklyDemand > 0 ? totalStock / (weeklyDemand / 7) : totalStock > 0 ? 30 : 0;
-    const inTransit = waybills.filter((waybill) => normalized(waybill.status) === "in transit");
+    const availableStock = productRows.reduce((sum, row) => sum + row.available, 0);
+    const warehouseStock = productRows.reduce((sum, row) => sum + Math.max(0, row.warehouse), 0);
+    const agentStock = productRows.reduce((sum, row) => sum + Math.max(0, row.agents), 0);
+    const dailyDemand = productRows.reduce((sum, row) => sum + row.dailySales, 0);
+    const overallCover = dailyDemand > 0 ? availableStock / dailyDemand : Number.POSITIVE_INFINITY;
+    const inTransit = waybills.filter(isInTransitWaybill);
     const receivedThisWeek = waybills.filter((waybill) => {
       const received = validDate(waybill.dateReceived);
       return normalized(waybill.status) === "received" && received && received >= weekAgo;
@@ -261,7 +261,7 @@ export function InventoryLogisticsOperationsPage({
       const sent = validDate(waybill.dateSent);
       return sent && sent >= weekAgo;
     });
-    const inTransitUnits = inTransit.reduce((sum, row) => sum + Math.max(0, row.quantity), 0);
+    const inTransitUnits = inTransit.reduce((sum, row) => sum + waybillInventoryLines(row).reduce((lineSum, line) => lineSum + line.quantity, 0), 0);
     const awaitingDispatch = waybills.filter((row) => ["pending", "awaiting dispatch", "assigned"].includes(normalized(row.status)));
     const logisticsSpend = expenses
       .filter((expense) => {
@@ -284,7 +284,7 @@ export function InventoryLogisticsOperationsPage({
       const sent = validDate(row.dateSent);
       return sent ? dayDiff(now, sent) > 3 : false;
     });
-    const criticalStates = stateRows.filter((row) => row.coverDays < 3);
+    const criticalStates = stateRows.filter((row) => row.status.label === "Critical");
 
     const health = productRows.reduce((acc, row) => {
       const key = row.status.label;
@@ -312,13 +312,14 @@ export function InventoryLogisticsOperationsPage({
       criticalStates,
       health,
     };
-  }, [products, stateHubs, orders, waybills, expenses]);
+  }, [products, stateHubs, orders, waybills, expenses, lookbackDays, criticalDays, watchDays]);
 
   const healthRows = [
-    { label: "Healthy", helper: "7+ days", value: model.health.Healthy ?? 0, color: "#10b981" },
-    { label: "Watch", helper: "3-7 days", value: model.health.Watch ?? 0, color: "#f59e0b" },
-    { label: "Restock Soon", helper: "1-3 days", value: model.health["Restock Soon"] ?? 0, color: "#f97316" },
-    { label: "Critical", helper: "<1 day", value: model.health.Critical ?? 0, color: "#ef4444" },
+    { label: "Healthy", helper: `>${Math.round(watchDays * 1.5)} days`, value: model.health.Healthy ?? 0, color: "#10b981" },
+    { label: "Watch", helper: `${watchDays}-${Math.round(watchDays * 1.5)} days`, value: model.health.Watch ?? 0, color: "#f59e0b" },
+    { label: "Restock Soon", helper: `${criticalDays}-${watchDays} days`, value: model.health["Restock Soon"] ?? 0, color: "#f97316" },
+    { label: "Critical", helper: `≤${criticalDays} days`, value: model.health.Critical ?? 0, color: "#ef4444" },
+    { label: "No Data", helper: "no recent delivered demand", value: model.health["No Data"] ?? 0, color: "#d1d5db" },
   ];
   let turn = 0;
   const donutStops = healthRows.map((row) => {
@@ -336,7 +337,7 @@ export function InventoryLogisticsOperationsPage({
     .slice(0, 5);
   const openDiscrepancies = discrepancies.filter((row) => normalized(row.status) === "discrepancy");
   const primaryRisk = model.criticalStates[0];
-  const primaryProductRisk = model.productRows.find((row) => row.coverDays < 3);
+  const primaryProductRisk = model.productRows.find((row) => row.status.label === "Critical");
   const primaryDelayed = model.delayed[0];
   const primaryDiscrepancy = openDiscrepancies[0];
 
@@ -346,13 +347,13 @@ export function InventoryLogisticsOperationsPage({
     { label: "Stock with Agents", value: number(model.agentStock), helper: `${activeAgentCount} active agents`, icon: Users, tone: "teal" },
     { label: "In Transit", value: number(model.inTransitUnits), helper: `${model.inTransit.length} shipments`, icon: Truck, tone: "orange" },
     { label: "Awaiting Dispatch", value: number(model.awaitingDispatch.length), helper: "Transfers", icon: Clock3, tone: "violet" },
-    { label: "Critical (< 3 Days)", value: number(model.criticalStates.length), helper: "States at risk", icon: AlertTriangle, tone: "rose" },
-    { label: "Overall Coverage", value: `${model.overallCover.toFixed(1)} Days`, helper: "Average stock cover", icon: ShieldCheck, tone: "blue" },
+    { label: `Critical (< ${criticalDays} Days)`, value: number(model.criticalStates.length), helper: "States at risk", icon: AlertTriangle, tone: "rose" },
+    { label: "Overall Coverage", value: Number.isFinite(model.overallCover) ? `${coverText(model.overallCover)} Days` : "No recent demand", helper: "Available stock cover", icon: ShieldCheck, tone: "blue" },
     { label: "Logistics Spend", value: money(model.logisticsSpend), helper: "This week", icon: WalletCards, tone: "amber" },
   ] as const;
 
   const shared = { products, stateHubs, orders, waybills, lookbackDays, criticalDays, watchDays };
-  if (section === "stock-products") return <InventoryOpsStockByProduct {...shared} />;
+  if (section === "stock-products") return <InventoryOpsStockByProduct {...shared} onOpenProduct={onOpenProduct} />;
   if (section === "stock-states") return <InventoryOpsStockByState {...shared} onOpenForecast={() => onAction("forecast")} />;
   if (section === "stock-agents") {
     return (
@@ -362,8 +363,14 @@ export function InventoryLogisticsOperationsPage({
         orders={orders}
         waybills={waybills}
         discrepancies={discrepancies}
+        lookbackDays={lookbackDays}
         criticalDays={criticalDays}
         watchDays={watchDays}
+        canManage={canManage}
+        onAction={onAction}
+        onOpenAgent={onOpenAgent}
+        onEditAgent={onEditAgent}
+        onViewAgentHistory={onViewAgentHistory}
       />
     );
   }
@@ -434,7 +441,7 @@ export function InventoryLogisticsOperationsPage({
 
         <article className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3"><h2 className="text-sm font-bold">Top Products <span className="font-normal text-gray-400">by Units in Network</span></h2><button type="button" onClick={() => onAction("stock-products")} className="!min-h-0 text-xs font-bold text-blue-600 hover:underline">View all products →</button></div>
-          <div className="overflow-x-auto"><table className="w-full min-w-[470px] text-xs"><thead className="bg-gray-50 text-left text-[10px] text-gray-500"><tr><th className="px-4 py-2">PRODUCT</th><th className="px-3 py-2">TOTAL STOCK</th><th className="px-3 py-2">COVER</th><th className="px-3 py-2">STATUS</th></tr></thead><tbody className="divide-y divide-gray-100">{topProducts.length === 0 ? <EmptyRow columns={4} text="No stock products found." /> : topProducts.map((row) => <tr key={row.id}><td className="px-4 py-3 font-semibold">{row.name}</td><td className="px-3 py-3 font-bold">{number(row.totalStock)}</td><td className="px-3 py-3">{row.coverDays.toFixed(1)} days</td><td className="px-3 py-3"><StatusPill label={row.status.label} tone={row.status.tone} /></td></tr>)}</tbody></table></div>
+          <div className="overflow-x-auto"><table className="w-full min-w-[470px] text-xs"><thead className="bg-gray-50 text-left text-[10px] text-gray-500"><tr><th className="px-4 py-2">PRODUCT</th><th className="px-3 py-2">TOTAL STOCK</th><th className="px-3 py-2">COVER</th><th className="px-3 py-2">STATUS</th></tr></thead><tbody className="divide-y divide-gray-100">{topProducts.length === 0 ? <EmptyRow columns={4} text="No stock products found." /> : topProducts.map((row) => <tr key={row.id}><td className="px-4 py-3 font-semibold">{row.name}</td><td className="px-3 py-3 font-bold">{number(row.totalStock)}</td><td className="px-3 py-3">{Number.isFinite(row.coverDays) ? `${coverText(row.coverDays)} days` : "No recent sales"}</td><td className="px-3 py-3"><StatusPill label={row.status.label} tone={row.status.tone} /></td></tr>)}</tbody></table></div>
         </article>
 
         <article className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
@@ -455,7 +462,7 @@ export function InventoryLogisticsOperationsPage({
       <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div><h2 className="text-sm font-bold">What needs your attention today?</h2><p className="mt-1 text-xs text-gray-400">Recommended actions based on stock levels, demand, shipment status and reconciliation.</p></div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-          <article className="rounded-lg border border-rose-200 bg-rose-50 p-3"><StatusPill label="Critical" tone="rose" /><h3 className="mt-3 text-sm font-bold">{primaryRisk?.state ?? "No critical state"}</h3><p className="mt-1 text-xs text-gray-600">{primaryProductRisk?.name ?? "Stock coverage is currently healthy"}</p><p className="mt-2 text-xs font-semibold text-rose-700">{primaryRisk ? `${primaryRisk.coverDays.toFixed(1)} days cover left` : "No urgent transfer needed"}</p><button disabled={!canManage || !primaryRisk} type="button" onClick={() => onAction("create-transfer")} className="!min-h-0 mt-3 w-full rounded-md border border-rose-200 bg-white px-2 py-1.5 text-xs font-bold text-rose-700 disabled:opacity-40">Create Transfer</button></article>
+          <article className="rounded-lg border border-rose-200 bg-rose-50 p-3"><StatusPill label="Critical" tone="rose" /><h3 className="mt-3 text-sm font-bold">{primaryRisk?.state ?? "No critical state"}</h3><p className="mt-1 text-xs text-gray-600">{primaryProductRisk?.name ?? "Stock coverage is currently healthy"}</p><p className="mt-2 text-xs font-semibold text-rose-700">{primaryRisk ? `${coverText(primaryRisk.coverDays)} days cover left` : "No urgent transfer needed"}</p><button disabled={!canManage || !primaryRisk} type="button" onClick={() => onAction("create-transfer")} className="!min-h-0 mt-3 w-full rounded-md border border-rose-200 bg-white px-2 py-1.5 text-xs font-bold text-rose-700 disabled:opacity-40">Create Transfer</button></article>
           <article className="rounded-lg border border-amber-200 bg-amber-50 p-3"><StatusPill label="Internal Transfer" tone="amber" /><h3 className="mt-3 text-sm font-bold">Balance agent stock</h3><p className="mt-1 text-xs text-gray-600">Move stock from stronger coverage to the weakest state hub.</p><p className="mt-2 text-xs font-semibold text-amber-700">{model.criticalStates.length} states need review</p><button disabled={!canManage} type="button" onClick={() => onAction("transfers")} className="!min-h-0 mt-3 w-full rounded-md border border-amber-200 bg-white px-2 py-1.5 text-xs font-bold text-amber-700 disabled:opacity-40">Transfer Now</button></article>
           <article className="rounded-lg border border-orange-200 bg-orange-50 p-3"><StatusPill label="State Replenish" tone="orange" /><h3 className="mt-3 text-sm font-bold">Warehouse → {primaryRisk?.state ?? "State"}</h3><p className="mt-1 text-xs text-gray-600">{model.warehouseStock > 0 ? `${number(model.warehouseStock)} warehouse units available` : "Warehouse stock needs replenishment"}</p><p className="mt-2 text-xs font-semibold text-orange-700">Assign stock and carrier</p><button disabled={!canManage} type="button" onClick={() => onAction("create-waybill")} className="!min-h-0 mt-3 w-full rounded-md border border-orange-200 bg-white px-2 py-1.5 text-xs font-bold text-orange-700 disabled:opacity-40">Assign Carrier</button></article>
           <article className="rounded-lg border border-rose-200 bg-rose-50 p-3"><StatusPill label="Delayed Shipment" tone="rose" /><h3 className="mt-3 text-sm font-bold">{primaryDelayed?.id ?? "No delayed shipment"}</h3><p className="mt-1 text-xs text-gray-600">{primaryDelayed ? `${primaryDelayed.carrier} · ${primaryDelayed.to}` : "All active shipments are within target"}</p><p className="mt-2 text-xs font-semibold text-rose-700">{primaryDelayed ? `Sent ${primaryDelayed.dateSent}` : "No overdue route"}</p><button type="button" onClick={() => onAction("shipments")} className="!min-h-0 mt-3 w-full rounded-md border border-rose-200 bg-white px-2 py-1.5 text-xs font-bold text-rose-700">Review Shipment</button></article>
@@ -465,7 +472,7 @@ export function InventoryLogisticsOperationsPage({
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">
-        <article className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-gray-100 px-4 py-3"><h2 className="text-sm font-bold">Low Stock States</h2><button type="button" onClick={() => onAction("stock-states")} className="!min-h-0 text-xs font-bold text-blue-600">View all states →</button></div><div className="overflow-x-auto"><table className="w-full min-w-[470px] text-xs"><thead className="bg-gray-50 text-left text-[10px] text-gray-500"><tr><th className="px-4 py-2">STATE</th><th className="px-3 py-2">PRODUCTS AT RISK</th><th className="px-3 py-2">DAYS COVER</th><th className="px-3 py-2">STATUS</th></tr></thead><tbody className="divide-y divide-gray-100">{visibleStates.length === 0 ? <EmptyRow columns={4} text="No state hubs have stock data yet." /> : visibleStates.map((row) => <tr key={row.state}><td className="px-4 py-3"><span className="inline-flex items-center gap-1.5 font-semibold"><MapPin className="h-3.5 w-3.5 text-gray-400" />{row.state}</span></td><td className="px-3 py-3">{row.risks.length}</td><td className="px-3 py-3">{row.coverDays.toFixed(1)}</td><td className="px-3 py-3"><StatusPill label={row.status.label} tone={row.status.tone} /></td></tr>)}</tbody></table></div></article>
+        <article className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-gray-100 px-4 py-3"><h2 className="text-sm font-bold">Low Stock States</h2><button type="button" onClick={() => onAction("stock-states")} className="!min-h-0 text-xs font-bold text-blue-600">View all states →</button></div><div className="overflow-x-auto"><table className="w-full min-w-[470px] text-xs"><thead className="bg-gray-50 text-left text-[10px] text-gray-500"><tr><th className="px-4 py-2">STATE</th><th className="px-3 py-2">PRODUCTS AT RISK</th><th className="px-3 py-2">DAYS COVER</th><th className="px-3 py-2">STATUS</th></tr></thead><tbody className="divide-y divide-gray-100">{visibleStates.length === 0 ? <EmptyRow columns={4} text="No state hubs have stock data yet." /> : visibleStates.map((row) => <tr key={row.state}><td className="px-4 py-3"><span className="inline-flex items-center gap-1.5 font-semibold"><MapPin className="h-3.5 w-3.5 text-gray-400" />{row.state}</span></td><td className="px-3 py-3">{row.risks.length}</td><td className="px-3 py-3">{Number.isFinite(row.coverDays) ? coverText(row.coverDays) : "-"}</td><td className="px-3 py-3"><StatusPill label={row.status.label} tone={row.status.tone} /></td></tr>)}</tbody></table></div></article>
 
         <article className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-gray-100 px-4 py-3"><h2 className="text-sm font-bold">Recent Transfers</h2><button type="button" onClick={() => onAction("transfers")} className="!min-h-0 text-xs font-bold text-blue-600">View all transfers →</button></div><div className="overflow-x-auto"><table className="w-full min-w-[500px] text-xs"><thead className="bg-gray-50 text-left text-[10px] text-gray-500"><tr><th className="px-4 py-2">TRANSFER ID</th><th className="px-3 py-2">FROM</th><th className="px-3 py-2">TO</th><th className="px-3 py-2">UNITS</th><th className="px-3 py-2">STATUS</th></tr></thead><tbody className="divide-y divide-gray-100">{visibleWaybills.length === 0 ? <EmptyRow columns={5} text="No transfers recorded yet." /> : visibleWaybills.map((row) => <tr key={row.id}><td className="px-4 py-3 font-bold text-blue-600">{row.id}</td><td className="px-3 py-3">{row.from}</td><td className="px-3 py-3">{row.to}</td><td className="px-3 py-3 font-semibold">{number(row.quantity)}</td><td className="px-3 py-3"><StatusPill label={row.status} tone={normalized(row.status) === "received" ? "emerald" : normalized(row.status) === "in transit" ? "blue" : "gray"} /></td></tr>)}</tbody></table></div></article>
 

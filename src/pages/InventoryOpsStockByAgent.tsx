@@ -5,9 +5,9 @@
 // lose if a hub's stock walked, which is the number worth watching on a page
 // about who is holding what.
 import { useMemo, useState } from "react";
-import { AlertTriangle, Boxes, Search, Truck, UserRound, Wallet } from "lucide-react";
-import type { OpsDiscrepancy, OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
-import { CLOSED_ORDER_STATES, money, norm, num, statusTone, type StockStatus } from "./inventory-ops-model";
+import { AlertTriangle, ArrowLeftRight, Boxes, CalendarDays, ClipboardCheck, Download, History, MessageCircle, PackageSearch, Search, Truck, UserCog, UserRound, Wallet } from "lucide-react";
+import type { InventoryOperationsAction, OpsDiscrepancy, OpsOrder, OpsProduct, OpsStateHub, OpsWaybill } from "./InventoryLogisticsOperationsPage";
+import { CLOSED_ORDER_STATES, downloadCsv, inventoryLinesForOrder, isInTransitWaybill, isInsideWindow, money, norm, num, orderEventDate, statusFor, statusTone, waybillInventoryLines, type StockStatus } from "./inventory-ops-model";
 
 type Props = {
   products: OpsProduct[];
@@ -15,102 +15,167 @@ type Props = {
   orders: OpsOrder[];
   waybills: OpsWaybill[];
   discrepancies: OpsDiscrepancy[];
+  lookbackDays: number;
   criticalDays: number;
   watchDays: number;
+  canManage: boolean;
+  onAction: (action: InventoryOperationsAction) => void;
+  onOpenAgent?: (agentId: string) => void;
+  onEditAgent?: (agentId: string) => void;
+  onViewAgentHistory?: (agentId: string) => void;
 };
 
 type AgentRow = {
   key: string;
+  agentId: string;
+  locationId: string;
   name: string;
   phone: string;
   state: string;
   city: string;
+  active: boolean;
+  joinedAt: string;
+  lastCountAt: string;
   productCount: number;
   total: number;
   reserved: number;
   available: number;
   inTransit: number;
+  dailySales: number;
+  coverDays: number;
   value: number;
   status: StockStatus;
   lines: Array<{ name: string; units: number }>;
 };
 
 export default function InventoryOpsStockByAgent({
-  products, stateHubs, orders, waybills, discrepancies, criticalDays, watchDays
+  products, stateHubs, orders, waybills, discrepancies, lookbackDays, criticalDays, watchDays,
+  canManage, onAction, onOpenAgent, onEditAgent, onViewAgentHistory
 }: Props) {
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [lowOnly, setLowOnly] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [windowDays, setWindowDays] = useState(lookbackDays);
 
   const rows = useMemo<AgentRow[]>(() => {
     const priceById = new Map(products.map((product) => [product.id, Math.max(0, product.sellingPrice ?? 0)]));
     const nameById = new Map(products.map((product) => [product.id, product.name]));
-
-    // Open order units in that agent's state, apportioned by the hub's share of
-    // the state's stock. Orders carry a state, not an agent, until dispatch.
-    const stateStock = new Map<string, number>();
+    const allowedIds = categoryFilter === "all"
+      ? null
+      : new Set(products.filter((product) => (product.category ?? "Uncategorised") === categoryFilter).map((product) => product.id));
+    const hubCountByAgent = new Map<string, number>();
     for (const hub of stateHubs) {
-      const units = hub.stocks.reduce((sum, stock) => sum + Math.max(0, stock.quantity), 0);
-      stateStock.set(hub.state, (stateStock.get(hub.state) ?? 0) + units);
+      if (hub.agentId) hubCountByAgent.set(hub.agentId, (hubCountByAgent.get(hub.agentId) ?? 0) + 1);
     }
-    const openByState = new Map<string, number>();
+
+    const openByAgent = new Map<string, number>();
+    const deliveredByAgent = new Map<string, number>();
     for (const order of orders) {
-      const state = String(order.state ?? "").trim();
-      if (!state || CLOSED_ORDER_STATES.has(norm(order.status))) continue;
-      openByState.set(state, (openByState.get(state) ?? 0) + Math.max(0, order.quantity));
+      if (!order.assignedAgentId) continue;
+      const assignmentKey = order.assignedAgentLocationId || order.assignedAgentId;
+      const orderLines = inventoryLinesForOrder(order).filter((line) => !allowedIds || allowedIds.has(line.productId));
+      const units = orderLines.reduce((sum, line) => sum + line.quantity, 0);
+      if (units <= 0) continue;
+      const orderStatus = norm(order.status);
+      if (orderStatus === "delivered" && isInsideWindow(orderEventDate(order), windowDays)) {
+        deliveredByAgent.set(assignmentKey, (deliveredByAgent.get(assignmentKey) ?? 0) + units);
+      } else if (!CLOSED_ORDER_STATES.has(orderStatus)) {
+        openByAgent.set(assignmentKey, (openByAgent.get(assignmentKey) ?? 0) + units);
+      }
     }
     const transitByAgent = new Map<string, number>();
     for (const waybill of waybills) {
-      if (norm(waybill.status) !== "in transit") continue;
-      const to = String(waybill.to ?? "").trim();
+      if (!isInTransitWaybill(waybill)) continue;
+      const to = waybill.toAgentLocationId || waybill.toAgentId || norm(waybill.toAgentName || waybill.to);
       if (!to) continue;
-      const units = waybill.items?.length
-        ? waybill.items.reduce((sum, item) => sum + Math.max(0, item.quantity), 0)
-        : Math.max(0, waybill.quantity);
+      const units = waybillInventoryLines(waybill)
+        .filter((item) => !allowedIds || (!!item.productId && allowedIds.has(item.productId)))
+        .reduce((sum, item) => sum + item.quantity, 0);
+      if (units <= 0) continue;
       transitByAgent.set(to, (transitByAgent.get(to) ?? 0) + units);
     }
 
     return stateHubs.map((hub) => {
-      const total = hub.stocks.reduce((sum, stock) => sum + Math.max(0, stock.quantity), 0);
-      const share = (stateStock.get(hub.state) ?? 0) > 0 ? total / (stateStock.get(hub.state) ?? 1) : 0;
-      const reserved = Math.round((openByState.get(hub.state) ?? 0) * share);
+      const visibleStocks = hub.stocks.filter((stock) => !allowedIds || allowedIds.has(stock.productId));
+      const total = visibleStocks.reduce((sum, stock) => sum + Math.max(0, stock.quantity), 0);
+      const agentKey = hub.agentId || "";
+      const assignmentKey = hub.locationId || agentKey;
+      // Older orders may only carry the agent ID. It is safe to attach those
+      // reservations to a hub only when that agent has exactly one location;
+      // otherwise guessing a location would make the wrong stock look held.
+      const agentFallback = agentKey && hubCountByAgent.get(agentKey) === 1 ? agentKey : "";
+      const reserved = (assignmentKey ? openByAgent.get(assignmentKey) ?? 0 : 0)
+        + (agentFallback && agentFallback !== assignmentKey ? openByAgent.get(agentFallback) ?? 0 : 0);
       const available = Math.max(0, total - reserved);
-      const value = hub.stocks.reduce((sum, stock) =>
+      const deliveredUnits = (assignmentKey ? deliveredByAgent.get(assignmentKey) ?? 0 : 0)
+        + (agentFallback && agentFallback !== assignmentKey ? deliveredByAgent.get(agentFallback) ?? 0 : 0);
+      const dailySales = deliveredUnits / Math.max(1, windowDays);
+      const coverDays = dailySales > 0 ? available / dailySales : Number.POSITIVE_INFINITY;
+      const value = visibleStocks.reduce((sum, stock) =>
         sum + Math.max(0, stock.quantity) * (priceById.get(stock.productId) ?? 0), 0);
-      const lines = hub.stocks
+      const lines = visibleStocks
         .filter((stock) => stock.quantity > 0)
         .map((stock) => ({ name: nameById.get(stock.productId) ?? stock.productId, units: Math.max(0, stock.quantity) }))
         .sort((a, b) => b.units - a.units);
-      // No sales history per hub, so status reads off cover of committed work
-      // rather than a run rate: can this hub serve what its state already owes?
-      const status: StockStatus = total === 0 ? "Critical"
-        : available <= 0 ? "Critical"
-          : available < reserved ? "Restock Soon"
-            : available < reserved * 2 ? "Watch" : "Healthy";
+      const status: StockStatus = total === 0 && reserved > 0 ? "Critical"
+        : statusFor(coverDays, dailySales > 0, criticalDays, watchDays);
+      const transitKey = hub.locationId || agentKey || norm(hub.agentName);
+      const incoming = (transitByAgent.get(transitKey) ?? 0)
+        + (agentFallback && agentFallback !== transitKey ? transitByAgent.get(agentFallback) ?? 0 : 0);
       return {
-        key: `${hub.agentId ?? hub.agentName}::${hub.state}`,
+        key: hub.locationId ?? `${hub.agentId ?? hub.agentName}::${hub.state}::${hub.city ?? ""}`,
+        agentId: hub.agentId ?? "",
+        locationId: hub.locationId ?? "",
         name: hub.agentName,
         phone: hub.agentPhone ?? "",
         state: hub.state,
         city: hub.city ?? "",
+        active: hub.active !== false,
+        joinedAt: hub.joinedAt ?? "",
+        lastCountAt: hub.lastCountAt ?? "",
         productCount: lines.length,
         total, reserved, available,
-        inTransit: transitByAgent.get(hub.state) ?? 0,
+        inTransit: incoming || transitByAgent.get(norm(hub.agentName)) || 0,
+        dailySales,
+        coverDays,
         value, status, lines
       };
     }).sort((a, b) => b.total - a.total);
-  }, [products, stateHubs, orders, waybills, criticalDays, watchDays]);
+  }, [products, stateHubs, orders, waybills, windowDays, criticalDays, watchDays, categoryFilter]);
 
   const states = Array.from(new Set(rows.map((row) => row.state))).sort();
+  const categories = Array.from(new Set(products.map((product) => product.category ?? "Uncategorised"))).sort();
   const visible = rows.filter((row) => {
     const needle = search.trim().toLowerCase();
     if (needle && !`${row.name} ${row.state} ${row.city}`.toLowerCase().includes(needle)) return false;
     if (stateFilter !== "all" && row.state !== stateFilter) return false;
-    if (lowOnly && (row.status === "Healthy" || row.status === "Watch")) return false;
+    if (statusFilter !== "all" && row.status !== statusFilter) return false;
+    if (lowOnly && row.status !== "Critical" && row.status !== "Restock Soon") return false;
     return true;
   });
   const selected = rows.find((row) => row.key === selectedKey) ?? null;
+
+  const displayDate = (value: string) => {
+    const date = value ? new Date(value) : null;
+    return date && Number.isFinite(date.getTime())
+      ? date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+      : "Never";
+  };
+  const nextCountDate = (value: string) => {
+    const date = value ? new Date(value) : null;
+    if (!date || !Number.isFinite(date.getTime())) return "Start a stock count";
+    date.setDate(date.getDate() + 7);
+    return displayDate(date.toISOString());
+  };
+  const messageSelectedAgent = () => {
+    if (!selected?.phone) return;
+    const raw = selected.phone.replace(/\D/g, "");
+    const phone = raw.startsWith("0") ? `234${raw.slice(1)}` : raw;
+    window.open(`https://wa.me/${phone}`, "_blank", "noopener,noreferrer");
+  };
 
   const totals = rows.reduce((acc, row) => ({
     agents: acc.agents + 1,
@@ -131,9 +196,16 @@ export default function InventoryOpsStockByAgent({
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="m-0 text-2xl font-bold text-gray-950">Stock by Agent</h1>
-        <p className="m-0 mt-0.5 text-sm text-gray-500">View and manage stock held by all agents across the network.</p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div><h1 className="m-0 text-2xl font-bold text-gray-950">Stock by Agent</h1>
+        <p className="m-0 mt-0.5 text-sm text-gray-500">Exact assigned reservations and {windowDays}-day delivered demand by agent hub.</p></div>
+        <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700"><CalendarDays className="h-4 w-4 text-blue-600" /><select className="!min-h-0 border-0 bg-transparent p-0 outline-none" value={windowDays} onChange={(event) => setWindowDays(Number(event.target.value))}><option value={7}>Last 7 days</option><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option></select></label>
+        <button className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700"
+          onClick={() => downloadCsv("stock-by-agent.csv", visible.map((row) => ({ Agent: row.name, State: row.state, Area: row.city, Products: row.productCount, Stock: row.total, Available: row.available, Reserved: row.reserved, "In transit": row.inTransit, "Daily sales": Math.round(row.dailySales * 10) / 10, "Days cover": Number.isFinite(row.coverDays) ? Math.round(row.coverDays * 10) / 10 : "-", Value: row.value, Status: row.status })))}>
+          <Download className="h-4 w-4" /> Export
+        </button>
+        </div>
       </header>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
@@ -155,6 +227,12 @@ export default function InventoryOpsStockByAgent({
             <select className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}>
               <option value="all">All States</option>
               {states.map((state) => <option key={state} value={state}>{state}</option>)}
+            </select>
+            <select className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+              <option value="all">All Categories</option>{categories.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <select className="!min-h-0 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">All Status</option><option>Healthy</option><option>Watch</option><option>Restock Soon</option><option>Critical</option><option>No Data</option>
             </select>
             <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-gray-600">
               <input type="checkbox" className="!min-h-0 h-4 w-4 accent-[#1F8FE0]" checked={lowOnly} onChange={(event) => setLowOnly(event.target.checked)} />
@@ -203,7 +281,7 @@ export default function InventoryOpsStockByAgent({
             </table>
           </div>
           <p className="m-0 border-t border-gray-100 px-4 py-3 text-xs text-gray-400">
-            Showing {visible.length} of {rows.length} agent hubs · Reserved is the hub&apos;s share of its state&apos;s open orders, since an order names a state, not an agent, until dispatch.
+            Showing {visible.length} of {rows.length} agent hubs · Reserved includes only orders explicitly assigned to that agent. Unassigned state demand stays at state/network level.
           </p>
         </section>
 
@@ -217,9 +295,13 @@ export default function InventoryOpsStockByAgent({
                     ["Agent Name", selected.name],
                     ["State / Area", `${selected.state}${selected.city ? ` · ${selected.city}` : ""}`],
                     ["Phone", selected.phone || "Not on file"],
+                    ["Status", selected.active ? "Active" : "Inactive"],
+                    ["Joined on", displayDate(selected.joinedAt)],
                     ["Products held", String(selected.productCount)],
                     ["Total stock", num(selected.total)],
                     ["Available", num(selected.available)],
+                    ["Avg. daily sales", `${Math.round(selected.dailySales * 10) / 10}`],
+                    ["Days cover", Number.isFinite(selected.coverDays) ? `${Math.round(selected.coverDays * 10) / 10} days` : "No recent assigned sales"],
                     ["Stock value", money(selected.value)]
                   ] as Array<[string, string]>).map(([label, value]) => (
                     <div key={label} className="flex items-center justify-between gap-3 border-b border-gray-50 pb-1.5">
@@ -227,6 +309,18 @@ export default function InventoryOpsStockByAgent({
                       <dd className="m-0 min-w-0 truncate text-right font-bold text-gray-900">{value}</dd>
                     </div>
                   ))}
+                </dl>
+                {selected.agentId && onOpenAgent ? (
+                  <button type="button" className="!min-h-0 mt-3 w-full rounded-lg border border-blue-200 px-3 py-2 text-sm font-bold text-blue-700 hover:bg-blue-50" onClick={() => onOpenAgent(selected.agentId)}>
+                    View agent profile
+                  </button>
+                ) : null}
+              </section>
+              <section className="rounded-xl border border-gray-200 bg-white p-4">
+                <h2 className="m-0 text-sm font-bold text-gray-900">Stock Count Schedule</h2>
+                <dl className="mt-3 space-y-2 text-sm">
+                  <div className="flex items-center justify-between gap-3"><dt className="text-gray-500">Last stock count</dt><dd className="m-0 text-right font-bold text-gray-900">{displayDate(selected.lastCountAt)}</dd></div>
+                  <div className="flex items-center justify-between gap-3"><dt className="text-gray-500">Next count due</dt><dd className="m-0 text-right font-bold text-gray-900">{nextCountDate(selected.lastCountAt)}</dd></div>
                 </dl>
               </section>
               <section className="rounded-xl border border-gray-200 bg-white p-4">
@@ -243,6 +337,25 @@ export default function InventoryOpsStockByAgent({
                     ))}
                   </ul>
                 )}
+              </section>
+              <section className="rounded-xl border border-gray-200 bg-white p-4">
+                <h2 className="m-0 text-sm font-bold text-gray-900">Quick Actions</h2>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  {([
+                    ["Transfer Stock", ArrowLeftRight, () => onAction("create-transfer"), canManage],
+                    ["Request Stock", PackageSearch, () => onAction("recommended-transfers"), canManage],
+                    ["Stock Count", ClipboardCheck, () => onAction("create-count"), canManage],
+                    ["View History", History, () => selected.agentId && onViewAgentHistory ? onViewAgentHistory(selected.agentId) : onAction("movements"), true],
+                    ["Update Info", UserCog, () => selected.agentId && onEditAgent?.(selected.agentId), canManage && Boolean(selected.agentId && onEditAgent)],
+                    ["Message Agent", MessageCircle, messageSelectedAgent, Boolean(selected.phone)],
+                  ] as Array<[string, typeof ArrowLeftRight, () => void, boolean]>).map(([label, Icon, action, enabled]) => (
+                    <button key={label} type="button" disabled={!enabled} onClick={action}
+                      className="!min-h-0 flex min-h-[72px] flex-col items-center justify-center gap-1 rounded-lg border border-gray-200 px-2 py-2 text-center text-xs font-bold text-gray-700 hover:border-blue-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40">
+                      <Icon className="h-4 w-4 text-blue-600" />
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
               </section>
             </>
           ) : (
