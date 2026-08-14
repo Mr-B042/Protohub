@@ -90409,13 +90409,19 @@ ${waybillLineItems(w).length > 1
                             key={agent.id}
                             type="button"
                             onClick={() => setCreateOrderAgentId(agent.id)}
-                            className={`!min-h-0 flex w-full items-center gap-3 rounded-xl border-2 px-4 py-3.5 text-left transition-colors ${isSelected ? "border-[#1F8FE0] bg-blue-50/40" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+                            className={`!min-h-0 flex w-full flex-col gap-3 rounded-xl border-2 px-4 py-3.5 text-left transition-colors sm:flex-row sm:items-center ${isSelected ? "border-[#1F8FE0] bg-blue-50/40" : "border-gray-200 bg-white hover:bg-gray-50"}`}
                           >
-                            <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${isSelected ? "border-[#1F8FE0]" : "border-gray-300"}`}>
-                              {isSelected && <span className="h-2.5 w-2.5 rounded-full bg-[#1F8FE0]" />}
-                            </span>
-                            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-sm font-black text-gray-500">
-                              {initialsOf(agent.name)}
+                            {/* Radio + avatar stay paired on their own line - the fixed-width
+                                stock badge and chevron used to sit in this same row too, which
+                                left the name/location/stats column almost no space on a phone
+                                and its content spilled over everything beside it. */}
+                            <span className="flex items-center gap-3">
+                              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${isSelected ? "border-[#1F8FE0]" : "border-gray-300"}`}>
+                                {isSelected && <span className="h-2.5 w-2.5 rounded-full bg-[#1F8FE0]" />}
+                              </span>
+                              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-sm font-black text-gray-500">
+                                {initialsOf(agent.name)}
+                              </span>
                             </span>
                             <span className="min-w-0 flex-1">
                               <span className="flex flex-wrap items-center gap-2">
@@ -90452,16 +90458,21 @@ ${waybillLineItems(w).length > 1
                                 </span>
                               </span>
                             </span>
-                            <span className={`flex shrink-0 flex-col items-center rounded-xl px-4 py-2.5 ${empty ? "bg-rose-50" : ok ? "bg-emerald-50" : "bg-amber-50"}`}>
-                              <span className="flex items-center gap-1.5">
-                                <Box className={`h-4 w-4 ${empty ? "text-rose-600" : ok ? "text-emerald-700" : "text-amber-700"}`} />
-                                <strong className={`text-base font-bold ${empty ? "text-rose-600" : ok ? "text-emerald-700" : "text-amber-700"}`}>{stockQty} units</strong>
+                            {/* On mobile this is its own row (badge left, chevron right); on
+                                sm+ `contents` drops the wrapper so both sit back in the row
+                                exactly as before - desktop is unchanged. */}
+                            <span className="flex items-center justify-between gap-3 sm:contents">
+                              <span className={`flex shrink-0 flex-col items-center rounded-xl px-4 py-2.5 ${empty ? "bg-rose-50" : ok ? "bg-emerald-50" : "bg-amber-50"}`}>
+                                <span className="flex items-center gap-1.5">
+                                  <Box className={`h-4 w-4 ${empty ? "text-rose-600" : ok ? "text-emerald-700" : "text-amber-700"}`} />
+                                  <strong className={`text-base font-bold ${empty ? "text-rose-600" : ok ? "text-emerald-700" : "text-amber-700"}`}>{stockQty} units</strong>
+                                </span>
+                                <span className={`text-[11px] ${empty ? "text-rose-500" : ok ? "text-emerald-600" : "text-amber-600"}`}>
+                                  {empty ? "No stock" : ok ? "In stock" : `Needs ${orderQty}`}
+                                </span>
                               </span>
-                              <span className={`text-[11px] ${empty ? "text-rose-500" : ok ? "text-emerald-600" : "text-amber-600"}`}>
-                                {empty ? "No stock" : ok ? "In stock" : `Needs ${orderQty}`}
-                              </span>
+                              <ChevronRight className="h-5 w-5 shrink-0 text-gray-300" />
                             </span>
-                            <ChevronRight className="h-5 w-5 shrink-0 text-gray-300" />
                           </button>
                         );
                       })}
