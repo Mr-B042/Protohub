@@ -90458,10 +90458,14 @@ ${waybillLineItems(w).length > 1
                                 </span>
                               </span>
                             </span>
-                            {/* On mobile this is its own row (badge left, chevron right); on
-                                sm+ `contents` drops the wrapper so both sit back in the row
-                                exactly as before - desktop is unchanged. */}
-                            <span className="flex items-center justify-between gap-3 sm:contents">
+                            {/* On mobile this is its own row (badge left, chevron right). On
+                                sm+ the outer button switches to a row itself, so this wrapper
+                                just becomes one more item sized to its content - badge and
+                                chevron sit adjacent exactly as before. (display:contents was
+                                tried here first but is unreliable inside a button on some
+                                mobile browsers - it detached these children from the row
+                                entirely instead of rejoining it.) */}
+                            <span className="flex items-center justify-between gap-3">
                               <span className={`flex shrink-0 flex-col items-center rounded-xl px-4 py-2.5 ${empty ? "bg-rose-50" : ok ? "bg-emerald-50" : "bg-amber-50"}`}>
                                 <span className="flex items-center gap-1.5">
                                   <Box className={`h-4 w-4 ${empty ? "text-rose-600" : ok ? "text-emerald-700" : "text-amber-700"}`} />
