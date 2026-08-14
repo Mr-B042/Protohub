@@ -84530,6 +84530,7 @@ ${waybillLineItems(w).length > 1
                 state: normalizeAgentState(location.state) || agentPrimaryBaseState(agent) || "Unassigned",
                 agentName: agent.name,
                 agentId: agent.id,
+                locationId: location.id,
                 agentPhone: agent.phone ?? "",
                 city: location.city ?? "",
                 stocks: stockRowsForStateHub(agent, location).map((stock) => ({
@@ -84540,17 +84541,28 @@ ${waybillLineItems(w).length > 1
               orders={trackedOrders.map((order) => ({
                 productId: order.productId,
                 productName: order.productName,
-                state: order.state,
+                state: normalizeAgentState(order.state)
+                  || normalizeAgentState(order.agentLocationStateSnapshot)
+                  || order.state,
                 location: order.location,
                 quantity: quantityForOrder(order),
                 status: order.status,
                 createdAt: order.createdAt,
+                deliveredAt: order.deliveredDate
+                  || ((order.status ?? "").toLowerCase() === "delivered" ? order.updatedAt : undefined),
+                assignedAgentId: order.agentId,
+                assignedAgentLocationId: order.agentLocationId ?? undefined,
+                assignedAgentName: order.agentLocationNameSnapshot
+                  || agents.find((agent) => agent.id === order.agentId)?.name,
+                inventoryItems: demandLinesForOrder(order),
               }))}
               waybills={waybillRecords.map((waybill) => ({
                 id: waybill.id,
+                productId: waybill.productId,
                 productName: waybill.productName,
                 quantity: Math.max(0, Number(waybill.quantity ?? 0)),
                 items: waybill.items?.map((item) => ({
+                  productId: item.productId,
                   productName: item.productName,
                   quantity: Math.max(0, Number(item.quantity ?? 0)),
                 })),
@@ -84558,6 +84570,13 @@ ${waybillLineItems(w).length > 1
                 carrier: waybill.logisticsPartner || "Not assigned",
                 from: waybill.sendingLocationName || waybill.sendingState || "Warehouse",
                 to: waybill.receivingLocationName || waybill.receivingState || "Unassigned",
+                fromState: normalizeAgentState(waybill.sendingState),
+                toState: normalizeAgentState(waybill.receivingState),
+                fromAgentId: waybill.fromAgentId,
+                toAgentId: waybill.toAgentId,
+                fromAgentLocationId: waybill.fromAgentLocationId,
+                toAgentLocationId: waybill.toAgentLocationId,
+                toAgentName: agents.find((agent) => agent.id === waybill.toAgentId)?.name,
                 dateSent: waybill.dateSent,
                 dateReceived: waybill.dateReceived,
                 status: waybill.status,
@@ -84578,6 +84597,7 @@ ${waybillLineItems(w).length > 1
                 })))}
               activeAgentCount={agents.filter((agent) => agent.active).length}
               canManage={["Owner", "Admin", "Inventory Manager", "Inventory Manager & Logistics Operations"].includes(currentRole)}
+              onOpenProduct={openInventoryProductDetailRoute}
               onAction={handleInventoryOperationsAction}
             />
           ) : activePage === "Inventory" ? (
@@ -90404,78 +90424,88 @@ ${waybillLineItems(w).length > 1
                         const empty = stockQty === 0;
                         const isSelected = createOrderAgentId === agent.id;
                         const stats = agentAssignStatsFor(agent.id);
+                        // Two responsive attempts at reusing one flex row (direction-flip with
+                        // display:contents, then without it) both rendered pieces of this card
+                        // detached from their own card on real mobile browsers - confirmed by
+                        // screenshot twice. Building genuinely separate mobile/desktop blocks
+                        // instead, each a plain single-direction flex layout with nothing
+                        // breakpoint-conditional about its own structure, so there is no
+                        // direction-switch or wrapper trick left that could misrender.
+                        const radio = (
+                          <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${isSelected ? "border-[#1F8FE0]" : "border-gray-300"}`}>
+                            {isSelected && <span className="h-2.5 w-2.5 rounded-full bg-[#1F8FE0]" />}
+                          </span>
+                        );
+                        const avatar = (
+                          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-sm font-black text-gray-500">
+                            {initialsOf(agent.name)}
+                          </span>
+                        );
+                        const textColumn = (
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center gap-2">
+                              <strong className="truncate text-[15px] font-bold text-gray-900">{agent.name}</strong>
+                              {!sameState && orderState && (
+                                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700">different state</span>
+                              )}
+                            </span>
+                            <span className="mt-0.5 flex flex-wrap items-center gap-2 text-[12px] text-gray-500">
+                              <MapPin className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                              {matchedLocation ? agentLocationLabel(matchedLocation) : `Based in ${agentPrimaryBaseState(agent) || "-"}`}
+                              {matchedLocation && (
+                                <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold text-[#1F8FE0]">This hub&apos;s stock</span>
+                              )}
+                            </span>
+                            {/* Real figures from this agent's own delivered orders.
+                                A star rating is not shown because nothing in
+                                Protohub has ever scored an agent - printing one
+                                would be inventing it. */}
+                            <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-gray-500">
+                              <span className="inline-flex items-center gap-1">
+                                <PackageCheck className="h-3.5 w-3.5 text-gray-400" />
+                                {stats.delivered} delivered
+                              </span>
+                              <span className="text-gray-200">|</span>
+                              <span className="inline-flex items-center gap-1">
+                                <Clock className="h-3.5 w-3.5 text-gray-400" />
+                                {stats.avgDays === null ? "No delivery history" : `Avg. delivery: ${stats.avgDays} day${stats.avgDays === 1 ? "" : "s"}`}
+                              </span>
+                              <span className="text-gray-200">|</span>
+                              <span className="inline-flex items-center gap-1">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-gray-400" />
+                                {stats.reliability === null ? "No record yet" : `Reliability: ${stats.reliability}%`}
+                              </span>
+                            </span>
+                          </span>
+                        );
+                        const stockBadge = (
+                          <span className={`flex shrink-0 flex-col items-center rounded-xl px-4 py-2.5 ${empty ? "bg-rose-50" : ok ? "bg-emerald-50" : "bg-amber-50"}`}>
+                            <span className="flex items-center gap-1.5">
+                              <Box className={`h-4 w-4 ${empty ? "text-rose-600" : ok ? "text-emerald-700" : "text-amber-700"}`} />
+                              <strong className={`text-base font-bold ${empty ? "text-rose-600" : ok ? "text-emerald-700" : "text-amber-700"}`}>{stockQty} units</strong>
+                            </span>
+                            <span className={`text-[11px] ${empty ? "text-rose-500" : ok ? "text-emerald-600" : "text-amber-600"}`}>
+                              {empty ? "No stock" : ok ? "In stock" : `Needs ${orderQty}`}
+                            </span>
+                          </span>
+                        );
+                        const chevron = <ChevronRight className="h-5 w-5 shrink-0 text-gray-300" />;
                         return (
                           <button
                             key={agent.id}
                             type="button"
                             onClick={() => setCreateOrderAgentId(agent.id)}
-                            className={`!min-h-0 flex w-full flex-col gap-3 rounded-xl border-2 px-4 py-3.5 text-left transition-colors sm:flex-row sm:items-center ${isSelected ? "border-[#1F8FE0] bg-blue-50/40" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+                            className={`!min-h-0 w-full rounded-xl border-2 text-left transition-colors ${isSelected ? "border-[#1F8FE0] bg-blue-50/40" : "border-gray-200 bg-white hover:bg-gray-50"}`}
                           >
-                            {/* Radio + avatar stay paired on their own line - the fixed-width
-                                stock badge and chevron used to sit in this same row too, which
-                                left the name/location/stats column almost no space on a phone
-                                and its content spilled over everything beside it. */}
-                            <span className="flex items-center gap-3">
-                              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${isSelected ? "border-[#1F8FE0]" : "border-gray-300"}`}>
-                                {isSelected && <span className="h-2.5 w-2.5 rounded-full bg-[#1F8FE0]" />}
-                              </span>
-                              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-sm font-black text-gray-500">
-                                {initialsOf(agent.name)}
-                              </span>
+                            {/* Desktop / iPad - the original single row, untouched. */}
+                            <span className="hidden items-center gap-3 px-4 py-3.5 sm:flex">
+                              {radio}{avatar}{textColumn}{stockBadge}{chevron}
                             </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="flex flex-wrap items-center gap-2">
-                                <strong className="truncate text-[15px] font-bold text-gray-900">{agent.name}</strong>
-                                {!sameState && orderState && (
-                                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700">different state</span>
-                                )}
-                              </span>
-                              <span className="mt-0.5 flex flex-wrap items-center gap-2 text-[12px] text-gray-500">
-                                <MapPin className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                                {matchedLocation ? agentLocationLabel(matchedLocation) : `Based in ${agentPrimaryBaseState(agent) || "-"}`}
-                                {matchedLocation && (
-                                  <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold text-[#1F8FE0]">This hub&apos;s stock</span>
-                                )}
-                              </span>
-                              {/* Real figures from this agent's own delivered orders.
-                                  A star rating is not shown because nothing in
-                                  Protohub has ever scored an agent - printing one
-                                  would be inventing it. */}
-                              <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-gray-500">
-                                <span className="inline-flex items-center gap-1">
-                                  <PackageCheck className="h-3.5 w-3.5 text-gray-400" />
-                                  {stats.delivered} delivered
-                                </span>
-                                <span className="text-gray-200">|</span>
-                                <span className="inline-flex items-center gap-1">
-                                  <Clock className="h-3.5 w-3.5 text-gray-400" />
-                                  {stats.avgDays === null ? "No delivery history" : `Avg. delivery: ${stats.avgDays} day${stats.avgDays === 1 ? "" : "s"}`}
-                                </span>
-                                <span className="text-gray-200">|</span>
-                                <span className="inline-flex items-center gap-1">
-                                  <CheckCircle2 className="h-3.5 w-3.5 text-gray-400" />
-                                  {stats.reliability === null ? "No record yet" : `Reliability: ${stats.reliability}%`}
-                                </span>
-                              </span>
-                            </span>
-                            {/* On mobile this is its own row (badge left, chevron right). On
-                                sm+ the outer button switches to a row itself, so this wrapper
-                                just becomes one more item sized to its content - badge and
-                                chevron sit adjacent exactly as before. (display:contents was
-                                tried here first but is unreliable inside a button on some
-                                mobile browsers - it detached these children from the row
-                                entirely instead of rejoining it.) */}
-                            <span className="flex items-center justify-between gap-3">
-                              <span className={`flex shrink-0 flex-col items-center rounded-xl px-4 py-2.5 ${empty ? "bg-rose-50" : ok ? "bg-emerald-50" : "bg-amber-50"}`}>
-                                <span className="flex items-center gap-1.5">
-                                  <Box className={`h-4 w-4 ${empty ? "text-rose-600" : ok ? "text-emerald-700" : "text-amber-700"}`} />
-                                  <strong className={`text-base font-bold ${empty ? "text-rose-600" : ok ? "text-emerald-700" : "text-amber-700"}`}>{stockQty} units</strong>
-                                </span>
-                                <span className={`text-[11px] ${empty ? "text-rose-500" : ok ? "text-emerald-600" : "text-amber-600"}`}>
-                                  {empty ? "No stock" : ok ? "In stock" : `Needs ${orderQty}`}
-                                </span>
-                              </span>
-                              <ChevronRight className="h-5 w-5 shrink-0 text-gray-300" />
+                            {/* Mobile - stacked into three lines so nothing fights for width. */}
+                            <span className="flex flex-col gap-3 px-4 py-3.5 sm:hidden">
+                              <span className="flex items-center gap-3">{radio}{avatar}</span>
+                              {textColumn}
+                              <span className="flex items-center justify-between gap-3">{stockBadge}{chevron}</span>
                             </span>
                           </button>
                         );
