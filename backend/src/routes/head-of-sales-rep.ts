@@ -407,6 +407,28 @@ type OfferLineRow = {
   accepted_amount?: number | null;
 };
 
+// A lightweight version of the main route's offer-line fetch, used only for
+// the "vs last week" delta on Customers Offered/Upgraded - just the two
+// totals, not the full per-rep/per-offer breakdown the main week needs.
+async function countRealOffersForWeek(orgId: string, repIds: string[], weekStart: string, weekEnd: string) {
+  if (repIds.length === 0) return { offered: 0, upgraded: 0 };
+  const { data: attempts, error } = await supabase
+    .from("order_sales_expansion_attempts")
+    .select("id, rep_id, created_at, offer_lines:order_sales_expansion_offer_lines(response)")
+    .eq("org_id", orgId)
+    .in("rep_id", repIds)
+    .gte("created_at", `${addDaysToDateKey(weekStart, -1)}T00:00:00Z`)
+    .lte("created_at", `${addDaysToDateKey(weekEnd, 1)}T23:59:59Z`);
+  if (error) throw error;
+  const inWeek = (attempts ?? []).filter((attempt: any) => {
+    const key = lagosDateKey(attempt.created_at);
+    return key >= weekStart && key <= weekEnd;
+  });
+  const lines = inWeek.flatMap((attempt: any) => (Array.isArray(attempt.offer_lines) ? attempt.offer_lines : []) as Array<{ response: string }>);
+  const realOffers = lines.filter((line) => line.response !== "waived_no_offer");
+  return { offered: realOffers.length, upgraded: realOffers.filter((line) => line.response === "accepted").length };
+}
+
 router.get("/upsell-cross-sell", async (req, res) => {
   const parsed = WeekQuerySchema.safeParse(req.query);
   if (!parsed.success) { res.status(400).json({ error: "repId is required." }); return; }
@@ -532,13 +554,31 @@ router.get("/upsell-cross-sell", async (req, res) => {
     };
 
     // 4-week Upsell Rate / Cross-sell Rate trend, off the same engine every
-    // other page uses.
-    const trend: Array<{ weekStart: string; upsellRate: number; crossSellRate: number }> = [];
+    // other page uses. Target is held flat at the CURRENT week's baseline
+    // (the same target every other page already uses) rather than
+    // recomputed per historical week - a dashed reference line, not a
+    // second moving series.
+    const trend: Array<{ weekStart: string; upsellRate: number; crossSellRate: number; upsellRateTarget: number; crossSellRateTarget: number }> = [];
     for (let offset = 3; offset >= 0; offset -= 1) {
       const ws = addDaysToDateKey(weekStart, -7 * offset);
       const week = computeTeamWeekMetrics(orders, repIds, ws).team;
-      trend.push({ weekStart: ws, upsellRate: week.upsellRate, crossSellRate: week.crossSellRate });
+      trend.push({
+        weekStart: ws,
+        upsellRate: week.upsellRate,
+        crossSellRate: week.crossSellRate,
+        upsellRateTarget: baseline.team.upsellRate,
+        crossSellRateTarget: baseline.team.crossSellRate
+      });
     }
+
+    const lastWeekEnd = weekEndFromStart(lastWeekStart);
+    const lastWeekOffers = await countRealOffersForWeek(orgId, repIds, lastWeekStart, lastWeekEnd);
+    const thisWeekCustomersOffered = customersOfferedUpsell + customersOfferedCrossSell;
+    const thisWeekCustomersUpgraded = customersUpgraded + customersCrossSold;
+    const thisWeekAdditionalRevenue = thisWeek.team.incrementalRevenueUpsell + thisWeek.team.incrementalRevenueCrossSell;
+    const lastWeekAdditionalRevenue = lastWeek.team.incrementalRevenueUpsell + lastWeek.team.incrementalRevenueCrossSell;
+    const pctDelta = (current: number, previous: number) =>
+      previous > 0 ? Math.round(((current - previous) / previous) * 1000) / 10 : (current > 0 ? 100 : 0);
 
     res.json({
       weekStart,
@@ -548,9 +588,15 @@ router.get("/upsell-cross-sell", async (req, res) => {
         crossSellRate: thisWeek.team.crossSellRate,
         upsellRateTarget: baseline.team.upsellRate,
         crossSellRateTarget: baseline.team.crossSellRate,
-        customersOffered: customersOfferedUpsell + customersOfferedCrossSell,
-        customersUpgraded: customersUpgraded + customersCrossSold,
-        additionalRevenue: thisWeek.team.incrementalRevenueUpsell + thisWeek.team.incrementalRevenueCrossSell,
+        customersOffered: thisWeekCustomersOffered,
+        customersOfferedLastWeek: lastWeekOffers.offered,
+        customersOfferedDeltaPct: pctDelta(thisWeekCustomersOffered, lastWeekOffers.offered),
+        customersUpgraded: thisWeekCustomersUpgraded,
+        customersUpgradedLastWeek: lastWeekOffers.upgraded,
+        customersUpgradedDeltaPct: pctDelta(thisWeekCustomersUpgraded, lastWeekOffers.upgraded),
+        additionalRevenue: thisWeekAdditionalRevenue,
+        additionalRevenueLastWeek: lastWeekAdditionalRevenue,
+        additionalRevenueDeltaPct: pctDelta(thisWeekAdditionalRevenue, lastWeekAdditionalRevenue),
         upsellRateDeltaVsLastWeek: Math.round((thisWeek.team.upsellRate - lastWeek.team.upsellRate) * 10) / 10,
         crossSellRateDeltaVsLastWeek: Math.round((thisWeek.team.crossSellRate - lastWeek.team.crossSellRate) * 10) / 10
       },

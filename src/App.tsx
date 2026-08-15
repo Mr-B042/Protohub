@@ -151,6 +151,7 @@ import {
 } from "./lib/followUpOutcomes";
 import {
   Cell,
+  Legend,
   Line,
   LineChart,
   Pie,
@@ -11825,6 +11826,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // plain picker, not view-as (mirrors recoveryRepScopeId).
   const [headOfSalesScopeId, setHeadOfSalesScopeId] = useState("");
   const [headOfSalesOverviewWeekStart, setHeadOfSalesOverviewWeekStart] = useState("");
+  const [headOfSalesOverviewCurrentWeekStart, setHeadOfSalesOverviewCurrentWeekStart] = useState("");
   const [headOfSalesOverview, setHeadOfSalesOverview] = useState<any | null>(null);
   const [headOfSalesOverviewLoading, setHeadOfSalesOverviewLoading] = useState(false);
   const [headOfSalesOverviewError, setHeadOfSalesOverviewError] = useState("");
@@ -43505,8 +43507,20 @@ ${waybillLineItems(w).length > 1
     setHeadOfSalesUpsellCrossSellLoading(true);
     setHeadOfSalesUpsellCrossSellError("");
     try {
+      const wasUnset = !headOfSalesOverviewWeekStart;
       const result = await headOfSalesApi.upsellCrossSell(headOfSalesViewingId, headOfSalesOverviewWeekStart || undefined);
       setHeadOfSalesUpsellCrossSell(result);
+      if (result?.weekStart && result.weekStart !== headOfSalesOverviewWeekStart) {
+        setHeadOfSalesOverviewWeekStart(result.weekStart);
+      }
+      // headOfSalesOverviewWeekStart is shared across every leadership page
+      // (Overview, Scorecard, Team Performance, Rep Coaching, this one) -
+      // whichever page resolves "this week" first captures it once, so
+      // "Next week" can be disabled everywhere without recomputing
+      // Sunday-week math client-side on each page separately.
+      if (wasUnset && result?.weekStart) {
+        setHeadOfSalesOverviewCurrentWeekStart(result.weekStart);
+      }
     } catch (error: any) {
       setHeadOfSalesUpsellCrossSellError(error?.message ?? "Could not load Upsell & Cross-sell.");
     } finally {
@@ -59474,43 +59488,96 @@ ${waybillLineItems(w).length > 1
 
     const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
     const pct = (value: number) => `${value}%`;
-    const kpi = (label: string, value: string, foot?: string) => (
+    const isCurrentWeek = Boolean(headOfSalesOverviewCurrentWeekStart) && headOfSalesOverviewWeekStart >= headOfSalesOverviewCurrentWeekStart;
+    const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    const kpi = (label: string, value: string, deltaPct: number | null, foot?: string) => (
       <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
         <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">{label}</span>
         <strong className="mt-1 block text-xl font-black text-gray-900">{value}</strong>
-        {foot && <span className="text-[11px] text-gray-400">{foot}</span>}
+        {deltaPct !== null && (
+          <span className={`text-[11px] font-bold ${deltaPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{deltaPct >= 0 ? "↑" : "↓"} {Math.abs(deltaPct)}%</span>
+        )}
+        {foot && <span className="ml-1 text-[11px] text-gray-400">{foot}</span>}
       </div>
     );
-    const funnelMax = Math.max(data.funnel.offered, 1);
-    const funnelStep = (label: string, value: number, tone: string) => (
-      <div className="flex items-center gap-3">
-        <div className="w-28 shrink-0 text-right text-sm font-semibold text-gray-600">{label}</div>
-        <div className="h-8 flex-1 overflow-hidden rounded-lg bg-gray-100">
-          <div className={`flex h-full items-center rounded-lg px-3 text-xs font-bold text-white ${tone}`} style={{ width: `${Math.max(8, (value / funnelMax) * 100)}%` }}>
-            {value.toLocaleString()}
-          </div>
-        </div>
-      </div>
+
+    const exportReport = () => triggerCsvDownload(
+      "upsell-cross-sell",
+      [
+        ["Rep", "Upsell Rate", "Cross-sell Rate", "Offered", "Upgraded", "Incremental Revenue"],
+        ...data.byRep.map((rep: any) => [rep.name, `${rep.upsellRate}%`, `${rep.crossSellRate}%`, rep.customersOffered, rep.customersUpgraded, rep.incrementalRevenue])
+      ],
+      "Upsell & Cross-sell report exported"
     );
+
+    const repStatus = (rep: any) => {
+      if (data.team.upsellRate <= 0) return { label: "Good", tone: "bg-sky-50 text-sky-700" };
+      const ratio = rep.upsellRate / data.team.upsellRate;
+      return ratio >= 1.1 ? { label: "Excellent", tone: "bg-emerald-50 text-emerald-700" }
+        : ratio >= 0.85 ? { label: "Good", tone: "bg-sky-50 text-sky-700" }
+        : { label: "Needs Help", tone: "bg-rose-50 text-rose-700" };
+    };
+
+    const offerStatus = (offer: any) =>
+      offer.acceptanceRatePct >= 25 ? { label: "Highly Effective", tone: "bg-emerald-50 text-emerald-700" }
+        : offer.acceptanceRatePct >= 15 ? { label: "Effective", tone: "bg-sky-50 text-sky-700" }
+        : offer.acceptanceRatePct >= 5 ? { label: "Testing", tone: "bg-amber-50 text-amber-700" }
+        : { label: "Low Impact", tone: "bg-rose-50 text-rose-700" };
+
+    const funnelStages = [
+      { label: "Offered", value: data.funnel.offered, pctOfPrev: 100, tone: "bg-violet-500" },
+      { label: "Upgraded", value: data.funnel.accepted, pctOfPrev: data.funnel.offered > 0 ? Math.round((data.funnel.accepted / data.funnel.offered) * 1000) / 10 : 0, tone: "bg-blue-500" },
+      { label: "Delivered", value: data.funnel.delivered, pctOfPrev: data.funnel.accepted > 0 ? Math.round((data.funnel.delivered / data.funnel.accepted) * 1000) / 10 : 0, tone: "bg-teal-500" }
+    ];
+    const avgRevenuePerCustomer = data.funnel.delivered > 0 ? Math.round(data.funnel.revenue / data.funnel.delivered) : 0;
+
+    const lowAcceptanceCount = data.topOffers.filter((offer: any) => offer.acceptanceRatePct < 15).length;
+    const keyInsights: string[] = [];
+    if (data.topOffers.length > 0) keyInsights.push(`"${data.topOffers[0].label}" is your top performer this week, driving ${money(data.topOffers[0].revenue)}.`);
+    if (lowAcceptanceCount > 0) keyInsights.push(`${lowAcceptanceCount} offer${lowAcceptanceCount === 1 ? "" : "s"} ${lowAcceptanceCount === 1 ? "has" : "have"} an acceptance rate below 15% and need${lowAcceptanceCount === 1 ? "s" : ""} attention.`);
+    keyInsights.push(`Team upsell rate is ${data.team.upsellRate >= data.team.upsellRateTarget ? "at or above" : "below"} target this week.`);
+    const recommendedFocus: string[] = [];
+    if (lowAcceptanceCount > 0) recommendedFocus.push("Review the underperforming offers below and consider retiring or reworking them.");
+    const belowTeamReps = data.byRep.filter((rep: any) => repStatus(rep).label === "Needs Help");
+    if (belowTeamReps.length > 0) recommendedFocus.push(`Coach ${belowTeamReps.map((r: any) => r.name).join(", ")} - trailing the team's upsell rate.`);
+    if (recommendedFocus.length === 0) recommendedFocus.push("Keep reinforcing what's already working - no reps or offers are flagged this week.");
 
     return (
       <div className="space-y-5">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-          {kpi("Upsell Rate (Team Avg.)", pct(data.team.upsellRate), `Target: ${pct(data.team.upsellRateTarget)}`)}
-          {kpi("Cross-sell Rate (Team Avg.)", pct(data.team.crossSellRate), `Target: ${pct(data.team.crossSellRateTarget)}`)}
-          {kpi("Customers Offered", data.team.customersOffered.toLocaleString())}
-          {kpi("Customers Upgraded", data.team.customersUpgraded.toLocaleString())}
-          {kpi("Additional Revenue", money(data.team.additionalRevenue))}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-xl font-bold text-gray-900">Upsell &amp; Cross-sell Performance</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Track, analyze and improve how the team increases average order value.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
+              <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, -7))}>←</button>
+              <span className="px-1 text-xs font-semibold text-gray-700">{formatDateOnly(headOfSalesOverviewWeekStart)}{data.weekEnd ? ` – ${formatDateOnly(data.weekEnd)}` : ""}</span>
+              <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, 7))}>→</button>
+            </div>
+            <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4]" onClick={exportReport}>
+              <Download className="h-3.5 w-3.5" /> Export Report
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          {kpi("Upsell Rate (Team Avg.)", pct(data.team.upsellRate), data.team.upsellRateDeltaVsLastWeek, `Target: ${pct(data.team.upsellRateTarget)}`)}
+          {kpi("Cross-sell Rate (Team Avg.)", pct(data.team.crossSellRate), data.team.crossSellRateDeltaVsLastWeek, `Target: ${pct(data.team.crossSellRateTarget)}`)}
+          {kpi("Customers Offered", data.team.customersOffered.toLocaleString(), data.team.customersOfferedDeltaPct, `vs last week: ${data.team.customersOfferedLastWeek}`)}
+          {kpi("Customers Upgraded", data.team.customersUpgraded.toLocaleString(), data.team.customersUpgradedDeltaPct, `vs last week: ${data.team.customersUpgradedLastWeek}`)}
+          {kpi("Additional Revenue", money(data.team.additionalRevenue), data.team.additionalRevenueDeltaPct)}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.4fr,1fr]">
+          <section id="upsell-by-rep-section" className="rounded-2xl border border-gray-200 bg-white p-5">
             <h2 className="m-0 text-base font-bold text-gray-900">Upsell &amp; Cross-sell by Rep</h2>
             {data.byRep.length === 0 ? (
               <p className="m-0 mt-3 text-sm italic text-gray-400">No active sales reps yet.</p>
             ) : (
               <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[560px] text-left text-sm">
+                <table className="w-full min-w-[640px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
                       <th className="py-2 pr-3 font-semibold">Rep</th>
@@ -59518,20 +59585,41 @@ ${waybillLineItems(w).length > 1
                       <th className="py-2 pr-3 font-semibold text-right">Cross-sell Rate</th>
                       <th className="py-2 pr-3 font-semibold text-right">Offered</th>
                       <th className="py-2 pr-3 font-semibold text-right">Upgraded</th>
-                      <th className="py-2 font-semibold text-right">Incremental Revenue</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Incremental Revenue</th>
+                      <th className="py-2 pr-3 font-semibold">Status</th>
+                      <th className="py-2 font-semibold"></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.byRep.map((rep: any) => (
-                      <tr key={rep.repId} className="border-b border-gray-50">
-                        <td className="py-2.5 pr-3 font-bold text-gray-900">{rep.name}</td>
-                        <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.upsellRate)}</td>
-                        <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.crossSellRate)}</td>
-                        <td className="py-2.5 pr-3 text-right text-gray-700">{rep.customersOffered}</td>
-                        <td className="py-2.5 pr-3 text-right text-gray-700">{rep.customersUpgraded}</td>
-                        <td className="py-2.5 text-right font-bold text-gray-900">{money(rep.incrementalRevenue)}</td>
-                      </tr>
-                    ))}
+                    {data.byRep.map((rep: any) => {
+                      const status = repStatus(rep);
+                      return (
+                        <tr key={rep.repId} className="border-b border-gray-50">
+                          <td className="py-2.5 pr-3 font-bold text-gray-900">{rep.name}</td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.upsellRate)}</td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.crossSellRate)}</td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">{rep.customersOffered}</td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">{rep.customersUpgraded}</td>
+                          <td className="py-2.5 pr-3 text-right font-bold text-gray-900">{money(rep.incrementalRevenue)}</td>
+                          <td className="py-2.5 pr-3"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${status.tone}`}>{status.label}</span></td>
+                          <td className="py-2.5">
+                            <button type="button" className="!min-h-0 text-xs font-bold text-[#1F8FE0] hover:underline"
+                              onClick={() => { setHeadOfSalesCoachingSelectedRepId(rep.repId); setHeadOfSalesSubPage("Rep Coaching"); }}>
+                              View Details
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="font-bold text-gray-900">
+                      <td className="py-2.5 pr-3">Team Average</td>
+                      <td className="py-2.5 pr-3 text-right">{pct(data.team.upsellRate)}</td>
+                      <td className="py-2.5 pr-3 text-right">{pct(data.team.crossSellRate)}</td>
+                      <td className="py-2.5 pr-3 text-right">{data.team.customersOffered}</td>
+                      <td className="py-2.5 pr-3 text-right">{data.team.customersUpgraded}</td>
+                      <td className="py-2.5 pr-3 text-right">{money(data.team.additionalRevenue)}</td>
+                      <td className="py-2.5 pr-3" colSpan={2}>—</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -59540,33 +59628,44 @@ ${waybillLineItems(w).length > 1
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5">
             <h2 className="m-0 text-base font-bold text-gray-900">Upsell &amp; Cross-sell Trend <span className="font-medium text-gray-400">(4-Week)</span></h2>
-            <div className="mt-4 flex h-32 items-end gap-2">
-              {data.trend.map((point: any) => {
-                const max = Math.max(...data.trend.map((p: any) => Math.max(p.upsellRate, p.crossSellRate)), 1);
-                return (
-                  <div key={point.weekStart} className="flex flex-1 flex-col items-center gap-1">
-                    <div className="flex w-full items-end justify-center gap-1" style={{ height: "80px" }}>
-                      <div className="w-2.5 rounded-t-sm bg-[#1F8FE0]" style={{ height: `${Math.max(4, (point.upsellRate / max) * 100)}%` }} title={`Upsell ${point.upsellRate}%`} />
-                      <div className="w-2.5 rounded-t-sm bg-violet-400" style={{ height: `${Math.max(4, (point.crossSellRate / max) * 100)}%` }} title={`Cross-sell ${point.crossSellRate}%`} />
-                    </div>
-                    <span className="text-[10px] text-gray-400">{new Date(point.weekStart).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span>
-                  </div>
-                );
-              })}
+            <div className="mt-3 h-40">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data.trend.map((point: any) => ({ ...point, label: formatDateOnly(point.weekStart) }))}>
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} unit="%" width={36} />
+                  <Tooltip formatter={(value: any) => `${value}%`} />
+                  <Line type="monotone" dataKey="upsellRate" name="Upsell Rate" stroke="#1F8FE0" strokeWidth={2} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="crossSellRate" name="Cross-sell Rate" stroke="#8B5CF6" strokeWidth={2} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="upsellRateTarget" name="Upsell Target" stroke="#1F8FE0" strokeDasharray="4 4" strokeWidth={1.5} dot={false} />
+                  <Line type="monotone" dataKey="crossSellRateTarget" name="Cross-sell Target" stroke="#8B5CF6" strokeDasharray="4 4" strokeWidth={1.5} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
             <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-500">
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#1F8FE0]" /> Upsell Rate</span>
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-400" /> Cross-sell Rate</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-4 border-t-2 border-dashed border-gray-400" /> Target</span>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-3 border-t border-gray-100 pt-3 text-sm">
-              <div><span className="text-gray-400">Upsell vs last week</span><strong className={`ml-2 font-bold ${data.team.upsellRateDeltaVsLastWeek >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{data.team.upsellRateDeltaVsLastWeek >= 0 ? "+" : ""}{data.team.upsellRateDeltaVsLastWeek}%</strong></div>
-              <div><span className="text-gray-400">Cross-sell vs last week</span><strong className={`ml-2 font-bold ${data.team.crossSellRateDeltaVsLastWeek >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{data.team.crossSellRateDeltaVsLastWeek >= 0 ? "+" : ""}{data.team.crossSellRateDeltaVsLastWeek}%</strong></div>
+            <div className="mt-3 space-y-1.5 border-t border-gray-100 pt-3 text-sm">
+              <strong className="block text-xs font-bold uppercase tracking-wide text-gray-400">This Week vs Target</strong>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-600">Upsell Rate</span>
+                <span className="flex items-center gap-1 font-bold text-gray-900">{pct(data.team.upsellRate)} / {pct(data.team.upsellRateTarget)} {data.team.upsellRate >= data.team.upsellRateTarget ? <span className="text-emerald-600">✓</span> : <span className="text-rose-500">✗</span>}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-600">Cross-sell Rate</span>
+                <span className="flex items-center gap-1 font-bold text-gray-900">{pct(data.team.crossSellRate)} / {pct(data.team.crossSellRateTarget)} {data.team.crossSellRate >= data.team.crossSellRateTarget ? <span className="text-emerald-600">✓</span> : <span className="text-rose-500">✗</span>}</span>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3 border-t border-gray-100 pt-3 text-sm">
+              <div><span className="block text-gray-400">Upsell vs last week</span><strong className={`font-bold ${data.team.upsellRateDeltaVsLastWeek >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{data.team.upsellRateDeltaVsLastWeek >= 0 ? "+" : ""}{data.team.upsellRateDeltaVsLastWeek}%</strong></div>
+              <div><span className="block text-gray-400">Cross-sell vs last week</span><strong className={`font-bold ${data.team.crossSellRateDeltaVsLastWeek >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{data.team.crossSellRateDeltaVsLastWeek >= 0 ? "+" : ""}{data.team.crossSellRateDeltaVsLastWeek}%</strong></div>
             </div>
           </section>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr,1fr]">
-          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr,1fr,0.9fr]">
+          <section id="upsell-top-offers-section" className="rounded-2xl border border-gray-200 bg-white p-5">
             <h2 className="m-0 text-base font-bold text-gray-900">Top Performing Upsell &amp; Cross-sell Offers</h2>
             {data.topOffers.length === 0 ? (
               <p className="m-0 mt-3 text-sm italic text-gray-400">Nothing offered yet this week.</p>
@@ -59580,38 +59679,97 @@ ${waybillLineItems(w).length > 1
                       <th className="py-2 pr-3 font-semibold text-right">Offered</th>
                       <th className="py-2 pr-3 font-semibold text-right">Accept Rate</th>
                       <th className="py-2 pr-3 font-semibold text-right">Delivered</th>
-                      <th className="py-2 font-semibold text-right">Revenue</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Revenue</th>
+                      <th className="py-2 font-semibold">Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.topOffers.map((offer: any) => (
-                      <tr key={`${offer.type}-${offer.label}`} className="border-b border-gray-50">
-                        <td className="py-2.5 pr-3 font-bold text-gray-900">{offer.label}</td>
-                        <td className="py-2.5 pr-3"><span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${offer.type === "Upsell" ? "bg-blue-50 text-blue-700" : "bg-violet-50 text-violet-700"}`}>{offer.type}</span></td>
-                        <td className="py-2.5 pr-3 text-right text-gray-700">{offer.offered}</td>
-                        <td className="py-2.5 pr-3 text-right text-gray-700">{pct(offer.acceptanceRatePct)}</td>
-                        <td className="py-2.5 pr-3 text-right text-gray-700">{offer.delivered}</td>
-                        <td className="py-2.5 text-right font-bold text-gray-900">{money(offer.revenue)}</td>
-                      </tr>
-                    ))}
+                    {data.topOffers.map((offer: any) => {
+                      const status = offerStatus(offer);
+                      return (
+                        <tr key={`${offer.type}-${offer.label}`} className="border-b border-gray-50">
+                          <td className="py-2.5 pr-3 font-bold text-gray-900">{offer.label}</td>
+                          <td className="py-2.5 pr-3"><span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${offer.type === "Upsell" ? "bg-blue-50 text-blue-700" : "bg-violet-50 text-violet-700"}`}>{offer.type}</span></td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">{offer.offered}</td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">{pct(offer.acceptanceRatePct)}</td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">{offer.delivered}</td>
+                          <td className="py-2.5 pr-3 text-right font-bold text-gray-900">{money(offer.revenue)}</td>
+                          <td className="py-2.5"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${status.tone}`}>{status.label}</span></td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
+            <button type="button" className="!min-h-0 mt-3 text-xs font-bold text-[#1F8FE0] hover:underline"
+              onClick={() => { setHeadOfSalesSubPage("Initiatives"); setHeadOfSalesInitiativeFormOpen(true); }}>
+              + Create New Offer / Initiative
+            </button>
+          </section>
+
+          <section id="upsell-funnel-section" className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-base font-bold text-gray-900">Offer Performance Funnel <span className="font-medium text-gray-400">(This Week)</span></h2>
+            <div className="mt-4 space-y-2">
+              {funnelStages.map((stage) => (
+                <div key={stage.label} className="flex items-center gap-3">
+                  <div className="w-20 shrink-0 text-right text-xs font-semibold text-gray-600">{stage.label}</div>
+                  <div className="h-9 flex-1 overflow-hidden rounded-lg bg-gray-100">
+                    <div className={`flex h-full items-center rounded-lg px-3 text-xs font-bold text-white ${stage.tone}`} style={{ width: `${Math.max(10, stage.pctOfPrev)}%` }}>
+                      {stage.value.toLocaleString()}
+                    </div>
+                  </div>
+                  <span className="w-12 shrink-0 text-right text-[11px] text-gray-400">{stage.label === "Offered" ? "100%" : `${stage.pctOfPrev}%`}</span>
+                </div>
+              ))}
+              <div className="flex items-center gap-3">
+                <div className="w-20 shrink-0 text-right text-xs font-semibold text-gray-600">Revenue</div>
+                <div className="h-9 flex-1 overflow-hidden rounded-lg bg-gray-100">
+                  <div className="flex h-full w-full items-center rounded-lg bg-emerald-600 px-3 text-xs font-bold text-white">{money(data.funnel.revenue)}</div>
+                </div>
+              </div>
+            </div>
+            <p className="m-0 mt-3 text-center text-[11px] text-gray-400">Average Revenue / Customer: <strong className="text-gray-700">{money(avgRevenuePerCustomer)}</strong></p>
           </section>
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5">
-            <h2 className="m-0 text-base font-bold text-gray-900">Offer Performance Funnel <span className="font-medium text-gray-400">(This Week)</span></h2>
-            <div className="mt-4 space-y-2">
-              {funnelStep("Offered", data.funnel.offered, "bg-blue-500")}
-              {funnelStep("Upgraded", data.funnel.accepted, "bg-violet-500")}
-              {funnelStep("Delivered", data.funnel.delivered, "bg-emerald-500")}
+            <h2 className="m-0 text-sm font-bold text-gray-900">Quick Actions</h2>
+            <div className="mt-3 space-y-1">
+              {[
+                { label: "Analyze Low Performing Offers", hint: "Identify offers that need improvement", onClick: () => scrollToSection("upsell-top-offers-section") },
+                { label: "Create New Upsell Script", hint: "Add a new upgrade strategy", onClick: () => { setHeadOfSalesSubPage("Initiatives"); setHeadOfSalesInitiativeFormOpen(true); } },
+                { label: "View Offer Performance", hint: "Detailed breakdown by offer", onClick: () => scrollToSection("upsell-funnel-section") },
+                { label: "Assign Offer to Reps", hint: "Roll out specific offers to the team", onClick: () => scrollToSection("upsell-by-rep-section") }
+              ].map((action) => (
+                <button key={action.label} type="button" onClick={action.onClick}
+                  className="!min-h-0 flex w-full items-center justify-between rounded-lg px-2 py-2 text-left hover:bg-gray-50">
+                  <span>
+                    <strong className="block text-sm font-bold text-gray-900">{action.label}</strong>
+                    <span className="text-[11px] text-gray-400">{action.hint}</span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" />
+                </button>
+              ))}
             </div>
-            <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs text-gray-500">
-              <div>{data.funnel.offered > 0 ? Math.round((data.funnel.accepted / data.funnel.offered) * 100) : 0}% accepted</div>
-              <div>{data.funnel.accepted > 0 ? Math.round((data.funnel.delivered / data.funnel.accepted) * 100) : 0}% delivered</div>
-              <div className="font-bold text-emerald-700">{money(data.funnel.revenue)} revenue</div>
-            </div>
+          </section>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-sm font-bold text-gray-900">Key Insights This Week</h2>
+            <ul className="m-0 mt-3 list-none space-y-1.5 p-0">
+              {keyInsights.map((insight, index) => (
+                <li key={index} className="flex items-start gap-2 text-sm text-gray-700"><span className="mt-0.5 shrink-0 text-emerald-600">✓</span> {insight}</li>
+              ))}
+            </ul>
+          </section>
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-sm font-bold text-gray-900">Recommended Focus</h2>
+            <ul className="m-0 mt-3 list-none space-y-1.5 p-0">
+              {recommendedFocus.map((focus, index) => (
+                <li key={index} className="flex items-start gap-2 text-sm text-gray-700"><span className="mt-0.5 shrink-0 text-sky-600">✓</span> {focus}</li>
+              ))}
+            </ul>
           </section>
         </div>
       </div>
