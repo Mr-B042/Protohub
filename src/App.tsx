@@ -11886,9 +11886,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesLearningSaving, setHeadOfSalesLearningSaving] = useState(false);
   const [headOfSalesWeeklyReport, setHeadOfSalesWeeklyReport] = useState<any | null>(null);
   const [headOfSalesWeeklyReportLivePreview, setHeadOfSalesWeeklyReportLivePreview] = useState<any | null>(null);
+  const [headOfSalesWeeklyReportWeekSummary, setHeadOfSalesWeeklyReportWeekSummary] = useState<any | null>(null);
+  const [headOfSalesWeeklyReportTests, setHeadOfSalesWeeklyReportTests] = useState<any[]>([]);
   const [headOfSalesWeeklyReportLoading, setHeadOfSalesWeeklyReportLoading] = useState(false);
   const [headOfSalesWeeklyReportError, setHeadOfSalesWeeklyReportError] = useState("");
-  const [headOfSalesWeeklyReportForm, setHeadOfSalesWeeklyReportForm] = useState({ summaryWins: "", summaryChallenges: "", nextWeekPlan: "" });
+  const [headOfSalesWeeklyReportForm, setHeadOfSalesWeeklyReportForm] = useState({
+    summaryWins: "", summaryChallenges: "", nextWeekPlan: "", keyLearnings: "", additionalNotes: "",
+    focusTargetAov: "", focusTargetDeliveryRate: "", focusTargetUpsellRate: ""
+  });
   const [headOfSalesWeeklyReportSaving, setHeadOfSalesWeeklyReportSaving] = useState(false);
   const [headOfSalesWeeklyReportSubmitting, setHeadOfSalesWeeklyReportSubmitting] = useState(false);
   const [headOfSalesWeeklyReportWeekStart, setHeadOfSalesWeeklyReportWeekStart] = useState("");
@@ -43840,6 +43845,8 @@ ${waybillLineItems(w).length > 1
       const result = await headOfSalesApi.weeklyReport(headOfSalesViewingId, headOfSalesWeeklyReportWeekStart || undefined);
       setHeadOfSalesWeeklyReport(result?.report ?? null);
       setHeadOfSalesWeeklyReportLivePreview(result?.livePreview ?? null);
+      setHeadOfSalesWeeklyReportWeekSummary(result?.weekSummary ?? null);
+      setHeadOfSalesWeeklyReportTests(result?.testsThisWeek ?? []);
       if (result?.weekStart && result.weekStart !== headOfSalesWeeklyReportWeekStart) {
         setHeadOfSalesWeeklyReportWeekStart(result.weekStart);
       }
@@ -43853,7 +43860,12 @@ ${waybillLineItems(w).length > 1
       setHeadOfSalesWeeklyReportForm({
         summaryWins: result?.report?.summaryWins ?? "",
         summaryChallenges: result?.report?.summaryChallenges ?? "",
-        nextWeekPlan: result?.report?.nextWeekPlan ?? ""
+        nextWeekPlan: result?.report?.nextWeekPlan ?? "",
+        keyLearnings: result?.report?.keyLearnings ?? "",
+        additionalNotes: result?.report?.additionalNotes ?? "",
+        focusTargetAov: result?.report?.focusTargetAov != null ? String(result.report.focusTargetAov) : "",
+        focusTargetDeliveryRate: result?.report?.focusTargetDeliveryRate != null ? String(result.report.focusTargetDeliveryRate) : "",
+        focusTargetUpsellRate: result?.report?.focusTargetUpsellRate != null ? String(result.report.focusTargetUpsellRate) : ""
       });
     } catch (error: any) {
       setHeadOfSalesWeeklyReportError(error?.message ?? "Could not load the Weekly Report.");
@@ -43866,18 +43878,25 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesWeeklyReportWeekStart]);
 
+  const buildWeeklyReportSavePayload = () => ({
+    repId: headOfSalesViewingId as string,
+    weekStart: headOfSalesWeeklyReportWeekStart,
+    summaryWins: headOfSalesWeeklyReportForm.summaryWins.trim() || undefined,
+    summaryChallenges: headOfSalesWeeklyReportForm.summaryChallenges.trim() || undefined,
+    nextWeekPlan: headOfSalesWeeklyReportForm.nextWeekPlan.trim() || undefined,
+    keyLearnings: headOfSalesWeeklyReportForm.keyLearnings.trim() || undefined,
+    additionalNotes: headOfSalesWeeklyReportForm.additionalNotes.trim() || undefined,
+    focusTargetAov: headOfSalesWeeklyReportForm.focusTargetAov ? Number(headOfSalesWeeklyReportForm.focusTargetAov) : undefined,
+    focusTargetDeliveryRate: headOfSalesWeeklyReportForm.focusTargetDeliveryRate ? Number(headOfSalesWeeklyReportForm.focusTargetDeliveryRate) : undefined,
+    focusTargetUpsellRate: headOfSalesWeeklyReportForm.focusTargetUpsellRate ? Number(headOfSalesWeeklyReportForm.focusTargetUpsellRate) : undefined
+  });
+
   const saveHeadOfSalesWeeklyReportDraft = async () => {
     if (!headOfSalesViewingId || !headOfSalesWeeklyReportWeekStart) return;
     setHeadOfSalesWeeklyReportSaving(true);
     setHeadOfSalesWeeklyReportError("");
     try {
-      await headOfSalesApi.saveWeeklyReport({
-        repId: headOfSalesViewingId,
-        weekStart: headOfSalesWeeklyReportWeekStart,
-        summaryWins: headOfSalesWeeklyReportForm.summaryWins.trim() || undefined,
-        summaryChallenges: headOfSalesWeeklyReportForm.summaryChallenges.trim() || undefined,
-        nextWeekPlan: headOfSalesWeeklyReportForm.nextWeekPlan.trim() || undefined
-      });
+      await headOfSalesApi.saveWeeklyReport(buildWeeklyReportSavePayload());
       await loadHeadOfSalesWeeklyReport();
     } catch (error: any) {
       setHeadOfSalesWeeklyReportError(error?.message ?? "Could not save the draft.");
@@ -43893,13 +43912,7 @@ ${waybillLineItems(w).length > 1
     try {
       // Submitting locks the week, so the latest draft text goes in first -
       // a submit should never leave the last few edits stranded.
-      await headOfSalesApi.saveWeeklyReport({
-        repId: headOfSalesViewingId,
-        weekStart: headOfSalesWeeklyReportWeekStart,
-        summaryWins: headOfSalesWeeklyReportForm.summaryWins.trim() || undefined,
-        summaryChallenges: headOfSalesWeeklyReportForm.summaryChallenges.trim() || undefined,
-        nextWeekPlan: headOfSalesWeeklyReportForm.nextWeekPlan.trim() || undefined
-      });
+      await headOfSalesApi.saveWeeklyReport(buildWeeklyReportSavePayload());
       await headOfSalesApi.submitWeeklyReport({ repId: headOfSalesViewingId, weekStart: headOfSalesWeeklyReportWeekStart });
       await loadHeadOfSalesWeeklyReport();
     } catch (error: any) {
@@ -60358,33 +60371,80 @@ ${waybillLineItems(w).length > 1
     }
 
     const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const pct = (value: number) => `${value}%`;
     const report = headOfSalesWeeklyReport;
     const snapshot = report?.performanceSnapshot ?? headOfSalesWeeklyReportLivePreview;
-    const weekEnd = snapshot?.weekEnd ?? "";
+    const weekEnd = snapshot?.weekEnd ?? (headOfSalesWeeklyReportWeekStart ? shiftDateKey(headOfSalesWeeklyReportWeekStart, 6) : "");
     const isSubmitted = Boolean(report?.submittedAt);
     const isCurrentWeek = Boolean(headOfSalesWeeklyReportCurrentWeekStart)
       && headOfSalesWeeklyReportWeekStart >= headOfSalesWeeklyReportCurrentWeekStart;
+    const summary = headOfSalesWeeklyReportWeekSummary;
+    const form = headOfSalesWeeklyReportForm;
+
+    const bulletList = (text: string, icon: ReactNode, empty: string) => {
+      const items = text.split("\n").map((line) => line.trim()).filter(Boolean);
+      if (items.length === 0) return <p className="m-0 text-sm italic text-gray-400">{empty}</p>;
+      return (
+        <ul className="m-0 list-none space-y-1.5 p-0">
+          {items.map((item, index) => (
+            <li key={index} className="flex items-start gap-2 text-sm text-gray-700">
+              <span className="mt-0.5 shrink-0">{icon}</span> {item}
+            </li>
+          ))}
+        </ul>
+      );
+    };
+
+    const exportReport = () => triggerCsvDownload(
+      "weekly-report",
+      [
+        ["Field", "Value"],
+        ["Week", `${formatDateOnly(headOfSalesWeeklyReportWeekStart)} - ${formatDateOnly(weekEnd)}`],
+        ["Team AOV", summary ? money(summary.teamAov.actual) : ""],
+        ["Delivery Rate", summary ? pct(summary.deliveryRate.actual) : ""],
+        ["Upsell Rate", summary ? pct(summary.upsellRate.actual) : ""],
+        ["Cross-sell Rate", summary ? pct(summary.crossSellRate.actual) : ""],
+        ["Incremental Revenue", summary ? money(summary.incrementalRevenue.actual) : ""],
+        ["What worked", form.summaryWins],
+        ["What didn't work", form.summaryChallenges],
+        ["Key learnings", form.keyLearnings],
+        ["Next week's plan", form.nextWeekPlan],
+        ["Focus - Team AOV target", form.focusTargetAov],
+        ["Focus - Delivery rate target", form.focusTargetDeliveryRate],
+        ["Focus - Upsell rate target", form.focusTargetUpsellRate],
+        ["Additional notes", form.additionalNotes]
+      ],
+      "Weekly report exported"
+    );
+
+    const summaryCard = (label: string, value: string, baselineLabel: string, deltaPct: number) => (
+      <div className="rounded-2xl border border-gray-200 bg-white p-4">
+        <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">{label}</span>
+        <strong className="mt-1 block text-xl font-black text-gray-900">{value}</strong>
+        <span className="text-[11px] text-gray-400">{baselineLabel}</span>
+        <span className={`mt-0.5 block text-[11px] font-bold ${deltaPct >= 0 ? "text-emerald-600" : "text-rose-500"}`}>{deltaPct >= 0 ? "↑" : "↓"} {Math.abs(deltaPct)}%</span>
+      </div>
+    );
 
     return (
       <div className="space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="m-0 text-base font-bold text-gray-900">Weekly Report</h2>
-            <p className="m-0 mt-0.5 text-xs text-gray-500">
-              Week of {formatDateOnly(headOfSalesWeeklyReportWeekStart)}{weekEnd ? ` – ${formatDateOnly(weekEnd)}` : ""}
-              {isSubmitted ? <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">Submitted</span>
-                : <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700">Draft</span>}
-            </p>
+            <h2 className="m-0 text-xl font-bold text-gray-900">Weekly Report</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Document your weekly tests, results, learnings and action plan.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <button type="button" className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50"
-              onClick={() => setHeadOfSalesWeeklyReportWeekStart((w) => shiftDateKey(w, -7))}>
-              ← Previous week
-            </button>
-            <button type="button" disabled={isCurrentWeek}
-              className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
-              onClick={() => setHeadOfSalesWeeklyReportWeekStart((w) => shiftDateKey(w, 7))}>
-              Next week →
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
+              <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesWeeklyReportWeekStart((w) => shiftDateKey(w, -7))}>←</button>
+              <span className="px-1 text-xs font-semibold text-gray-700">
+                {formatDateOnly(headOfSalesWeeklyReportWeekStart)}{weekEnd ? ` – ${formatDateOnly(weekEnd)}` : ""}
+                {isSubmitted ? <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">Submitted</span>
+                  : <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700">Draft</span>}
+              </span>
+              <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesWeeklyReportWeekStart((w) => shiftDateKey(w, 7))}>→</button>
+            </div>
+            <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={exportReport}>
+              <Download className="h-3.5 w-3.5" /> Export Report
             </button>
           </div>
         </div>
@@ -60393,59 +60453,184 @@ ${waybillLineItems(w).length > 1
           <p className="m-0 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{headOfSalesWeeklyReportError}</p>
         )}
 
-        {snapshot && (
-          <section className="rounded-2xl border border-gray-200 bg-white p-5">
-            <h3 className="m-0 text-sm font-bold text-gray-900">This Week's Numbers{isSubmitted ? " (frozen at submission)" : ""}</h3>
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-xl border border-gray-200 px-4 py-3">
-                <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Total Weighted Score</span>
-                <strong className="mt-1 block text-xl font-black text-gray-900">{snapshot.totalWeightedScore}</strong>
-              </div>
-              <div className="rounded-xl border border-gray-200 px-4 py-3">
-                <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Initiatives Active</span>
-                <strong className="mt-1 block text-xl font-black text-gray-900">{snapshot.initiativesActive}</strong>
-              </div>
-              <div className="rounded-xl border border-gray-200 px-4 py-3">
-                <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Completed This Week</span>
-                <strong className="mt-1 block text-xl font-black text-gray-900">{snapshot.initiativesCompletedThisWeek}</strong>
-              </div>
-              <div className="rounded-xl border border-gray-200 px-4 py-3">
-                <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Successful This Week</span>
-                <strong className="mt-1 block text-xl font-black text-gray-900">{snapshot.initiativesSuccessfulThisWeek}</strong>
-              </div>
+        {summary && (
+          <section>
+            <h3 className="m-0 mb-2 text-sm font-bold text-gray-900">Week Summary</h3>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+              {summaryCard("Team AOV", money(summary.teamAov.actual), `vs baseline ${money(summary.teamAov.baseline)}`, summary.teamAov.deltaPct)}
+              {summaryCard("Delivery Rate", pct(summary.deliveryRate.actual), `Target: ≥ ${pct(summary.deliveryRate.baseline)}`, summary.deliveryRate.deltaPct)}
+              {summaryCard("Upsell Rate", pct(summary.upsellRate.actual), `vs baseline ${pct(summary.upsellRate.baseline)}`, summary.upsellRate.deltaPct)}
+              {summaryCard("Cross-sell Rate", pct(summary.crossSellRate.actual), `vs baseline ${pct(summary.crossSellRate.baseline)}`, summary.crossSellRate.deltaPct)}
+              {summaryCard("Incremental Revenue", money(summary.incrementalRevenue.actual), `vs baseline ${money(summary.incrementalRevenue.baseline)}`, summary.incrementalRevenue.deltaPct)}
             </div>
-            <p className="m-0 mt-3 text-[11px] text-gray-400">See Weekly Scorecard for the full metric-by-metric breakdown.</p>
           </section>
         )}
 
-        <section className="rounded-2xl border border-gray-200 bg-white p-5">
-          <h3 className="m-0 text-sm font-bold text-gray-900">Narrative</h3>
-          <div className="mt-3 space-y-3">
-            <div>
-              <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-gray-400">Wins This Week</label>
-              <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={3}
-                disabled={isSubmitted}
-                value={headOfSalesWeeklyReportForm.summaryWins}
-                onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, summaryWins: e.target.value }))} />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-gray-400">Challenges</label>
-              <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={3}
-                disabled={isSubmitted}
-                value={headOfSalesWeeklyReportForm.summaryChallenges}
-                onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, summaryChallenges: e.target.value }))} />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-gray-400">Plan For Next Week</label>
-              <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={3}
-                disabled={isSubmitted}
-                value={headOfSalesWeeklyReportForm.nextWeekPlan}
-                onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, nextWeekPlan: e.target.value }))} />
-            </div>
-          </div>
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">1. What did we test this week?</h3>
+            {headOfSalesWeeklyReportTests.length === 0 ? (
+              <p className="m-0 mt-3 text-sm italic text-gray-400">No initiatives touching this week yet.</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[440px] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                      <th className="py-2 pr-3">Test / Initiative</th>
+                      <th className="py-2 pr-3">Type</th>
+                      <th className="py-2 pr-3">Target Segment</th>
+                      <th className="py-2 pr-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {headOfSalesWeeklyReportTests.map((test: any) => (
+                      <tr key={test.id} className="border-b border-gray-50">
+                        <td className="py-2 pr-3">
+                          <strong className="block text-gray-900">{test.title}</strong>
+                          {test.description && <span className="block text-[11px] text-gray-400">{test.description}</span>}
+                        </td>
+                        <td className="py-2 pr-3"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-600">{test.initiativeType}</span></td>
+                        <td className="py-2 pr-3 text-gray-500">{test.targetSegment ?? "—"}</td>
+                        <td className="py-2 pr-3"><span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700">{test.status}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <button type="button" className="!min-h-0 mt-3 text-xs font-bold text-[#1F8FE0] hover:underline"
+              onClick={() => { setHeadOfSalesSubPage("Initiatives"); setHeadOfSalesInitiativeFormOpen(true); }}>
+              + Add Test / Initiative
+            </button>
+          </section>
 
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">2. Performance Results</h3>
+            {headOfSalesWeeklyReportTests.length === 0 ? (
+              <p className="m-0 mt-3 text-sm italic text-gray-400">Nothing to report yet.</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[440px] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                      <th className="py-2 pr-3">Initiative</th>
+                      <th className="py-2 pr-3">Offered</th>
+                      <th className="py-2 pr-3">Accepted</th>
+                      <th className="py-2 pr-3">Delivered</th>
+                      <th className="py-2 pr-3">Incremental Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {headOfSalesWeeklyReportTests.map((test: any) => (
+                      <tr key={test.id} className="border-b border-gray-50">
+                        <td className="py-2 pr-3 font-semibold text-gray-900">{test.title}</td>
+                        <td className="py-2 pr-3 text-gray-700">{test.customersOffered}</td>
+                        <td className="py-2 pr-3 text-gray-700">
+                          {test.customersAccepted}
+                          {test.customersOffered > 0 && <span className="block text-[10px] text-gray-400">{Math.round((test.customersAccepted / test.customersOffered) * 1000) / 10}%</span>}
+                        </td>
+                        <td className="py-2 pr-3 text-gray-700">{test.customersDelivered}</td>
+                        <td className="py-2 pr-3 font-bold text-gray-900">{money(test.incrementalRevenue)}</td>
+                      </tr>
+                    ))}
+                    <tr className="font-bold text-gray-900">
+                      <td className="py-2 pr-3">Total</td>
+                      <td className="py-2 pr-3">{headOfSalesWeeklyReportTests.reduce((sum: number, t: any) => sum + t.customersOffered, 0)}</td>
+                      <td className="py-2 pr-3">{headOfSalesWeeklyReportTests.reduce((sum: number, t: any) => sum + t.customersAccepted, 0)}</td>
+                      <td className="py-2 pr-3">{headOfSalesWeeklyReportTests.reduce((sum: number, t: any) => sum + t.customersDelivered, 0)}</td>
+                      <td className="py-2 pr-3">{money(headOfSalesWeeklyReportTests.reduce((sum: number, t: any) => sum + t.incrementalRevenue, 0))}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">3. What worked?</h3>
+            <textarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
+              placeholder="One point per line" disabled={isSubmitted}
+              value={form.summaryWins}
+              onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, summaryWins: e.target.value }))} />
+            {isSubmitted && <div className="mt-2">{bulletList(form.summaryWins, <span className="text-emerald-600">✓</span>, "Nothing logged.")}</div>}
+          </section>
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">4. What didn't work?</h3>
+            <textarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
+              placeholder="One point per line" disabled={isSubmitted}
+              value={form.summaryChallenges}
+              onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, summaryChallenges: e.target.value }))} />
+            {isSubmitted && <div className="mt-2">{bulletList(form.summaryChallenges, <span className="text-rose-500">✗</span>, "Nothing logged.")}</div>}
+          </section>
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">5. Key Learnings</h3>
+            <textarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
+              placeholder="One point per line" disabled={isSubmitted}
+              value={form.keyLearnings}
+              onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, keyLearnings: e.target.value }))} />
+            {isSubmitted && <div className="mt-2">{bulletList(form.keyLearnings, <Info className="h-3.5 w-3.5 text-blue-500" />, "Nothing logged.")}</div>}
+          </section>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5 lg:col-span-2">
+            <h3 className="m-0 text-sm font-bold text-gray-900">6. What are we doing next week?</h3>
+            <textarea className="mt-3 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={4}
+              placeholder="One action per line" disabled={isSubmitted}
+              value={form.nextWeekPlan}
+              onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, nextWeekPlan: e.target.value }))} />
+            {isSubmitted && <div className="mt-2">{bulletList(form.nextWeekPlan, <span className="h-3 w-3 rounded-full border border-gray-300" />, "Nothing planned.")}</div>}
+          </section>
+
+          <section className="rounded-2xl border border-violet-200 bg-violet-50/40 p-5">
+            <div className="flex items-center gap-1.5">
+              <Target className="h-4 w-4 text-violet-600" />
+              <h3 className="m-0 text-sm font-bold text-gray-900">Focus Goal</h3>
+            </div>
+            {isSubmitted ? (
+              <div className="mt-2 space-y-1 text-sm text-gray-700">
+                <p className="m-0">Increase Team AOV to <strong>{form.focusTargetAov ? money(Number(form.focusTargetAov)) : "—"}</strong></p>
+                <p className="m-0">Maintain delivery rate ≥ {form.focusTargetDeliveryRate ? `${form.focusTargetDeliveryRate}%` : "—"}</p>
+                <p className="m-0">Improve upsell rate to ≥ {form.focusTargetUpsellRate ? `${form.focusTargetUpsellRate}%` : "—"}</p>
+              </div>
+            ) : (
+              <div className="mt-2 space-y-2">
+                <label className="block text-[11px] text-gray-500">Team AOV target (₦)
+                  <input type="number" min="0" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                    value={form.focusTargetAov} onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, focusTargetAov: e.target.value }))} />
+                </label>
+                <label className="block text-[11px] text-gray-500">Delivery rate target (%)
+                  <input type="number" min="0" max="100" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                    value={form.focusTargetDeliveryRate} onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, focusTargetDeliveryRate: e.target.value }))} />
+                </label>
+                <label className="block text-[11px] text-gray-500">Upsell rate target (%)
+                  <input type="number" min="0" max="100" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                    value={form.focusTargetUpsellRate} onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, focusTargetUpsellRate: e.target.value }))} />
+                </label>
+              </div>
+            )}
+          </section>
+        </div>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <h3 className="m-0 text-sm font-bold text-gray-900">7. Additional Notes</h3>
+          <textarea className="mt-3 w-full rounded-lg border border-gray-200 bg-amber-50/40 p-3 text-sm disabled:bg-amber-50/40 disabled:text-gray-700" rows={3}
+            disabled={isSubmitted}
+            value={form.additionalNotes}
+            onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, additionalNotes: e.target.value }))} />
+          {isSubmitted && headOfSalesViewingUser && (
+            <p className="m-0 mt-2 text-[11px] text-gray-500">
+              <strong className="text-gray-700">{headOfSalesViewingUser.name}</strong>, Head of Sales Rep · {formatDateTime(report?.submittedAt)}
+            </p>
+          )}
+        </section>
+
+        <p className="m-0 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-blue-50/60 px-4 py-3 text-xs text-blue-800">
+          <span className="flex items-center gap-1.5"><Info className="h-3.5 w-3.5 shrink-0" /> Weekly reports help track leadership impact. Be honest, specific and action-focused.</span>
           {!isSubmitted && (
-            <div className="mt-4 flex flex-wrap gap-2">
+            <span className="flex gap-2">
               <button type="button" disabled={headOfSalesWeeklyReportSaving || headOfSalesWeeklyReportSubmitting}
                 className="!min-h-0 rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 onClick={() => void saveHeadOfSalesWeeklyReportDraft()}>
@@ -60454,12 +60639,11 @@ ${waybillLineItems(w).length > 1
               <button type="button" disabled={headOfSalesWeeklyReportSaving || headOfSalesWeeklyReportSubmitting}
                 className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
                 onClick={() => void submitHeadOfSalesWeeklyReport()}>
-                {headOfSalesWeeklyReportSubmitting ? "Submitting..." : "Submit Report"}
+                {headOfSalesWeeklyReportSubmitting ? "Submitting..." : "✓ Mark Week as Completed"}
               </button>
-              <span className="self-center text-[11px] text-gray-400">Submitting locks this week's numbers and text.</span>
-            </div>
+            </span>
           )}
-        </section>
+        </p>
       </div>
     );
   };
