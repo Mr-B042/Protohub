@@ -1539,7 +1539,21 @@ export const headOfSalesApi = {
     repId: string; weekStart: string; summaryWins?: string; summaryChallenges?: string; nextWeekPlan?: string;
   }) => put<any>("/api/head-of-sales-rep/weekly-report", body),
   submitWeeklyReport: (body: { repId: string; weekStart: string }) =>
-    post<any>("/api/head-of-sales-rep/weekly-report/submit", body)
+    post<any>("/api/head-of-sales-rep/weekly-report/submit", body),
+  bonusSettings: (repId: string) =>
+    get<any>(`/api/head-of-sales-rep/bonus-settings?${new URLSearchParams({ repId }).toString()}`),
+  updateBonusSettings: (body: { repId: string; currency?: string; tiers: any[] }) =>
+    patch<any>("/api/head-of-sales-rep/bonus-settings", body),
+  bonusPayouts: (repId: string, weekStart?: string) => {
+    const params = new URLSearchParams({ repId });
+    if (weekStart) params.set("weekStart", weekStart);
+    return get<any>(`/api/head-of-sales-rep/bonus-payouts?${params.toString()}`);
+  },
+  saveBonusPayout: (body: {
+    repId: string; weekStart: string; upsellImprovement?: boolean; initiativeSuccess?: boolean; notes?: string;
+  }) => put<any>("/api/head-of-sales-rep/bonus-payouts", body),
+  markBonusPaid: (body: { repId: string; weekStart: string }) =>
+    post<any>("/api/head-of-sales-rep/bonus-payouts/mark-paid", body)
 };
 
 export const repWeeklyTargetsApi = {
