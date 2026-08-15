@@ -43489,8 +43489,15 @@ ${waybillLineItems(w).length > 1
     setHeadOfSalesTeamPerformanceLoading(true);
     setHeadOfSalesTeamPerformanceError("");
     try {
+      const wasUnset = !headOfSalesOverviewWeekStart;
       const result = await headOfSalesApi.teamPerformance(headOfSalesViewingId, headOfSalesOverviewWeekStart || undefined);
       setHeadOfSalesTeamPerformance(result);
+      if (result?.weekStart && result.weekStart !== headOfSalesOverviewWeekStart) {
+        setHeadOfSalesOverviewWeekStart(result.weekStart);
+      }
+      if (wasUnset && result?.weekStart) {
+        setHeadOfSalesOverviewCurrentWeekStart(result.weekStart);
+      }
     } catch (error: any) {
       setHeadOfSalesTeamPerformanceError(error?.message ?? "Could not load Team Performance.");
     } finally {
@@ -59340,57 +59347,105 @@ ${waybillLineItems(w).length > 1
     const dist = data.repImprovement.distribution;
     const distTotal = Math.max(1, dist.improvedOver5 + dist.improved1to5 + dist.noChange + dist.declined);
     const distSegments = [
-      { label: "Improved > 5%", value: dist.improvedOver5, color: "bg-emerald-500", dot: "bg-emerald-500" },
-      { label: "Improved 1% - 5%", value: dist.improved1to5, color: "bg-emerald-300", dot: "bg-emerald-300" },
-      { label: "No Change", value: dist.noChange, color: "bg-gray-300", dot: "bg-gray-300" },
-      { label: "Declined", value: dist.declined, color: "bg-rose-500", dot: "bg-rose-500" }
+      { label: "Improved > 5%", value: dist.improvedOver5, color: "bg-emerald-500", dot: "bg-emerald-500", dotHex: "#10B981" },
+      { label: "Improved 1% - 5%", value: dist.improved1to5, color: "bg-emerald-300", dot: "bg-emerald-300", dotHex: "#6EE7B7" },
+      { label: "No Change", value: dist.noChange, color: "bg-gray-300", dot: "bg-gray-300", dotHex: "#D1D5DB" },
+      { label: "Declined", value: dist.declined, color: "bg-rose-500", dot: "bg-rose-500", dotHex: "#F43F5E" }
     ];
 
-    const trendTable = (title: string, trend: any[], format: (value: number) => string) => (
-      <section className="rounded-2xl border border-gray-200 bg-white p-5">
-        <h2 className="m-0 text-base font-bold text-gray-900">{title} <span className="font-medium text-gray-400">(4-Week Trend)</span></h2>
-        {trend.length === 0 ? (
-          <p className="m-0 mt-3 text-sm italic text-gray-400">No active sales reps yet.</p>
-        ) : (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full min-w-[420px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
-                  <th className="py-2 pr-3 font-semibold">Rep</th>
-                  {trend[0]?.series.map((point: any) => (
-                    <th key={point.weekStart} className="py-2 pr-3 font-semibold text-right">
-                      {new Date(point.weekStart).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {trend.map((rep) => (
-                  <tr key={rep.repId} className="border-b border-gray-50">
-                    <td className="py-2 pr-3 font-bold text-gray-900">{rep.name}</td>
-                    {rep.series.map((point: any, index: number) => {
-                      const prior = index > 0 ? rep.series[index - 1].value : null;
-                      const up = prior !== null && point.value > prior;
-                      const down = prior !== null && point.value < prior;
-                      return (
-                        <td key={point.weekStart} className="py-2 pr-3 text-right text-gray-700">
-                          {format(point.value)}
-                          {up && <TrendingUp className="ml-1 inline h-3 w-3 text-emerald-500" />}
-                          {down && <TrendingUp className="ml-1 inline h-3 w-3 rotate-180 text-rose-500" />}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+    const REP_TREND_COLORS = ["#1F8FE0", "#10B981", "#8B5CF6", "#F59E0B", "#EF4444", "#EC4899"];
+    const reshapeTrendForChart = (trend: any[]) => {
+      if (trend.length === 0) return [];
+      const weeks = trend[0].series.map((point: any) => point.weekStart);
+      return weeks.map((weekStart: string, index: number) => {
+        const row: any = { weekStart, label: formatDateOnly(weekStart) };
+        trend.forEach((rep: any) => { row[rep.name] = rep.series[index]?.value ?? 0; });
+        row.teamAverage = trend.length > 0 ? Math.round((trend.reduce((sum: number, rep: any) => sum + (rep.series[index]?.value ?? 0), 0) / trend.length) * 100) / 100 : 0;
+        return row;
+      });
+    };
+    // Real recharts line chart (replacing the earlier hand-built HTML
+    // trend table) - one Line per rep plus a dashed Team Average, with a
+    // legend showing each rep's latest value and week-over-week delta,
+    // matching the supplied design rather than a raw numbers table.
+    const trendChart = (title: string, trend: any[], format: (value: number) => string, isPct: boolean) => {
+      const rows = reshapeTrendForChart(trend);
+      return (
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <h2 className="m-0 text-base font-bold text-gray-900">{title} <span className="font-medium text-gray-400">(4-Week Trend)</span></h2>
+          {trend.length === 0 ? (
+            <p className="m-0 mt-3 text-sm italic text-gray-400">No active sales reps yet.</p>
+          ) : (
+            <>
+              <div className="mt-3 h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={rows}>
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 10 }} width={isPct ? 36 : 52} tickFormatter={(v) => isPct ? `${v}%` : `₦${Math.round(Number(v) / 1000)}k`} />
+                    <Tooltip formatter={(value: any) => format(Number(value))} />
+                    {trend.map((rep: any, index: number) => (
+                      <Line key={rep.repId} type="monotone" dataKey={rep.name} stroke={REP_TREND_COLORS[index % REP_TREND_COLORS.length]} strokeWidth={2} dot={{ r: 3 }} />
+                    ))}
+                    <Line type="monotone" dataKey="teamAverage" name="Team Average" stroke="#9CA3AF" strokeDasharray="4 4" strokeWidth={1.5} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <ul className="m-0 mt-3 list-none space-y-1 p-0 text-xs">
+                {trend.map((rep: any, index: number) => {
+                  const series = rep.series;
+                  const latest = series[series.length - 1]?.value ?? 0;
+                  const prior = series.length > 1 ? series[series.length - 2].value : null;
+                  const deltaPct = prior !== null && prior > 0 ? Math.round(((latest - prior) / prior) * 1000) / 10 : null;
+                  return (
+                    <li key={rep.repId} className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 text-gray-600"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: REP_TREND_COLORS[index % REP_TREND_COLORS.length] }} /> {rep.name}</span>
+                      <span className="font-bold text-gray-900">
+                        {format(latest)}
+                        {deltaPct !== null && <span className={`ml-1.5 ${deltaPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{deltaPct >= 0 ? "↑" : "↓"} {Math.abs(deltaPct)}%</span>}
+                      </span>
+                    </li>
+                  );
+                })}
+                <li className="flex items-center justify-between gap-2 border-t border-gray-100 pt-1.5 font-bold text-gray-700">
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-4 border-t-2 border-dashed border-gray-400" /> Team Average</span>
+                  <span>{format(rows[rows.length - 1]?.teamAverage ?? 0)}</span>
+                </li>
+              </ul>
+            </>
+          )}
+        </section>
+      );
+    };
+
+    const isCurrentWeek = Boolean(headOfSalesOverviewCurrentWeekStart) && headOfSalesOverviewWeekStart >= headOfSalesOverviewCurrentWeekStart;
+    const exportReport = () => triggerCsvDownload(
+      "team-performance",
+      [
+        ["Rep", "Orders", "Delivered", "Delivery Rate", "AOV", "Upsell Rate", "Cross-sell Rate", "Vs Last Week (AOV)", "Status"],
+        ...data.reps.map((rep: any) => [rep.name, rep.ordersAssigned, rep.ordersDelivered, `${rep.deliveryRate}%`, rep.aov, `${rep.upsellRate}%`, `${rep.crossSellRate}%`, `${rep.vsLastWeekAovPct}%`, rep.status])
+      ],
+      "Team performance report exported"
     );
 
     return (
       <div className="space-y-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-xl font-bold text-gray-900">Team Performance</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Track, compare and improve each sales rep on your team.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
+              <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, -7))}>←</button>
+              <span className="px-1 text-xs font-semibold text-gray-700">{formatDateOnly(headOfSalesOverviewWeekStart)}{data.weekEnd ? ` – ${formatDateOnly(data.weekEnd)}` : ""}</span>
+              <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, 7))}>→</button>
+            </div>
+            <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4]" onClick={exportReport}>
+              <Download className="h-3.5 w-3.5" /> Export Report
+            </button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
           {stat("Total Reps", String(data.stats.totalReps))}
           {stat("Reps Meeting AOV Target", `${data.stats.repsMeetingAovTarget} / ${data.stats.totalReps}`)}
@@ -59430,7 +59485,10 @@ ${waybillLineItems(w).length > 1
                       <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.upsellRate)}</td>
                       <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.crossSellRate)}</td>
                       <td className={`py-2.5 pr-3 text-right font-bold ${rep.vsLastWeekAovPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                        {rep.vsLastWeekAovPct >= 0 ? "+" : ""}{rep.vsLastWeekAovPct}%
+                        <span className="inline-flex items-center gap-1">
+                          {rep.vsLastWeekAovPct >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingUp className="h-3 w-3 rotate-180" />}
+                          {rep.vsLastWeekAovPct >= 0 ? "+" : ""}{rep.vsLastWeekAovPct}%
+                        </span>
                       </td>
                       <td className="py-2.5">
                         <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${rep.status === "On Target" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
@@ -59464,11 +59522,32 @@ ${waybillLineItems(w).length > 1
               </li>
             ))}
           </ul>
+
+          {distSegments.some((segment) => segment.value > 0) && (
+            <div className="mt-4 flex items-center gap-4 border-t border-gray-100 pt-4">
+              <div className="h-28 w-28 shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RePieChart>
+                    <Pie data={distSegments} dataKey="value" nameKey="label" innerRadius={30} outerRadius={48} paddingAngle={2}>
+                      {distSegments.map((segment) => (
+                        <Cell key={segment.label} fill={segment.dotHex} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value: any, name: any) => [`${value} rep${value === 1 ? "" : "s"}`, name]} />
+                  </RePieChart>
+                </ResponsiveContainer>
+              </div>
+              <div>
+                <strong className="block text-sm font-bold text-gray-900">AOV Improvement Distribution</strong>
+                <span className="text-[11px] text-gray-400">{data.repImprovement.totalReps} rep{data.repImprovement.totalReps === 1 ? "" : "s"} this week</span>
+              </div>
+            </div>
+          )}
         </section>
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {trendTable("AOV by Rep", data.aovByRepTrend, money)}
-          {trendTable("Delivery Rate by Rep", data.deliveryRateByRepTrend, pct)}
+          {trendChart("AOV by Rep", data.aovByRepTrend, money, false)}
+          {trendChart("Delivery Rate by Rep", data.deliveryRateByRepTrend, pct, true)}
         </div>
       </div>
     );
