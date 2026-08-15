@@ -1473,6 +1473,11 @@ export const headOfSalesApi = {
     const params = new URLSearchParams({ repId });
     if (weekStart) params.set("weekStart", weekStart);
     return get<any>(`/api/head-of-sales-rep/overview?${params.toString()}`);
+  },
+  scorecard: (repId: string, weekStart?: string) => {
+    const params = new URLSearchParams({ repId });
+    if (weekStart) params.set("weekStart", weekStart);
+    return get<any>(`/api/head-of-sales-rep/scorecard?${params.toString()}`);
   }
 };
 
