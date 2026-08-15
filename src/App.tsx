@@ -3699,6 +3699,19 @@ const formatDateKey = (date: Date) => {
 const monthLabel = (date: Date) =>
   new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(date);
 
+// Pure calendar-day arithmetic on a "YYYY-MM-DD" key, deliberately not
+// routed through a local-time Date object - a dateKey carries no time-of-day
+// or timezone, so mixing UTC construction with formatDateKey's local-time
+// getters would silently shift the result by a day near midnight.
+const shiftDateKey = (dateKey: string, days: number) => {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  const yyyy = shifted.getUTCFullYear();
+  const mm = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(shifted.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 const payrollMonthKeyFromDate = (date = new Date()) => {
   const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
   return `${safeDate.getFullYear()}-${String(safeDate.getMonth() + 1).padStart(2, "0")}`;
@@ -11854,6 +11867,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesInitiativeLearningsLoading, setHeadOfSalesInitiativeLearningsLoading] = useState(false);
   const [headOfSalesLearningDraft, setHeadOfSalesLearningDraft] = useState("");
   const [headOfSalesLearningSaving, setHeadOfSalesLearningSaving] = useState(false);
+  const [headOfSalesWeeklyReport, setHeadOfSalesWeeklyReport] = useState<any | null>(null);
+  const [headOfSalesWeeklyReportLivePreview, setHeadOfSalesWeeklyReportLivePreview] = useState<any | null>(null);
+  const [headOfSalesWeeklyReportLoading, setHeadOfSalesWeeklyReportLoading] = useState(false);
+  const [headOfSalesWeeklyReportError, setHeadOfSalesWeeklyReportError] = useState("");
+  const [headOfSalesWeeklyReportForm, setHeadOfSalesWeeklyReportForm] = useState({ summaryWins: "", summaryChallenges: "", nextWeekPlan: "" });
+  const [headOfSalesWeeklyReportSaving, setHeadOfSalesWeeklyReportSaving] = useState(false);
+  const [headOfSalesWeeklyReportSubmitting, setHeadOfSalesWeeklyReportSubmitting] = useState(false);
+  const [headOfSalesWeeklyReportWeekStart, setHeadOfSalesWeeklyReportWeekStart] = useState("");
+  const [headOfSalesWeeklyReportCurrentWeekStart, setHeadOfSalesWeeklyReportCurrentWeekStart] = useState("");
   const [pdaSubPage, setPdaSubPage] = useState<PdaSubPage>("Overview");
   const [pdaAgents, setPdaAgents] = useState<PersonalDeliveryAgentRow[]>([]);
   const [pdaOverview, setPdaOverview] = useState<PersonalDeliveryAgentOverview | null>(null);
@@ -43734,6 +43756,84 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  const loadHeadOfSalesWeeklyReport = async () => {
+    if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Weekly Report" || !headOfSalesViewingId) return;
+    setHeadOfSalesWeeklyReportLoading(true);
+    setHeadOfSalesWeeklyReportError("");
+    try {
+      const wasUnset = !headOfSalesWeeklyReportWeekStart;
+      const result = await headOfSalesApi.weeklyReport(headOfSalesViewingId, headOfSalesWeeklyReportWeekStart || undefined);
+      setHeadOfSalesWeeklyReport(result?.report ?? null);
+      setHeadOfSalesWeeklyReportLivePreview(result?.livePreview ?? null);
+      if (result?.weekStart && result.weekStart !== headOfSalesWeeklyReportWeekStart) {
+        setHeadOfSalesWeeklyReportWeekStart(result.weekStart);
+      }
+      // The first-ever resolution (no explicit weekStart sent) is the
+      // server's idea of "this week" - captured once so "Next week" can be
+      // disabled once she reaches it, without reimplementing Sunday-week
+      // math client-side.
+      if (wasUnset && result?.weekStart) {
+        setHeadOfSalesWeeklyReportCurrentWeekStart(result.weekStart);
+      }
+      setHeadOfSalesWeeklyReportForm({
+        summaryWins: result?.report?.summaryWins ?? "",
+        summaryChallenges: result?.report?.summaryChallenges ?? "",
+        nextWeekPlan: result?.report?.nextWeekPlan ?? ""
+      });
+    } catch (error: any) {
+      setHeadOfSalesWeeklyReportError(error?.message ?? "Could not load the Weekly Report.");
+    } finally {
+      setHeadOfSalesWeeklyReportLoading(false);
+    }
+  };
+  useEffect(() => {
+    void loadHeadOfSalesWeeklyReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesWeeklyReportWeekStart]);
+
+  const saveHeadOfSalesWeeklyReportDraft = async () => {
+    if (!headOfSalesViewingId || !headOfSalesWeeklyReportWeekStart) return;
+    setHeadOfSalesWeeklyReportSaving(true);
+    setHeadOfSalesWeeklyReportError("");
+    try {
+      await headOfSalesApi.saveWeeklyReport({
+        repId: headOfSalesViewingId,
+        weekStart: headOfSalesWeeklyReportWeekStart,
+        summaryWins: headOfSalesWeeklyReportForm.summaryWins.trim() || undefined,
+        summaryChallenges: headOfSalesWeeklyReportForm.summaryChallenges.trim() || undefined,
+        nextWeekPlan: headOfSalesWeeklyReportForm.nextWeekPlan.trim() || undefined
+      });
+      await loadHeadOfSalesWeeklyReport();
+    } catch (error: any) {
+      setHeadOfSalesWeeklyReportError(error?.message ?? "Could not save the draft.");
+    } finally {
+      setHeadOfSalesWeeklyReportSaving(false);
+    }
+  };
+
+  const submitHeadOfSalesWeeklyReport = async () => {
+    if (!headOfSalesViewingId || !headOfSalesWeeklyReportWeekStart) return;
+    setHeadOfSalesWeeklyReportSubmitting(true);
+    setHeadOfSalesWeeklyReportError("");
+    try {
+      // Submitting locks the week, so the latest draft text goes in first -
+      // a submit should never leave the last few edits stranded.
+      await headOfSalesApi.saveWeeklyReport({
+        repId: headOfSalesViewingId,
+        weekStart: headOfSalesWeeklyReportWeekStart,
+        summaryWins: headOfSalesWeeklyReportForm.summaryWins.trim() || undefined,
+        summaryChallenges: headOfSalesWeeklyReportForm.summaryChallenges.trim() || undefined,
+        nextWeekPlan: headOfSalesWeeklyReportForm.nextWeekPlan.trim() || undefined
+      });
+      await headOfSalesApi.submitWeeklyReport({ repId: headOfSalesViewingId, weekStart: headOfSalesWeeklyReportWeekStart });
+      await loadHeadOfSalesWeeklyReport();
+    } catch (error: any) {
+      setHeadOfSalesWeeklyReportError(error?.message ?? "Could not submit the report.");
+    } finally {
+      setHeadOfSalesWeeklyReportSubmitting(false);
+    }
+  };
+
   const loadRecoveryCandidates = async () => {
     if (activePage !== "Recovery Rep Dashboard") return;
     try {
@@ -58493,7 +58593,8 @@ ${waybillLineItems(w).length > 1
               : headOfSalesSubPage === "Team Performance" ? renderHeadOfSalesTeamPerformance()
               : headOfSalesSubPage === "Upsell & Cross-sell" ? renderHeadOfSalesUpsellCrossSell()
               : headOfSalesSubPage === "Rep Coaching" ? renderHeadOfSalesRepCoaching()
-              : headOfSalesSubPage === "Initiatives" ? renderHeadOfSalesInitiatives() : (
+              : headOfSalesSubPage === "Initiatives" ? renderHeadOfSalesInitiatives()
+              : headOfSalesSubPage === "Weekly Report" ? renderHeadOfSalesWeeklyReport() : (
               <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
                 <h2 className="text-base font-bold text-gray-900">{headOfSalesSubPage}</h2>
                 <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
@@ -59791,6 +59892,123 @@ ${waybillLineItems(w).length > 1
             <div className="space-y-3">{resolved.map(initiativeCard)}</div>
           </section>
         )}
+      </div>
+    );
+  };
+
+  const renderHeadOfSalesWeeklyReport = () => {
+    if (headOfSalesWeeklyReportLoading && !headOfSalesWeeklyReport && !headOfSalesWeeklyReportLivePreview) {
+      return (
+        <section className="flex flex-col items-center gap-3 rounded-xl border border-gray-200 bg-white px-5 py-16 text-center shadow-sm">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-[#1F8FE0]" />
+          <p className="m-0 text-sm font-semibold text-gray-500">Loading the Weekly Report...</p>
+        </section>
+      );
+    }
+
+    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const report = headOfSalesWeeklyReport;
+    const snapshot = report?.performanceSnapshot ?? headOfSalesWeeklyReportLivePreview;
+    const weekEnd = snapshot?.weekEnd ?? "";
+    const isSubmitted = Boolean(report?.submittedAt);
+    const isCurrentWeek = Boolean(headOfSalesWeeklyReportCurrentWeekStart)
+      && headOfSalesWeeklyReportWeekStart >= headOfSalesWeeklyReportCurrentWeekStart;
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-base font-bold text-gray-900">Weekly Report</h2>
+            <p className="m-0 mt-0.5 text-xs text-gray-500">
+              Week of {formatDateOnly(headOfSalesWeeklyReportWeekStart)}{weekEnd ? ` – ${formatDateOnly(weekEnd)}` : ""}
+              {isSubmitted ? <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">Submitted</span>
+                : <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700">Draft</span>}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50"
+              onClick={() => setHeadOfSalesWeeklyReportWeekStart((w) => shiftDateKey(w, -7))}>
+              ← Previous week
+            </button>
+            <button type="button" disabled={isCurrentWeek}
+              className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={() => setHeadOfSalesWeeklyReportWeekStart((w) => shiftDateKey(w, 7))}>
+              Next week →
+            </button>
+          </div>
+        </div>
+
+        {headOfSalesWeeklyReportError && (
+          <p className="m-0 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{headOfSalesWeeklyReportError}</p>
+        )}
+
+        {snapshot && (
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">This Week's Numbers{isSubmitted ? " (frozen at submission)" : ""}</h3>
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-xl border border-gray-200 px-4 py-3">
+                <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Total Weighted Score</span>
+                <strong className="mt-1 block text-xl font-black text-gray-900">{snapshot.totalWeightedScore}</strong>
+              </div>
+              <div className="rounded-xl border border-gray-200 px-4 py-3">
+                <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Initiatives Active</span>
+                <strong className="mt-1 block text-xl font-black text-gray-900">{snapshot.initiativesActive}</strong>
+              </div>
+              <div className="rounded-xl border border-gray-200 px-4 py-3">
+                <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Completed This Week</span>
+                <strong className="mt-1 block text-xl font-black text-gray-900">{snapshot.initiativesCompletedThisWeek}</strong>
+              </div>
+              <div className="rounded-xl border border-gray-200 px-4 py-3">
+                <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Successful This Week</span>
+                <strong className="mt-1 block text-xl font-black text-gray-900">{snapshot.initiativesSuccessfulThisWeek}</strong>
+              </div>
+            </div>
+            <p className="m-0 mt-3 text-[11px] text-gray-400">See Weekly Scorecard for the full metric-by-metric breakdown.</p>
+          </section>
+        )}
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <h3 className="m-0 text-sm font-bold text-gray-900">Narrative</h3>
+          <div className="mt-3 space-y-3">
+            <div>
+              <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-gray-400">Wins This Week</label>
+              <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={3}
+                disabled={isSubmitted}
+                value={headOfSalesWeeklyReportForm.summaryWins}
+                onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, summaryWins: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-gray-400">Challenges</label>
+              <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={3}
+                disabled={isSubmitted}
+                value={headOfSalesWeeklyReportForm.summaryChallenges}
+                onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, summaryChallenges: e.target.value }))} />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-gray-400">Plan For Next Week</label>
+              <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50 disabled:text-gray-500" rows={3}
+                disabled={isSubmitted}
+                value={headOfSalesWeeklyReportForm.nextWeekPlan}
+                onChange={(e) => setHeadOfSalesWeeklyReportForm((f) => ({ ...f, nextWeekPlan: e.target.value }))} />
+            </div>
+          </div>
+
+          {!isSubmitted && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button type="button" disabled={headOfSalesWeeklyReportSaving || headOfSalesWeeklyReportSubmitting}
+                className="!min-h-0 rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                onClick={() => void saveHeadOfSalesWeeklyReportDraft()}>
+                {headOfSalesWeeklyReportSaving ? "Saving..." : "Save Draft"}
+              </button>
+              <button type="button" disabled={headOfSalesWeeklyReportSaving || headOfSalesWeeklyReportSubmitting}
+                className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
+                onClick={() => void submitHeadOfSalesWeeklyReport()}>
+                {headOfSalesWeeklyReportSubmitting ? "Submitting..." : "Submit Report"}
+              </button>
+              <span className="self-center text-[11px] text-gray-400">Submitting locks this week's numbers and text.</span>
+            </div>
+          )}
+        </section>
       </div>
     );
   };

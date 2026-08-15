@@ -1113,4 +1113,183 @@ router.post("/initiatives/:initiativeId/learnings", async (req, res) => {
   }
 });
 
+// The frozen numbers that go into a Weekly Report - the same scorecard shape
+// Overview/Weekly Scorecard already show, plus that week's initiative
+// activity. Computed fresh every time a DRAFT is saved; computed one final
+// time and then frozen into performance_snapshot when submitted, so a later
+// edit to an order or an initiative can never rewrite a closed week.
+async function computeWeeklyPerformanceSnapshot(orgId: string, repId: string, repIds: string[], weekStart: string) {
+  const weekEnd = weekEndFromStart(weekStart);
+  const earliestNeeded = addDaysToDateKey(weekStart, -28);
+  const orders = await loadOrdersSince(orgId, repIds, earliestNeeded, weekEnd);
+  const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
+  const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
+  const { scorecard, totalWeightedScore } = buildScorecard(thisWeek, baseline);
+
+  const { data: initiativeRows, error: initiativeError } = await supabase
+    .from("sales_initiatives")
+    .select("status, completed_at, was_successful")
+    .eq("org_id", orgId)
+    .eq("head_of_sales_rep_id", repId);
+  if (initiativeError) throw initiativeError;
+  const rows = initiativeRows ?? [];
+  const completedThisWeek = rows.filter((row) => {
+    if (!row.completed_at) return false;
+    const dateKey = String(row.completed_at).slice(0, 10);
+    return dateKey >= weekStart && dateKey <= weekEnd;
+  });
+
+  return {
+    weekStart,
+    weekEnd,
+    totalWeightedScore,
+    scorecard,
+    initiativesActive: rows.filter((row) => row.status !== "Completed" && row.status !== "Abandoned").length,
+    initiativesCompletedThisWeek: completedThisWeek.length,
+    initiativesSuccessfulThisWeek: completedThisWeek.filter((row) => row.was_successful === true).length
+  };
+}
+
+const WeeklyReportQuerySchema = z.object({
+  repId: z.string().min(1),
+  weekStart: z.string().regex(DATE_KEY_PATTERN).optional()
+});
+
+router.get("/weekly-report", async (req, res) => {
+  const parsed = WeeklyReportQuerySchema.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "repId is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { rep, repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
+
+    const { data: reportRow, error: reportError } = await supabase
+      .from("head_of_sales_weekly_reports")
+      .select("id, week_start, summary_wins, summary_challenges, next_week_plan, performance_snapshot, submitted_at")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .eq("week_start", weekStart)
+      .maybeSingle();
+    if (reportError) throw reportError;
+
+    const report = reportRow ? {
+      id: reportRow.id,
+      weekStart: reportRow.week_start,
+      summaryWins: reportRow.summary_wins,
+      summaryChallenges: reportRow.summary_challenges,
+      nextWeekPlan: reportRow.next_week_plan,
+      performanceSnapshot: reportRow.performance_snapshot,
+      submittedAt: reportRow.submitted_at
+    } : null;
+
+    // A live preview so she can see this week's numbers BEFORE a draft has
+    // ever been saved - otherwise the report form would open blank.
+    const livePreview = !report || !report.submittedAt
+      ? await computeWeeklyPerformanceSnapshot(orgId, rep.id, repIds, weekStart)
+      : null;
+
+    res.json({ weekStart, report, livePreview });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load the Weekly Report." });
+  }
+});
+
+const SaveWeeklyReportSchema = z.object({
+  repId: z.string().min(1),
+  weekStart: z.string().regex(DATE_KEY_PATTERN),
+  summaryWins: z.string().max(4000).optional(),
+  summaryChallenges: z.string().max(4000).optional(),
+  nextWeekPlan: z.string().max(4000).optional()
+});
+
+router.put("/weekly-report", async (req, res) => {
+  const parsed = SaveWeeklyReportSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "weekStart is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { rep, repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+
+    const { data: existing, error: existingError } = await supabase
+      .from("head_of_sales_weekly_reports")
+      .select("id, submitted_at")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .eq("week_start", parsed.data.weekStart)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing?.submitted_at) {
+      res.status(409).json({ error: "This week's report is already submitted and locked." });
+      return;
+    }
+
+    const snapshot = await computeWeeklyPerformanceSnapshot(orgId, rep.id, repIds, parsed.data.weekStart);
+    const row = {
+      org_id: orgId,
+      head_of_sales_rep_id: rep.id,
+      week_start: parsed.data.weekStart,
+      summary_wins: parsed.data.summaryWins ?? null,
+      summary_challenges: parsed.data.summaryChallenges ?? null,
+      next_week_plan: parsed.data.nextWeekPlan ?? null,
+      performance_snapshot: snapshot,
+      updated_at: new Date().toISOString()
+    };
+
+    if (existing) {
+      const { error: updateError } = await supabase.from("head_of_sales_weekly_reports").update(row).eq("id", existing.id);
+      if (updateError) throw updateError;
+      res.json({ id: existing.id, saved: true });
+    } else {
+      const { data: inserted, error: insertError } = await supabase
+        .from("head_of_sales_weekly_reports")
+        .insert({ ...row, created_by: req.user!.id })
+        .select("id")
+        .single();
+      if (insertError) throw insertError;
+      res.status(201).json({ id: inserted.id, saved: true });
+    }
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not save the Weekly Report." });
+  }
+});
+
+const SubmitWeeklyReportSchema = z.object({
+  repId: z.string().min(1),
+  weekStart: z.string().regex(DATE_KEY_PATTERN)
+});
+
+router.post("/weekly-report/submit", async (req, res) => {
+  const parsed = SubmitWeeklyReportSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "weekStart is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { rep, repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const { data: existing, error: existingError } = await supabase
+      .from("head_of_sales_weekly_reports")
+      .select("id, submitted_at")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .eq("week_start", parsed.data.weekStart)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) {
+      res.status(404).json({ error: "Save a draft before submitting." });
+      return;
+    }
+    if (existing.submitted_at) {
+      res.status(409).json({ error: "This week's report is already submitted." });
+      return;
+    }
+
+    const snapshot = await computeWeeklyPerformanceSnapshot(orgId, rep.id, repIds, parsed.data.weekStart);
+    const { error: updateError } = await supabase
+      .from("head_of_sales_weekly_reports")
+      .update({ performance_snapshot: snapshot, submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq("id", existing.id);
+    if (updateError) throw updateError;
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not submit the Weekly Report." });
+  }
+});
+
 export default router;

@@ -1529,7 +1529,17 @@ export const headOfSalesApi = {
   initiativeLearnings: (initiativeId: string, repId: string) =>
     get<any>(`/api/head-of-sales-rep/initiatives/${initiativeId}/learnings?${new URLSearchParams({ repId }).toString()}`),
   addInitiativeLearning: (initiativeId: string, body: { repId: string; note: string }) =>
-    post<any>(`/api/head-of-sales-rep/initiatives/${initiativeId}/learnings`, body)
+    post<any>(`/api/head-of-sales-rep/initiatives/${initiativeId}/learnings`, body),
+  weeklyReport: (repId: string, weekStart?: string) => {
+    const params = new URLSearchParams({ repId });
+    if (weekStart) params.set("weekStart", weekStart);
+    return get<any>(`/api/head-of-sales-rep/weekly-report?${params.toString()}`);
+  },
+  saveWeeklyReport: (body: {
+    repId: string; weekStart: string; summaryWins?: string; summaryChallenges?: string; nextWeekPlan?: string;
+  }) => put<any>("/api/head-of-sales-rep/weekly-report", body),
+  submitWeeklyReport: (body: { repId: string; weekStart: string }) =>
+    post<any>("/api/head-of-sales-rep/weekly-report/submit", body)
 };
 
 export const repWeeklyTargetsApi = {
