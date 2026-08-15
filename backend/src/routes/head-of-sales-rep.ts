@@ -901,4 +901,216 @@ router.delete("/coaching-plan/action-items/:itemId", async (req, res) => {
   }
 });
 
+const INITIATIVE_STATUSES = ["Idea", "Planned", "In Progress", "Completed", "Abandoned"] as const;
+const TERMINAL_INITIATIVE_STATUSES = new Set(["Completed", "Abandoned"]);
+
+// Unlike coaching (authored ABOUT a team member), an initiative is run BY
+// the Head of Sales Rep herself - so she can read and write her own, not
+// just read it. Owner/Admin/Manager can do both for anyone.
+async function loadInitiativeForRep(orgId: string, initiativeId: string, requestingUser: { id: string; role: string }) {
+  const { data: row, error } = await supabase
+    .from("sales_initiatives")
+    .select("id, head_of_sales_rep_id")
+    .eq("id", initiativeId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!row) throw Object.assign(new Error("Initiative not found."), { status: 404 });
+  if (requestingUser.role === "Sales Rep" && requestingUser.id !== row.head_of_sales_rep_id) {
+    throw Object.assign(new Error("Initiative not found."), { status: 404 });
+  }
+  return row;
+}
+
+const InitiativesQuerySchema = z.object({ repId: z.string().min(1) });
+
+router.get("/initiatives", async (req, res) => {
+  const parsed = InitiativesQuerySchema.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "repId is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { rep } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const { data, error } = await supabase
+      .from("sales_initiatives")
+      .select("id, title, description, status, target_metric, started_at, target_date, completed_at, outcome_summary, was_successful, created_at, updated_at")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const initiatives = (data ?? []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      status: row.status,
+      targetMetric: row.target_metric,
+      startedAt: row.started_at,
+      targetDate: row.target_date,
+      completedAt: row.completed_at,
+      outcomeSummary: row.outcome_summary,
+      wasSuccessful: row.was_successful
+    }));
+    res.json({ initiatives });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load Initiatives." });
+  }
+});
+
+const CreateInitiativeSchema = z.object({
+  repId: z.string().min(1),
+  title: z.string().min(1).max(200),
+  description: z.string().max(4000).optional(),
+  targetMetric: z.string().max(200).optional(),
+  startedAt: z.string().regex(DATE_KEY_PATTERN).optional(),
+  targetDate: z.string().regex(DATE_KEY_PATTERN).optional()
+});
+
+router.post("/initiatives", async (req, res) => {
+  const parsed = CreateInitiativeSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "A title is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { rep } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const { data, error } = await supabase
+      .from("sales_initiatives")
+      .insert({
+        org_id: orgId,
+        head_of_sales_rep_id: rep.id,
+        title: parsed.data.title,
+        description: parsed.data.description ?? null,
+        target_metric: parsed.data.targetMetric ?? null,
+        started_at: parsed.data.startedAt ?? null,
+        target_date: parsed.data.targetDate ?? null,
+        created_by: req.user!.id
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+    res.status(201).json({ id: data.id });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not create the initiative." });
+  }
+});
+
+const UpdateInitiativeSchema = z.object({
+  repId: z.string().min(1),
+  title: z.string().min(1).max(200).optional(),
+  description: z.string().max(4000).nullable().optional(),
+  status: z.enum(INITIATIVE_STATUSES).optional(),
+  targetMetric: z.string().max(200).nullable().optional(),
+  startedAt: z.string().regex(DATE_KEY_PATTERN).nullable().optional(),
+  targetDate: z.string().regex(DATE_KEY_PATTERN).nullable().optional(),
+  outcomeSummary: z.string().max(4000).nullable().optional(),
+  wasSuccessful: z.boolean().nullable().optional()
+});
+
+router.patch("/initiatives/:initiativeId", async (req, res) => {
+  const parsed = UpdateInitiativeSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Nothing valid to update." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    await loadInitiativeForRep(orgId, req.params.initiativeId, req.user!);
+
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (parsed.data.title !== undefined) patch.title = parsed.data.title;
+    if (parsed.data.description !== undefined) patch.description = parsed.data.description;
+    if (parsed.data.targetMetric !== undefined) patch.target_metric = parsed.data.targetMetric;
+    if (parsed.data.startedAt !== undefined) patch.started_at = parsed.data.startedAt;
+    if (parsed.data.targetDate !== undefined) patch.target_date = parsed.data.targetDate;
+    if (parsed.data.outcomeSummary !== undefined) patch.outcome_summary = parsed.data.outcomeSummary;
+    if (parsed.data.wasSuccessful !== undefined) patch.was_successful = parsed.data.wasSuccessful;
+    if (parsed.data.status !== undefined) {
+      patch.status = parsed.data.status;
+      // Moving into a terminal status timestamps the resolution automatically -
+      // nobody has to remember to also set a completion date by hand.
+      if (TERMINAL_INITIATIVE_STATUSES.has(parsed.data.status)) {
+        patch.completed_at = new Date().toISOString();
+      }
+    }
+
+    const { error: updateError } = await supabase
+      .from("sales_initiatives")
+      .update(patch)
+      .eq("id", req.params.initiativeId);
+    if (updateError) throw updateError;
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not update the initiative." });
+  }
+});
+
+router.delete("/initiatives/:initiativeId", async (req, res) => {
+  const repIdRaw = typeof req.query.repId === "string" ? req.query.repId : "";
+  if (!repIdRaw) { res.status(400).json({ error: "repId is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    await loadRepAndTeam(orgId, repIdRaw, req.user!);
+    await loadInitiativeForRep(orgId, req.params.initiativeId, req.user!);
+    const { error: deleteError } = await supabase
+      .from("sales_initiatives")
+      .delete()
+      .eq("id", req.params.initiativeId);
+    if (deleteError) throw deleteError;
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not remove the initiative." });
+  }
+});
+
+const LearningsQuerySchema = z.object({ repId: z.string().min(1) });
+
+router.get("/initiatives/:initiativeId/learnings", async (req, res) => {
+  const parsed = LearningsQuerySchema.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "repId is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    await loadInitiativeForRep(orgId, req.params.initiativeId, req.user!);
+    const { data, error } = await supabase
+      .from("sales_initiative_learnings")
+      .select("id, note, created_at, author:users!sales_initiative_learnings_created_by_fkey(name)")
+      .eq("initiative_id", req.params.initiativeId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const learnings = (data ?? []).map((row: any) => ({
+      id: row.id,
+      note: row.note,
+      createdAt: row.created_at,
+      authorName: row.author?.name ?? null
+    }));
+    res.json({ learnings });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load learnings." });
+  }
+});
+
+const CreateLearningSchema = z.object({
+  repId: z.string().min(1),
+  note: z.string().min(1).max(4000)
+});
+
+router.post("/initiatives/:initiativeId/learnings", async (req, res) => {
+  const parsed = CreateLearningSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "A note is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    await loadInitiativeForRep(orgId, req.params.initiativeId, req.user!);
+    const { data, error } = await supabase
+      .from("sales_initiative_learnings")
+      .insert({
+        initiative_id: req.params.initiativeId,
+        org_id: orgId,
+        note: parsed.data.note,
+        created_by: req.user!.id
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+    res.status(201).json({ id: data.id });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not add the learning." });
+  }
+});
+
 export default router;

@@ -330,6 +330,7 @@ const HEAD_OF_SALES_SUBNAV_ITEMS: Array<{ key: HeadOfSalesSubPage; label: string
   { key: "Weekly Report", label: "Weekly Report", icon: FileText },
   { key: "Bonus & Payouts", label: "Bonus & Payouts", icon: HandCoins }
 ];
+const HEAD_OF_SALES_INITIATIVE_STATUSES = ["Idea", "Planned", "In Progress", "Completed", "Abandoned"] as const;
 
 type InventoryOperationsNavGroup = {
   label?: string;
@@ -11837,6 +11838,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesActionItemSaving, setHeadOfSalesActionItemSaving] = useState(false);
   const [headOfSalesActionItemError, setHeadOfSalesActionItemError] = useState("");
   const [headOfSalesActionItemForm, setHeadOfSalesActionItemForm] = useState({ description: "", targetCount: "", dueDate: "" });
+  const [headOfSalesInitiatives, setHeadOfSalesInitiatives] = useState<any[]>([]);
+  const [headOfSalesInitiativesLoading, setHeadOfSalesInitiativesLoading] = useState(false);
+  const [headOfSalesInitiativesError, setHeadOfSalesInitiativesError] = useState("");
+  const [headOfSalesInitiativeFormOpen, setHeadOfSalesInitiativeFormOpen] = useState(false);
+  const [headOfSalesInitiativeSaving, setHeadOfSalesInitiativeSaving] = useState(false);
+  const [headOfSalesInitiativeError, setHeadOfSalesInitiativeError] = useState("");
+  const [headOfSalesInitiativeForm, setHeadOfSalesInitiativeForm] = useState({
+    title: "", description: "", targetMetric: "", startedAt: "", targetDate: ""
+  });
+  const [headOfSalesExpandedInitiativeId, setHeadOfSalesExpandedInitiativeId] = useState<string | null>(null);
+  const [headOfSalesInitiativeOutcomeDraft, setHeadOfSalesInitiativeOutcomeDraft] = useState({ outcomeSummary: "", wasSuccessful: "" });
+  const [headOfSalesInitiativeOutcomeSaving, setHeadOfSalesInitiativeOutcomeSaving] = useState(false);
+  const [headOfSalesInitiativeLearnings, setHeadOfSalesInitiativeLearnings] = useState<any[]>([]);
+  const [headOfSalesInitiativeLearningsLoading, setHeadOfSalesInitiativeLearningsLoading] = useState(false);
+  const [headOfSalesLearningDraft, setHeadOfSalesLearningDraft] = useState("");
+  const [headOfSalesLearningSaving, setHeadOfSalesLearningSaving] = useState(false);
   const [pdaSubPage, setPdaSubPage] = useState<PdaSubPage>("Overview");
   const [pdaAgents, setPdaAgents] = useState<PersonalDeliveryAgentRow[]>([]);
   const [pdaOverview, setPdaOverview] = useState<PersonalDeliveryAgentOverview | null>(null);
@@ -43588,6 +43605,135 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  const loadHeadOfSalesInitiatives = async () => {
+    if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Initiatives" || !headOfSalesViewingId) return;
+    setHeadOfSalesInitiativesLoading(true);
+    setHeadOfSalesInitiativesError("");
+    try {
+      const result = await headOfSalesApi.initiatives(headOfSalesViewingId);
+      setHeadOfSalesInitiatives(result?.initiatives ?? []);
+    } catch (error: any) {
+      setHeadOfSalesInitiativesError(error?.message ?? "Could not load Initiatives.");
+    } finally {
+      setHeadOfSalesInitiativesLoading(false);
+    }
+  };
+  useEffect(() => {
+    void loadHeadOfSalesInitiatives();
+    setHeadOfSalesExpandedInitiativeId(null);
+    setHeadOfSalesInitiativeFormOpen(false);
+    setHeadOfSalesInitiativeError("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId]);
+
+  const loadHeadOfSalesInitiativeLearnings = async (initiativeId: string) => {
+    if (!headOfSalesViewingId) return;
+    setHeadOfSalesInitiativeLearningsLoading(true);
+    try {
+      const result = await headOfSalesApi.initiativeLearnings(initiativeId, headOfSalesViewingId);
+      setHeadOfSalesInitiativeLearnings(result?.learnings ?? []);
+    } catch {
+      setHeadOfSalesInitiativeLearnings([]);
+    } finally {
+      setHeadOfSalesInitiativeLearningsLoading(false);
+    }
+  };
+
+  const toggleHeadOfSalesInitiativeExpanded = (initiative: any) => {
+    if (headOfSalesExpandedInitiativeId === initiative.id) {
+      setHeadOfSalesExpandedInitiativeId(null);
+      return;
+    }
+    setHeadOfSalesExpandedInitiativeId(initiative.id);
+    setHeadOfSalesInitiativeOutcomeDraft({
+      outcomeSummary: initiative.outcomeSummary ?? "",
+      wasSuccessful: initiative.wasSuccessful === true ? "yes" : initiative.wasSuccessful === false ? "no" : ""
+    });
+    setHeadOfSalesLearningDraft("");
+    void loadHeadOfSalesInitiativeLearnings(initiative.id);
+  };
+
+  const submitHeadOfSalesInitiative = async () => {
+    if (!headOfSalesViewingId) return;
+    const form = headOfSalesInitiativeForm;
+    if (!form.title.trim()) {
+      setHeadOfSalesInitiativeError("A title is required.");
+      return;
+    }
+    setHeadOfSalesInitiativeSaving(true);
+    setHeadOfSalesInitiativeError("");
+    try {
+      await headOfSalesApi.createInitiative({
+        repId: headOfSalesViewingId,
+        title: form.title.trim(),
+        description: form.description.trim() || undefined,
+        targetMetric: form.targetMetric.trim() || undefined,
+        startedAt: form.startedAt || undefined,
+        targetDate: form.targetDate || undefined
+      });
+      setHeadOfSalesInitiativeForm({ title: "", description: "", targetMetric: "", startedAt: "", targetDate: "" });
+      setHeadOfSalesInitiativeFormOpen(false);
+      await loadHeadOfSalesInitiatives();
+    } catch (error: any) {
+      setHeadOfSalesInitiativeError(error?.message ?? "Could not create the initiative.");
+    } finally {
+      setHeadOfSalesInitiativeSaving(false);
+    }
+  };
+
+  const updateHeadOfSalesInitiativeStatus = async (initiativeId: string, status: string) => {
+    if (!headOfSalesViewingId) return;
+    try {
+      await headOfSalesApi.updateInitiative(initiativeId, { repId: headOfSalesViewingId, status });
+      await loadHeadOfSalesInitiatives();
+    } catch {
+      // The card keeps its old status pill and stays clickable to retry.
+    }
+  };
+
+  const deleteHeadOfSalesInitiative = async (initiativeId: string) => {
+    if (!headOfSalesViewingId) return;
+    try {
+      await headOfSalesApi.deleteInitiative(initiativeId, headOfSalesViewingId);
+      if (headOfSalesExpandedInitiativeId === initiativeId) setHeadOfSalesExpandedInitiativeId(null);
+      await loadHeadOfSalesInitiatives();
+    } catch {
+      // Leave it in place if the delete failed.
+    }
+  };
+
+  const saveHeadOfSalesInitiativeOutcome = async (initiativeId: string) => {
+    if (!headOfSalesViewingId) return;
+    setHeadOfSalesInitiativeOutcomeSaving(true);
+    try {
+      await headOfSalesApi.updateInitiative(initiativeId, {
+        repId: headOfSalesViewingId,
+        outcomeSummary: headOfSalesInitiativeOutcomeDraft.outcomeSummary.trim() || null,
+        wasSuccessful: headOfSalesInitiativeOutcomeDraft.wasSuccessful === "yes" ? true
+          : headOfSalesInitiativeOutcomeDraft.wasSuccessful === "no" ? false : null
+      });
+      await loadHeadOfSalesInitiatives();
+    } catch {
+      // The draft stays in the form so nothing typed is lost - retry stays available.
+    } finally {
+      setHeadOfSalesInitiativeOutcomeSaving(false);
+    }
+  };
+
+  const submitHeadOfSalesLearning = async (initiativeId: string) => {
+    if (!headOfSalesViewingId || !headOfSalesLearningDraft.trim()) return;
+    setHeadOfSalesLearningSaving(true);
+    try {
+      await headOfSalesApi.addInitiativeLearning(initiativeId, { repId: headOfSalesViewingId, note: headOfSalesLearningDraft.trim() });
+      setHeadOfSalesLearningDraft("");
+      await loadHeadOfSalesInitiativeLearnings(initiativeId);
+    } catch {
+      // Draft stays in the box so the note isn't lost - retry stays available.
+    } finally {
+      setHeadOfSalesLearningSaving(false);
+    }
+  };
+
   const loadRecoveryCandidates = async () => {
     if (activePage !== "Recovery Rep Dashboard") return;
     try {
@@ -58346,7 +58492,8 @@ ${waybillLineItems(w).length > 1
               : headOfSalesSubPage === "Weekly Scorecard" ? renderHeadOfSalesScorecard()
               : headOfSalesSubPage === "Team Performance" ? renderHeadOfSalesTeamPerformance()
               : headOfSalesSubPage === "Upsell & Cross-sell" ? renderHeadOfSalesUpsellCrossSell()
-              : headOfSalesSubPage === "Rep Coaching" ? renderHeadOfSalesRepCoaching() : (
+              : headOfSalesSubPage === "Rep Coaching" ? renderHeadOfSalesRepCoaching()
+              : headOfSalesSubPage === "Initiatives" ? renderHeadOfSalesInitiatives() : (
               <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
                 <h2 className="text-base font-bold text-gray-900">{headOfSalesSubPage}</h2>
                 <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
@@ -59453,6 +59600,197 @@ ${waybillLineItems(w).length > 1
             ))}
           </div>
         </section>
+      </div>
+    );
+  };
+
+  const renderHeadOfSalesInitiatives = () => {
+    if (headOfSalesInitiativesLoading && headOfSalesInitiatives.length === 0) {
+      return (
+        <section className="flex flex-col items-center gap-3 rounded-xl border border-gray-200 bg-white px-5 py-16 text-center shadow-sm">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-[#1F8FE0]" />
+          <p className="m-0 text-sm font-semibold text-gray-500">Loading Initiatives...</p>
+        </section>
+      );
+    }
+    if (headOfSalesInitiativesError) {
+      return (
+        <section className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-10 text-center">
+          <p className="m-0 text-sm font-semibold text-rose-800">{headOfSalesInitiativesError}</p>
+          <button className="!min-h-0 mt-3 rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100" onClick={() => void loadHeadOfSalesInitiatives()}>
+            Try again
+          </button>
+        </section>
+      );
+    }
+
+    const statusTone = (status: string) =>
+      status === "Completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+        : status === "Abandoned" ? "border-gray-300 bg-gray-100 text-gray-500"
+        : status === "In Progress" ? "border-sky-200 bg-sky-50 text-sky-700"
+        : status === "Planned" ? "border-amber-200 bg-amber-50 text-amber-700"
+        : "border-violet-200 bg-violet-50 text-violet-700";
+
+    const active = headOfSalesInitiatives.filter((row) => row.status !== "Completed" && row.status !== "Abandoned");
+    const resolved = headOfSalesInitiatives.filter((row) => row.status === "Completed" || row.status === "Abandoned");
+
+    const initiativeCard = (initiative: any) => {
+      const expanded = headOfSalesExpandedInitiativeId === initiative.id;
+      return (
+        <div key={initiative.id} className="rounded-2xl border border-gray-200 bg-white p-4">
+          <div className="flex items-start justify-between gap-3">
+            <button type="button" className="!min-h-0 flex-1 text-left" onClick={() => toggleHeadOfSalesInitiativeExpanded(initiative)}>
+              <div className="flex flex-wrap items-center gap-2">
+                <strong className="text-sm font-bold text-gray-900">{initiative.title}</strong>
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase ${statusTone(initiative.status)}`}>{initiative.status}</span>
+              </div>
+              {initiative.description ? <p className="m-0 mt-1 text-xs text-gray-500">{initiative.description}</p> : null}
+              <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
+                {initiative.targetMetric ? <span>Target: {initiative.targetMetric}</span> : null}
+                {initiative.targetDate ? <span>Due {formatDateOnly(initiative.targetDate)}</span> : null}
+                {initiative.completedAt ? <span>Resolved {formatDateOnly(initiative.completedAt)}</span> : null}
+                {initiative.wasSuccessful === true ? <span className="font-bold text-emerald-600">✓ Successful</span> : null}
+                {initiative.wasSuccessful === false ? <span className="font-bold text-rose-500">✗ Not successful</span> : null}
+              </div>
+            </button>
+            <button type="button" className="!min-h-0 shrink-0 rounded-md p-1 text-gray-300 hover:bg-rose-50 hover:text-rose-500"
+              onClick={() => void deleteHeadOfSalesInitiative(initiative.id)} title="Remove">
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
+            {HEAD_OF_SALES_INITIATIVE_STATUSES.map((status) => (
+              <button key={status} type="button"
+                className={`!min-h-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${initiative.status === status ? statusTone(status) : "border-gray-200 text-gray-400 hover:bg-gray-50"}`}
+                onClick={() => void updateHeadOfSalesInitiativeStatus(initiative.id, status)}>
+                {status}
+              </button>
+            ))}
+          </div>
+
+          {expanded && (
+            <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
+              <div className="space-y-2">
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-gray-400">Outcome</span>
+                <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" rows={2} placeholder="What actually happened?"
+                  value={headOfSalesInitiativeOutcomeDraft.outcomeSummary}
+                  onChange={(e) => setHeadOfSalesInitiativeOutcomeDraft((d) => ({ ...d, outcomeSummary: e.target.value }))} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <select className="rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                    value={headOfSalesInitiativeOutcomeDraft.wasSuccessful}
+                    onChange={(e) => setHeadOfSalesInitiativeOutcomeDraft((d) => ({ ...d, wasSuccessful: e.target.value }))}>
+                    <option value="">Successful? Not decided</option>
+                    <option value="yes">Yes, successful</option>
+                    <option value="no">No, not successful</option>
+                  </select>
+                  <button type="button" disabled={headOfSalesInitiativeOutcomeSaving}
+                    className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
+                    onClick={() => void saveHeadOfSalesInitiativeOutcome(initiative.id)}>
+                    {headOfSalesInitiativeOutcomeSaving ? "Saving..." : "Save Outcome"}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <span className="block text-[11px] font-bold uppercase tracking-wide text-gray-400">Learnings</span>
+                {headOfSalesInitiativeLearningsLoading ? (
+                  <p className="m-0 mt-2 text-xs italic text-gray-400">Loading...</p>
+                ) : headOfSalesInitiativeLearnings.length === 0 ? (
+                  <p className="m-0 mt-2 text-xs italic text-gray-400">Nothing logged yet.</p>
+                ) : (
+                  <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
+                    {headOfSalesInitiativeLearnings.map((learning: any) => (
+                      <li key={learning.id} className="rounded-lg bg-gray-50 px-2.5 py-1.5 text-xs text-gray-700">
+                        <p className="m-0">{learning.note}</p>
+                        <span className="mt-0.5 block text-[10px] text-gray-400">
+                          {formatDateTime(learning.createdAt)}{learning.authorName ? ` · ${learning.authorName}` : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="mt-2 flex gap-2">
+                  <input className="flex-1 rounded-lg border border-gray-200 bg-white p-2 text-xs" placeholder="Add a learning..."
+                    value={headOfSalesLearningDraft}
+                    onChange={(e) => setHeadOfSalesLearningDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void submitHeadOfSalesLearning(initiative.id); }} />
+                  <button type="button" disabled={headOfSalesLearningSaving || !headOfSalesLearningDraft.trim()}
+                    className="!min-h-0 shrink-0 rounded-lg bg-gray-800 px-3 py-2 text-xs font-bold text-white hover:bg-gray-700 disabled:opacity-50"
+                    onClick={() => void submitHeadOfSalesLearning(initiative.id)}>
+                    Add
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-base font-bold text-gray-900">Initiatives</h2>
+            <p className="m-0 mt-0.5 text-xs text-gray-500">Leadership initiatives to make the whole team better - the kind of work Level 3 bonus rewards.</p>
+          </div>
+          <button type="button"
+            className="!min-h-0 rounded-lg border border-[#1F8FE0] bg-blue-50/60 px-3 py-1.5 text-xs font-bold text-[#1F8FE0] hover:bg-blue-100"
+            onClick={() => { setHeadOfSalesInitiativeError(""); setHeadOfSalesInitiativeFormOpen((open) => !open); }}>
+            {headOfSalesInitiativeFormOpen ? "Cancel" : "+ New Initiative"}
+          </button>
+        </div>
+
+        {headOfSalesInitiativeFormOpen && (
+          <section className="space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+            <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Title"
+              value={headOfSalesInitiativeForm.title}
+              onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, title: e.target.value }))} />
+            <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" rows={2} placeholder="Description (optional)"
+              value={headOfSalesInitiativeForm.description}
+              onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, description: e.target.value }))} />
+            <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Target metric (e.g. Raise cross-sell rate by 5%)"
+              value={headOfSalesInitiativeForm.targetMetric}
+              onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, targetMetric: e.target.value }))} />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="mb-1 block text-[11px] text-gray-500">Start date</span>
+                <input type="date" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                  value={headOfSalesInitiativeForm.startedAt}
+                  onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, startedAt: e.target.value }))} />
+              </div>
+              <div>
+                <span className="mb-1 block text-[11px] text-gray-500">Target date</span>
+                <input type="date" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                  value={headOfSalesInitiativeForm.targetDate}
+                  onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, targetDate: e.target.value }))} />
+              </div>
+            </div>
+            {headOfSalesInitiativeError && <p className="m-0 text-xs font-bold text-rose-600">{headOfSalesInitiativeError}</p>}
+            <button type="button" disabled={headOfSalesInitiativeSaving}
+              className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
+              onClick={() => void submitHeadOfSalesInitiative()}>
+              {headOfSalesInitiativeSaving ? "Saving..." : "Create Initiative"}
+            </button>
+          </section>
+        )}
+
+        <section>
+          <h3 className="m-0 mb-2 text-xs font-bold uppercase tracking-wide text-gray-400">Active &amp; Pipeline ({active.length})</h3>
+          {active.length === 0 ? (
+            <p className="m-0 rounded-xl border border-gray-200 bg-white px-4 py-6 text-center text-sm italic text-gray-400">Nothing here yet.</p>
+          ) : (
+            <div className="space-y-3">{active.map(initiativeCard)}</div>
+          )}
+        </section>
+
+        {resolved.length > 0 && (
+          <section>
+            <h3 className="m-0 mb-2 text-xs font-bold uppercase tracking-wide text-gray-400">Resolved ({resolved.length})</h3>
+            <div className="space-y-3">{resolved.map(initiativeCard)}</div>
+          </section>
+        )}
       </div>
     );
   };
