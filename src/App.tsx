@@ -11809,6 +11809,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesOverview, setHeadOfSalesOverview] = useState<any | null>(null);
   const [headOfSalesOverviewLoading, setHeadOfSalesOverviewLoading] = useState(false);
   const [headOfSalesOverviewError, setHeadOfSalesOverviewError] = useState("");
+  const [headOfSalesScorecardTab, setHeadOfSalesScorecardTab] = useState<"Scorecard Summary" | "Metric Breakdown" | "Baseline Comparison" | "Trend Analysis" | "Scorecard History">("Scorecard Summary");
+  const [headOfSalesScorecard, setHeadOfSalesScorecard] = useState<any | null>(null);
+  const [headOfSalesScorecardLoading, setHeadOfSalesScorecardLoading] = useState(false);
+  const [headOfSalesScorecardError, setHeadOfSalesScorecardError] = useState("");
   const [pdaSubPage, setPdaSubPage] = useState<PdaSubPage>("Overview");
   const [pdaAgents, setPdaAgents] = useState<PersonalDeliveryAgentRow[]>([]);
   const [pdaOverview, setPdaOverview] = useState<PersonalDeliveryAgentOverview | null>(null);
@@ -43363,6 +43367,24 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart]);
 
+  const loadHeadOfSalesScorecard = async () => {
+    if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Weekly Scorecard" || !headOfSalesViewingId) return;
+    setHeadOfSalesScorecardLoading(true);
+    setHeadOfSalesScorecardError("");
+    try {
+      const result = await headOfSalesApi.scorecard(headOfSalesViewingId, headOfSalesOverviewWeekStart || undefined);
+      setHeadOfSalesScorecard(result);
+    } catch (error: any) {
+      setHeadOfSalesScorecardError(error?.message ?? "Could not load the scorecard.");
+    } finally {
+      setHeadOfSalesScorecardLoading(false);
+    }
+  };
+  useEffect(() => {
+    void loadHeadOfSalesScorecard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart]);
+
   const loadRecoveryCandidates = async () => {
     if (activePage !== "Recovery Rep Dashboard") return;
     try {
@@ -58117,7 +58139,8 @@ ${waybillLineItems(w).length > 1
                 ))}
               </div>
             </div>
-            {headOfSalesSubPage === "Overview" ? renderHeadOfSalesOverview() : (
+            {headOfSalesSubPage === "Overview" ? renderHeadOfSalesOverview()
+              : headOfSalesSubPage === "Weekly Scorecard" ? renderHeadOfSalesScorecard() : (
               <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
                 <h2 className="text-base font-bold text-gray-900">{headOfSalesSubPage}</h2>
                 <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
@@ -58341,6 +58364,290 @@ ${waybillLineItems(w).length > 1
             Read-only preview against default bonus rules - final weekly sign-off and payment history are coming in a later update.
           </p>
         </section>
+      </div>
+    );
+  };
+
+  const renderHeadOfSalesScorecard = () => {
+    const data = headOfSalesScorecard;
+    if (headOfSalesScorecardLoading && !data) {
+      return (
+        <section className="flex flex-col items-center gap-3 rounded-xl border border-gray-200 bg-white px-5 py-16 text-center shadow-sm">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-[#1F8FE0]" />
+          <p className="m-0 text-sm font-semibold text-gray-500">Loading the scorecard...</p>
+        </section>
+      );
+    }
+    if (headOfSalesScorecardError || !data) {
+      return (
+        <section className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-10 text-center">
+          <p className="m-0 text-sm font-semibold text-rose-800">{headOfSalesScorecardError || "Nothing to show yet."}</p>
+          <button className="!min-h-0 mt-3 rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100" onClick={() => void loadHeadOfSalesScorecard()}>
+            Try again
+          </button>
+        </section>
+      );
+    }
+
+    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const pct = (value: number) => `${value}%`;
+    const metricValue = (key: string, value: number) =>
+      key === "teamAov" || key === "incrementalRevenue" ? money(value) : pct(value);
+    const scorecardTabs: Array<typeof headOfSalesScorecardTab> = ["Scorecard Summary", "Metric Breakdown", "Baseline Comparison", "Trend Analysis", "Scorecard History"];
+
+    const performanceLevelChecklist = () => {
+      const tier = data.bonus.matchedTier;
+      const nextTier = data.bonus.nextTier;
+      const criteria = tier ? [
+        { label: `Team AOV ≥ ${money(tier.minTeamAov)}`, met: data.team.aov >= tier.minTeamAov },
+        { label: `Delivery Rate ≥ ${tier.minDeliveryRate}%`, met: data.team.deliveryRate >= tier.minDeliveryRate },
+        ...(tier.requiresUpsellImprovement ? [{ label: "Upsell/Cross-sell Improvement", met: false as boolean, note: "Needs a confirmed sign-off - coming in a later update" }] : []),
+        ...(tier.requiresInitiativeSuccess ? [{ label: "Successful Initiative Implementation", met: false as boolean, note: "Needs a confirmed sign-off - coming in a later update" }] : [])
+      ] : [];
+      return (
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <h2 className="m-0 text-base font-bold text-gray-900">Performance Level</h2>
+          <div className="mt-3 flex items-center gap-4">
+            <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-4 border-amber-400 text-lg font-black text-amber-600">
+              {data.bonus.level === "none" ? "-" : data.bonus.level.replace("level", "")}
+            </span>
+            <div>
+              <strong className="block text-base font-bold text-gray-900">{data.bonus.level === "none" ? "Below Level 1" : data.bonus.label}</strong>
+              <span className="text-sm text-gray-500">{tier ? `Meeting the requirements for ${data.bonus.label} this week.` : (nextTier ? `Needs ${money(nextTier.minTeamAov)} Team AOV and ${nextTier.minDeliveryRate}% delivery for ${nextTier.label}.` : "")}</span>
+            </div>
+          </div>
+          {criteria.length > 0 && (
+            <ul className="m-0 mt-3 list-none space-y-1.5 p-0">
+              {criteria.map((item) => (
+                <li key={item.label} className="flex items-center gap-2 text-sm">
+                  {item.met ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : <span className="h-4 w-4 shrink-0 rounded-full border-2 border-gray-300" />}
+                  <span className={item.met ? "text-gray-700" : "text-gray-400"}>{item.label}</span>
+                  {item.note && <span className="text-[11px] italic text-gray-400">({item.note})</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      );
+    };
+
+    return (
+      <div className="space-y-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          {data.scorecard.map((row: any) => (
+            <article key={row.key} className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
+              <strong className="block text-sm font-bold text-gray-900">{row.label}</strong>
+              <strong className="mt-1 block text-xl font-black text-gray-900">{metricValue(row.key, row.actual)}</strong>
+              <span className="text-[11px] text-gray-400">Target: {metricValue(row.key, row.target)}</span>
+              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                <div className={`h-full rounded-full ${row.vsTargetPct >= 100 ? "bg-emerald-500" : row.vsTargetPct >= 80 ? "bg-amber-500" : "bg-rose-500"}`} style={{ width: `${Math.min(100, row.vsTargetPct)}%` }} />
+              </div>
+              <span className="mt-1 block text-[11px] font-bold text-gray-500">{row.vsTargetPct}%</span>
+            </article>
+          ))}
+        </div>
+
+        <div className="-mx-1 overflow-x-auto border-b border-gray-200">
+          <div className="flex min-w-max gap-1 px-1">
+            {scorecardTabs.map((tab) => (
+              <button key={tab} type="button" onClick={() => setHeadOfSalesScorecardTab(tab)}
+                className={`!min-h-0 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors ${
+                  headOfSalesScorecardTab === tab ? "border-[#1F8FE0] text-[#1F8FE0]" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
+                {tab}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {headOfSalesScorecardTab === "Scorecard Summary" && (
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <section className="rounded-2xl border border-gray-200 bg-white p-5">
+              <h2 className="m-0 text-base font-bold text-gray-900">Metric Performance vs Targets</h2>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[480px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                      <th className="py-2 pr-3 font-semibold">Metric</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Actual</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Target</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Vs Target</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Weight</th>
+                      <th className="py-2 font-semibold text-right">Weighted Score</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.scorecard.map((row: any) => (
+                      <tr key={row.key} className="border-b border-gray-50">
+                        <td className="py-2.5 pr-3 font-bold text-gray-900">{row.label}</td>
+                        <td className="py-2.5 pr-3 text-right text-gray-700">{metricValue(row.key, row.actual)}</td>
+                        <td className="py-2.5 pr-3 text-right text-gray-700">{metricValue(row.key, row.target)}</td>
+                        <td className={`py-2.5 pr-3 text-right font-bold ${row.vsTargetPct >= 100 ? "text-emerald-600" : "text-amber-600"}`}>{pct(row.vsTargetPct)}</td>
+                        <td className="py-2.5 pr-3 text-right text-gray-500">{pct(row.weight)}</td>
+                        <td className="py-2.5 text-right font-bold text-gray-900">{Math.round(row.weight * (row.vsTargetPct / 100) * 10) / 10} / {row.weight}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td colSpan={5} className="py-3 pr-3 text-right font-bold text-gray-900">Total Weighted Score</td>
+                      <td className="py-3 text-right text-base font-black text-[#1F8FE0]">{data.totalWeightedScore} / 100</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            {performanceLevelChecklist()}
+
+            <section className="rounded-2xl border border-gray-200 bg-white p-5">
+              <h2 className="m-0 text-base font-bold text-gray-900">Team AOV by Rep</h2>
+              {data.teamAovByRep.length === 0 ? (
+                <p className="m-0 mt-3 text-sm italic text-gray-400">No active sales reps yet.</p>
+              ) : (
+                <ul className="m-0 mt-3 list-none space-y-2 p-0">
+                  {data.teamAovByRep.map((rep: any) => (
+                    <li key={rep.repId} className="flex items-center justify-between gap-3 border-b border-gray-50 pb-2 text-sm">
+                      <span className="font-bold text-gray-900">{rep.name}</span>
+                      <span className="text-right">
+                        <strong className="block text-gray-900">{money(rep.aov)}</strong>
+                        <span className={`text-[11px] font-bold ${rep.vsTargetPct >= 100 ? "text-emerald-600" : "text-amber-600"}`}>{pct(rep.vsTargetPct)}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <div className="space-y-4">
+              <section className="rounded-2xl border border-gray-200 bg-white p-5">
+                <h2 className="m-0 text-base font-bold text-gray-900">Upsell &amp; Cross-sell Summary</h2>
+                <dl className="m-0 mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <div><dt className="text-gray-400">Customers Upgraded</dt><dd className="m-0 font-bold text-gray-900">{data.team.upsellCount}</dd></div>
+                  <div><dt className="text-gray-400">Upsell Rate</dt><dd className="m-0 font-bold text-gray-900">{pct(data.team.upsellRate)}</dd></div>
+                  <div><dt className="text-gray-400">Customers Cross-sold</dt><dd className="m-0 font-bold text-gray-900">{data.team.crossSellCount}</dd></div>
+                  <div><dt className="text-gray-400">Cross-sell Rate</dt><dd className="m-0 font-bold text-gray-900">{pct(data.team.crossSellRate)}</dd></div>
+                </dl>
+              </section>
+              <section className="rounded-2xl border border-gray-200 bg-white p-5">
+                <h2 className="m-0 text-base font-bold text-gray-900">Incremental Revenue Breakdown</h2>
+                <dl className="m-0 mt-3 space-y-1.5 text-sm">
+                  <div className="flex items-center justify-between"><dt className="text-gray-500">From Upsell</dt><dd className="m-0 font-bold text-emerald-700">{money(data.incrementalRevenueBreakdown.fromUpsell)}</dd></div>
+                  <div className="flex items-center justify-between"><dt className="text-gray-500">From Cross-sell</dt><dd className="m-0 font-bold text-emerald-700">{money(data.incrementalRevenueBreakdown.fromCrossSell)}</dd></div>
+                  <div className="flex items-center justify-between border-t border-gray-100 pt-1.5"><dt className="font-bold text-gray-900">Total Incremental Revenue</dt><dd className="m-0 font-black text-gray-900">{money(data.incrementalRevenueBreakdown.total)}</dd></div>
+                  <div className="flex items-center justify-between pt-1"><dt className="text-gray-400">Potential Lost (Not Upgraded)</dt><dd className="m-0 text-gray-500">~{money(data.incrementalRevenueBreakdown.potentialLostUpsell)}</dd></div>
+                  <div className="flex items-center justify-between"><dt className="text-gray-400">Potential Lost (Not Cross-sold)</dt><dd className="m-0 text-gray-500">~{money(data.incrementalRevenueBreakdown.potentialLostCrossSell)}</dd></div>
+                </dl>
+                <p className="m-0 mt-2 text-[11px] italic text-gray-400">"Potential lost" is an estimate off this week's own average, not a hard number.</p>
+              </section>
+            </div>
+          </div>
+        )}
+
+        {headOfSalesScorecardTab === "Metric Breakdown" && (
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-base font-bold text-gray-900">Metric Breakdown</h2>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[560px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                    <th className="py-2 pr-3 font-semibold">Metric</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Weight</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Baseline (4wk avg)</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Target</th>
+                    <th className="py-2 font-semibold text-right">Actual</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.scorecard.map((row: any) => (
+                    <tr key={row.key} className="border-b border-gray-50">
+                      <td className="py-2.5 pr-3 font-bold text-gray-900">{row.label}</td>
+                      <td className="py-2.5 pr-3 text-right text-gray-500">{pct(row.weight)}</td>
+                      <td className="py-2.5 pr-3 text-right text-gray-700">{metricValue(row.key, row.baseline)}</td>
+                      <td className="py-2.5 pr-3 text-right text-gray-700">{metricValue(row.key, row.target)}</td>
+                      <td className="py-2.5 text-right font-bold text-gray-900">{metricValue(row.key, row.actual)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {headOfSalesScorecardTab === "Baseline Comparison" && (
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-base font-bold text-gray-900">Baseline Comparison <span className="font-medium text-gray-400">(vs 4-week average)</span></h2>
+            <div className="mt-3 space-y-3">
+              {data.scorecard.map((row: any) => {
+                const deltaPct = row.baseline > 0 ? Math.round(((row.actual - row.baseline) / row.baseline) * 1000) / 10 : 0;
+                return (
+                  <div key={row.key} className="flex items-center justify-between gap-3 border-b border-gray-50 pb-2">
+                    <span className="font-bold text-gray-900">{row.label}</span>
+                    <span className="text-sm text-gray-500">{metricValue(row.key, row.baseline)} → <strong className="text-gray-900">{metricValue(row.key, row.actual)}</strong></span>
+                    <span className={`text-sm font-bold ${deltaPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{deltaPct >= 0 ? "+" : ""}{deltaPct}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {headOfSalesScorecardTab === "Trend Analysis" && (
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {[
+              { key: "totalWeightedScore", label: "Total Weighted Score", format: (v: number) => `${v}` },
+              { key: "teamAov", label: "Team AOV", format: money },
+              { key: "deliveryRate", label: "Team Delivery Rate", format: pct }
+            ].map(({ key, label, format }) => {
+              const max = Math.max(...data.history.map((week: any) => week[key]), 1);
+              return (
+                <section key={key} className="rounded-2xl border border-gray-200 bg-white p-5">
+                  <h2 className="m-0 text-base font-bold text-gray-900">{label} <span className="font-medium text-gray-400">(8-Week)</span></h2>
+                  <div className="mt-4 flex h-28 items-end gap-2">
+                    {data.history.map((week: any) => (
+                      <div key={week.weekStart} className="flex flex-1 flex-col items-center gap-1">
+                        <span className="text-[9px] font-bold text-gray-500">{format(week[key])}</span>
+                        <div className="w-full rounded-t-md bg-[#1F8FE0]" style={{ height: `${Math.max(6, (week[key] / max) * 100)}%` }} />
+                        <span className="text-[9px] text-gray-400">{new Date(week.weekStart).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        )}
+
+        {headOfSalesScorecardTab === "Scorecard History" && (
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-base font-bold text-gray-900">Scorecard History</h2>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[520px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                    <th className="py-2 pr-3 font-semibold">Week</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Team AOV</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Delivery Rate</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Total Score</th>
+                    <th className="py-2 font-semibold">Bonus Level</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.history.map((week: any) => (
+                    <tr key={week.weekStart} className="border-b border-gray-50">
+                      <td className="py-2.5 pr-3 font-bold text-gray-900">{new Date(week.weekStart).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</td>
+                      <td className="py-2.5 pr-3 text-right text-gray-700">{money(week.teamAov)}</td>
+                      <td className="py-2.5 pr-3 text-right text-gray-700">{pct(week.deliveryRate)}</td>
+                      <td className="py-2.5 pr-3 text-right font-bold text-gray-900">{week.totalWeightedScore} / 100</td>
+                      <td className="py-2.5">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${week.bonusLevel === "none" ? "bg-gray-100 text-gray-500" : "bg-emerald-50 text-emerald-700"}`}>
+                          {week.bonusLevel === "none" ? "Below Level 1" : week.bonusLevel.replace("level", "Level ")}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
       </div>
     );
   };
