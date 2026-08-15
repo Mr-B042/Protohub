@@ -374,4 +374,171 @@ router.get("/team-performance", async (req, res) => {
   }
 });
 
+type OfferLineRow = {
+  attempt_id: string;
+  order_id: string;
+  offer_type: "upsell" | "cross_sell";
+  response: "accepted" | "declined" | "consider_later" | "not_appropriate" | "waived_no_offer";
+  offered_product_name?: string | null;
+  offered_package_name?: string | null;
+  accepted_amount?: number | null;
+};
+
+router.get("/upsell-cross-sell", async (req, res) => {
+  const parsed = WeekQuerySchema.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "repId is required." }); return; }
+  const orgId = req.user!.orgId;
+
+  try {
+    const { repIds, repNameById } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
+    const weekEnd = weekEndFromStart(weekStart);
+    const lastWeekStart = addDaysToDateKey(weekStart, -7);
+
+    // Same headline Upsell Rate / Cross-sell Rate as Overview and Weekly
+    // Scorecard - reused, not recomputed, so this page can't disagree with
+    // the others about the same week. The offer-line data below adds what
+    // those pages don't have: how many customers were actually OFFERED
+    // something, not just how many delivered orders ended up upsold.
+    const earliestNeeded = addDaysToDateKey(weekStart, -28);
+    const orders = await loadOrdersSince(orgId, repIds, earliestNeeded, weekEnd);
+    const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
+    const lastWeek = computeTeamWeekMetrics(orders, repIds, lastWeekStart);
+    const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
+
+    // order_sales_expansion_attempts carries rep_id directly (offer_lines
+    // does not, so attempts is the scoping point) with its offer lines
+    // embedded - one query per week rather than joining separately.
+    let offerLines: OfferLineRow[] = [];
+    let attemptRepById = new Map<string, string>();
+    if (repIds.length > 0) {
+      // Widened by a day either side, then filtered precisely in JS via
+      // lagosDateKey - same WAT-boundary care as the orders engine.
+      const { data: attempts, error: attemptsError } = await supabase
+        .from("order_sales_expansion_attempts")
+        .select("id, rep_id, order_id, created_at, offer_lines:order_sales_expansion_offer_lines(attempt_id, order_id, offer_type, response, offered_product_name, offered_package_name, accepted_amount)")
+        .eq("org_id", orgId)
+        .in("rep_id", repIds)
+        .gte("created_at", `${addDaysToDateKey(weekStart, -1)}T00:00:00Z`)
+        .lte("created_at", `${addDaysToDateKey(weekEnd, 1)}T23:59:59Z`);
+      if (attemptsError) throw attemptsError;
+      const inWeek = (attempts ?? []).filter((attempt: any) => {
+        const key = lagosDateKey(attempt.created_at);
+        return key >= weekStart && key <= weekEnd;
+      });
+      attemptRepById = new Map(inWeek.map((attempt: any) => [attempt.id, attempt.rep_id as string]));
+      offerLines = inWeek.flatMap((attempt: any) => (Array.isArray(attempt.offer_lines) ? attempt.offer_lines : []) as OfferLineRow[]);
+    }
+
+    // Real offers only - "waived_no_offer" means nothing was actually
+    // presented (nothing eligible to offer), so it is not a customer who
+    // was offered something and said no.
+    const realOffers = offerLines.filter((line) => line.response !== "waived_no_offer");
+    const orderIds = Array.from(new Set(realOffers.map((line) => line.order_id)));
+    const orderStatusById = new Map<string, string>();
+    if (orderIds.length > 0) {
+      const { data: statusRows, error: statusError } = await supabase
+        .from("orders")
+        .select("id, status")
+        .eq("org_id", orgId)
+        .in("id", orderIds);
+      if (statusError) throw statusError;
+      for (const row of statusRows ?? []) orderStatusById.set(row.id, row.status);
+    }
+
+    const isUpsell = (line: OfferLineRow) => line.offer_type === "upsell";
+    const isCrossSell = (line: OfferLineRow) => line.offer_type === "cross_sell";
+    const isAccepted = (line: OfferLineRow) => line.response === "accepted";
+    const isDelivered = (line: OfferLineRow) => orderStatusById.get(line.order_id) === "Delivered";
+
+    const customersOfferedUpsell = realOffers.filter(isUpsell).length;
+    const customersUpgraded = realOffers.filter((line) => isUpsell(line) && isAccepted(line)).length;
+    const customersOfferedCrossSell = realOffers.filter(isCrossSell).length;
+    const customersCrossSold = realOffers.filter((line) => isCrossSell(line) && isAccepted(line)).length;
+
+    // Per-rep breakdown, joined back through the attempt's rep_id.
+    const byRep = new Map<string, { offered: number; accepted: number; revenue: number }>();
+    for (const line of realOffers) {
+      const repId = attemptRepById.get(line.attempt_id);
+      if (!repId) continue;
+      const bucket = byRep.get(repId) ?? { offered: 0, accepted: 0, revenue: 0 };
+      bucket.offered += 1;
+      if (isAccepted(line)) { bucket.accepted += 1; bucket.revenue += Number(line.accepted_amount ?? 0); }
+      byRep.set(repId, bucket);
+    }
+    const byRepDetail = repIds.map((repId) => {
+      const repMetrics = thisWeek.reps.find((rep) => rep.repId === repId);
+      const offers = byRep.get(repId) ?? { offered: 0, accepted: 0, revenue: 0 };
+      return {
+        repId,
+        name: repNameById.get(repId) ?? "Unknown",
+        upsellRate: repMetrics?.upsellRate ?? 0,
+        crossSellRate: repMetrics?.crossSellRate ?? 0,
+        customersOffered: offers.offered,
+        customersUpgraded: offers.accepted,
+        incrementalRevenue: Math.round(offers.revenue)
+      };
+    });
+
+    // Top Performing Offers: group by what was actually offered.
+    const offerGroups = new Map<string, { label: string; type: string; offered: number; accepted: number; delivered: number; revenue: number }>();
+    for (const line of realOffers) {
+      const label = line.offered_package_name || line.offered_product_name || "Unnamed offer";
+      const key = `${line.offer_type}::${label}`;
+      const group = offerGroups.get(key) ?? { label, type: line.offer_type === "upsell" ? "Upsell" : "Cross-sell", offered: 0, accepted: 0, delivered: 0, revenue: 0 };
+      group.offered += 1;
+      if (isAccepted(line)) {
+        group.accepted += 1;
+        group.revenue += Number(line.accepted_amount ?? 0);
+        if (isDelivered(line)) group.delivered += 1;
+      }
+      offerGroups.set(key, group);
+    }
+    const topOffers = Array.from(offerGroups.values())
+      .map((group) => ({ ...group, revenue: Math.round(group.revenue), acceptanceRatePct: group.offered > 0 ? Math.round((group.accepted / group.offered) * 1000) / 10 : 0 }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10);
+
+    const acceptedOffers = realOffers.filter(isAccepted);
+    const deliveredOffers = acceptedOffers.filter(isDelivered);
+    const funnel = {
+      offered: realOffers.length,
+      accepted: acceptedOffers.length,
+      delivered: deliveredOffers.length,
+      revenue: Math.round(deliveredOffers.reduce((sum, line) => sum + Number(line.accepted_amount ?? 0), 0))
+    };
+
+    // 4-week Upsell Rate / Cross-sell Rate trend, off the same engine every
+    // other page uses.
+    const trend: Array<{ weekStart: string; upsellRate: number; crossSellRate: number }> = [];
+    for (let offset = 3; offset >= 0; offset -= 1) {
+      const ws = addDaysToDateKey(weekStart, -7 * offset);
+      const week = computeTeamWeekMetrics(orders, repIds, ws).team;
+      trend.push({ weekStart: ws, upsellRate: week.upsellRate, crossSellRate: week.crossSellRate });
+    }
+
+    res.json({
+      weekStart,
+      weekEnd,
+      team: {
+        upsellRate: thisWeek.team.upsellRate,
+        crossSellRate: thisWeek.team.crossSellRate,
+        upsellRateTarget: baseline.team.upsellRate,
+        crossSellRateTarget: baseline.team.crossSellRate,
+        customersOffered: customersOfferedUpsell + customersOfferedCrossSell,
+        customersUpgraded: customersUpgraded + customersCrossSold,
+        additionalRevenue: thisWeek.team.incrementalRevenueUpsell + thisWeek.team.incrementalRevenueCrossSell,
+        upsellRateDeltaVsLastWeek: Math.round((thisWeek.team.upsellRate - lastWeek.team.upsellRate) * 10) / 10,
+        crossSellRateDeltaVsLastWeek: Math.round((thisWeek.team.crossSellRate - lastWeek.team.crossSellRate) * 10) / 10
+      },
+      byRep: byRepDetail,
+      trend,
+      topOffers,
+      funnel
+    });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load Upsell & Cross-sell." });
+  }
+});
+
 export default router;

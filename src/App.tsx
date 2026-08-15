@@ -11816,6 +11816,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesTeamPerformance, setHeadOfSalesTeamPerformance] = useState<any | null>(null);
   const [headOfSalesTeamPerformanceLoading, setHeadOfSalesTeamPerformanceLoading] = useState(false);
   const [headOfSalesTeamPerformanceError, setHeadOfSalesTeamPerformanceError] = useState("");
+  const [headOfSalesUpsellCrossSell, setHeadOfSalesUpsellCrossSell] = useState<any | null>(null);
+  const [headOfSalesUpsellCrossSellLoading, setHeadOfSalesUpsellCrossSellLoading] = useState(false);
+  const [headOfSalesUpsellCrossSellError, setHeadOfSalesUpsellCrossSellError] = useState("");
   const [pdaSubPage, setPdaSubPage] = useState<PdaSubPage>("Overview");
   const [pdaAgents, setPdaAgents] = useState<PersonalDeliveryAgentRow[]>([]);
   const [pdaOverview, setPdaOverview] = useState<PersonalDeliveryAgentOverview | null>(null);
@@ -43406,6 +43409,24 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart]);
 
+  const loadHeadOfSalesUpsellCrossSell = async () => {
+    if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Upsell & Cross-sell" || !headOfSalesViewingId) return;
+    setHeadOfSalesUpsellCrossSellLoading(true);
+    setHeadOfSalesUpsellCrossSellError("");
+    try {
+      const result = await headOfSalesApi.upsellCrossSell(headOfSalesViewingId, headOfSalesOverviewWeekStart || undefined);
+      setHeadOfSalesUpsellCrossSell(result);
+    } catch (error: any) {
+      setHeadOfSalesUpsellCrossSellError(error?.message ?? "Could not load Upsell & Cross-sell.");
+    } finally {
+      setHeadOfSalesUpsellCrossSellLoading(false);
+    }
+  };
+  useEffect(() => {
+    void loadHeadOfSalesUpsellCrossSell();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart]);
+
   const loadRecoveryCandidates = async () => {
     if (activePage !== "Recovery Rep Dashboard") return;
     try {
@@ -58162,7 +58183,8 @@ ${waybillLineItems(w).length > 1
             </div>
             {headOfSalesSubPage === "Overview" ? renderHeadOfSalesOverview()
               : headOfSalesSubPage === "Weekly Scorecard" ? renderHeadOfSalesScorecard()
-              : headOfSalesSubPage === "Team Performance" ? renderHeadOfSalesTeamPerformance() : (
+              : headOfSalesSubPage === "Team Performance" ? renderHeadOfSalesTeamPerformance()
+              : headOfSalesSubPage === "Upsell & Cross-sell" ? renderHeadOfSalesUpsellCrossSell() : (
               <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
                 <h2 className="text-base font-bold text-gray-900">{headOfSalesSubPage}</h2>
                 <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
@@ -58835,6 +58857,173 @@ ${waybillLineItems(w).length > 1
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {trendTable("AOV by Rep", data.aovByRepTrend, money)}
           {trendTable("Delivery Rate by Rep", data.deliveryRateByRepTrend, pct)}
+        </div>
+      </div>
+    );
+  };
+
+  const renderHeadOfSalesUpsellCrossSell = () => {
+    const data = headOfSalesUpsellCrossSell;
+    if (headOfSalesUpsellCrossSellLoading && !data) {
+      return (
+        <section className="flex flex-col items-center gap-3 rounded-xl border border-gray-200 bg-white px-5 py-16 text-center shadow-sm">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-[#1F8FE0]" />
+          <p className="m-0 text-sm font-semibold text-gray-500">Loading upsell &amp; cross-sell...</p>
+        </section>
+      );
+    }
+    if (headOfSalesUpsellCrossSellError || !data) {
+      return (
+        <section className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-10 text-center">
+          <p className="m-0 text-sm font-semibold text-rose-800">{headOfSalesUpsellCrossSellError || "Nothing to show yet."}</p>
+          <button className="!min-h-0 mt-3 rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100" onClick={() => void loadHeadOfSalesUpsellCrossSell()}>
+            Try again
+          </button>
+        </section>
+      );
+    }
+
+    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const pct = (value: number) => `${value}%`;
+    const kpi = (label: string, value: string, foot?: string) => (
+      <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
+        <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">{label}</span>
+        <strong className="mt-1 block text-xl font-black text-gray-900">{value}</strong>
+        {foot && <span className="text-[11px] text-gray-400">{foot}</span>}
+      </div>
+    );
+    const funnelMax = Math.max(data.funnel.offered, 1);
+    const funnelStep = (label: string, value: number, tone: string) => (
+      <div className="flex items-center gap-3">
+        <div className="w-28 shrink-0 text-right text-sm font-semibold text-gray-600">{label}</div>
+        <div className="h-8 flex-1 overflow-hidden rounded-lg bg-gray-100">
+          <div className={`flex h-full items-center rounded-lg px-3 text-xs font-bold text-white ${tone}`} style={{ width: `${Math.max(8, (value / funnelMax) * 100)}%` }}>
+            {value.toLocaleString()}
+          </div>
+        </div>
+      </div>
+    );
+
+    return (
+      <div className="space-y-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          {kpi("Upsell Rate (Team Avg.)", pct(data.team.upsellRate), `Target: ${pct(data.team.upsellRateTarget)}`)}
+          {kpi("Cross-sell Rate (Team Avg.)", pct(data.team.crossSellRate), `Target: ${pct(data.team.crossSellRateTarget)}`)}
+          {kpi("Customers Offered", data.team.customersOffered.toLocaleString())}
+          {kpi("Customers Upgraded", data.team.customersUpgraded.toLocaleString())}
+          {kpi("Additional Revenue", money(data.team.additionalRevenue))}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-base font-bold text-gray-900">Upsell &amp; Cross-sell by Rep</h2>
+            {data.byRep.length === 0 ? (
+              <p className="m-0 mt-3 text-sm italic text-gray-400">No active sales reps yet.</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[560px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                      <th className="py-2 pr-3 font-semibold">Rep</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Upsell Rate</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Cross-sell Rate</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Offered</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Upgraded</th>
+                      <th className="py-2 font-semibold text-right">Incremental Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.byRep.map((rep: any) => (
+                      <tr key={rep.repId} className="border-b border-gray-50">
+                        <td className="py-2.5 pr-3 font-bold text-gray-900">{rep.name}</td>
+                        <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.upsellRate)}</td>
+                        <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.crossSellRate)}</td>
+                        <td className="py-2.5 pr-3 text-right text-gray-700">{rep.customersOffered}</td>
+                        <td className="py-2.5 pr-3 text-right text-gray-700">{rep.customersUpgraded}</td>
+                        <td className="py-2.5 text-right font-bold text-gray-900">{money(rep.incrementalRevenue)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-base font-bold text-gray-900">Upsell &amp; Cross-sell Trend <span className="font-medium text-gray-400">(4-Week)</span></h2>
+            <div className="mt-4 flex h-32 items-end gap-2">
+              {data.trend.map((point: any) => {
+                const max = Math.max(...data.trend.map((p: any) => Math.max(p.upsellRate, p.crossSellRate)), 1);
+                return (
+                  <div key={point.weekStart} className="flex flex-1 flex-col items-center gap-1">
+                    <div className="flex w-full items-end justify-center gap-1" style={{ height: "80px" }}>
+                      <div className="w-2.5 rounded-t-sm bg-[#1F8FE0]" style={{ height: `${Math.max(4, (point.upsellRate / max) * 100)}%` }} title={`Upsell ${point.upsellRate}%`} />
+                      <div className="w-2.5 rounded-t-sm bg-violet-400" style={{ height: `${Math.max(4, (point.crossSellRate / max) * 100)}%` }} title={`Cross-sell ${point.crossSellRate}%`} />
+                    </div>
+                    <span className="text-[10px] text-gray-400">{new Date(point.weekStart).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-500">
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#1F8FE0]" /> Upsell Rate</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-400" /> Cross-sell Rate</span>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3 border-t border-gray-100 pt-3 text-sm">
+              <div><span className="text-gray-400">Upsell vs last week</span><strong className={`ml-2 font-bold ${data.team.upsellRateDeltaVsLastWeek >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{data.team.upsellRateDeltaVsLastWeek >= 0 ? "+" : ""}{data.team.upsellRateDeltaVsLastWeek}%</strong></div>
+              <div><span className="text-gray-400">Cross-sell vs last week</span><strong className={`ml-2 font-bold ${data.team.crossSellRateDeltaVsLastWeek >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{data.team.crossSellRateDeltaVsLastWeek >= 0 ? "+" : ""}{data.team.crossSellRateDeltaVsLastWeek}%</strong></div>
+            </div>
+          </section>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr,1fr]">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-base font-bold text-gray-900">Top Performing Upsell &amp; Cross-sell Offers</h2>
+            {data.topOffers.length === 0 ? (
+              <p className="m-0 mt-3 text-sm italic text-gray-400">Nothing offered yet this week.</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[560px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                      <th className="py-2 pr-3 font-semibold">Offer</th>
+                      <th className="py-2 pr-3 font-semibold">Type</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Offered</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Accept Rate</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Delivered</th>
+                      <th className="py-2 font-semibold text-right">Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.topOffers.map((offer: any) => (
+                      <tr key={`${offer.type}-${offer.label}`} className="border-b border-gray-50">
+                        <td className="py-2.5 pr-3 font-bold text-gray-900">{offer.label}</td>
+                        <td className="py-2.5 pr-3"><span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${offer.type === "Upsell" ? "bg-blue-50 text-blue-700" : "bg-violet-50 text-violet-700"}`}>{offer.type}</span></td>
+                        <td className="py-2.5 pr-3 text-right text-gray-700">{offer.offered}</td>
+                        <td className="py-2.5 pr-3 text-right text-gray-700">{pct(offer.acceptanceRatePct)}</td>
+                        <td className="py-2.5 pr-3 text-right text-gray-700">{offer.delivered}</td>
+                        <td className="py-2.5 text-right font-bold text-gray-900">{money(offer.revenue)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-base font-bold text-gray-900">Offer Performance Funnel <span className="font-medium text-gray-400">(This Week)</span></h2>
+            <div className="mt-4 space-y-2">
+              {funnelStep("Offered", data.funnel.offered, "bg-blue-500")}
+              {funnelStep("Upgraded", data.funnel.accepted, "bg-violet-500")}
+              {funnelStep("Delivered", data.funnel.delivered, "bg-emerald-500")}
+            </div>
+            <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs text-gray-500">
+              <div>{data.funnel.offered > 0 ? Math.round((data.funnel.accepted / data.funnel.offered) * 100) : 0}% accepted</div>
+              <div>{data.funnel.accepted > 0 ? Math.round((data.funnel.delivered / data.funnel.accepted) * 100) : 0}% delivered</div>
+              <div className="font-bold text-emerald-700">{money(data.funnel.revenue)} revenue</div>
+            </div>
+          </section>
         </div>
       </div>
     );
