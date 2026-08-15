@@ -1419,33 +1419,65 @@ router.get("/bonus-payouts", async (req, res) => {
       paidAt: recordRow.paid_at
     } : null;
 
-    // A live preview so a Pending record isn't required just to see where
-    // the team currently stands this week.
+    // Always computed - the Weekly Bonus Breakdown table needs this week's
+    // real numbers whether or not a record has been confirmed yet, and the
+    // live preview (when nothing's confirmed) reads off the same numbers.
+    const weekEnd = weekEndFromStart(weekStart);
+    const orders = await loadOrdersSince(orgId, repIds, addDaysToDateKey(weekStart, -28), weekEnd);
+    const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
+    const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
+    const { scorecard, totalWeightedScore } = buildScorecard(thisWeek, baseline);
+
     let preview: any = null;
     if (!record) {
-      const weekEnd = weekEndFromStart(weekStart);
-      const orders = await loadOrdersSince(orgId, repIds, addDaysToDateKey(weekStart, -28), weekEnd);
-      const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
       const evaluation = evaluateHeadOfSalesBonus(bonusSettings, thisWeek.team.aov, thisWeek.team.deliveryRate);
       preview = { teamAov: thisWeek.team.aov, teamDeliveryRate: thisWeek.team.deliveryRate, ...evaluation };
     }
 
     const { data: historyRows, error: historyError } = await supabase
       .from("head_of_sales_bonus_weekly_records")
-      .select("week_start, bonus_level, amount, status, paid_at")
+      .select("week_start, team_aov, team_delivery_rate, bonus_level, amount, status, paid_at")
       .eq("org_id", orgId)
       .eq("head_of_sales_rep_id", rep.id)
       .order("week_start", { ascending: false })
       .limit(12);
     if (historyError) throw historyError;
 
+    // All-time, not just the 12-week history window above, so "Weeks Paid"
+    // stays correct once more than 12 weeks of records exist.
+    const { data: allRecords, error: allRecordsError } = await supabase
+      .from("head_of_sales_bonus_weekly_records")
+      .select("amount, status")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id);
+    if (allRecordsError) throw allRecordsError;
+    const paidAmounts = (allRecords ?? []).filter((row) => row.status === "Paid").map((row) => Number(row.amount));
+    const summary = {
+      totalEarned: paidAmounts.reduce((sum, amount) => sum + amount, 0),
+      highestBonus: paidAmounts.length > 0 ? Math.max(...paidAmounts) : 0,
+      averageBonus: paidAmounts.length > 0 ? Math.round(paidAmounts.reduce((sum, amount) => sum + amount, 0) / paidAmounts.length) : 0,
+      weeksPaid: paidAmounts.length,
+      weeksTotal: (allRecords ?? []).length
+    };
+
     res.json({
       weekStart,
+      weekEnd,
       settings: bonusSettings,
+      appointment: appointmentFromRow(rep.head_of_sales_rep_appointed_at),
       record,
       preview,
+      scorecard,
+      totalWeightedScore,
+      summary,
       history: (historyRows ?? []).map((row) => ({
-        weekStart: row.week_start, bonusLevel: row.bonus_level, amount: row.amount, status: row.status, paidAt: row.paid_at
+        weekStart: row.week_start,
+        teamAov: row.team_aov,
+        teamDeliveryRate: row.team_delivery_rate,
+        bonusLevel: row.bonus_level,
+        amount: row.amount,
+        status: row.status,
+        paidAt: row.paid_at
       }))
     });
   } catch (error: any) {
