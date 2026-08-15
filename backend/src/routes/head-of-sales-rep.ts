@@ -82,6 +82,8 @@ async function loadOrdersSince(orgId: string, repIds: string[], sinceDateKey: st
   return (data ?? []) as HeadOfSalesOrder[];
 }
 
+const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+
 const vsTarget = (actual: number, targetValue: number) =>
   targetValue > 0 ? Math.round((actual / targetValue) * 1000) / 10 : (actual > 0 ? 100 : 0);
 
@@ -538,6 +540,100 @@ router.get("/upsell-cross-sell", async (req, res) => {
     });
   } catch (error: any) {
     res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load Upsell & Cross-sell." });
+  }
+});
+
+const RepCoachingQuerySchema = z.object({
+  repId: z.string().min(1),
+  selectedRepId: z.string().min(1).optional(),
+  weekStart: z.string().regex(DATE_KEY_PATTERN).optional()
+});
+
+router.get("/rep-coaching", async (req, res) => {
+  const parsed = RepCoachingQuerySchema.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "repId is required." }); return; }
+  const orgId = req.user!.orgId;
+
+  try {
+    const { repIds, repNameById } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
+    const weekEnd = weekEndFromStart(weekStart);
+    const lastWeekStart = addDaysToDateKey(weekStart, -7);
+    const selectedRepId = parsed.data.selectedRepId && repIds.includes(parsed.data.selectedRepId)
+      ? parsed.data.selectedRepId
+      : repIds[0];
+
+    const earliestNeeded = addDaysToDateKey(weekStart, -28);
+    const orders = await loadOrdersSince(orgId, repIds, earliestNeeded, weekEnd);
+    const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
+    const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
+    const target = baseline.team;
+
+    // Rep-picker strip: every team member's headline AOV + on-target status,
+    // same "vs the team's own baseline" definition Overview and Team
+    // Performance already use.
+    const repStrip = thisWeek.reps.map((rep) => ({
+      repId: rep.repId,
+      name: repNameById.get(rep.repId) ?? "Unknown",
+      aov: rep.aov,
+      status: (target.aov > 0 ? rep.aov >= target.aov : rep.aov > 0) ? "On Target" : "Needs Attention"
+    }));
+
+    if (!selectedRepId) {
+      res.json({ weekStart, weekEnd, reps: repStrip, snapshot: null, issuesIdentified: [] });
+      return;
+    }
+
+    const selectedThisWeek = computeRepWeekMetrics(orders, selectedRepId, weekStart);
+    const selectedLastWeek = computeRepWeekMetrics(orders, selectedRepId, lastWeekStart);
+    const delta = (key: keyof typeof selectedThisWeek) => {
+      const now = Number(selectedThisWeek[key] ?? 0);
+      const before = Number(selectedLastWeek[key] ?? 0);
+      return before > 0 ? Math.round(((now - before) / before) * 1000) / 10 : (now > 0 ? 100 : 0);
+    };
+
+    const snapshot = {
+      repId: selectedRepId,
+      name: repNameById.get(selectedRepId) ?? "Unknown",
+      aov: selectedThisWeek.aov,
+      aovTarget: target.aov,
+      aovDeltaVsLastWeekPct: delta("aov"),
+      deliveryRate: selectedThisWeek.deliveryRate,
+      deliveryRateTarget: target.deliveryRate,
+      deliveryRateDeltaVsLastWeekPct: delta("deliveryRate"),
+      upsellRate: selectedThisWeek.upsellRate,
+      upsellRateTarget: target.upsellRate,
+      upsellRateDeltaVsLastWeekPct: delta("upsellRate"),
+      crossSellRate: selectedThisWeek.crossSellRate,
+      crossSellRateTarget: target.crossSellRate,
+      crossSellRateDeltaVsLastWeekPct: delta("crossSellRate"),
+      ordersAssigned: selectedThisWeek.ordersAssigned,
+      ordersDelivered: selectedThisWeek.ordersDelivered
+    };
+
+    // Rule-based flagging off the same numbers already on screen elsewhere -
+    // no separate storage, this list just explains WHY a rep needs coaching
+    // this week, not a new judgement about them.
+    const issuesIdentified: Array<{ label: string; severity: "High" | "Medium" | "Low" }> = [];
+    if (target.aov > 0 && selectedThisWeek.aov < target.aov * 0.9) {
+      issuesIdentified.push({ label: `AOV below target (${money(selectedThisWeek.aov)} vs ${money(target.aov)})`, severity: "High" });
+    }
+    if (target.deliveryRate > 0 && selectedThisWeek.deliveryRate < target.deliveryRate * 0.9) {
+      issuesIdentified.push({ label: `Low delivery rate (${selectedThisWeek.deliveryRate}% vs ${target.deliveryRate}%)`, severity: "High" });
+    }
+    if (target.upsellRate > 0 && selectedThisWeek.upsellRate < target.upsellRate * 0.75) {
+      issuesIdentified.push({ label: `Low upsell attempts (${selectedThisWeek.upsellRate}% vs ${target.upsellRate}%)`, severity: "Medium" });
+    }
+    if (target.crossSellRate > 0 && selectedThisWeek.crossSellRate < target.crossSellRate * 0.75) {
+      issuesIdentified.push({ label: `Low cross-sell attempts (${selectedThisWeek.crossSellRate}% vs ${target.crossSellRate}%)`, severity: "Medium" });
+    }
+    if (selectedThisWeek.ordersAssigned === 0) {
+      issuesIdentified.push({ label: "No orders assigned this week", severity: "Low" });
+    }
+
+    res.json({ weekStart, weekEnd, reps: repStrip, snapshot, issuesIdentified });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load Rep Coaching." });
   }
 });
 
