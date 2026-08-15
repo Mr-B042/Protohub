@@ -1478,6 +1478,11 @@ export const headOfSalesApi = {
     const params = new URLSearchParams({ repId });
     if (weekStart) params.set("weekStart", weekStart);
     return get<any>(`/api/head-of-sales-rep/scorecard?${params.toString()}`);
+  },
+  teamPerformance: (repId: string, weekStart?: string) => {
+    const params = new URLSearchParams({ repId });
+    if (weekStart) params.set("weekStart", weekStart);
+    return get<any>(`/api/head-of-sales-rep/team-performance?${params.toString()}`);
   }
 };
 
