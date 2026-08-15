@@ -11876,6 +11876,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesWeeklyReportSubmitting, setHeadOfSalesWeeklyReportSubmitting] = useState(false);
   const [headOfSalesWeeklyReportWeekStart, setHeadOfSalesWeeklyReportWeekStart] = useState("");
   const [headOfSalesWeeklyReportCurrentWeekStart, setHeadOfSalesWeeklyReportCurrentWeekStart] = useState("");
+  const [headOfSalesBonusWeekStart, setHeadOfSalesBonusWeekStart] = useState("");
+  const [headOfSalesBonusCurrentWeekStart, setHeadOfSalesBonusCurrentWeekStart] = useState("");
+  const [headOfSalesBonusData, setHeadOfSalesBonusData] = useState<any | null>(null);
+  const [headOfSalesBonusLoading, setHeadOfSalesBonusLoading] = useState(false);
+  const [headOfSalesBonusError, setHeadOfSalesBonusError] = useState("");
+  const [headOfSalesBonusForm, setHeadOfSalesBonusForm] = useState({ upsellImprovement: false, initiativeSuccess: false, notes: "" });
+  const [headOfSalesBonusSaving, setHeadOfSalesBonusSaving] = useState(false);
+  const [headOfSalesBonusMarkingPaid, setHeadOfSalesBonusMarkingPaid] = useState(false);
+  const [headOfSalesBonusSettingsOpen, setHeadOfSalesBonusSettingsOpen] = useState(false);
+  const [headOfSalesBonusSettingsDraft, setHeadOfSalesBonusSettingsDraft] = useState<any[]>([]);
+  const [headOfSalesBonusSettingsSaving, setHeadOfSalesBonusSettingsSaving] = useState(false);
+  const [headOfSalesBonusSettingsError, setHeadOfSalesBonusSettingsError] = useState("");
   const [pdaSubPage, setPdaSubPage] = useState<PdaSubPage>("Overview");
   const [pdaAgents, setPdaAgents] = useState<PersonalDeliveryAgentRow[]>([]);
   const [pdaOverview, setPdaOverview] = useState<PersonalDeliveryAgentOverview | null>(null);
@@ -43834,6 +43846,96 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  const loadHeadOfSalesBonus = async () => {
+    if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Bonus & Payouts" || !headOfSalesViewingId) return;
+    setHeadOfSalesBonusLoading(true);
+    setHeadOfSalesBonusError("");
+    try {
+      const wasUnset = !headOfSalesBonusWeekStart;
+      const result = await headOfSalesApi.bonusPayouts(headOfSalesViewingId, headOfSalesBonusWeekStart || undefined);
+      setHeadOfSalesBonusData(result ?? null);
+      if (result?.weekStart && result.weekStart !== headOfSalesBonusWeekStart) {
+        setHeadOfSalesBonusWeekStart(result.weekStart);
+      }
+      if (wasUnset && result?.weekStart) {
+        setHeadOfSalesBonusCurrentWeekStart(result.weekStart);
+      }
+      setHeadOfSalesBonusForm({
+        upsellImprovement: result?.record?.upsellImprovement ?? false,
+        initiativeSuccess: result?.record?.initiativeSuccess ?? false,
+        notes: result?.record?.notes ?? ""
+      });
+    } catch (error: any) {
+      setHeadOfSalesBonusError(error?.message ?? "Could not load Bonus & Payouts.");
+    } finally {
+      setHeadOfSalesBonusLoading(false);
+    }
+  };
+  useEffect(() => {
+    void loadHeadOfSalesBonus();
+    setHeadOfSalesBonusSettingsOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesBonusWeekStart]);
+
+  const saveHeadOfSalesBonusRecord = async () => {
+    if (!headOfSalesViewingId || !headOfSalesBonusWeekStart) return;
+    setHeadOfSalesBonusSaving(true);
+    setHeadOfSalesBonusError("");
+    try {
+      await headOfSalesApi.saveBonusPayout({
+        repId: headOfSalesViewingId,
+        weekStart: headOfSalesBonusWeekStart,
+        upsellImprovement: headOfSalesBonusForm.upsellImprovement,
+        initiativeSuccess: headOfSalesBonusForm.initiativeSuccess,
+        notes: headOfSalesBonusForm.notes.trim() || undefined
+      });
+      await loadHeadOfSalesBonus();
+    } catch (error: any) {
+      setHeadOfSalesBonusError(error?.message ?? "Could not save the bonus.");
+    } finally {
+      setHeadOfSalesBonusSaving(false);
+    }
+  };
+
+  const markHeadOfSalesBonusPaid = async () => {
+    if (!headOfSalesViewingId || !headOfSalesBonusWeekStart) return;
+    setHeadOfSalesBonusMarkingPaid(true);
+    setHeadOfSalesBonusError("");
+    try {
+      await headOfSalesApi.markBonusPaid({ repId: headOfSalesViewingId, weekStart: headOfSalesBonusWeekStart });
+      await loadHeadOfSalesBonus();
+    } catch (error: any) {
+      setHeadOfSalesBonusError(error?.message ?? "Could not mark the bonus paid.");
+    } finally {
+      setHeadOfSalesBonusMarkingPaid(false);
+    }
+  };
+
+  const openHeadOfSalesBonusSettings = () => {
+    setHeadOfSalesBonusSettingsError("");
+    setHeadOfSalesBonusSettingsDraft((headOfSalesBonusData?.settings?.tiers ?? []).map((tier: any) => ({ ...tier })));
+    setHeadOfSalesBonusSettingsOpen(true);
+  };
+
+  const updateHeadOfSalesBonusTierDraft = (tierId: string, field: string, value: number) => {
+    setHeadOfSalesBonusSettingsDraft((draft) => draft.map((tier) => tier.id === tierId ? { ...tier, [field]: value } : tier));
+  };
+
+  const saveHeadOfSalesBonusSettings = async () => {
+    if (!headOfSalesViewingId) return;
+    setHeadOfSalesBonusSettingsSaving(true);
+    setHeadOfSalesBonusSettingsError("");
+    try {
+      await headOfSalesApi.updateBonusSettings({ repId: headOfSalesViewingId, tiers: headOfSalesBonusSettingsDraft });
+      setHeadOfSalesBonusSettingsOpen(false);
+      await loadHeadOfSalesBonus();
+    } catch (error: any) {
+      setHeadOfSalesBonusSettingsError(error?.message ?? "Could not save the tier settings.");
+    } finally {
+      setHeadOfSalesBonusSettingsSaving(false);
+    }
+  };
+
   const loadRecoveryCandidates = async () => {
     if (activePage !== "Recovery Rep Dashboard") return;
     try {
@@ -58594,7 +58696,8 @@ ${waybillLineItems(w).length > 1
               : headOfSalesSubPage === "Upsell & Cross-sell" ? renderHeadOfSalesUpsellCrossSell()
               : headOfSalesSubPage === "Rep Coaching" ? renderHeadOfSalesRepCoaching()
               : headOfSalesSubPage === "Initiatives" ? renderHeadOfSalesInitiatives()
-              : headOfSalesSubPage === "Weekly Report" ? renderHeadOfSalesWeeklyReport() : (
+              : headOfSalesSubPage === "Weekly Report" ? renderHeadOfSalesWeeklyReport()
+              : headOfSalesSubPage === "Bonus & Payouts" ? renderHeadOfSalesBonusPayouts() : (
               <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
                 <h2 className="text-base font-bold text-gray-900">{headOfSalesSubPage}</h2>
                 <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
@@ -60009,6 +60112,213 @@ ${waybillLineItems(w).length > 1
             </div>
           )}
         </section>
+      </div>
+    );
+  };
+
+  const renderHeadOfSalesBonusPayouts = () => {
+    if (headOfSalesBonusLoading && !headOfSalesBonusData) {
+      return (
+        <section className="flex flex-col items-center gap-3 rounded-xl border border-gray-200 bg-white px-5 py-16 text-center shadow-sm">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-[#1F8FE0]" />
+          <p className="m-0 text-sm font-semibold text-gray-500">Loading Bonus &amp; Payouts...</p>
+        </section>
+      );
+    }
+
+    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const data = headOfSalesBonusData;
+    const tiers: any[] = data?.settings?.tiers ?? [];
+    const record = data?.record;
+    const preview = data?.preview;
+    const canConfirm = headOfSalesIsOwnerLike;
+    const isCurrentWeek = Boolean(headOfSalesBonusCurrentWeekStart) && headOfSalesBonusWeekStart >= headOfSalesBonusCurrentWeekStart;
+
+    const levelTone = (level: string) =>
+      level === "level3" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+        : level === "level2" ? "bg-sky-50 text-sky-700 border-sky-200"
+        : level === "level1" ? "bg-amber-50 text-amber-700 border-amber-200"
+        : "bg-gray-50 text-gray-500 border-gray-200";
+    const levelLabel = (level: string) =>
+      tiers.find((t) => t.id === level)?.label ?? (level === "none" ? "Below Level 1" : level);
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="m-0 text-base font-bold text-gray-900">Bonus &amp; Payouts</h2>
+          <div className="flex items-center gap-2">
+            <button type="button" className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50"
+              onClick={() => setHeadOfSalesBonusWeekStart((w) => shiftDateKey(w, -7))}>
+              ← Previous week
+            </button>
+            <button type="button" disabled={isCurrentWeek}
+              className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={() => setHeadOfSalesBonusWeekStart((w) => shiftDateKey(w, 7))}>
+              Next week →
+            </button>
+            {currentRole === "Owner" && (
+              <button type="button" className="!min-h-0 rounded-lg border border-[#1F8FE0] bg-blue-50/60 px-3 py-1.5 text-xs font-bold text-[#1F8FE0] hover:bg-blue-100"
+                onClick={() => headOfSalesBonusSettingsOpen ? setHeadOfSalesBonusSettingsOpen(false) : openHeadOfSalesBonusSettings()}>
+                {headOfSalesBonusSettingsOpen ? "Cancel" : "Edit Tiers"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <p className="m-0 text-xs text-gray-500">Week of {formatDateOnly(headOfSalesBonusWeekStart)}</p>
+
+        {headOfSalesBonusError && (
+          <p className="m-0 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{headOfSalesBonusError}</p>
+        )}
+
+        {headOfSalesBonusSettingsOpen && (
+          <section className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Bonus Tier Settings</h3>
+            <div className="mt-3 space-y-3">
+              {headOfSalesBonusSettingsDraft.map((tier) => (
+                <div key={tier.id} className="rounded-xl border border-gray-200 bg-white p-3">
+                  <strong className="text-xs font-bold text-gray-900">{tier.label}</strong>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    <div>
+                      <span className="mb-1 block text-[10px] text-gray-500">Amount (₦/week)</span>
+                      <input type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                        value={tier.amount} onChange={(e) => updateHeadOfSalesBonusTierDraft(tier.id, "amount", Number(e.target.value))} />
+                    </div>
+                    <div>
+                      <span className="mb-1 block text-[10px] text-gray-500">Min Team AOV</span>
+                      <input type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                        value={tier.minTeamAov} onChange={(e) => updateHeadOfSalesBonusTierDraft(tier.id, "minTeamAov", Number(e.target.value))} />
+                    </div>
+                    <div>
+                      <span className="mb-1 block text-[10px] text-gray-500">Min Delivery Rate %</span>
+                      <input type="number" min="0" max="100" className="w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                        value={tier.minDeliveryRate} onChange={(e) => updateHeadOfSalesBonusTierDraft(tier.id, "minDeliveryRate", Number(e.target.value))} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {headOfSalesBonusSettingsError && <p className="m-0 mt-2 text-xs font-bold text-rose-600">{headOfSalesBonusSettingsError}</p>}
+            <button type="button" disabled={headOfSalesBonusSettingsSaving}
+              className="!min-h-0 mt-3 rounded-lg bg-[#1F8FE0] px-4 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
+              onClick={() => void saveHeadOfSalesBonusSettings()}>
+              {headOfSalesBonusSettingsSaving ? "Saving..." : "Save Tier Settings"}
+            </button>
+          </section>
+        )}
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="m-0 text-sm font-bold text-gray-900">This Week's Bonus</h3>
+            {record ? (
+              <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${record.status === "Paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                {record.status}
+              </span>
+            ) : null}
+          </div>
+
+          {(() => {
+            const teamAov = record ? record.teamAov : preview?.teamAov ?? 0;
+            const teamDeliveryRate = record ? record.teamDeliveryRate : preview?.teamDeliveryRate ?? 0;
+            const level = record ? record.bonusLevel : preview?.level ?? "none";
+            const amount = record ? record.amount : preview?.amount ?? 0;
+            return (
+              <>
+                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="rounded-xl border border-gray-200 px-4 py-3">
+                    <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Team AOV</span>
+                    <strong className="mt-1 block text-lg font-black text-gray-900">{money(teamAov)}</strong>
+                  </div>
+                  <div className="rounded-xl border border-gray-200 px-4 py-3">
+                    <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Team Delivery Rate</span>
+                    <strong className="mt-1 block text-lg font-black text-gray-900">{teamDeliveryRate}%</strong>
+                  </div>
+                  <div className="rounded-xl border border-gray-200 px-4 py-3 sm:col-span-2">
+                    <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Bonus Level</span>
+                    <span className={`mt-1 inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${levelTone(level)}`}>{levelLabel(level)}</span>
+                    <strong className="ml-2 text-lg font-black text-gray-900">{amount > 0 ? money(amount) : "—"}</strong>
+                  </div>
+                </div>
+                {!record && <p className="m-0 mt-2 text-[11px] italic text-gray-400">Live preview - nothing confirmed yet for this week.</p>}
+              </>
+            );
+          })()}
+
+          <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" disabled={!canConfirm || record?.status === "Paid"}
+                  checked={headOfSalesBonusForm.upsellImprovement}
+                  onChange={(e) => setHeadOfSalesBonusForm((f) => ({ ...f, upsellImprovement: e.target.checked }))} />
+                Measurable upsell/cross-sell improvement confirmed
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" disabled={!canConfirm || record?.status === "Paid"}
+                  checked={headOfSalesBonusForm.initiativeSuccess}
+                  onChange={(e) => setHeadOfSalesBonusForm((f) => ({ ...f, initiativeSuccess: e.target.checked }))} />
+                Successful initiative implementation confirmed
+              </label>
+            </div>
+            <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm disabled:bg-gray-50" rows={2}
+              placeholder="Notes (optional)" disabled={!canConfirm || record?.status === "Paid"}
+              value={headOfSalesBonusForm.notes}
+              onChange={(e) => setHeadOfSalesBonusForm((f) => ({ ...f, notes: e.target.value }))} />
+
+            {canConfirm && record?.status !== "Paid" && (
+              <div className="flex flex-wrap gap-2">
+                <button type="button" disabled={headOfSalesBonusSaving}
+                  className="!min-h-0 rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  onClick={() => void saveHeadOfSalesBonusRecord()}>
+                  {headOfSalesBonusSaving ? "Saving..." : record ? "Update Bonus" : "Confirm & Save Bonus"}
+                </button>
+                {record && (
+                  <button type="button" disabled={headOfSalesBonusMarkingPaid || record.amount <= 0}
+                    className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
+                    onClick={() => void markHeadOfSalesBonusPaid()}>
+                    {headOfSalesBonusMarkingPaid ? "Marking Paid..." : "Mark Paid"}
+                  </button>
+                )}
+              </div>
+            )}
+            {!canConfirm && (
+              <p className="m-0 text-[11px] italic text-gray-400">Only Owner, Admin, or Manager can confirm or pay a bonus.</p>
+            )}
+          </div>
+        </section>
+
+        {data?.history?.length > 0 && (
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Payout History</h3>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[420px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                    <th className="py-2 pr-3">Week</th>
+                    <th className="py-2 pr-3">Level</th>
+                    <th className="py-2 pr-3">Amount</th>
+                    <th className="py-2 pr-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.history.map((row: any) => (
+                    <tr key={row.weekStart} className="border-b border-gray-50">
+                      <td className="py-2 pr-3 text-gray-700">{formatDateOnly(row.weekStart)}</td>
+                      <td className="py-2 pr-3">
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${levelTone(row.bonusLevel)}`}>{levelLabel(row.bonusLevel)}</span>
+                      </td>
+                      <td className="py-2 pr-3 font-bold text-gray-900">{row.amount > 0 ? money(row.amount) : "—"}</td>
+                      <td className="py-2 pr-3">
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${row.status === "Paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                          {row.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
       </div>
     );
   };

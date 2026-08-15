@@ -116,6 +116,25 @@ function buildScorecard(thisWeek: TeamWeekMetrics, baseline: TrailingBaseline) {
   return { scorecard, totalWeightedScore, target };
 }
 
+// Every page that previews a bonus (Overview, Weekly Scorecard, Bonus &
+// Payouts) reads through here rather than the hardcoded default, so an
+// Owner edit to the tiers shows up everywhere at once - "five views of the
+// same question must not each invent their own arithmetic" extends to
+// settings too. Falls back to the shipped defaults before an Owner has ever
+// saved a row, same bootstrapping manager-bonus.ts does.
+async function loadHeadOfSalesBonusSettings(orgId: string) {
+  const { data, error } = await supabase
+    .from("head_of_sales_settings")
+    .select("currency, tiers, updated_at")
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    return { currency: DEFAULT_HEAD_OF_SALES_BONUS_SETTINGS.currency, tiers: DEFAULT_HEAD_OF_SALES_BONUS_SETTINGS.tiers, updatedAt: null as string | null };
+  }
+  return { currency: data.currency as "NGN" | "USD" | "GBP", tiers: data.tiers as typeof DEFAULT_HEAD_OF_SALES_BONUS_SETTINGS.tiers, updatedAt: data.updated_at as string | null };
+}
+
 function appointmentFromRow(appointedAt: string | null) {
   const appointedTime = appointedAt ? new Date(appointedAt).getTime() : null;
   const dayNumber = appointedTime ? Math.max(1, Math.floor((Date.now() - appointedTime) / 86_400_000) + 1) : null;
@@ -153,11 +172,12 @@ router.get("/overview", async (req, res) => {
       trend.push({ weekStart: ws, aov: computeTeamWeekMetrics(orders, repIds, ws).team.aov });
     }
 
-    // Read-only preview - Stage 10 adds real Owner-editable settings and a
-    // persisted Pending/Paid record. Qualitative checks default unconfirmed,
-    // so a live preview can never show a rep as if Level 2/3 were already
-    // signed off before anyone actually reviewed the week.
-    const bonus = evaluateHeadOfSalesBonus(DEFAULT_HEAD_OF_SALES_BONUS_SETTINGS, thisWeek.team.aov, thisWeek.team.deliveryRate);
+    // Read-only preview off the persisted Owner-editable settings (Stage 10).
+    // Qualitative checks default unconfirmed, so a live preview can never
+    // show a rep as if Level 2/3 were already signed off before anyone
+    // actually reviewed the week - that only happens on Bonus & Payouts.
+    const bonusSettings = await loadHeadOfSalesBonusSettings(orgId);
+    const bonus = evaluateHeadOfSalesBonus(bonusSettings, thisWeek.team.aov, thisWeek.team.deliveryRate);
 
     // Flagged at 90% of target rather than exactly at target, so someone a
     // hair under target isn't lumped in with someone genuinely struggling.
@@ -217,7 +237,8 @@ router.get("/scorecard", async (req, res) => {
     const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
     const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
     const { scorecard, totalWeightedScore, target } = buildScorecard(thisWeek, baseline);
-    const bonus = evaluateHeadOfSalesBonus(DEFAULT_HEAD_OF_SALES_BONUS_SETTINGS, thisWeek.team.aov, thisWeek.team.deliveryRate);
+    const bonusSettings = await loadHeadOfSalesBonusSettings(orgId);
+    const bonus = evaluateHeadOfSalesBonus(bonusSettings, thisWeek.team.aov, thisWeek.team.deliveryRate);
 
     const teamAovByRep = thisWeek.reps
       .map((rep2) => ({
@@ -251,7 +272,7 @@ router.get("/scorecard", async (req, res) => {
       const weekMetrics = computeTeamWeekMetrics(orders, repIds, ws);
       const weekBaseline = computeTrailingBaseline(orders, repIds, ws, 4);
       const weekScorecard = buildScorecard(weekMetrics, weekBaseline);
-      const weekBonus = evaluateHeadOfSalesBonus(DEFAULT_HEAD_OF_SALES_BONUS_SETTINGS, weekMetrics.team.aov, weekMetrics.team.deliveryRate);
+      const weekBonus = evaluateHeadOfSalesBonus(bonusSettings, weekMetrics.team.aov, weekMetrics.team.deliveryRate);
       history.push({
         weekStart: ws,
         totalWeightedScore: weekScorecard.totalWeightedScore,
@@ -1289,6 +1310,252 @@ router.post("/weekly-report/submit", async (req, res) => {
     res.json({ ok: true });
   } catch (error: any) {
     res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not submit the Weekly Report." });
+  }
+});
+
+// Confirming a bonus is a leadership call, not self-service - unlike
+// Initiatives (Stage 8), which she runs herself, this is her own
+// compensation being evaluated, so it never gets a Sales-Rep-self carve-out
+// the way loadRepAndTeam's read gate does.
+function requireBonusLeadership(user: { role: string }) {
+  if (!["Owner", "Admin", "Manager"].includes(user.role)) {
+    throw Object.assign(new Error("Only Owner, Admin, or Manager can confirm a bonus."), { status: 403 });
+  }
+}
+
+const BonusSettingsQuerySchema = z.object({ repId: z.string().min(1) });
+
+router.get("/bonus-settings", async (req, res) => {
+  const parsed = BonusSettingsQuerySchema.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "repId is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const settings = await loadHeadOfSalesBonusSettings(orgId);
+    res.json({ settings });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load bonus settings." });
+  }
+});
+
+const BonusTierSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  amount: z.number().min(0),
+  minTeamAov: z.number().min(0),
+  minDeliveryRate: z.number().min(0).max(100),
+  requiresUpsellImprovement: z.boolean().optional(),
+  requiresInitiativeSuccess: z.boolean().optional()
+});
+const UpdateBonusSettingsSchema = z.object({
+  repId: z.string().min(1),
+  currency: z.enum(["NGN", "USD", "GBP"]).optional(),
+  tiers: z.array(BonusTierSchema).min(1)
+});
+
+router.patch("/bonus-settings", requireRole("Owner"), async (req, res) => {
+  const parsed = UpdateBonusSettingsSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "At least one valid tier is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const { data: existing, error: existingError } = await supabase
+      .from("head_of_sales_settings")
+      .select("id")
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+
+    const row = {
+      currency: parsed.data.currency ?? "NGN",
+      tiers: parsed.data.tiers,
+      updated_by: req.user!.id,
+      updated_at: new Date().toISOString()
+    };
+
+    if (existing) {
+      const { error: updateError } = await supabase.from("head_of_sales_settings").update(row).eq("id", existing.id);
+      if (updateError) throw updateError;
+    } else {
+      const { error: insertError } = await supabase.from("head_of_sales_settings").insert({ org_id: orgId, ...row });
+      if (insertError) throw insertError;
+    }
+    const settings = await loadHeadOfSalesBonusSettings(orgId);
+    res.json({ settings });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not save bonus settings." });
+  }
+});
+
+router.get("/bonus-payouts", async (req, res) => {
+  const parsed = WeekQuerySchema.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "repId is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { rep, repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
+    const bonusSettings = await loadHeadOfSalesBonusSettings(orgId);
+
+    const { data: recordRow, error: recordError } = await supabase
+      .from("head_of_sales_bonus_weekly_records")
+      .select("id, week_start, team_aov, team_delivery_rate, upsell_improvement, initiative_success, bonus_level, amount, status, notes, paid_at")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .eq("week_start", weekStart)
+      .maybeSingle();
+    if (recordError) throw recordError;
+
+    const record = recordRow ? {
+      id: recordRow.id,
+      weekStart: recordRow.week_start,
+      teamAov: recordRow.team_aov,
+      teamDeliveryRate: recordRow.team_delivery_rate,
+      upsellImprovement: recordRow.upsell_improvement,
+      initiativeSuccess: recordRow.initiative_success,
+      bonusLevel: recordRow.bonus_level,
+      amount: recordRow.amount,
+      status: recordRow.status,
+      notes: recordRow.notes,
+      paidAt: recordRow.paid_at
+    } : null;
+
+    // A live preview so a Pending record isn't required just to see where
+    // the team currently stands this week.
+    let preview: any = null;
+    if (!record) {
+      const weekEnd = weekEndFromStart(weekStart);
+      const orders = await loadOrdersSince(orgId, repIds, addDaysToDateKey(weekStart, -28), weekEnd);
+      const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
+      const evaluation = evaluateHeadOfSalesBonus(bonusSettings, thisWeek.team.aov, thisWeek.team.deliveryRate);
+      preview = { teamAov: thisWeek.team.aov, teamDeliveryRate: thisWeek.team.deliveryRate, ...evaluation };
+    }
+
+    const { data: historyRows, error: historyError } = await supabase
+      .from("head_of_sales_bonus_weekly_records")
+      .select("week_start, bonus_level, amount, status, paid_at")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .order("week_start", { ascending: false })
+      .limit(12);
+    if (historyError) throw historyError;
+
+    res.json({
+      weekStart,
+      settings: bonusSettings,
+      record,
+      preview,
+      history: (historyRows ?? []).map((row) => ({
+        weekStart: row.week_start, bonusLevel: row.bonus_level, amount: row.amount, status: row.status, paidAt: row.paid_at
+      }))
+    });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load Bonus & Payouts." });
+  }
+});
+
+const SaveBonusPayoutSchema = z.object({
+  repId: z.string().min(1),
+  weekStart: z.string().regex(DATE_KEY_PATTERN),
+  upsellImprovement: z.boolean().optional(),
+  initiativeSuccess: z.boolean().optional(),
+  notes: z.string().max(2000).optional()
+});
+
+router.put("/bonus-payouts", async (req, res) => {
+  const parsed = SaveBonusPayoutSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "weekStart is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    requireBonusLeadership(req.user!);
+    const { rep, repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+
+    const { data: existing, error: existingError } = await supabase
+      .from("head_of_sales_bonus_weekly_records")
+      .select("id, status")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .eq("week_start", parsed.data.weekStart)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing?.status === "Paid") {
+      res.status(409).json({ error: "This week's bonus is already marked Paid and locked." });
+      return;
+    }
+
+    const weekEnd = weekEndFromStart(parsed.data.weekStart);
+    const orders = await loadOrdersSince(orgId, repIds, addDaysToDateKey(parsed.data.weekStart, -28), weekEnd);
+    const thisWeek = computeTeamWeekMetrics(orders, repIds, parsed.data.weekStart);
+    const bonusSettings = await loadHeadOfSalesBonusSettings(orgId);
+    const qualitative = {
+      upsellImprovement: parsed.data.upsellImprovement ?? false,
+      initiativeSuccess: parsed.data.initiativeSuccess ?? false
+    };
+    const evaluation = evaluateHeadOfSalesBonus(bonusSettings, thisWeek.team.aov, thisWeek.team.deliveryRate, qualitative);
+
+    const row = {
+      org_id: orgId,
+      head_of_sales_rep_id: rep.id,
+      week_start: parsed.data.weekStart,
+      team_aov: thisWeek.team.aov,
+      team_delivery_rate: thisWeek.team.deliveryRate,
+      upsell_improvement: qualitative.upsellImprovement,
+      initiative_success: qualitative.initiativeSuccess,
+      bonus_level: evaluation.level,
+      amount: evaluation.amount,
+      notes: parsed.data.notes ?? null,
+      updated_at: new Date().toISOString()
+    };
+
+    if (existing) {
+      const { error: updateError } = await supabase.from("head_of_sales_bonus_weekly_records").update(row).eq("id", existing.id);
+      if (updateError) throw updateError;
+      res.json({ id: existing.id, level: evaluation.level, amount: evaluation.amount });
+    } else {
+      const { data: inserted, error: insertError } = await supabase
+        .from("head_of_sales_bonus_weekly_records")
+        .insert({ ...row, created_by: req.user!.id })
+        .select("id")
+        .single();
+      if (insertError) throw insertError;
+      res.status(201).json({ id: inserted.id, level: evaluation.level, amount: evaluation.amount });
+    }
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not save the bonus." });
+  }
+});
+
+const MarkBonusPaidSchema = z.object({ repId: z.string().min(1), weekStart: z.string().regex(DATE_KEY_PATTERN) });
+
+router.post("/bonus-payouts/mark-paid", async (req, res) => {
+  const parsed = MarkBonusPaidSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "weekStart is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    requireBonusLeadership(req.user!);
+    const { rep } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const { data: existing, error: existingError } = await supabase
+      .from("head_of_sales_bonus_weekly_records")
+      .select("id, status, amount")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .eq("week_start", parsed.data.weekStart)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) { res.status(404).json({ error: "Save the bonus before marking it paid." }); return; }
+    if (existing.status === "Paid") { res.status(409).json({ error: "Already marked Paid." }); return; }
+    if (Number(existing.amount) <= 0) {
+      res.status(400).json({ error: "This week didn't qualify for a bonus - nothing to mark paid." });
+      return;
+    }
+
+    const { error: updateError } = await supabase
+      .from("head_of_sales_bonus_weekly_records")
+      .update({ status: "Paid", paid_at: new Date().toISOString(), paid_by: req.user!.id, updated_at: new Date().toISOString() })
+      .eq("id", existing.id);
+    if (updateError) throw updateError;
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not mark the bonus paid." });
   }
 });
 
