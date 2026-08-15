@@ -58872,10 +58872,13 @@ ${waybillLineItems(w).length > 1
           {kpi("Current Week", appt.weekNumber ? `Week ${appt.weekNumber}` : "-")}
           {kpi("Next Review", appt.nextReviewAt ? new Date(appt.nextReviewAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "-")}
           {kpi("This Week's Rating", data.bonus.level === "none" ? "Below Level 1" : data.bonus.label,
-            <span className="mt-0.5 block text-[11px] text-gray-400">
-              {data.bonus.nextTier ? `${money(data.bonus.nextTier.minTeamAov)} AOV for ${data.bonus.nextTier.label}` : "Top level"}
-            </span>)}
-          {kpi("Estimated Bonus", money(data.bonus.amount))}
+            <button type="button" className="!min-h-0 mt-0.5 text-[11px] font-bold text-[#1F8FE0] hover:underline" onClick={() => setHeadOfSalesSubPage("Weekly Scorecard")}>
+              View Scorecard →
+            </button>)}
+          {kpi("Estimated Head Bonus", money(data.bonus.amount),
+            <button type="button" className="!min-h-0 mt-0.5 text-[11px] font-bold text-[#1F8FE0] hover:underline" onClick={() => setHeadOfSalesSubPage("Bonus & Payouts")}>
+              View Bonus Rules →
+            </button>)}
         </div>
 
         <section className="rounded-2xl border border-gray-200 bg-white p-5">
@@ -58909,9 +58912,14 @@ ${waybillLineItems(w).length > 1
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <section className="rounded-2xl border border-gray-200 bg-white p-5">
-            <h2 className="m-0 flex items-center gap-1.5 text-base font-bold text-gray-900">
-              Team Performance <span className="font-medium text-gray-400">(Rep Improvement)</span>
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="m-0 flex items-center gap-1.5 text-base font-bold text-gray-900">
+                Team Performance <span className="font-medium text-gray-400">(Rep Improvement)</span>
+              </h2>
+              <button type="button" className="!min-h-0 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={() => setHeadOfSalesSubPage("Team Performance")}>
+                View All Team Reps →
+              </button>
+            </div>
             <div className="mt-3 flex flex-wrap gap-4">
               <span className="text-sm font-semibold text-gray-700">
                 <strong className="text-lg font-black text-gray-900">{data.repsMeetingTarget} / {data.teamSize}</strong> reps meeting Team AOV target
@@ -58924,14 +58932,17 @@ ${waybillLineItems(w).length > 1
               <p className="m-0 mt-4 text-sm italic text-gray-400">No active sales reps yet.</p>
             ) : (
               <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[520px] text-left text-sm">
+                <table className="w-full min-w-[640px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
                       <th className="py-2 pr-3 font-semibold">Rep</th>
                       <th className="py-2 pr-3 font-semibold text-right">Orders</th>
                       <th className="py-2 pr-3 font-semibold text-right">AOV</th>
-                      <th className="py-2 pr-3 font-semibold text-right">Delivery</th>
-                      <th className="py-2 font-semibold">Status</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Delivery Rate</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Upsell Rate</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Cross-sell Rate</th>
+                      <th className="py-2 pr-3 font-semibold">Status</th>
+                      <th className="py-2 font-semibold text-right">Trend</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -58943,10 +58954,17 @@ ${waybillLineItems(w).length > 1
                           <td className="py-2.5 pr-3 text-right text-gray-700">{rep.ordersDelivered}</td>
                           <td className="py-2.5 pr-3 text-right text-gray-700">{money(rep.aov)}</td>
                           <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.deliveryRate)}</td>
-                          <td className="py-2.5">
+                          <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.upsellRate)}</td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.crossSellRate)}</td>
+                          <td className="py-2.5 pr-3">
                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${onTarget ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
                               {onTarget ? "On Target" : "Needs Attention"}
                             </span>
+                          </td>
+                          <td className="py-2.5 text-right">
+                            {onTarget
+                              ? <TrendingUp className="ml-auto h-3.5 w-3.5 text-emerald-500" />
+                              : <TrendingUp className="ml-auto h-3.5 w-3.5 rotate-180 text-rose-500" />}
                           </td>
                         </tr>
                       );
@@ -58958,7 +58976,12 @@ ${waybillLineItems(w).length > 1
           </section>
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5">
-            <h2 className="m-0 text-base font-bold text-gray-900">Team AOV Trend <span className="font-medium text-gray-400">(4-Week)</span></h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="m-0 text-base font-bold text-gray-900">Team AOV Trend <span className="font-medium text-gray-400">(4-Week)</span></h2>
+              <button type="button" className="!min-h-0 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={() => setHeadOfSalesSubPage("Team Performance")}>
+                View Full Trend →
+              </button>
+            </div>
             <strong className="mt-1 block text-2xl font-black text-gray-900">{money(data.team.aov)}</strong>
             <div className="mt-4 flex h-32 items-end gap-2">
               {data.trend.map((point: any) => {
@@ -58977,22 +59000,61 @@ ${waybillLineItems(w).length > 1
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           <section className="rounded-2xl border border-gray-200 bg-white p-5 xl:col-span-1">
-            <h2 className="m-0 text-base font-bold text-gray-900">Leadership Actions This Week <span className="font-medium text-gray-400">(Initiatives)</span></h2>
-            <p className="m-0 mt-3 text-sm italic text-gray-400">Initiatives tracking is coming in a later update - nothing to show yet.</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="m-0 text-base font-bold text-gray-900">Leadership Actions This Week <span className="font-medium text-gray-400">(Initiatives)</span></h2>
+              <button type="button" className="!min-h-0 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={() => setHeadOfSalesSubPage("Initiatives")}>View All →</button>
+            </div>
+            {data.initiatives.length === 0 ? (
+              <p className="m-0 mt-3 text-sm italic text-gray-400">Nothing active yet.</p>
+            ) : (
+              <ul className="m-0 mt-3 list-none space-y-2.5 p-0">
+                {data.initiatives.map((initiative: any) => (
+                  <li key={initiative.id} className="rounded-lg border border-gray-200 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <strong className="text-sm font-bold text-gray-900">{initiative.title}</strong>
+                      <span className="shrink-0 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700">{initiative.status}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500">
+                      <span>Offered: {initiative.customersOffered}</span>
+                      <span>Upgraded: {initiative.customersAccepted}</span>
+                      <span>Delivered: {initiative.customersDelivered}</span>
+                    </div>
+                    <div className="mt-0.5 flex items-center justify-between text-[11px] text-gray-400">
+                      <span>{initiative.incrementalRevenue > 0 ? `Impact: ${money(initiative.incrementalRevenue)}` : "No impact tracked yet"}</span>
+                      {initiative.startedAt && <span>Started {formatDateOnly(initiative.startedAt)}</span>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button type="button" className="!min-h-0 mt-3 text-xs font-bold text-[#1F8FE0] hover:underline"
+              onClick={() => { setHeadOfSalesSubPage("Initiatives"); setHeadOfSalesInitiativeFormOpen(true); }}>
+              + Create Initiative
+            </button>
           </section>
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5 xl:col-span-1">
-            <h2 className="m-0 text-base font-bold text-gray-900">Reps Needing Attention</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="m-0 text-base font-bold text-gray-900">Reps Needing Attention</h2>
+              <button type="button" className="!min-h-0 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={() => setHeadOfSalesSubPage("Rep Coaching")}>View All →</button>
+            </div>
             {data.repsNeedingAttention.length === 0 ? (
               <p className="m-0 mt-3 text-sm italic text-gray-400">Nobody is flagged this week.</p>
             ) : (
               <ul className="m-0 mt-3 list-none space-y-3 p-0">
                 {data.repsNeedingAttention.map((rep: any) => (
                   <li key={rep.repId} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                    <strong className="block text-sm font-bold text-amber-900">{rep.repName}</strong>
+                    <div className="flex items-center justify-between gap-2">
+                      <strong className="block text-sm font-bold text-amber-900">{rep.repName}</strong>
+                      <span className="shrink-0 rounded-full bg-amber-600 px-2 py-0.5 text-[10px] font-black uppercase text-white">Priority</span>
+                    </div>
                     <ul className="m-0 mt-1 list-disc space-y-0.5 pl-4 text-xs text-amber-800">
                       {rep.reasons.map((reason: string) => <li key={reason}>{reason}</li>)}
                     </ul>
+                    <button type="button" className="!min-h-0 mt-2 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-700"
+                      onClick={() => { setHeadOfSalesCoachingSelectedRepId(rep.repId); setHeadOfSalesSubPage("Rep Coaching"); }}>
+                      Review Rep →
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -59000,20 +59062,54 @@ ${waybillLineItems(w).length > 1
           </section>
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5 xl:col-span-1">
-            <h2 className="m-0 text-base font-bold text-gray-900">Weekly Leadership Report</h2>
-            <p className="m-0 mt-3 text-sm italic text-gray-400">Weekly Report is coming in a later update - nothing written yet.</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="m-0 text-base font-bold text-gray-900">Weekly Leadership Report</h2>
+              <button type="button" className="!min-h-0 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={() => setHeadOfSalesSubPage("Weekly Report")}>View Report →</button>
+            </div>
+            {!data.weeklyReport ? (
+              <p className="m-0 mt-3 text-sm italic text-gray-400">Nothing written yet for this week.</p>
+            ) : (
+              <ul className="m-0 mt-3 list-none space-y-1.5 p-0 text-sm text-gray-700">
+                <li className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> What did we test? {data.initiatives.length > 0 ? data.initiatives[0].title : "Not logged yet"}</li>
+                <li className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> What worked? {data.weeklyReport.firstWin ?? "Not logged yet"}</li>
+                <li className="flex items-start gap-2">{data.weeklyReport.firstChallenge ? <CircleX className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-500" /> : <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-300" />} What didn't work? {data.weeklyReport.firstChallenge ?? "Not logged yet"}</li>
+                <li className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> Next week: {data.weeklyReport.firstNextStep ?? "Not logged yet"}</li>
+              </ul>
+            )}
+            <button type="button" className="!min-h-0 mt-3 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4]"
+              onClick={() => setHeadOfSalesSubPage("Weekly Report")}>
+              {data.weeklyReport?.submitted ? "View Weekly Report" : "Complete Weekly Report"} →
+            </button>
           </section>
         </div>
 
-        <section className="rounded-2xl border border-gray-200 bg-white p-5">
-          <h2 className="m-0 text-base font-bold text-gray-900">Weekly Bonus Status</h2>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
-            <div>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-base font-bold text-gray-900">Weekly Bonus Status</h2>
+            <div className="mt-3">
               <strong className="block text-lg font-black text-gray-900">{data.bonus.level === "none" ? "Below Level 1" : data.bonus.label}</strong>
-              <span className="text-sm text-gray-500">Estimated this week: {money(data.bonus.amount)}</span>
+              <span className="text-sm text-gray-500">This Week's Bonus: {money(data.bonus.amount)}</span>
             </div>
+            <ul className="m-0 mt-3 list-none space-y-1 p-0 text-sm text-gray-700">
+              <li className="flex items-center gap-2">
+                {data.team.aov >= data.baseline.aov ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <CircleX className="h-3.5 w-3.5 text-rose-500" />}
+                Team AOV: {money(data.team.aov)} / {money(data.baseline.aov)}
+              </li>
+              <li className="flex items-center gap-2">
+                {data.team.deliveryRate >= data.baseline.deliveryRate ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <CircleX className="h-3.5 w-3.5 text-rose-500" />}
+                Delivery Rate: {pct(data.team.deliveryRate)} / {pct(data.baseline.deliveryRate)}
+              </li>
+            </ul>
+            <p className="m-0 mt-3 text-[11px] text-gray-400">
+              Read-only preview against default bonus rules - final weekly sign-off happens on Bonus &amp; Payouts.
+            </p>
+          </section>
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-base font-bold text-gray-900">Position Review</h2>
+            <p className="m-0 mt-1 text-xs text-gray-500">Your leadership position is reviewed every 4 weeks, and formally at 90 days.</p>
             {appt.dayNumber && (
-              <div className="min-w-[200px] flex-1">
+              <div className="mt-3">
                 <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
                   <span>90-Day Progress</span><span>{Math.min(appt.dayNumber, 90)} / 90 days</span>
                 </div>
@@ -59022,11 +59118,8 @@ ${waybillLineItems(w).length > 1
                 </div>
               </div>
             )}
-          </div>
-          <p className="m-0 mt-3 text-[11px] text-gray-400">
-            Read-only preview against default bonus rules - final weekly sign-off and payment history are coming in a later update.
-          </p>
-        </section>
+          </section>
+        </div>
       </div>
     );
   };
