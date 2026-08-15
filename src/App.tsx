@@ -3718,6 +3718,17 @@ const shiftDateKey = (dateKey: string, days: number) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+// The Sunday-anchored week containing a given date key - the client-side
+// equivalent of the backend's sundayWeekStartForDateKey, needed so the
+// shared Today/This Week/This Month/... period picker can drive
+// Head of Sales Rep's inherently weekly pages (weekly scorecard, weekly
+// bonus) without those routes ever seeing anything but a week start.
+const sundayWeekStartClient = (dateKey: string) => {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const dayOfWeek = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return shiftDateKey(dateKey, -dayOfWeek);
+};
+
 const payrollMonthKeyFromDate = (date = new Date()) => {
   const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
   return `${safeDate.getFullYear()}-${String(safeDate.getMonth() + 1).padStart(2, "0")}`;
@@ -11825,8 +11836,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Which Head of Sales Rep's dashboard Owner/Admin/Manager are browsing - a
   // plain picker, not view-as (mirrors recoveryRepScopeId).
   const [headOfSalesScopeId, setHeadOfSalesScopeId] = useState("");
-  const [headOfSalesOverviewWeekStart, setHeadOfSalesOverviewWeekStart] = useState("");
-  const [headOfSalesOverviewCurrentWeekStart, setHeadOfSalesOverviewCurrentWeekStart] = useState("");
+  // ONE shared filter for the entire Head of Sales Rep section (same
+  // Today/This Week/Last Week/This Month/.../Custom band Dashboard, Orders,
+  // Recovery Rep Dashboard etc. all already use) - not per-page state,
+  // matching how recoveryRepPeriod is one shared filter across every
+  // Recovery Rep Dashboard page. Every backend route here still only
+  // understands a Sunday-anchored week, so headOfSalesResolvedWeekStart
+  // snaps whatever the picker resolves to onto its containing week - the
+  // weekly scorecard/bonus model stays intact, only the filter's LOOK
+  // matches the rest of the app.
+  const [headOfSalesPeriod, setHeadOfSalesPeriod] = useState<Period>("This Week");
+  const [headOfSalesDateRange, setHeadOfSalesDateRange] = useState<DateRange>({ start: "", end: "" });
+  const [headOfSalesNavStart, setHeadOfSalesNavStart] = useState("");
+  const [headOfSalesNavSpan, setHeadOfSalesNavSpan] = useState<NavSpan>("1W");
+  const [headOfSalesShowDateRange, setHeadOfSalesShowDateRange] = useState(false);
   const [headOfSalesOverview, setHeadOfSalesOverview] = useState<any | null>(null);
   const [headOfSalesOverviewLoading, setHeadOfSalesOverviewLoading] = useState(false);
   const [headOfSalesOverviewError, setHeadOfSalesOverviewError] = useState("");
@@ -11863,8 +11886,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesInitiativeImpactSummary, setHeadOfSalesInitiativeImpactSummary] = useState<any[]>([]);
   const [headOfSalesInitiativeVsLastWeek, setHeadOfSalesInitiativeVsLastWeek] = useState<any | null>(null);
   const [headOfSalesInitiativeRecentLearnings, setHeadOfSalesInitiativeRecentLearnings] = useState<any[]>([]);
-  const [headOfSalesInitiativeWeekStart, setHeadOfSalesInitiativeWeekStart] = useState("");
-  const [headOfSalesInitiativeCurrentWeekStart, setHeadOfSalesInitiativeCurrentWeekStart] = useState("");
   const [headOfSalesInitiativesLoading, setHeadOfSalesInitiativesLoading] = useState(false);
   const [headOfSalesInitiativesError, setHeadOfSalesInitiativesError] = useState("");
   const [headOfSalesInitiativeFormOpen, setHeadOfSalesInitiativeFormOpen] = useState(false);
@@ -11898,10 +11919,6 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   });
   const [headOfSalesWeeklyReportSaving, setHeadOfSalesWeeklyReportSaving] = useState(false);
   const [headOfSalesWeeklyReportSubmitting, setHeadOfSalesWeeklyReportSubmitting] = useState(false);
-  const [headOfSalesWeeklyReportWeekStart, setHeadOfSalesWeeklyReportWeekStart] = useState("");
-  const [headOfSalesWeeklyReportCurrentWeekStart, setHeadOfSalesWeeklyReportCurrentWeekStart] = useState("");
-  const [headOfSalesBonusWeekStart, setHeadOfSalesBonusWeekStart] = useState("");
-  const [headOfSalesBonusCurrentWeekStart, setHeadOfSalesBonusCurrentWeekStart] = useState("");
   const [headOfSalesBonusData, setHeadOfSalesBonusData] = useState<any | null>(null);
   const [headOfSalesBonusLoading, setHeadOfSalesBonusLoading] = useState(false);
   const [headOfSalesBonusError, setHeadOfSalesBonusError] = useState("");
@@ -43448,12 +43465,42 @@ ${waybillLineItems(w).length > 1
   const headOfSalesViewingUser = headOfSalesRepUsers.find((user) => user.id === headOfSalesViewingId)
     ?? (headOfSalesIsOwnerLike ? null : currentManagedUser ?? null);
 
+  // Whatever the shared period picker resolves to, snapped onto its
+  // containing Sunday-anchored week - the one value every Head of Sales
+  // Rep route and page reads.
+  const headOfSalesResolvedWeekStart = useMemo(() => {
+    const { start } = explicitPeriodRange(headOfSalesPeriod, headOfSalesDateRange);
+    return start ? sundayWeekStartClient(start) : sundayWeekStartClient(formatDateKey(new Date()));
+  }, [headOfSalesPeriod, headOfSalesDateRange]);
+
+  const handleHeadOfSalesPeriodChange = (nextPeriod: Period) => {
+    setHeadOfSalesPeriod(nextPeriod);
+    setHeadOfSalesShowDateRange(false);
+  };
+
+  const applyHeadOfSalesDateRange = () => {
+    if (!headOfSalesDateRange.start || !headOfSalesDateRange.end) {
+      showToast("Choose both a start date and an end date.");
+      return;
+    }
+    if (!isDateValue(headOfSalesDateRange.start) || !isDateValue(headOfSalesDateRange.end)) {
+      showToast("Use YYYY-MM-DD for both dates.");
+      return;
+    }
+    if (headOfSalesDateRange.start > headOfSalesDateRange.end) {
+      showToast("Start date must be before end date.");
+      return;
+    }
+    setHeadOfSalesPeriod("Custom");
+    setHeadOfSalesShowDateRange(false);
+  };
+
   const loadHeadOfSalesOverview = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Overview" || !headOfSalesViewingId) return;
     setHeadOfSalesOverviewLoading(true);
     setHeadOfSalesOverviewError("");
     try {
-      const result = await headOfSalesApi.overview(headOfSalesViewingId, headOfSalesOverviewWeekStart || undefined);
+      const result = await headOfSalesApi.overview(headOfSalesViewingId, headOfSalesResolvedWeekStart);
       setHeadOfSalesOverview(result);
     } catch (error: any) {
       setHeadOfSalesOverviewError(error?.message ?? "Could not load this dashboard.");
@@ -43464,14 +43511,14 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     void loadHeadOfSalesOverview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart]);
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart]);
 
   const loadHeadOfSalesScorecard = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Weekly Scorecard" || !headOfSalesViewingId) return;
     setHeadOfSalesScorecardLoading(true);
     setHeadOfSalesScorecardError("");
     try {
-      const result = await headOfSalesApi.scorecard(headOfSalesViewingId, headOfSalesOverviewWeekStart || undefined);
+      const result = await headOfSalesApi.scorecard(headOfSalesViewingId, headOfSalesResolvedWeekStart);
       setHeadOfSalesScorecard(result);
     } catch (error: any) {
       setHeadOfSalesScorecardError(error?.message ?? "Could not load the scorecard.");
@@ -43482,22 +43529,15 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     void loadHeadOfSalesScorecard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart]);
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart]);
 
   const loadHeadOfSalesTeamPerformance = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Team Performance" || !headOfSalesViewingId) return;
     setHeadOfSalesTeamPerformanceLoading(true);
     setHeadOfSalesTeamPerformanceError("");
     try {
-      const wasUnset = !headOfSalesOverviewWeekStart;
-      const result = await headOfSalesApi.teamPerformance(headOfSalesViewingId, headOfSalesOverviewWeekStart || undefined);
+      const result = await headOfSalesApi.teamPerformance(headOfSalesViewingId, headOfSalesResolvedWeekStart);
       setHeadOfSalesTeamPerformance(result);
-      if (result?.weekStart && result.weekStart !== headOfSalesOverviewWeekStart) {
-        setHeadOfSalesOverviewWeekStart(result.weekStart);
-      }
-      if (wasUnset && result?.weekStart) {
-        setHeadOfSalesOverviewCurrentWeekStart(result.weekStart);
-      }
     } catch (error: any) {
       setHeadOfSalesTeamPerformanceError(error?.message ?? "Could not load Team Performance.");
     } finally {
@@ -43507,27 +43547,15 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     void loadHeadOfSalesTeamPerformance();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart]);
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart]);
 
   const loadHeadOfSalesUpsellCrossSell = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Upsell & Cross-sell" || !headOfSalesViewingId) return;
     setHeadOfSalesUpsellCrossSellLoading(true);
     setHeadOfSalesUpsellCrossSellError("");
     try {
-      const wasUnset = !headOfSalesOverviewWeekStart;
-      const result = await headOfSalesApi.upsellCrossSell(headOfSalesViewingId, headOfSalesOverviewWeekStart || undefined);
+      const result = await headOfSalesApi.upsellCrossSell(headOfSalesViewingId, headOfSalesResolvedWeekStart);
       setHeadOfSalesUpsellCrossSell(result);
-      if (result?.weekStart && result.weekStart !== headOfSalesOverviewWeekStart) {
-        setHeadOfSalesOverviewWeekStart(result.weekStart);
-      }
-      // headOfSalesOverviewWeekStart is shared across every leadership page
-      // (Overview, Scorecard, Team Performance, Rep Coaching, this one) -
-      // whichever page resolves "this week" first captures it once, so
-      // "Next week" can be disabled everywhere without recomputing
-      // Sunday-week math client-side on each page separately.
-      if (wasUnset && result?.weekStart) {
-        setHeadOfSalesOverviewCurrentWeekStart(result.weekStart);
-      }
     } catch (error: any) {
       setHeadOfSalesUpsellCrossSellError(error?.message ?? "Could not load Upsell & Cross-sell.");
     } finally {
@@ -43537,26 +43565,19 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     void loadHeadOfSalesUpsellCrossSell();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart]);
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart]);
 
   const loadHeadOfSalesCoaching = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Rep Coaching" || !headOfSalesViewingId) return;
     setHeadOfSalesCoachingLoading(true);
     setHeadOfSalesCoachingError("");
     try {
-      const wasUnset = !headOfSalesOverviewWeekStart;
-      const result = await headOfSalesApi.repCoaching(headOfSalesViewingId, headOfSalesCoachingSelectedRepId || undefined, headOfSalesOverviewWeekStart || undefined);
+      const result = await headOfSalesApi.repCoaching(headOfSalesViewingId, headOfSalesCoachingSelectedRepId || undefined, headOfSalesResolvedWeekStart);
       setHeadOfSalesCoaching(result);
       // Keep the picker in sync with whichever rep the server actually
       // resolved (e.g. the first team member, the first time this loads).
       if (result?.snapshot?.repId && result.snapshot.repId !== headOfSalesCoachingSelectedRepId) {
         setHeadOfSalesCoachingSelectedRepId(result.snapshot.repId);
-      }
-      if (result?.weekStart && result.weekStart !== headOfSalesOverviewWeekStart) {
-        setHeadOfSalesOverviewWeekStart(result.weekStart);
-      }
-      if (wasUnset && result?.weekStart) {
-        setHeadOfSalesOverviewCurrentWeekStart(result.weekStart);
       }
     } catch (error: any) {
       setHeadOfSalesCoachingError(error?.message ?? "Could not load Rep Coaching.");
@@ -43567,14 +43588,14 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     void loadHeadOfSalesCoaching();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart, headOfSalesCoachingSelectedRepId]);
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart, headOfSalesCoachingSelectedRepId]);
 
   const loadHeadOfSalesCallReviews = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Rep Coaching" || !headOfSalesViewingId || !headOfSalesCoachingSelectedRepId) return;
     setHeadOfSalesCallReviewsLoading(true);
     try {
-      const weekEnd = headOfSalesOverviewWeekStart ? shiftDateKey(headOfSalesOverviewWeekStart, 6) : undefined;
-      const result = await headOfSalesApi.callReviews(headOfSalesViewingId, headOfSalesCoachingSelectedRepId, headOfSalesOverviewWeekStart || undefined, weekEnd);
+      const weekEnd = shiftDateKey(headOfSalesResolvedWeekStart, 6);
+      const result = await headOfSalesApi.callReviews(headOfSalesViewingId, headOfSalesCoachingSelectedRepId, headOfSalesResolvedWeekStart, weekEnd);
       setHeadOfSalesCallReviews(result?.reviews ?? []);
     } catch {
       setHeadOfSalesCallReviews([]);
@@ -43585,7 +43606,7 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     void loadHeadOfSalesCallReviews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesCoachingSelectedRepId, headOfSalesOverviewWeekStart]);
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesCoachingSelectedRepId, headOfSalesResolvedWeekStart]);
 
   const loadHeadOfSalesCoachingPlan = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Rep Coaching" || !headOfSalesViewingId || !headOfSalesCoachingSelectedRepId) return;
@@ -43696,19 +43717,12 @@ ${waybillLineItems(w).length > 1
     setHeadOfSalesInitiativesLoading(true);
     setHeadOfSalesInitiativesError("");
     try {
-      const wasUnset = !headOfSalesInitiativeWeekStart;
-      const result = await headOfSalesApi.initiatives(headOfSalesViewingId, headOfSalesInitiativeWeekStart || undefined);
+      const result = await headOfSalesApi.initiatives(headOfSalesViewingId, headOfSalesResolvedWeekStart);
       setHeadOfSalesInitiatives(result?.initiatives ?? []);
       setHeadOfSalesInitiativeStats(result?.stats ?? { activeCount: 0, completedThisWeekCount: 0, totalIncrementalRevenue: 0, customersImpacted: 0, upgradesGenerated: 0 });
       setHeadOfSalesInitiativeImpactSummary(result?.impactSummary ?? []);
       setHeadOfSalesInitiativeVsLastWeek(result?.vsLastWeek ?? null);
       setHeadOfSalesInitiativeRecentLearnings(result?.recentLearnings ?? []);
-      if (result?.weekStart && result.weekStart !== headOfSalesInitiativeWeekStart) {
-        setHeadOfSalesInitiativeWeekStart(result.weekStart);
-      }
-      if (wasUnset && result?.weekStart) {
-        setHeadOfSalesInitiativeCurrentWeekStart(result.weekStart);
-      }
     } catch (error: any) {
       setHeadOfSalesInitiativesError(error?.message ?? "Could not load Initiatives.");
     } finally {
@@ -43721,7 +43735,7 @@ ${waybillLineItems(w).length > 1
     setHeadOfSalesInitiativeFormOpen(false);
     setHeadOfSalesInitiativeError("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesInitiativeWeekStart]);
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart]);
 
   const loadHeadOfSalesInitiativeLearnings = async (initiativeId: string) => {
     if (!headOfSalesViewingId) return;
@@ -43871,22 +43885,11 @@ ${waybillLineItems(w).length > 1
     setHeadOfSalesWeeklyReportLoading(true);
     setHeadOfSalesWeeklyReportError("");
     try {
-      const wasUnset = !headOfSalesWeeklyReportWeekStart;
-      const result = await headOfSalesApi.weeklyReport(headOfSalesViewingId, headOfSalesWeeklyReportWeekStart || undefined);
+      const result = await headOfSalesApi.weeklyReport(headOfSalesViewingId, headOfSalesResolvedWeekStart);
       setHeadOfSalesWeeklyReport(result?.report ?? null);
       setHeadOfSalesWeeklyReportLivePreview(result?.livePreview ?? null);
       setHeadOfSalesWeeklyReportWeekSummary(result?.weekSummary ?? null);
       setHeadOfSalesWeeklyReportTests(result?.testsThisWeek ?? []);
-      if (result?.weekStart && result.weekStart !== headOfSalesWeeklyReportWeekStart) {
-        setHeadOfSalesWeeklyReportWeekStart(result.weekStart);
-      }
-      // The first-ever resolution (no explicit weekStart sent) is the
-      // server's idea of "this week" - captured once so "Next week" can be
-      // disabled once she reaches it, without reimplementing Sunday-week
-      // math client-side.
-      if (wasUnset && result?.weekStart) {
-        setHeadOfSalesWeeklyReportCurrentWeekStart(result.weekStart);
-      }
       setHeadOfSalesWeeklyReportForm({
         summaryWins: result?.report?.summaryWins ?? "",
         summaryChallenges: result?.report?.summaryChallenges ?? "",
@@ -43906,11 +43909,11 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     void loadHeadOfSalesWeeklyReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesWeeklyReportWeekStart]);
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart]);
 
   const buildWeeklyReportSavePayload = () => ({
     repId: headOfSalesViewingId as string,
-    weekStart: headOfSalesWeeklyReportWeekStart,
+    weekStart: headOfSalesResolvedWeekStart,
     summaryWins: headOfSalesWeeklyReportForm.summaryWins.trim() || undefined,
     summaryChallenges: headOfSalesWeeklyReportForm.summaryChallenges.trim() || undefined,
     nextWeekPlan: headOfSalesWeeklyReportForm.nextWeekPlan.trim() || undefined,
@@ -43922,7 +43925,7 @@ ${waybillLineItems(w).length > 1
   });
 
   const saveHeadOfSalesWeeklyReportDraft = async () => {
-    if (!headOfSalesViewingId || !headOfSalesWeeklyReportWeekStart) return;
+    if (!headOfSalesViewingId || !headOfSalesResolvedWeekStart) return;
     setHeadOfSalesWeeklyReportSaving(true);
     setHeadOfSalesWeeklyReportError("");
     try {
@@ -43936,14 +43939,14 @@ ${waybillLineItems(w).length > 1
   };
 
   const submitHeadOfSalesWeeklyReport = async () => {
-    if (!headOfSalesViewingId || !headOfSalesWeeklyReportWeekStart) return;
+    if (!headOfSalesViewingId || !headOfSalesResolvedWeekStart) return;
     setHeadOfSalesWeeklyReportSubmitting(true);
     setHeadOfSalesWeeklyReportError("");
     try {
       // Submitting locks the week, so the latest draft text goes in first -
       // a submit should never leave the last few edits stranded.
       await headOfSalesApi.saveWeeklyReport(buildWeeklyReportSavePayload());
-      await headOfSalesApi.submitWeeklyReport({ repId: headOfSalesViewingId, weekStart: headOfSalesWeeklyReportWeekStart });
+      await headOfSalesApi.submitWeeklyReport({ repId: headOfSalesViewingId, weekStart: headOfSalesResolvedWeekStart });
       await loadHeadOfSalesWeeklyReport();
     } catch (error: any) {
       setHeadOfSalesWeeklyReportError(error?.message ?? "Could not submit the report.");
@@ -43957,15 +43960,8 @@ ${waybillLineItems(w).length > 1
     setHeadOfSalesBonusLoading(true);
     setHeadOfSalesBonusError("");
     try {
-      const wasUnset = !headOfSalesBonusWeekStart;
-      const result = await headOfSalesApi.bonusPayouts(headOfSalesViewingId, headOfSalesBonusWeekStart || undefined);
+      const result = await headOfSalesApi.bonusPayouts(headOfSalesViewingId, headOfSalesResolvedWeekStart);
       setHeadOfSalesBonusData(result ?? null);
-      if (result?.weekStart && result.weekStart !== headOfSalesBonusWeekStart) {
-        setHeadOfSalesBonusWeekStart(result.weekStart);
-      }
-      if (wasUnset && result?.weekStart) {
-        setHeadOfSalesBonusCurrentWeekStart(result.weekStart);
-      }
       setHeadOfSalesBonusForm({
         upsellImprovement: result?.record?.upsellImprovement ?? false,
         initiativeSuccess: result?.record?.initiativeSuccess ?? false,
@@ -43981,16 +43977,16 @@ ${waybillLineItems(w).length > 1
     void loadHeadOfSalesBonus();
     setHeadOfSalesBonusSettingsOpen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesBonusWeekStart]);
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart]);
 
   const saveHeadOfSalesBonusRecord = async () => {
-    if (!headOfSalesViewingId || !headOfSalesBonusWeekStart) return;
+    if (!headOfSalesViewingId || !headOfSalesResolvedWeekStart) return;
     setHeadOfSalesBonusSaving(true);
     setHeadOfSalesBonusError("");
     try {
       await headOfSalesApi.saveBonusPayout({
         repId: headOfSalesViewingId,
-        weekStart: headOfSalesBonusWeekStart,
+        weekStart: headOfSalesResolvedWeekStart,
         upsellImprovement: headOfSalesBonusForm.upsellImprovement,
         initiativeSuccess: headOfSalesBonusForm.initiativeSuccess,
         notes: headOfSalesBonusForm.notes.trim() || undefined
@@ -44004,11 +44000,11 @@ ${waybillLineItems(w).length > 1
   };
 
   const markHeadOfSalesBonusPaid = async () => {
-    if (!headOfSalesViewingId || !headOfSalesBonusWeekStart) return;
+    if (!headOfSalesViewingId || !headOfSalesResolvedWeekStart) return;
     setHeadOfSalesBonusMarkingPaid(true);
     setHeadOfSalesBonusError("");
     try {
-      await headOfSalesApi.markBonusPaid({ repId: headOfSalesViewingId, weekStart: headOfSalesBonusWeekStart });
+      await headOfSalesApi.markBonusPaid({ repId: headOfSalesViewingId, weekStart: headOfSalesResolvedWeekStart });
       await loadHeadOfSalesBonus();
     } catch (error: any) {
       setHeadOfSalesBonusError(error?.message ?? "Could not mark the bonus paid.");
@@ -58796,6 +58792,46 @@ ${waybillLineItems(w).length > 1
                 ))}
               </div>
             </div>
+
+            {/* Same Today/This Week/.../Custom period band every other
+                section of the app uses - snapped to its containing
+                Sunday-anchored week underneath, since every route here
+                still only understands a week (weekly scorecard, weekly
+                bonus). Shared across all 8 sub-pages, not per-page. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                {periods.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${headOfSalesPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                    onClick={() => handleHeadOfSalesPeriodChange(item)}
+                  >{item}</button>
+                ))}
+              </div>
+              <div className="relative">
+                <button
+                  type="button"
+                  className="!min-h-0 h-9 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  onClick={() => setHeadOfSalesShowDateRange((open) => !open)}
+                >
+                  <CalendarDays className="w-4 h-4" /> {headOfSalesPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
+                </button>
+                {headOfSalesShowDateRange && renderDateRangeCalendar("head-of-sales-date-range-panel", headOfSalesDateRange, setHeadOfSalesDateRange, applyHeadOfSalesDateRange, () => setHeadOfSalesShowDateRange(false))}
+              </div>
+            </div>
+            {renderWeekNav(headOfSalesNavStart, setHeadOfSalesNavStart, headOfSalesNavSpan, setHeadOfSalesNavSpan, setHeadOfSalesPeriod, setHeadOfSalesDateRange, headOfSalesPeriod, headOfSalesDateRange)}
+            <div className="meta-chip-row flex flex-wrap items-center gap-3 text-xs text-gray-500 font-medium">
+              <span className="meta-chip inline-flex items-center gap-2">
+                <span className="meta-chip-label">Period:</span>
+                <strong className="meta-chip-value">{headOfSalesPeriod === "Custom" && headOfSalesDateRange.start && headOfSalesDateRange.end ? `${headOfSalesDateRange.start} → ${headOfSalesDateRange.end}` : headOfSalesPeriod}</strong>
+              </span>
+              <span className="meta-chip inline-flex items-center gap-2">
+                <span className="meta-chip-label">Applied as week of:</span>
+                <strong className="meta-chip-value">{formatDateOnly(headOfSalesResolvedWeekStart)}</strong>
+              </span>
+            </div>
+
             {headOfSalesSubPage === "Overview" ? renderHeadOfSalesOverview()
               : headOfSalesSubPage === "Weekly Scorecard" ? renderHeadOfSalesScorecard()
               : headOfSalesSubPage === "Team Performance" ? renderHeadOfSalesTeamPerformance()
@@ -59535,7 +59571,6 @@ ${waybillLineItems(w).length > 1
       );
     };
 
-    const isCurrentWeek = Boolean(headOfSalesOverviewCurrentWeekStart) && headOfSalesOverviewWeekStart >= headOfSalesOverviewCurrentWeekStart;
     const exportReport = () => triggerCsvDownload(
       "team-performance",
       [
@@ -59552,16 +59587,9 @@ ${waybillLineItems(w).length > 1
             <h2 className="m-0 text-xl font-bold text-gray-900">Team Performance</h2>
             <p className="m-0 mt-0.5 text-sm text-gray-500">Track, compare and improve each sales rep on your team.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
-              <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, -7))}>←</button>
-              <span className="px-1 text-xs font-semibold text-gray-700">{formatDateOnly(headOfSalesOverviewWeekStart)}{data.weekEnd ? ` – ${formatDateOnly(data.weekEnd)}` : ""}</span>
-              <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, 7))}>→</button>
-            </div>
-            <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4]" onClick={exportReport}>
-              <Download className="h-3.5 w-3.5" /> Export Report
-            </button>
-          </div>
+          <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4]" onClick={exportReport}>
+            <Download className="h-3.5 w-3.5" /> Export Report
+          </button>
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
@@ -59694,7 +59722,6 @@ ${waybillLineItems(w).length > 1
 
     const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
     const pct = (value: number) => `${value}%`;
-    const isCurrentWeek = Boolean(headOfSalesOverviewCurrentWeekStart) && headOfSalesOverviewWeekStart >= headOfSalesOverviewCurrentWeekStart;
     const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 
     const kpi = (label: string, value: string, deltaPct: number | null, foot?: string) => (
@@ -59756,16 +59783,9 @@ ${waybillLineItems(w).length > 1
             <h2 className="m-0 text-xl font-bold text-gray-900">Upsell &amp; Cross-sell Performance</h2>
             <p className="m-0 mt-0.5 text-sm text-gray-500">Track, analyze and improve how the team increases average order value.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
-              <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, -7))}>←</button>
-              <span className="px-1 text-xs font-semibold text-gray-700">{formatDateOnly(headOfSalesOverviewWeekStart)}{data.weekEnd ? ` – ${formatDateOnly(data.weekEnd)}` : ""}</span>
-              <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, 7))}>→</button>
-            </div>
-            <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4]" onClick={exportReport}>
-              <Download className="h-3.5 w-3.5" /> Export Report
-            </button>
-          </div>
+          <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4]" onClick={exportReport}>
+            <Download className="h-3.5 w-3.5" /> Export Report
+          </button>
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
@@ -60018,7 +60038,6 @@ ${waybillLineItems(w).length > 1
         : severity === "Medium" ? "bg-amber-50 text-amber-700 border-amber-200"
         : "bg-sky-50 text-sky-700 border-sky-200";
     const snapshot = data.snapshot;
-    const isCurrentWeek = Boolean(headOfSalesOverviewCurrentWeekStart) && headOfSalesOverviewWeekStart >= headOfSalesOverviewCurrentWeekStart;
     const snapshotCard = (label: string, value: string, deltaPct: number, target: number, targetLabel: string) => {
       const progressPct = target > 0 ? Math.min(100, Math.round((Number(value.replace(/[^\d.]/g, "")) / target) * 100)) : 0;
       return (
@@ -60042,11 +60061,6 @@ ${waybillLineItems(w).length > 1
           <div>
             <h2 className="m-0 text-xl font-bold text-gray-900">Rep Coaching</h2>
             <p className="m-0 mt-0.5 text-sm text-gray-500">Identify opportunities, review calls, and coach your team to improve.</p>
-          </div>
-          <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
-            <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, -7))}>←</button>
-            <span className="px-1 text-xs font-semibold text-gray-700">{formatDateOnly(headOfSalesOverviewWeekStart)}{data.weekEnd ? ` – ${formatDateOnly(data.weekEnd)}` : ""}</span>
-            <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, 7))}>→</button>
           </div>
         </div>
 
@@ -60324,7 +60338,6 @@ ${waybillLineItems(w).length > 1
     const pipeline = headOfSalesInitiatives.filter((row) => row.status === "Idea");
     const stats = headOfSalesInitiativeStats;
     const vsLastWeek = headOfSalesInitiativeVsLastWeek;
-    const isCurrentWeek = Boolean(headOfSalesInitiativeCurrentWeekStart) && headOfSalesInitiativeWeekStart >= headOfSalesInitiativeCurrentWeekStart;
 
     const expandedDetail = (initiative: any) => (
       <tr>
@@ -60534,20 +60547,11 @@ ${waybillLineItems(w).length > 1
             <h2 className="m-0 text-xl font-bold text-gray-900">Initiatives</h2>
             <p className="m-0 mt-0.5 text-sm text-gray-500">Track experiments, strategies and actions that drive team performance.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
-              <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesInitiativeWeekStart((w) => shiftDateKey(w, -7))}>←</button>
-              <span className="px-1 text-xs font-semibold text-gray-700">
-                {formatDateOnly(headOfSalesInitiativeWeekStart)}{headOfSalesInitiativeWeekStart ? ` – ${formatDateOnly(shiftDateKey(headOfSalesInitiativeWeekStart, 6))}` : ""}
-              </span>
-              <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesInitiativeWeekStart((w) => shiftDateKey(w, 7))}>→</button>
-            </div>
-            <button type="button"
-              className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4]"
-              onClick={() => { setHeadOfSalesInitiativeError(""); setHeadOfSalesInitiativeFormOpen((open) => !open); }}>
-              {headOfSalesInitiativeFormOpen ? "Cancel" : "+ Create Initiative"}
-            </button>
-          </div>
+          <button type="button"
+            className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4]"
+            onClick={() => { setHeadOfSalesInitiativeError(""); setHeadOfSalesInitiativeFormOpen((open) => !open); }}>
+            {headOfSalesInitiativeFormOpen ? "Cancel" : "+ Create Initiative"}
+          </button>
         </div>
 
         {headOfSalesInitiativeFormOpen && (
@@ -60773,10 +60777,8 @@ ${waybillLineItems(w).length > 1
     const pct = (value: number) => `${value}%`;
     const report = headOfSalesWeeklyReport;
     const snapshot = report?.performanceSnapshot ?? headOfSalesWeeklyReportLivePreview;
-    const weekEnd = snapshot?.weekEnd ?? (headOfSalesWeeklyReportWeekStart ? shiftDateKey(headOfSalesWeeklyReportWeekStart, 6) : "");
+    const weekEnd = snapshot?.weekEnd ?? (headOfSalesResolvedWeekStart ? shiftDateKey(headOfSalesResolvedWeekStart, 6) : "");
     const isSubmitted = Boolean(report?.submittedAt);
-    const isCurrentWeek = Boolean(headOfSalesWeeklyReportCurrentWeekStart)
-      && headOfSalesWeeklyReportWeekStart >= headOfSalesWeeklyReportCurrentWeekStart;
     const summary = headOfSalesWeeklyReportWeekSummary;
     const form = headOfSalesWeeklyReportForm;
 
@@ -60798,7 +60800,7 @@ ${waybillLineItems(w).length > 1
       "weekly-report",
       [
         ["Field", "Value"],
-        ["Week", `${formatDateOnly(headOfSalesWeeklyReportWeekStart)} - ${formatDateOnly(weekEnd)}`],
+        ["Week", `${formatDateOnly(headOfSalesResolvedWeekStart)} - ${formatDateOnly(weekEnd)}`],
         ["Team AOV", summary ? money(summary.teamAov.actual) : ""],
         ["Delivery Rate", summary ? pct(summary.deliveryRate.actual) : ""],
         ["Upsell Rate", summary ? pct(summary.upsellRate.actual) : ""],
@@ -60829,23 +60831,16 @@ ${waybillLineItems(w).length > 1
       <div className="space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="m-0 text-xl font-bold text-gray-900">Weekly Report</h2>
+            <h2 className="m-0 flex items-center gap-2 text-xl font-bold text-gray-900">
+              Weekly Report
+              {isSubmitted ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">Submitted</span>
+                : <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700">Draft</span>}
+            </h2>
             <p className="m-0 mt-0.5 text-sm text-gray-500">Document your weekly tests, results, learnings and action plan.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
-              <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesWeeklyReportWeekStart((w) => shiftDateKey(w, -7))}>←</button>
-              <span className="px-1 text-xs font-semibold text-gray-700">
-                {formatDateOnly(headOfSalesWeeklyReportWeekStart)}{weekEnd ? ` – ${formatDateOnly(weekEnd)}` : ""}
-                {isSubmitted ? <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">Submitted</span>
-                  : <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700">Draft</span>}
-              </span>
-              <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesWeeklyReportWeekStart((w) => shiftDateKey(w, 7))}>→</button>
-            </div>
-            <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={exportReport}>
-              <Download className="h-3.5 w-3.5" /> Export Report
-            </button>
-          </div>
+          <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={exportReport}>
+            <Download className="h-3.5 w-3.5" /> Export Report
+          </button>
         </div>
 
         {headOfSalesWeeklyReportError && (
@@ -61067,7 +61062,6 @@ ${waybillLineItems(w).length > 1
     const summary = data?.summary ?? { totalEarned: 0, highestBonus: 0, averageBonus: 0, weeksPaid: 0, weeksTotal: 0 };
     const appointment = data?.appointment;
     const canConfirm = headOfSalesIsOwnerLike;
-    const isCurrentWeek = Boolean(headOfSalesBonusCurrentWeekStart) && headOfSalesBonusWeekStart >= headOfSalesBonusCurrentWeekStart;
 
     const currentLevel = record ? record.bonusLevel : preview?.level ?? "none";
     const currentAmount = record ? record.amount : preview?.amount ?? 0;
@@ -61120,13 +61114,6 @@ ${waybillLineItems(w).length > 1
             <p className="m-0 mt-0.5 text-sm text-gray-500">Your weekly bonus based on performance and leadership impact.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
-              <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesBonusWeekStart((w) => shiftDateKey(w, -7))}>←</button>
-              <span className="px-1 text-xs font-semibold text-gray-700">
-                {formatDateOnly(headOfSalesBonusWeekStart)}{data?.weekEnd ? ` – ${formatDateOnly(data.weekEnd)}` : ""}
-              </span>
-              <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesBonusWeekStart((w) => shiftDateKey(w, 7))}>→</button>
-            </div>
             <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={exportHistory}>
               <Download className="h-3.5 w-3.5" /> Export History
             </button>
