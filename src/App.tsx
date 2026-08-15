@@ -218,7 +218,7 @@ type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" |
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | null;
-type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
+type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -311,6 +311,24 @@ const RETENTION_SUBNAV_ITEMS: Array<{ key: RetentionSubPage; label: string; icon
   { key: "Win-back", label: "Win-back", icon: RefreshCw },
   { key: "Reports", label: "Reports", icon: BarChart3 },
   { key: "Settings", label: "Settings", icon: Settings, ownerOnly: true }
+];
+
+// The Head of Sales Rep's own dashboard, unlocked per-user via
+// isHeadOfSalesRep (User Management) and fully browsable/editable by
+// Owner/Admin/Manager for whichever rep holds it, via a rep-picker rather
+// than view-as (see headOfSalesViewingId).
+type HeadOfSalesSubPage =
+  | "Overview" | "Weekly Scorecard" | "Team Performance" | "Rep Coaching"
+  | "Upsell & Cross-sell" | "Initiatives" | "Weekly Report" | "Bonus & Payouts";
+const HEAD_OF_SALES_SUBNAV_ITEMS: Array<{ key: HeadOfSalesSubPage; label: string; icon: typeof LayoutPanelTop }> = [
+  { key: "Overview", label: "Overview", icon: LayoutPanelTop },
+  { key: "Weekly Scorecard", label: "Weekly Scorecard", icon: ClipboardCheck },
+  { key: "Team Performance", label: "Team Performance", icon: Users },
+  { key: "Rep Coaching", label: "Rep Coaching", icon: Headphones },
+  { key: "Upsell & Cross-sell", label: "Upsell & Cross-sell", icon: TrendingUp },
+  { key: "Initiatives", label: "Initiatives", icon: Lightbulb },
+  { key: "Weekly Report", label: "Weekly Report", icon: FileText },
+  { key: "Bonus & Payouts", label: "Bonus & Payouts", icon: HandCoins }
 ];
 
 type InventoryOperationsNavGroup = {
@@ -696,6 +714,10 @@ type ManagedUser = {
   // Paused from round-robin auto-assignment only - independent of `active`
   // (login/visibility). Excluded reps can still log in + be assigned manually.
   roundRobinExcluded?: boolean;
+  // Org-wide oversight of ALL sales reps, independent of a sales_teams
+  // leadId (which only covers one team). Owner-granted only.
+  isHeadOfSalesRep?: boolean;
+  headOfSalesRepAppointedAt?: string;
 };
 
 type MarketingLinkVariant = {
@@ -2560,20 +2582,24 @@ type AccessiblePage = ActivePage; // alias for readability
 const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
     "Dashboard", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
+    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Marketing", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Admin": [
     "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
+    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Manager": [
     "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
+    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
   ],
+  // "Head of Sales Rep" is NOT listed here - a Sales Rep only gets it at
+  // runtime when currentManagedUser?.isHeadOfSalesRep is true (see
+  // currentAllowedPages), the same way extraPages layers on top of this
+  // static list. Most Sales Reps must never see the page in their sidebar.
   "Sales Rep": [
     "Sales Rep Workspace", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
   ],
@@ -2638,6 +2664,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Sales Rep Bonuses": "#/dashboard/admin/sales-reps/bonuses",
   "Sales Rep Workspace": "#/dashboard/sales-rep",
   "Recovery Rep Dashboard": "#/dashboard/recovery-rep",
+  "Head of Sales Rep": "#/dashboard/admin/head-of-sales-rep",
   "Upsell & Cross-sell Log": "#/dashboard/admin/upsell-cross-sell-log",
   Bonuses: "#/dashboard/sales-rep/bonuses",
   "Call Rep Console": "#/dashboard/admin/call-rep-console",
@@ -6794,7 +6821,13 @@ const normalizeRealtimeUser = (value: any): ManagedUser => {
     agentBalanceAgentIds: Array.isArray(user.agentBalanceAgentIds) ? user.agentBalanceAgentIds.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0) : [],
     assignedAgentIds: Array.isArray(user.assignedAgentIds) ? user.assignedAgentIds.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0) : [],
     roundRobinPosition: user.roundRobinPosition ?? 0,
-    roundRobinExcluded: (user.roundRobinExcluded ?? user.round_robin_excluded) === true
+    roundRobinExcluded: (user.roundRobinExcluded ?? user.round_robin_excluded) === true,
+    // isDemo was missing here before - a live toggle from another tab would
+    // silently vanish on the next realtime update. Fixed alongside adding the
+    // new flag rather than repeating the same gap.
+    isDemo: (user.isDemo ?? user.is_demo) === true,
+    isHeadOfSalesRep: (user.isHeadOfSalesRep ?? user.is_head_of_sales_rep) === true,
+    headOfSalesRepAppointedAt: user.headOfSalesRepAppointedAt ?? user.head_of_sales_rep_appointed_at ?? undefined
   };
 };
 
@@ -9665,7 +9698,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }, [isPreviewing, previewReadOnly]);
   // Every new preview starts safe, whichever kind it is.
   useEffect(() => { if (isPreviewing) setPreviewReadOnly(true); }, [isPreviewing, previewRole, spyAsUserId]);
-  const currentAllowedPages = allowedPagesFor(currentRole, currentManagedUser?.extraPages ?? []);
+  // "Head of Sales Rep" is static for Owner/Admin/Manager (roleAllowedPages)
+  // but a Sales Rep only gets it here at runtime, once Owner has flipped their
+  // isHeadOfSalesRep flag - the same layering extraPages already does on top
+  // of the role's default page list.
+  const currentAllowedPages = currentRole === "Sales Rep" && currentManagedUser?.isHeadOfSalesRep
+    ? sanitizeActivePageList([...allowedPagesFor(currentRole, currentManagedUser?.extraPages ?? []), "Head of Sales Rep"])
+    : allowedPagesFor(currentRole, currentManagedUser?.extraPages ?? []);
   // Page-aware + role-aware Help: the (?) modal explains the page you're on,
   // with an optional role-specific note. Content lives in src/help-content.ts.
   const activeHelp = PAGE_HELP[activePage] ?? DEFAULT_HELP;
@@ -11762,6 +11801,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // When each dead order actually died, keyed by order id. Derived from
   // order_audit server-side because orders.updated_at is not the closure date.
   const [orderClosureDates, setOrderClosureDates] = useState<Record<string, string>>({});
+  const [headOfSalesSubPage, setHeadOfSalesSubPage] = useState<HeadOfSalesSubPage>("Overview");
+  // Which Head of Sales Rep's dashboard Owner/Admin/Manager are browsing - a
+  // plain picker, not view-as (mirrors recoveryRepScopeId).
+  const [headOfSalesScopeId, setHeadOfSalesScopeId] = useState("");
   const [pdaSubPage, setPdaSubPage] = useState<PdaSubPage>("Overview");
   const [pdaAgents, setPdaAgents] = useState<PersonalDeliveryAgentRow[]>([]);
   const [pdaOverview, setPdaOverview] = useState<PersonalDeliveryAgentOverview | null>(null);
@@ -24720,6 +24763,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       "weekend-stock-summary": "Weekend Stock Summary",
       agents: "Agents",
       "personal-delivery-agents": "Personal Delivery Agents",
+      "head-of-sales-rep": "Head of Sales Rep",
       "my-deliveries": "My Deliveries",
       waybill: "Waybill",
       payroll: "Payroll",
@@ -25555,6 +25599,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             role,
             active: u.active,
             isDemo: Boolean(u.isDemo ?? u.is_demo),
+            isHeadOfSalesRep: Boolean(u.isHeadOfSalesRep ?? u.is_head_of_sales_rep),
+            headOfSalesRepAppointedAt: u.headOfSalesRepAppointedAt ?? u.head_of_sales_rep_appointed_at ?? undefined,
             created: u.createdAt ?? u.created_at ?? "",
             lastSeenAt: u.lastSeenAt ?? u.last_seen_at ?? undefined,
             permissions: resolvedPermissionsForRole(
@@ -31744,6 +31790,7 @@ ${waybillLineItems(w).length > 1
       "Call Rep Console": "#/dashboard/admin/call-rep-console",
       Bonuses: "#/dashboard/sales-rep/bonuses",
       "Recovery Rep Dashboard": "#/dashboard/recovery-rep",
+      "Head of Sales Rep": "#/dashboard/admin/head-of-sales-rep",
       Settings: "#/dashboard/admin/settings",
       WhatsApp: "#/dashboard/admin/whatsapp"
     };
@@ -31795,7 +31842,7 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
       if (label === "Inventory & Logistics Operations") {
         setInventoryOperationsSection("dashboard");
       }
@@ -31809,6 +31856,9 @@ ${waybillLineItems(w).length > 1
       if (label === "Personal Delivery Agents") {
         setPdaSubPage("Overview");
         setPdaDetail(null);
+      }
+      if (label === "Head of Sales Rep") {
+        setHeadOfSalesSubPage("Overview");
       }
       if (label === "Call Rep Console") {
         setCallQueueIndex(0);
@@ -39420,6 +39470,30 @@ ${waybillLineItems(w).length > 1
         showToast(`Could not change that: ${err?.message ?? "please retry"}.`);
       });
   };
+  // Owner-only, Sales Rep-only (enforced again server-side). Unlocks the
+  // Head of Sales Rep dashboard for this person. The appointed-at timestamp
+  // is set once server-side on the false->true edge, so read it back from
+  // the response rather than guessing it client-side.
+  const toggleManagedUserHeadOfSalesRep = (user: ManagedUser) => {
+    const next = !user.isHeadOfSalesRep;
+    const previous = users;
+    setUsers((list) => list.map((row) => row.id === user.id ? { ...row, isHeadOfSalesRep: next } : row));
+    usersApi.update(user.id, { isHeadOfSalesRep: next } as any)
+      .then((saved: any) => {
+        setUsers((list) => list.map((row) => row.id === user.id ? {
+          ...row,
+          isHeadOfSalesRep: Boolean(saved?.is_head_of_sales_rep ?? next),
+          headOfSalesRepAppointedAt: saved?.head_of_sales_rep_appointed_at ?? row.headOfSalesRepAppointedAt
+        } : row));
+        showToast(next
+          ? `${user.name} is now Head of Sales Rep - the leadership dashboard is unlocked for them.`
+          : `${user.name} is no longer Head of Sales Rep.`);
+      })
+      .catch((err: any) => {
+        setUsers(previous);
+        showToast(`Could not change that: ${err?.message ?? "please retry"}.`);
+      });
+  };
   const toggleManagedUserActive = (user: ManagedUser) => {
     if (isTemporaryUserId(user.id)) {
       showToast("This user is still syncing. Try again in a moment.");
@@ -43254,6 +43328,18 @@ ${waybillLineItems(w).length > 1
   const recoveryRepViewingId = recoveryRepIsOwnerLike
     ? (recoveryRepScopeId || recoveryRepUsers[0]?.id || "")
     : (currentManagedUser?.id ?? authUser?.id ?? "");
+
+  // Same pattern as Recovery Rep above: Owner/Admin/Manager get a plain
+  // picker over whichever Sales Reps are flagged isHeadOfSalesRep (there can
+  // be more than one), never view-as. The Sales Rep holding the flag is
+  // locked to themself.
+  const headOfSalesRepUsers = users.filter((user) => user.role === "Sales Rep" && user.isHeadOfSalesRep && user.active);
+  const headOfSalesIsOwnerLike = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
+  const headOfSalesViewingId = headOfSalesIsOwnerLike
+    ? (headOfSalesScopeId || headOfSalesRepUsers[0]?.id || "")
+    : (currentManagedUser?.id ?? authUser?.id ?? "");
+  const headOfSalesViewingUser = headOfSalesRepUsers.find((user) => user.id === headOfSalesViewingId)
+    ?? (headOfSalesIsOwnerLike ? null : currentManagedUser ?? null);
 
   const loadRecoveryCandidates = async () => {
     if (activePage !== "Recovery Rep Dashboard") return;
@@ -57942,6 +58028,85 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // Stage 0 of the Head of Sales Rep feature: the toggle, role gating, and an
+  // 8-page shell everything else attaches to. No real scorecard/bonus data
+  // yet - each sub-page is a placeholder until its own stage lands.
+  const renderHeadOfSalesRepDashboard = () => {
+    const viewingUser = headOfSalesViewingUser;
+
+    if (!headOfSalesIsOwnerLike && !currentManagedUser?.isHeadOfSalesRep) {
+      // Nav already blocks a Sales Rep without the flag from reaching this
+      // page - this is a defense-in-depth fallback, not the primary gate.
+      return (
+        <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
+          <h2 className="text-base font-bold text-gray-900">Head of Sales Rep</h2>
+          <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
+            You don't have Head of Sales Rep access. Ask the Owner if you believe this is wrong.
+          </p>
+        </section>
+      );
+    }
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+              <Crown className="h-5 w-5" />
+            </span>
+            <div>
+              <h1 className="m-0 text-xl font-bold text-gray-900">Head of Sales Rep</h1>
+              <p className="m-0 mt-0.5 text-sm text-gray-500">
+                {headOfSalesIsOwnerLike
+                  ? (viewingUser ? `Viewing ${viewingUser.name}'s leadership dashboard.` : "No Sales Rep currently holds Head of Sales Rep.")
+                  : "Lead the team. Improve performance. Increase revenue."}
+              </p>
+            </div>
+          </div>
+          {headOfSalesIsOwnerLike && headOfSalesRepUsers.length > 0 && (
+            <select
+              className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700"
+              value={headOfSalesViewingId}
+              onChange={(event) => setHeadOfSalesScopeId(event.target.value)}
+              aria-label="Choose which Head of Sales Rep to view"
+            >
+              {headOfSalesRepUsers.map((rep) => <option key={rep.id} value={rep.id}>{rep.name}</option>)}
+            </select>
+          )}
+        </div>
+
+        {headOfSalesIsOwnerLike && headOfSalesRepUsers.length === 0 ? (
+          <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
+            <h2 className="text-base font-bold text-gray-900">Nobody is Head of Sales Rep yet</h2>
+            <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
+              Promote a Sales Rep from User Management to unlock this dashboard for them - and for you to review here.
+            </p>
+          </section>
+        ) : (
+          <>
+            <div className="-mx-1 overflow-x-auto border-b border-gray-200">
+              <div className="flex min-w-max gap-1 px-1">
+                {HEAD_OF_SALES_SUBNAV_ITEMS.map((tab) => (
+                  <button key={tab.key} type="button" onClick={() => setHeadOfSalesSubPage(tab.key)}
+                    className={`!min-h-0 inline-flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors ${
+                      headOfSalesSubPage === tab.key ? "border-[#1F8FE0] text-[#1F8FE0]" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
+                    <tab.icon className="h-4 w-4" /> {tab.key}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
+              <h2 className="text-base font-bold text-gray-900">{headOfSalesSubPage}</h2>
+              <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
+                Coming soon.
+              </p>
+            </section>
+          </>
+        )}
+      </div>
+    );
+  };
+
   const renderRecoveryRepConsole = () => {
     const summary = recoveryRepKpiSummary;
     const viewingUser = recoveryRepUsers.find((user) => user.id === recoveryRepViewingId) ?? currentManagedUser;
@@ -62481,6 +62646,9 @@ ${waybillLineItems(w).length > 1
             const showInventoryOperationsSubnav = item.label === "Inventory & Logistics Operations"
               && activePage === "Inventory & Logistics Operations"
               && !collapsed;
+            const showHeadOfSalesSubnav = item.label === "Head of Sales Rep"
+              && activePage === "Head of Sales Rep"
+              && !collapsed;
             return (
               <Fragment key={item.label}>
                 <button
@@ -62563,6 +62731,27 @@ ${waybillLineItems(w).length > 1
                         ))}
                       </div>
                     </div>
+                  </div>
+                )}
+                {showHeadOfSalesSubnav && (
+                  <div className="ml-4 mt-1 mb-1.5 pl-3.5 border-l border-white/10 space-y-1">
+                    {HEAD_OF_SALES_SUBNAV_ITEMS.map((sub) => {
+                      const subActive = headOfSalesSubPage === sub.key;
+                      return (
+                        <button
+                          key={sub.key}
+                          type="button"
+                          onClick={() => {
+                            setHeadOfSalesSubPage(sub.key);
+                            if (window.matchMedia("(max-width: 1024px)").matches) setMobileMenuOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition-colors ${subActive ? "bg-[#1F8FE0]/15 text-[#1F8FE0] font-bold" : "text-gray-400 font-medium hover:bg-white/5 hover:text-white"}`}
+                        >
+                          <sub.icon className="w-4 h-4 shrink-0" />
+                          <span className="flex-1 truncate text-left">{sub.label}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
                 {showPdaSubnav && (
@@ -68869,6 +69058,8 @@ ${waybillLineItems(w).length > 1
             renderRepConsole()
           ) : activePage === "Recovery Rep Dashboard" ? (
             renderRecoveryRepConsole()
+          ) : activePage === "Head of Sales Rep" ? (
+            renderHeadOfSalesRepDashboard()
           ) : activePage === "Weekend Stock Summary" ? (
             <div className="space-y-6">
               <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
@@ -79135,6 +79326,12 @@ ${waybillLineItems(w).length > 1
                                   Demo · not counted
                                 </span>
                               )}
+                              {user.isHeadOfSalesRep && (
+                                <span className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-700"
+                                  title="Oversees all sales reps - has the Head of Sales Rep dashboard.">
+                                  <Crown className="h-2.5 w-2.5" /> Head of Sales Rep
+                                </span>
+                              )}
                             </div>
                             {/* Owner only. Flipping a real person to demo would
                                 take them out of payroll and their own bonuses
@@ -79149,6 +79346,20 @@ ${waybillLineItems(w).length > 1
                                   : "Mark as a testing account - removed from payroll, round-robin, bonuses, leaderboards, assignment and headcounts."}
                               >
                                 {user.isDemo ? "Demo account" : "Mark as demo"}
+                              </button>
+                            )}
+                            {/* Owner only, Sales Rep only - unlocks the Head of
+                                Sales Rep leadership dashboard for this person. */}
+                            {realRole === "Owner" && user.role === "Sales Rep" && (
+                              <button
+                                type="button"
+                                className={`!min-h-0 shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-colors ${user.isHeadOfSalesRep ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" : "border-gray-200 bg-white text-gray-500 hover:bg-gray-50"}`}
+                                onClick={() => toggleManagedUserHeadOfSalesRep(user)}
+                                title={user.isHeadOfSalesRep
+                                  ? "Remove Head of Sales Rep - they lose the leadership dashboard."
+                                  : "Make Head of Sales Rep - unlocks the leadership dashboard, oversees all sales reps."}
+                              >
+                                <Crown className="mr-1 inline h-3 w-3" />{user.isHeadOfSalesRep ? "Head of Sales Rep" : "Make Head of Sales Rep"}
                               </button>
                             )}
                             <button type="button" className="flex items-center gap-2 text-sm" onClick={() => toggleManagedUserActive(user)}>
@@ -79224,6 +79435,12 @@ ${waybillLineItems(w).length > 1
                                             Demo · not counted
                                           </span>
                                         )}
+                                        {user.isHeadOfSalesRep && (
+                                          <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-700"
+                                            title="Oversees all sales reps - has the Head of Sales Rep dashboard.">
+                                            <Crown className="h-2.5 w-2.5" /> Head of Sales Rep
+                                          </span>
+                                        )}
                                       </div>
                                       <div className="text-xs text-gray-400">{user.email}</div>
                                     </div>
@@ -79281,6 +79498,18 @@ ${waybillLineItems(w).length > 1
                                         aria-label={user.isDemo ? `Stop ${user.name} being a demo account` : `Mark ${user.name} as a demo account`}
                                         onClick={() => toggleManagedUserDemo(user)}
                                       ><Bot className="w-4 h-4" /></button>
+                                    )}
+                                    {/* Same control as the card view above - Owner
+                                        only, Sales Rep only. */}
+                                    {realRole === "Owner" && user.role === "Sales Rep" && (
+                                      <button
+                                        className={`w-8 h-8 flex items-center justify-center rounded border transition-colors ${user.isHeadOfSalesRep ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100" : "border-gray-200 text-gray-400 hover:bg-gray-100"}`}
+                                        title={user.isHeadOfSalesRep
+                                          ? `${user.name} is Head of Sales Rep - oversees all sales reps. Click to remove.`
+                                          : `Make ${user.name} Head of Sales Rep - unlocks the leadership dashboard.`}
+                                        aria-label={user.isHeadOfSalesRep ? `Remove ${user.name} as Head of Sales Rep` : `Make ${user.name} Head of Sales Rep`}
+                                        onClick={() => toggleManagedUserHeadOfSalesRep(user)}
+                                      ><Crown className="w-4 h-4" /></button>
                                     )}
                                     <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Edit user" aria-label={`Edit ${user.name}`} onClick={() => openAdminUserEditRoute(user.id)}><Pencil className="w-4 h-4" /></button>
                                     <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors" title="Reset password" aria-label={`Reset password for ${user.name}`} onClick={() => openAdminUserResetPasswordRoute(user.id)}><KeyRound className="w-4 h-4" /></button>

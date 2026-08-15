@@ -11,6 +11,7 @@ import {
   CalendarClock,
   Code2,
   CreditCard,
+  Crown,
   HandCoins,
   Headphones,
   ClipboardCheck,
@@ -65,6 +66,7 @@ export const navItems = [
   { label: "Call Rep Console", icon: Phone },
   { label: "Sales Rep Workspace", icon: Headphones },
   { label: "Recovery Rep Dashboard", icon: RotateCcw },
+  { label: "Head of Sales Rep", icon: Crown },
   { label: "Bonuses", icon: HandCoins },
   { label: "Settings", icon: Settings }
 ];

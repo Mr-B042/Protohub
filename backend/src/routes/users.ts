@@ -14,7 +14,7 @@ router.use(requireAuth);
 router.get("/", async (req, res) => {
   let query = supabase
     .from("users")
-    .select("id, name, email, phone, role, active, round_robin_excluded, is_demo, created_at, last_seen_at, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids, marketing_attribution_tags")
+    .select("id, name, email, phone, role, active, round_robin_excluded, is_demo, is_head_of_sales_rep, head_of_sales_rep_appointed_at, created_at, last_seen_at, agent_balance_scope_mode, agent_balance_state_scope, agent_balance_agent_ids, marketing_attribution_tags")
     .eq("org_id", req.user!.orgId)
     .order("created_at", { ascending: true });
 
@@ -68,7 +68,10 @@ const UserPatchSchema = z.object({
   active: z.boolean().optional(),
   // Marks an account as a testing one: still fully usable in-app, removed from
   // payroll, round-robin, bonuses, leaderboards, assignment and headcounts.
-  isDemo: z.boolean().optional()
+  isDemo: z.boolean().optional(),
+  // Org-wide leadership oversight of ALL sales reps, independent of
+  // sales_teams.lead_id. Owner only - unlocks the Head of Sales Rep dashboard.
+  isHeadOfSalesRep: z.boolean().optional()
 }).strict();
 
 router.patch("/:id",
@@ -93,6 +96,33 @@ router.patch("/:id",
         return;
       }
       updates.is_demo = parsed.data.isDemo;
+    }
+    // Owner only, and only ever granted to a Sales Rep - the whole dashboard
+    // this unlocks assumes the person is one of the reps being led.
+    // head_of_sales_rep_appointed_at is set once, on the false->true edge, and
+    // never touched again while the flag stays true, so re-toggling later
+    // cannot quietly restart someone's 90-day appointment clock.
+    if (parsed.data.isHeadOfSalesRep !== undefined) {
+      if (req.user!.role !== "Owner") {
+        res.status(403).json({ error: "Only the Owner can grant or remove Head of Sales Rep." });
+        return;
+      }
+      const { data: target, error: targetError } = await supabase
+        .from("users")
+        .select("role, is_head_of_sales_rep, head_of_sales_rep_appointed_at")
+        .eq("id", req.params.id)
+        .eq("org_id", req.user!.orgId)
+        .maybeSingle();
+      if (targetError) { res.status(500).json({ error: targetError.message }); return; }
+      if (!target) { res.status(404).json({ error: "User not found." }); return; }
+      if (parsed.data.isHeadOfSalesRep && target.role !== "Sales Rep") {
+        res.status(400).json({ error: "Only a Sales Rep can be made Head of Sales Rep." });
+        return;
+      }
+      updates.is_head_of_sales_rep = parsed.data.isHeadOfSalesRep;
+      if (parsed.data.isHeadOfSalesRep && !target.is_head_of_sales_rep && !target.head_of_sales_rep_appointed_at) {
+        updates.head_of_sales_rep_appointed_at = new Date().toISOString();
+      }
     }
 
     if (Object.keys(updates).length === 0) {
