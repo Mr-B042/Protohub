@@ -11857,7 +11857,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesActionItemFormOpen, setHeadOfSalesActionItemFormOpen] = useState(false);
   const [headOfSalesActionItemSaving, setHeadOfSalesActionItemSaving] = useState(false);
   const [headOfSalesActionItemError, setHeadOfSalesActionItemError] = useState("");
-  const [headOfSalesActionItemForm, setHeadOfSalesActionItemForm] = useState({ description: "", targetCount: "", dueDate: "" });
+  const [headOfSalesActionItemForm, setHeadOfSalesActionItemForm] = useState({ description: "", targetCount: "", targetIsPercentage: false, dueDate: "" });
   const [headOfSalesInitiatives, setHeadOfSalesInitiatives] = useState<any[]>([]);
   const [headOfSalesInitiativeStats, setHeadOfSalesInitiativeStats] = useState({ activeCount: 0, completedThisWeekCount: 0, totalIncrementalRevenue: 0, customersImpacted: 0, upgradesGenerated: 0 });
   const [headOfSalesInitiativeImpactSummary, setHeadOfSalesInitiativeImpactSummary] = useState<any[]>([]);
@@ -43537,12 +43537,19 @@ ${waybillLineItems(w).length > 1
     setHeadOfSalesCoachingLoading(true);
     setHeadOfSalesCoachingError("");
     try {
+      const wasUnset = !headOfSalesOverviewWeekStart;
       const result = await headOfSalesApi.repCoaching(headOfSalesViewingId, headOfSalesCoachingSelectedRepId || undefined, headOfSalesOverviewWeekStart || undefined);
       setHeadOfSalesCoaching(result);
       // Keep the picker in sync with whichever rep the server actually
       // resolved (e.g. the first team member, the first time this loads).
       if (result?.snapshot?.repId && result.snapshot.repId !== headOfSalesCoachingSelectedRepId) {
         setHeadOfSalesCoachingSelectedRepId(result.snapshot.repId);
+      }
+      if (result?.weekStart && result.weekStart !== headOfSalesOverviewWeekStart) {
+        setHeadOfSalesOverviewWeekStart(result.weekStart);
+      }
+      if (wasUnset && result?.weekStart) {
+        setHeadOfSalesOverviewCurrentWeekStart(result.weekStart);
       }
     } catch (error: any) {
       setHeadOfSalesCoachingError(error?.message ?? "Could not load Rep Coaching.");
@@ -43559,7 +43566,8 @@ ${waybillLineItems(w).length > 1
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Rep Coaching" || !headOfSalesViewingId || !headOfSalesCoachingSelectedRepId) return;
     setHeadOfSalesCallReviewsLoading(true);
     try {
-      const result = await headOfSalesApi.callReviews(headOfSalesViewingId, headOfSalesCoachingSelectedRepId);
+      const weekEnd = headOfSalesOverviewWeekStart ? shiftDateKey(headOfSalesOverviewWeekStart, 6) : undefined;
+      const result = await headOfSalesApi.callReviews(headOfSalesViewingId, headOfSalesCoachingSelectedRepId, headOfSalesOverviewWeekStart || undefined, weekEnd);
       setHeadOfSalesCallReviews(result?.reviews ?? []);
     } catch {
       setHeadOfSalesCallReviews([]);
@@ -43570,7 +43578,7 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     void loadHeadOfSalesCallReviews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesCoachingSelectedRepId]);
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesCoachingSelectedRepId, headOfSalesOverviewWeekStart]);
 
   const loadHeadOfSalesCoachingPlan = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Rep Coaching" || !headOfSalesViewingId || !headOfSalesCoachingSelectedRepId) return;
@@ -43643,9 +43651,10 @@ ${waybillLineItems(w).length > 1
         selectedRepId: headOfSalesCoachingSelectedRepId,
         description: form.description.trim(),
         targetCount: form.targetCount ? Number(form.targetCount) : undefined,
+        targetIsPercentage: form.targetIsPercentage,
         dueDate: form.dueDate || undefined
       });
-      setHeadOfSalesActionItemForm({ description: "", targetCount: "", dueDate: "" });
+      setHeadOfSalesActionItemForm({ description: "", targetCount: "", targetIsPercentage: false, dueDate: "" });
       setHeadOfSalesActionItemFormOpen(false);
       await loadHeadOfSalesCoachingPlan();
     } catch (error: any) {
@@ -59812,17 +59821,38 @@ ${waybillLineItems(w).length > 1
         : severity === "Medium" ? "bg-amber-50 text-amber-700 border-amber-200"
         : "bg-sky-50 text-sky-700 border-sky-200";
     const snapshot = data.snapshot;
-    const snapshotCard = (label: string, value: string, deltaPct: number, targetLabel: string) => (
-      <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
-        <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">{label}</span>
-        <strong className="mt-1 block text-xl font-black text-gray-900">{value}</strong>
-        <span className={`text-[11px] font-bold ${deltaPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{deltaPct >= 0 ? "+" : ""}{deltaPct}% vs last week</span>
-        <span className="mt-0.5 block text-[11px] text-gray-400">Target: {targetLabel}</span>
-      </div>
-    );
+    const isCurrentWeek = Boolean(headOfSalesOverviewCurrentWeekStart) && headOfSalesOverviewWeekStart >= headOfSalesOverviewCurrentWeekStart;
+    const snapshotCard = (label: string, value: string, deltaPct: number, target: number, targetLabel: string) => {
+      const progressPct = target > 0 ? Math.min(100, Math.round((Number(value.replace(/[^\d.]/g, "")) / target) * 100)) : 0;
+      return (
+        <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
+          <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">{label}</span>
+          <strong className="mt-1 block text-xl font-black text-gray-900">{value}</strong>
+          <span className={`text-[11px] font-bold ${deltaPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{deltaPct >= 0 ? "+" : ""}{deltaPct}% vs last week</span>
+          <span className="mt-0.5 block text-[11px] text-gray-400">Target: {targetLabel}</span>
+          {target > 0 && (
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-100">
+              <div className={`h-full rounded-full ${progressPct >= 100 ? "bg-emerald-500" : progressPct >= 70 ? "bg-amber-400" : "bg-rose-400"}`} style={{ width: `${progressPct}%` }} />
+            </div>
+          )}
+        </div>
+      );
+    };
 
     return (
       <div className="space-y-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-xl font-bold text-gray-900">Rep Coaching</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Identify opportunities, review calls, and coach your team to improve.</p>
+          </div>
+          <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
+            <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, -7))}>←</button>
+            <span className="px-1 text-xs font-semibold text-gray-700">{formatDateOnly(headOfSalesOverviewWeekStart)}{data.weekEnd ? ` – ${formatDateOnly(data.weekEnd)}` : ""}</span>
+            <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesOverviewWeekStart((w) => shiftDateKey(w, 7))}>→</button>
+          </div>
+        </div>
+
         <div className="-mx-1 overflow-x-auto px-1">
           <div className="flex min-w-max gap-2">
             {data.reps.map((rep: any) => (
@@ -59850,10 +59880,10 @@ ${waybillLineItems(w).length > 1
             <section className="rounded-2xl border border-gray-200 bg-white p-5">
               <h2 className="m-0 text-base font-bold text-gray-900">Rep Performance Snapshot: {snapshot.name}</h2>
               <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-                {snapshotCard("AOV (Delivered)", money(snapshot.aov), snapshot.aovDeltaVsLastWeekPct, money(snapshot.aovTarget))}
-                {snapshotCard("Delivery Rate", pct(snapshot.deliveryRate), snapshot.deliveryRateDeltaVsLastWeekPct, pct(snapshot.deliveryRateTarget))}
-                {snapshotCard("Upsell Rate", pct(snapshot.upsellRate), snapshot.upsellRateDeltaVsLastWeekPct, pct(snapshot.upsellRateTarget))}
-                {snapshotCard("Cross-sell Rate", pct(snapshot.crossSellRate), snapshot.crossSellRateDeltaVsLastWeekPct, pct(snapshot.crossSellRateTarget))}
+                {snapshotCard("AOV (Delivered)", money(snapshot.aov), snapshot.aovDeltaVsLastWeekPct, snapshot.aovTarget, money(snapshot.aovTarget))}
+                {snapshotCard("Delivery Rate", pct(snapshot.deliveryRate), snapshot.deliveryRateDeltaVsLastWeekPct, snapshot.deliveryRateTarget, pct(snapshot.deliveryRateTarget))}
+                {snapshotCard("Upsell Rate", pct(snapshot.upsellRate), snapshot.upsellRateDeltaVsLastWeekPct, snapshot.upsellRateTarget, pct(snapshot.upsellRateTarget))}
+                {snapshotCard("Cross-sell Rate", pct(snapshot.crossSellRate), snapshot.crossSellRateDeltaVsLastWeekPct, snapshot.crossSellRateTarget, pct(snapshot.crossSellRateTarget))}
                 <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
                   <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Orders (Assigned)</span>
                   <strong className="mt-1 block text-xl font-black text-gray-900">{snapshot.ordersAssigned}</strong>
@@ -59881,7 +59911,7 @@ ${waybillLineItems(w).length > 1
 
               <section className="rounded-2xl border border-gray-200 bg-white p-5">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="m-0 text-base font-bold text-gray-900">Recent Calls Reviewed</h2>
+                  <h2 className="m-0 text-base font-bold text-gray-900">Recent Calls Reviewed <span className="font-medium text-gray-400">(This Week)</span></h2>
                   <button type="button"
                     className="!min-h-0 rounded-lg border border-[#1F8FE0] bg-blue-50/60 px-3 py-1.5 text-xs font-bold text-[#1F8FE0] hover:bg-blue-100"
                     onClick={() => { setHeadOfSalesCallReviewError(""); setHeadOfSalesCallReviewFormOpen((open) => !open); }}>
@@ -59967,13 +59997,19 @@ ${waybillLineItems(w).length > 1
                     value={headOfSalesActionItemForm.description}
                     onChange={(e) => setHeadOfSalesActionItemForm((f) => ({ ...f, description: e.target.value }))} />
                   <div className="grid grid-cols-2 gap-2">
-                    <input type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Target count (optional)"
+                    <input type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                      placeholder={headOfSalesActionItemForm.targetIsPercentage ? "Target % (e.g. 85)" : "Target count (optional)"}
                       value={headOfSalesActionItemForm.targetCount}
                       onChange={(e) => setHeadOfSalesActionItemForm((f) => ({ ...f, targetCount: e.target.value }))} />
                     <input type="date" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
                       value={headOfSalesActionItemForm.dueDate}
                       onChange={(e) => setHeadOfSalesActionItemForm((f) => ({ ...f, dueDate: e.target.value }))} />
                   </div>
+                  <label className="flex items-center gap-2 text-xs text-gray-600">
+                    <input type="checkbox" checked={headOfSalesActionItemForm.targetIsPercentage}
+                      onChange={(e) => setHeadOfSalesActionItemForm((f) => ({ ...f, targetIsPercentage: e.target.checked }))} />
+                    This is a percentage target (e.g. "increase upsell attempt rate to 85%")
+                  </label>
                   {headOfSalesActionItemError && <p className="m-0 text-xs font-bold text-rose-600">{headOfSalesActionItemError}</p>}
                   <button type="button" disabled={headOfSalesActionItemSaving}
                     className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
@@ -59993,16 +60029,24 @@ ${waybillLineItems(w).length > 1
                     const statusTone = item.status === "Completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                       : item.status === "In Progress" ? "border-sky-200 bg-sky-50 text-sky-700"
                       : "border-gray-200 bg-gray-50 text-gray-600";
+                    const progressPct = item.targetCount > 0 ? Math.min(100, Math.round((item.completedCount / item.targetCount) * 100)) : (item.status === "Completed" ? 100 : 0);
                     return (
                       <li key={item.id} className="rounded-lg border border-gray-200 px-3 py-2 text-sm">
                         <div className="flex items-start justify-between gap-2">
-                          <div>
+                          <div className="flex-1">
                             <strong className="block text-gray-900">{item.description}</strong>
                             <span className="text-[11px] text-gray-500">
-                              {item.targetCount ? `${item.completedCount}/${item.targetCount} · ` : ""}
+                              {item.targetCount ? (item.targetIsPercentage ? `${item.completedCount}%` : `${item.completedCount}/${item.targetCount}`) : ""}
+                              {item.targetCount ? " · " : ""}
                               {item.dueDate ? `Due ${formatDateOnly(item.dueDate)}` : "No due date"}
                             </span>
+                            {item.targetCount > 0 && (
+                              <div className="mt-1.5 h-1.5 w-full max-w-[160px] overflow-hidden rounded-full bg-gray-100">
+                                <div className={`h-full rounded-full ${item.status === "Completed" ? "bg-emerald-500" : "bg-[#1F8FE0]"}`} style={{ width: `${progressPct}%` }} />
+                              </div>
+                            )}
                           </div>
+                          {item.status === "Completed" && <span className="shrink-0 text-emerald-600"><CheckCircle2 className="h-4 w-4" /></span>}
                           <button type="button" className="!min-h-0 shrink-0 rounded-md p-1 text-gray-300 hover:bg-rose-50 hover:text-rose-500"
                             onClick={() => void deleteHeadOfSalesActionItem(item.id)} title="Remove">
                             <Trash2 className="h-3.5 w-3.5" />
