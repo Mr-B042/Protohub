@@ -943,7 +943,46 @@ async function loadInitiativeForRep(orgId: string, initiativeId: string, request
   return row;
 }
 
-const InitiativesQuerySchema = z.object({ repId: z.string().min(1) });
+const INITIATIVE_TYPES = ["Upsell", "Cross-sell", "Retention", "Promotion", "Training", "Process", "Offer"] as const;
+const INITIATIVE_IMPACT_BUCKETS = ["Upsell", "Cross-sell", "Retention"] as const;
+const LEARNING_TAGS = ["Use & Scale", "Test More", "Adjust Approach", "Keep Doing"] as const;
+
+// Promotion/Training/Process/Offer don't map to a funnel stage directly -
+// folded into Retention for the Impact Summary donut since they're
+// generally aimed at keeping or improving existing customer relationships
+// rather than a specific upsell/cross-sell ask.
+function impactBucketForType(type: string): typeof INITIATIVE_IMPACT_BUCKETS[number] {
+  if (type === "Upsell" || type === "Cross-sell") return type;
+  return "Retention";
+}
+
+const INITIATIVE_SELECT = "id, title, description, status, target_metric, started_at, target_date, completed_at, outcome_summary, was_successful, initiative_type, target_segment, customers_offered, customers_accepted, customers_delivered, incremental_revenue, impact_level, priority, expected_impact, created_at, updated_at";
+
+function mapInitiativeRow(row: any) {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    status: row.status,
+    targetMetric: row.target_metric,
+    startedAt: row.started_at,
+    targetDate: row.target_date,
+    completedAt: row.completed_at,
+    outcomeSummary: row.outcome_summary,
+    wasSuccessful: row.was_successful,
+    initiativeType: row.initiative_type,
+    targetSegment: row.target_segment,
+    customersOffered: row.customers_offered,
+    customersAccepted: row.customers_accepted,
+    customersDelivered: row.customers_delivered,
+    incrementalRevenue: Number(row.incremental_revenue),
+    impactLevel: row.impact_level,
+    priority: row.priority,
+    expectedImpact: row.expected_impact
+  };
+}
+
+const InitiativesQuerySchema = z.object({ repId: z.string().min(1), weekStart: z.string().regex(DATE_KEY_PATTERN).optional() });
 
 router.get("/initiatives", async (req, res) => {
   const parsed = InitiativesQuerySchema.safeParse(req.query);
@@ -951,26 +990,88 @@ router.get("/initiatives", async (req, res) => {
   const orgId = req.user!.orgId;
   try {
     const { rep } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
+    const weekEnd = weekEndFromStart(weekStart);
+
     const { data, error } = await supabase
       .from("sales_initiatives")
-      .select("id, title, description, status, target_metric, started_at, target_date, completed_at, outcome_summary, was_successful, created_at, updated_at")
+      .select(INITIATIVE_SELECT)
       .eq("org_id", orgId)
       .eq("head_of_sales_rep_id", rep.id)
       .order("created_at", { ascending: false });
     if (error) throw error;
-    const initiatives = (data ?? []).map((row) => ({
-      id: row.id,
-      title: row.title,
-      description: row.description,
-      status: row.status,
-      targetMetric: row.target_metric,
-      startedAt: row.started_at,
-      targetDate: row.target_date,
-      completedAt: row.completed_at,
-      outcomeSummary: row.outcome_summary,
-      wasSuccessful: row.was_successful
+    const initiatives = (data ?? []).map(mapInitiativeRow);
+
+    const nonAbandoned = initiatives.filter((i) => i.status !== "Abandoned");
+    const activeCount = initiatives.filter((i) => i.status !== "Completed" && i.status !== "Abandoned").length;
+    const completedThisWeekCount = initiatives.filter((i) =>
+      i.completedAt && String(i.completedAt).slice(0, 10) >= weekStart && String(i.completedAt).slice(0, 10) <= weekEnd
+    ).length;
+    const totalIncrementalRevenue = nonAbandoned.reduce((sum, i) => sum + i.incrementalRevenue, 0);
+    const customersImpacted = nonAbandoned.reduce((sum, i) => sum + i.customersOffered, 0);
+    const upgradesGenerated = nonAbandoned.reduce((sum, i) => sum + i.customersAccepted, 0);
+
+    const impactByBucket = new Map<string, number>(INITIATIVE_IMPACT_BUCKETS.map((bucket) => [bucket, 0]));
+    for (const initiative of nonAbandoned) {
+      const bucket = impactBucketForType(initiative.initiativeType);
+      impactByBucket.set(bucket, (impactByBucket.get(bucket) ?? 0) + initiative.incrementalRevenue);
+    }
+    const impactSummary = INITIATIVE_IMPACT_BUCKETS.map((bucket) => ({
+      bucket,
+      amount: impactByBucket.get(bucket) ?? 0,
+      pct: totalIncrementalRevenue > 0 ? Math.round(((impactByBucket.get(bucket) ?? 0) / totalIncrementalRevenue) * 1000) / 10 : 0
     }));
-    res.json({ initiatives });
+
+    // "vs last week" is anchored to the last SUBMITTED weekly report's
+    // frozen snapshot - a real prior checkpoint, not a fabricated
+    // comparison. No submitted report yet for a prior week -> no delta.
+    const { data: lastReportRow, error: lastReportError } = await supabase
+      .from("head_of_sales_weekly_reports")
+      .select("performance_snapshot")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .not("submitted_at", "is", null)
+      .lt("week_start", weekStart)
+      .order("week_start", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lastReportError) throw lastReportError;
+    const lastSnapshot: any = lastReportRow?.performance_snapshot ?? null;
+    const deltaPct = (current: number, previous: number) =>
+      previous > 0 ? Math.round(((current - previous) / previous) * 1000) / 10 : (current > 0 ? 100 : 0);
+    const vsLastWeek = lastSnapshot ? {
+      totalIncrementalRevenue: { previous: lastSnapshot.incrementalRevenue ?? 0, deltaPct: deltaPct(totalIncrementalRevenue, lastSnapshot.incrementalRevenue ?? 0) },
+      customersImpacted: { previous: lastSnapshot.customersOffered ?? 0, deltaPct: deltaPct(customersImpacted, lastSnapshot.customersOffered ?? 0) },
+      upgradesGenerated: { previous: lastSnapshot.customersAccepted ?? 0, deltaPct: deltaPct(upgradesGenerated, lastSnapshot.customersAccepted ?? 0) }
+    } : null;
+
+    // Learnings across ALL of this rep's initiatives - the page-level
+    // "Initiative Learnings" panel, not the per-initiative expand view.
+    const initiativeIds = initiatives.map((i) => i.id);
+    let recentLearnings: any[] = [];
+    if (initiativeIds.length > 0) {
+      const { data: learningRows, error: learningError } = await supabase
+        .from("sales_initiative_learnings")
+        .select("id, note, tag, created_at, initiative_id")
+        .in("initiative_id", initiativeIds)
+        .order("created_at", { ascending: false })
+        .limit(6);
+      if (learningError) throw learningError;
+      const titleById = new Map(initiatives.map((i) => [i.id, i.title]));
+      recentLearnings = (learningRows ?? []).map((row) => ({
+        id: row.id, note: row.note, tag: row.tag, createdAt: row.created_at, initiativeTitle: titleById.get(row.initiative_id) ?? "Unknown"
+      }));
+    }
+
+    res.json({
+      weekStart,
+      weekEnd,
+      initiatives,
+      stats: { activeCount, completedThisWeekCount, totalIncrementalRevenue, customersImpacted, upgradesGenerated },
+      impactSummary,
+      vsLastWeek,
+      recentLearnings
+    });
   } catch (error: any) {
     res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load Initiatives." });
   }
@@ -982,7 +1083,11 @@ const CreateInitiativeSchema = z.object({
   description: z.string().max(4000).optional(),
   targetMetric: z.string().max(200).optional(),
   startedAt: z.string().regex(DATE_KEY_PATTERN).optional(),
-  targetDate: z.string().regex(DATE_KEY_PATTERN).optional()
+  targetDate: z.string().regex(DATE_KEY_PATTERN).optional(),
+  initiativeType: z.enum(INITIATIVE_TYPES).optional(),
+  targetSegment: z.string().max(200).optional(),
+  priority: z.enum(["Low", "Medium", "High"]).optional(),
+  expectedImpact: z.string().max(500).optional()
 });
 
 router.post("/initiatives", async (req, res) => {
@@ -1001,6 +1106,10 @@ router.post("/initiatives", async (req, res) => {
         target_metric: parsed.data.targetMetric ?? null,
         started_at: parsed.data.startedAt ?? null,
         target_date: parsed.data.targetDate ?? null,
+        initiative_type: parsed.data.initiativeType ?? "Promotion",
+        target_segment: parsed.data.targetSegment ?? null,
+        priority: parsed.data.priority ?? null,
+        expected_impact: parsed.data.expectedImpact ?? null,
         created_by: req.user!.id
       })
       .select("id")
@@ -1021,7 +1130,16 @@ const UpdateInitiativeSchema = z.object({
   startedAt: z.string().regex(DATE_KEY_PATTERN).nullable().optional(),
   targetDate: z.string().regex(DATE_KEY_PATTERN).nullable().optional(),
   outcomeSummary: z.string().max(4000).nullable().optional(),
-  wasSuccessful: z.boolean().nullable().optional()
+  wasSuccessful: z.boolean().nullable().optional(),
+  initiativeType: z.enum(INITIATIVE_TYPES).optional(),
+  targetSegment: z.string().max(200).nullable().optional(),
+  customersOffered: z.number().int().min(0).optional(),
+  customersAccepted: z.number().int().min(0).optional(),
+  customersDelivered: z.number().int().min(0).optional(),
+  incrementalRevenue: z.number().min(0).optional(),
+  impactLevel: z.enum(["Low", "Medium", "High"]).nullable().optional(),
+  priority: z.enum(["Low", "Medium", "High"]).nullable().optional(),
+  expectedImpact: z.string().max(500).nullable().optional()
 });
 
 router.patch("/initiatives/:initiativeId", async (req, res) => {
@@ -1040,6 +1158,15 @@ router.patch("/initiatives/:initiativeId", async (req, res) => {
     if (parsed.data.targetDate !== undefined) patch.target_date = parsed.data.targetDate;
     if (parsed.data.outcomeSummary !== undefined) patch.outcome_summary = parsed.data.outcomeSummary;
     if (parsed.data.wasSuccessful !== undefined) patch.was_successful = parsed.data.wasSuccessful;
+    if (parsed.data.initiativeType !== undefined) patch.initiative_type = parsed.data.initiativeType;
+    if (parsed.data.targetSegment !== undefined) patch.target_segment = parsed.data.targetSegment;
+    if (parsed.data.customersOffered !== undefined) patch.customers_offered = parsed.data.customersOffered;
+    if (parsed.data.customersAccepted !== undefined) patch.customers_accepted = parsed.data.customersAccepted;
+    if (parsed.data.customersDelivered !== undefined) patch.customers_delivered = parsed.data.customersDelivered;
+    if (parsed.data.incrementalRevenue !== undefined) patch.incremental_revenue = parsed.data.incrementalRevenue;
+    if (parsed.data.impactLevel !== undefined) patch.impact_level = parsed.data.impactLevel;
+    if (parsed.data.priority !== undefined) patch.priority = parsed.data.priority;
+    if (parsed.data.expectedImpact !== undefined) patch.expected_impact = parsed.data.expectedImpact;
     if (parsed.data.status !== undefined) {
       patch.status = parsed.data.status;
       // Moving into a terminal status timestamps the resolution automatically -
@@ -1089,13 +1216,14 @@ router.get("/initiatives/:initiativeId/learnings", async (req, res) => {
     await loadInitiativeForRep(orgId, req.params.initiativeId, req.user!);
     const { data, error } = await supabase
       .from("sales_initiative_learnings")
-      .select("id, note, created_at, author:users!sales_initiative_learnings_created_by_fkey(name)")
+      .select("id, note, tag, created_at, author:users!sales_initiative_learnings_created_by_fkey(name)")
       .eq("initiative_id", req.params.initiativeId)
       .order("created_at", { ascending: false });
     if (error) throw error;
     const learnings = (data ?? []).map((row: any) => ({
       id: row.id,
       note: row.note,
+      tag: row.tag,
       createdAt: row.created_at,
       authorName: row.author?.name ?? null
     }));
@@ -1107,7 +1235,8 @@ router.get("/initiatives/:initiativeId/learnings", async (req, res) => {
 
 const CreateLearningSchema = z.object({
   repId: z.string().min(1),
-  note: z.string().min(1).max(4000)
+  note: z.string().min(1).max(4000),
+  tag: z.enum(LEARNING_TAGS).optional()
 });
 
 router.post("/initiatives/:initiativeId/learnings", async (req, res) => {
@@ -1123,6 +1252,7 @@ router.post("/initiatives/:initiativeId/learnings", async (req, res) => {
         initiative_id: req.params.initiativeId,
         org_id: orgId,
         note: parsed.data.note,
+        tag: parsed.data.tag ?? null,
         created_by: req.user!.id
       })
       .select("id")

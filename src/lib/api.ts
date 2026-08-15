@@ -1515,20 +1515,27 @@ export const headOfSalesApi = {
   }) => patch<any>(`/api/head-of-sales-rep/coaching-plan/action-items/${itemId}`, body),
   deleteCoachingActionItem: (itemId: string, repId: string) =>
     del<any>(`/api/head-of-sales-rep/coaching-plan/action-items/${itemId}?${new URLSearchParams({ repId }).toString()}`),
-  initiatives: (repId: string) =>
-    get<any>(`/api/head-of-sales-rep/initiatives?${new URLSearchParams({ repId }).toString()}`),
+  initiatives: (repId: string, weekStart?: string) => {
+    const params = new URLSearchParams({ repId });
+    if (weekStart) params.set("weekStart", weekStart);
+    return get<any>(`/api/head-of-sales-rep/initiatives?${params.toString()}`);
+  },
   createInitiative: (body: {
     repId: string; title: string; description?: string; targetMetric?: string; startedAt?: string; targetDate?: string;
+    initiativeType?: string; targetSegment?: string; priority?: string; expectedImpact?: string;
   }) => post<any>("/api/head-of-sales-rep/initiatives", body),
   updateInitiative: (initiativeId: string, body: {
     repId: string; title?: string; description?: string | null; status?: string; targetMetric?: string | null;
     startedAt?: string | null; targetDate?: string | null; outcomeSummary?: string | null; wasSuccessful?: boolean | null;
+    initiativeType?: string; targetSegment?: string | null; customersOffered?: number; customersAccepted?: number;
+    customersDelivered?: number; incrementalRevenue?: number; impactLevel?: string | null; priority?: string | null;
+    expectedImpact?: string | null;
   }) => patch<any>(`/api/head-of-sales-rep/initiatives/${initiativeId}`, body),
   deleteInitiative: (initiativeId: string, repId: string) =>
     del<any>(`/api/head-of-sales-rep/initiatives/${initiativeId}?${new URLSearchParams({ repId }).toString()}`),
   initiativeLearnings: (initiativeId: string, repId: string) =>
     get<any>(`/api/head-of-sales-rep/initiatives/${initiativeId}/learnings?${new URLSearchParams({ repId }).toString()}`),
-  addInitiativeLearning: (initiativeId: string, body: { repId: string; note: string }) =>
+  addInitiativeLearning: (initiativeId: string, body: { repId: string; note: string; tag?: string }) =>
     post<any>(`/api/head-of-sales-rep/initiatives/${initiativeId}/learnings`, body),
   weeklyReport: (repId: string, weekStart?: string) => {
     const params = new URLSearchParams({ repId });
