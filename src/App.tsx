@@ -59162,20 +59162,45 @@ ${waybillLineItems(w).length > 1
 
             <section className="rounded-2xl border border-gray-200 bg-white p-5">
               <h2 className="m-0 text-base font-bold text-gray-900">Team AOV by Rep</h2>
+              <p className="m-0 mt-0.5 text-[11px] text-gray-400">Average Order Value (Delivered Orders)</p>
               {data.teamAovByRep.length === 0 ? (
                 <p className="m-0 mt-3 text-sm italic text-gray-400">No active sales reps yet.</p>
               ) : (
-                <ul className="m-0 mt-3 list-none space-y-2 p-0">
-                  {data.teamAovByRep.map((rep: any) => (
-                    <li key={rep.repId} className="flex items-center justify-between gap-3 border-b border-gray-50 pb-2 text-sm">
-                      <span className="font-bold text-gray-900">{rep.name}</span>
-                      <span className="text-right">
-                        <strong className="block text-gray-900">{money(rep.aov)}</strong>
-                        <span className={`text-[11px] font-bold ${rep.vsTargetPct >= 100 ? "text-emerald-600" : "text-amber-600"}`}>{pct(rep.vsTargetPct)}</span>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full min-w-[420px] text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                        <th className="py-2 pr-3 font-semibold">Rep</th>
+                        <th className="py-2 pr-3 font-semibold text-right">This Week</th>
+                        <th className="py-2 pr-3 font-semibold text-right">Target</th>
+                        <th className="py-2 pr-3 font-semibold text-right">Vs Target</th>
+                        <th className="py-2 font-semibold text-right">Trend</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.teamAovByRep.map((rep: any) => (
+                        <tr key={rep.repId} className="border-b border-gray-50">
+                          <td className="py-2 pr-3 font-bold text-gray-900">{rep.name}</td>
+                          <td className="py-2 pr-3 text-right text-gray-700">{money(rep.aov)}</td>
+                          <td className="py-2 pr-3 text-right text-gray-500">{money(data.baseline.aov ?? 0)}</td>
+                          <td className={`py-2 pr-3 text-right font-bold ${rep.vsTargetPct >= 100 ? "text-emerald-600" : "text-amber-600"}`}>{pct(rep.vsTargetPct)}</td>
+                          <td className="py-2 text-right">
+                            {rep.vsLastWeekPct >= 0
+                              ? <TrendingUp className="ml-auto h-3.5 w-3.5 text-emerald-500" />
+                              : <TrendingUp className="ml-auto h-3.5 w-3.5 rotate-180 text-rose-500" />}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="font-bold text-gray-900">
+                        <td className="py-2 pr-3">Team Average</td>
+                        <td className="py-2 pr-3 text-right">{money(data.team.aov)}</td>
+                        <td className="py-2 pr-3 text-right">{money(data.baseline.aov ?? 0)}</td>
+                        <td className="py-2 pr-3 text-right">{pct(data.baseline.aov > 0 ? Math.round((data.team.aov / data.baseline.aov) * 1000) / 10 : (data.team.aov > 0 ? 100 : 0))}</td>
+                        <td className="py-2"></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               )}
             </section>
 
