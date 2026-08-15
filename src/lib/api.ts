@@ -1544,6 +1544,7 @@ export const headOfSalesApi = {
   },
   saveWeeklyReport: (body: {
     repId: string; weekStart: string; summaryWins?: string; summaryChallenges?: string; nextWeekPlan?: string;
+    keyLearnings?: string; additionalNotes?: string; focusTargetAov?: number; focusTargetDeliveryRate?: number; focusTargetUpsellRate?: number;
   }) => put<any>("/api/head-of-sales-rep/weekly-report", body),
   submitWeeklyReport: (body: { repId: string; weekStart: string }) =>
     post<any>("/api/head-of-sales-rep/weekly-report/submit", body),

@@ -1279,7 +1279,7 @@ async function computeWeeklyPerformanceSnapshot(orgId: string, repId: string, re
 
   const { data: initiativeRows, error: initiativeError } = await supabase
     .from("sales_initiatives")
-    .select("status, completed_at, was_successful")
+    .select("status, completed_at, was_successful, customers_offered, customers_accepted, customers_delivered, incremental_revenue")
     .eq("org_id", orgId)
     .eq("head_of_sales_rep_id", repId);
   if (initiativeError) throw initiativeError;
@@ -1289,6 +1289,10 @@ async function computeWeeklyPerformanceSnapshot(orgId: string, repId: string, re
     const dateKey = String(row.completed_at).slice(0, 10);
     return dateKey >= weekStart && dateKey <= weekEnd;
   });
+  // Same non-Abandoned scope Initiatives' own stat cards use, so this
+  // snapshot is a genuine "as of this week" checkpoint for that page's
+  // "vs last week" delta to read back out later.
+  const nonAbandoned = rows.filter((row) => row.status !== "Abandoned");
 
   return {
     weekStart,
@@ -1297,7 +1301,11 @@ async function computeWeeklyPerformanceSnapshot(orgId: string, repId: string, re
     scorecard,
     initiativesActive: rows.filter((row) => row.status !== "Completed" && row.status !== "Abandoned").length,
     initiativesCompletedThisWeek: completedThisWeek.length,
-    initiativesSuccessfulThisWeek: completedThisWeek.filter((row) => row.was_successful === true).length
+    initiativesSuccessfulThisWeek: completedThisWeek.filter((row) => row.was_successful === true).length,
+    customersOffered: nonAbandoned.reduce((sum, row) => sum + (row.customers_offered ?? 0), 0),
+    customersAccepted: nonAbandoned.reduce((sum, row) => sum + (row.customers_accepted ?? 0), 0),
+    customersDelivered: nonAbandoned.reduce((sum, row) => sum + (row.customers_delivered ?? 0), 0),
+    incrementalRevenue: nonAbandoned.reduce((sum, row) => sum + Number(row.incremental_revenue ?? 0), 0)
   };
 }
 
@@ -1313,10 +1321,11 @@ router.get("/weekly-report", async (req, res) => {
   try {
     const { rep, repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
+    const weekEnd = weekEndFromStart(weekStart);
 
     const { data: reportRow, error: reportError } = await supabase
       .from("head_of_sales_weekly_reports")
-      .select("id, week_start, summary_wins, summary_challenges, next_week_plan, performance_snapshot, submitted_at")
+      .select("id, week_start, summary_wins, summary_challenges, next_week_plan, key_learnings, additional_notes, focus_target_aov, focus_target_delivery_rate, focus_target_upsell_rate, performance_snapshot, submitted_at")
       .eq("org_id", orgId)
       .eq("head_of_sales_rep_id", rep.id)
       .eq("week_start", weekStart)
@@ -1329,6 +1338,11 @@ router.get("/weekly-report", async (req, res) => {
       summaryWins: reportRow.summary_wins,
       summaryChallenges: reportRow.summary_challenges,
       nextWeekPlan: reportRow.next_week_plan,
+      keyLearnings: reportRow.key_learnings,
+      additionalNotes: reportRow.additional_notes,
+      focusTargetAov: reportRow.focus_target_aov,
+      focusTargetDeliveryRate: reportRow.focus_target_delivery_rate,
+      focusTargetUpsellRate: reportRow.focus_target_upsell_rate,
       performanceSnapshot: reportRow.performance_snapshot,
       submittedAt: reportRow.submitted_at
     } : null;
@@ -1339,7 +1353,50 @@ router.get("/weekly-report", async (req, res) => {
       ? await computeWeeklyPerformanceSnapshot(orgId, rep.id, repIds, weekStart)
       : null;
 
-    res.json({ weekStart, report, livePreview });
+    // The 5-card Week Summary - same computeTeamWeekMetrics+baseline call
+    // Overview already makes, just surfaced as all 5 metrics instead of a
+    // subset.
+    const earliestNeeded = addDaysToDateKey(weekStart, -28);
+    const orders = await loadOrdersSince(orgId, repIds, earliestNeeded, weekEnd);
+    const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
+    const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
+    const pctDelta = (actual: number, base: number) => base > 0 ? Math.round(((actual - base) / base) * 1000) / 10 : (actual > 0 ? 100 : 0);
+    const weekSummary = {
+      teamAov: { actual: thisWeek.team.aov, baseline: baseline.team.aov, deltaPct: pctDelta(thisWeek.team.aov, baseline.team.aov) },
+      deliveryRate: { actual: thisWeek.team.deliveryRate, baseline: baseline.team.deliveryRate, deltaPct: pctDelta(thisWeek.team.deliveryRate, baseline.team.deliveryRate) },
+      upsellRate: { actual: thisWeek.team.upsellRate, baseline: baseline.team.upsellRate, deltaPct: pctDelta(thisWeek.team.upsellRate, baseline.team.upsellRate) },
+      crossSellRate: { actual: thisWeek.team.crossSellRate, baseline: baseline.team.crossSellRate, deltaPct: pctDelta(thisWeek.team.crossSellRate, baseline.team.crossSellRate) },
+      incrementalRevenue: {
+        actual: thisWeek.team.incrementalRevenueUpsell + thisWeek.team.incrementalRevenueCrossSell,
+        baseline: baseline.team.incrementalRevenueUpsell + baseline.team.incrementalRevenueCrossSell,
+        deltaPct: pctDelta(
+          thisWeek.team.incrementalRevenueUpsell + thisWeek.team.incrementalRevenueCrossSell,
+          baseline.team.incrementalRevenueUpsell + baseline.team.incrementalRevenueCrossSell
+        )
+      }
+    };
+
+    // "What did we test this week?" / "Performance Results" are the SAME
+    // Initiatives, not separate report data - active/planned/completed
+    // initiatives whose window overlaps this week.
+    const { data: initiativeRows, error: initiativeError } = await supabase
+      .from("sales_initiatives")
+      .select(INITIATIVE_SELECT)
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .neq("status", "Idea")
+      .neq("status", "Abandoned")
+      .order("created_at", { ascending: false });
+    if (initiativeError) throw initiativeError;
+    const testsThisWeek = (initiativeRows ?? [])
+      .map(mapInitiativeRow)
+      .filter((row) => {
+        const started = row.startedAt ? String(row.startedAt) : null;
+        const completed = row.completedAt ? String(row.completedAt).slice(0, 10) : null;
+        return (started && started <= weekEnd) || (completed && completed >= weekStart);
+      });
+
+    res.json({ weekStart, weekEnd, report, livePreview, weekSummary, testsThisWeek });
   } catch (error: any) {
     res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load the Weekly Report." });
   }
@@ -1350,7 +1407,12 @@ const SaveWeeklyReportSchema = z.object({
   weekStart: z.string().regex(DATE_KEY_PATTERN),
   summaryWins: z.string().max(4000).optional(),
   summaryChallenges: z.string().max(4000).optional(),
-  nextWeekPlan: z.string().max(4000).optional()
+  nextWeekPlan: z.string().max(4000).optional(),
+  keyLearnings: z.string().max(4000).optional(),
+  additionalNotes: z.string().max(4000).optional(),
+  focusTargetAov: z.number().min(0).optional(),
+  focusTargetDeliveryRate: z.number().min(0).max(100).optional(),
+  focusTargetUpsellRate: z.number().min(0).max(100).optional()
 });
 
 router.put("/weekly-report", async (req, res) => {
@@ -1381,6 +1443,11 @@ router.put("/weekly-report", async (req, res) => {
       summary_wins: parsed.data.summaryWins ?? null,
       summary_challenges: parsed.data.summaryChallenges ?? null,
       next_week_plan: parsed.data.nextWeekPlan ?? null,
+      key_learnings: parsed.data.keyLearnings ?? null,
+      additional_notes: parsed.data.additionalNotes ?? null,
+      focus_target_aov: parsed.data.focusTargetAov ?? null,
+      focus_target_delivery_rate: parsed.data.focusTargetDeliveryRate ?? null,
+      focus_target_upsell_rate: parsed.data.focusTargetUpsellRate ?? null,
       performance_snapshot: snapshot,
       updated_at: new Date().toISOString()
     };
