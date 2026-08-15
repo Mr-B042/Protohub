@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
   addDaysToDateKey,
+  computeRepWeekMetrics,
   computeTeamWeekMetrics,
   computeTrailingBaseline,
   lagosDateKey,
@@ -274,6 +275,102 @@ router.get("/scorecard", async (req, res) => {
     });
   } catch (error: any) {
     res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load the Weekly Scorecard." });
+  }
+});
+
+router.get("/team-performance", async (req, res) => {
+  const parsed = WeekQuerySchema.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "repId is required." }); return; }
+  const orgId = req.user!.orgId;
+  const TREND_WEEKS = 4;
+
+  try {
+    const { repIds, repNameById } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
+    const weekEnd = weekEndFromStart(weekStart);
+    const lastWeekStart = addDaysToDateKey(weekStart, -7);
+
+    // This week, its own 4-week baseline, the trend weeks, AND last week (for
+    // the week-over-week delta) all fit inside one query.
+    const earliestNeeded = addDaysToDateKey(weekStart, -7 * (TREND_WEEKS + 4));
+    const orders = await loadOrdersSince(orgId, repIds, earliestNeeded, weekEnd);
+
+    const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
+    const lastWeek = computeTeamWeekMetrics(orders, repIds, lastWeekStart);
+    const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
+    const lastWeekAovByRep = new Map(lastWeek.reps.map((rep) => [rep.repId, rep.aov]));
+
+    const reps = thisWeek.reps.map((rep) => {
+      const lastWeekAov = lastWeekAovByRep.get(rep.repId) ?? 0;
+      const vsLastWeekAovPct = lastWeekAov > 0 ? Math.round(((rep.aov - lastWeekAov) / lastWeekAov) * 1000) / 10 : (rep.aov > 0 ? 100 : 0);
+      const onTarget = baseline.team.aov > 0 ? rep.aov >= baseline.team.aov : rep.aov > 0;
+      return {
+        repId: rep.repId,
+        name: repNameById.get(rep.repId) ?? "Unknown",
+        ordersAssigned: rep.ordersAssigned,
+        ordersDelivered: rep.ordersDelivered,
+        deliveryRate: rep.deliveryRate,
+        aov: rep.aov,
+        upsellRate: rep.upsellRate,
+        crossSellRate: rep.crossSellRate,
+        vsLastWeekAovPct,
+        status: onTarget ? "On Target" : "Needs Attention"
+      };
+    });
+
+    const totalReps = repIds.length;
+    const repsMeetingAovTarget = reps.filter((rep) => rep.status === "On Target").length;
+
+    // Team Rep Improvement: THIS week's AOV vs the rep's OWN 4-week baseline
+    // (not vs the team's baseline) - "improvement" means better than where
+    // that specific person already was, matching the Owner's own framing
+    // ("Rep A: N18,500 -> is Rep A getting better").
+    const repBaselineAov = new Map(repIds.map((repId) => [repId, computeTrailingBaseline(orders, [repId], weekStart, 4).team.aov]));
+    let improvedOver5 = 0, improved1to5 = 0, noChange = 0, declined = 0, improvingCount = 0;
+    for (const rep of thisWeek.reps) {
+      const repBaseline = repBaselineAov.get(rep.repId) ?? 0;
+      const deltaPct = repBaseline > 0 ? ((rep.aov - repBaseline) / repBaseline) * 100 : 0;
+      if (deltaPct > 5) { improvedOver5 += 1; improvingCount += 1; }
+      else if (deltaPct > 1) { improved1to5 += 1; improvingCount += 1; }
+      else if (deltaPct >= -1) { noChange += 1; }
+      else { declined += 1; }
+    }
+
+    // 4-week AOV and Delivery Rate trend, PER REP, oldest to newest.
+    const trendWeeks: string[] = [];
+    for (let offset = TREND_WEEKS - 1; offset >= 0; offset -= 1) trendWeeks.push(addDaysToDateKey(weekStart, -7 * offset));
+    const aovByRepTrend = repIds.map((repId) => ({
+      repId,
+      name: repNameById.get(repId) ?? "Unknown",
+      series: trendWeeks.map((ws) => ({ weekStart: ws, value: computeRepWeekMetrics(orders, repId, ws).aov }))
+    }));
+    const deliveryRateByRepTrend = repIds.map((repId) => ({
+      repId,
+      name: repNameById.get(repId) ?? "Unknown",
+      series: trendWeeks.map((ws) => ({ weekStart: ws, value: computeRepWeekMetrics(orders, repId, ws).deliveryRate }))
+    }));
+
+    res.json({
+      weekStart,
+      weekEnd,
+      stats: {
+        totalReps,
+        repsMeetingAovTarget,
+        teamAvgAov: thisWeek.team.aov,
+        teamDeliveryRate: thisWeek.team.deliveryRate,
+        teamOrders: thisWeek.team.ordersAssigned
+      },
+      reps,
+      repImprovement: {
+        improvingCount,
+        totalReps,
+        distribution: { improvedOver5, improved1to5, noChange, declined }
+      },
+      aovByRepTrend,
+      deliveryRateByRepTrend
+    });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load Team Performance." });
   }
 });
 

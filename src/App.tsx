@@ -11813,6 +11813,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesScorecard, setHeadOfSalesScorecard] = useState<any | null>(null);
   const [headOfSalesScorecardLoading, setHeadOfSalesScorecardLoading] = useState(false);
   const [headOfSalesScorecardError, setHeadOfSalesScorecardError] = useState("");
+  const [headOfSalesTeamPerformance, setHeadOfSalesTeamPerformance] = useState<any | null>(null);
+  const [headOfSalesTeamPerformanceLoading, setHeadOfSalesTeamPerformanceLoading] = useState(false);
+  const [headOfSalesTeamPerformanceError, setHeadOfSalesTeamPerformanceError] = useState("");
   const [pdaSubPage, setPdaSubPage] = useState<PdaSubPage>("Overview");
   const [pdaAgents, setPdaAgents] = useState<PersonalDeliveryAgentRow[]>([]);
   const [pdaOverview, setPdaOverview] = useState<PersonalDeliveryAgentOverview | null>(null);
@@ -43385,6 +43388,24 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart]);
 
+  const loadHeadOfSalesTeamPerformance = async () => {
+    if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Team Performance" || !headOfSalesViewingId) return;
+    setHeadOfSalesTeamPerformanceLoading(true);
+    setHeadOfSalesTeamPerformanceError("");
+    try {
+      const result = await headOfSalesApi.teamPerformance(headOfSalesViewingId, headOfSalesOverviewWeekStart || undefined);
+      setHeadOfSalesTeamPerformance(result);
+    } catch (error: any) {
+      setHeadOfSalesTeamPerformanceError(error?.message ?? "Could not load Team Performance.");
+    } finally {
+      setHeadOfSalesTeamPerformanceLoading(false);
+    }
+  };
+  useEffect(() => {
+    void loadHeadOfSalesTeamPerformance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart]);
+
   const loadRecoveryCandidates = async () => {
     if (activePage !== "Recovery Rep Dashboard") return;
     try {
@@ -58140,7 +58161,8 @@ ${waybillLineItems(w).length > 1
               </div>
             </div>
             {headOfSalesSubPage === "Overview" ? renderHeadOfSalesOverview()
-              : headOfSalesSubPage === "Weekly Scorecard" ? renderHeadOfSalesScorecard() : (
+              : headOfSalesSubPage === "Weekly Scorecard" ? renderHeadOfSalesScorecard()
+              : headOfSalesSubPage === "Team Performance" ? renderHeadOfSalesTeamPerformance() : (
               <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
                 <h2 className="text-base font-bold text-gray-900">{headOfSalesSubPage}</h2>
                 <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
@@ -58648,6 +58670,172 @@ ${waybillLineItems(w).length > 1
             </div>
           </section>
         )}
+      </div>
+    );
+  };
+
+  const renderHeadOfSalesTeamPerformance = () => {
+    const data = headOfSalesTeamPerformance;
+    if (headOfSalesTeamPerformanceLoading && !data) {
+      return (
+        <section className="flex flex-col items-center gap-3 rounded-xl border border-gray-200 bg-white px-5 py-16 text-center shadow-sm">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-[#1F8FE0]" />
+          <p className="m-0 text-sm font-semibold text-gray-500">Loading team performance...</p>
+        </section>
+      );
+    }
+    if (headOfSalesTeamPerformanceError || !data) {
+      return (
+        <section className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-10 text-center">
+          <p className="m-0 text-sm font-semibold text-rose-800">{headOfSalesTeamPerformanceError || "Nothing to show yet."}</p>
+          <button className="!min-h-0 mt-3 rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100" onClick={() => void loadHeadOfSalesTeamPerformance()}>
+            Try again
+          </button>
+        </section>
+      );
+    }
+
+    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const pct = (value: number) => `${value}%`;
+    const stat = (label: string, value: string) => (
+      <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
+        <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">{label}</span>
+        <strong className="mt-1 block text-xl font-black text-gray-900">{value}</strong>
+      </div>
+    );
+    const dist = data.repImprovement.distribution;
+    const distTotal = Math.max(1, dist.improvedOver5 + dist.improved1to5 + dist.noChange + dist.declined);
+    const distSegments = [
+      { label: "Improved > 5%", value: dist.improvedOver5, color: "bg-emerald-500", dot: "bg-emerald-500" },
+      { label: "Improved 1% - 5%", value: dist.improved1to5, color: "bg-emerald-300", dot: "bg-emerald-300" },
+      { label: "No Change", value: dist.noChange, color: "bg-gray-300", dot: "bg-gray-300" },
+      { label: "Declined", value: dist.declined, color: "bg-rose-500", dot: "bg-rose-500" }
+    ];
+
+    const trendTable = (title: string, trend: any[], format: (value: number) => string) => (
+      <section className="rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="m-0 text-base font-bold text-gray-900">{title} <span className="font-medium text-gray-400">(4-Week Trend)</span></h2>
+        {trend.length === 0 ? (
+          <p className="m-0 mt-3 text-sm italic text-gray-400">No active sales reps yet.</p>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[420px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                  <th className="py-2 pr-3 font-semibold">Rep</th>
+                  {trend[0]?.series.map((point: any) => (
+                    <th key={point.weekStart} className="py-2 pr-3 font-semibold text-right">
+                      {new Date(point.weekStart).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {trend.map((rep) => (
+                  <tr key={rep.repId} className="border-b border-gray-50">
+                    <td className="py-2 pr-3 font-bold text-gray-900">{rep.name}</td>
+                    {rep.series.map((point: any, index: number) => {
+                      const prior = index > 0 ? rep.series[index - 1].value : null;
+                      const up = prior !== null && point.value > prior;
+                      const down = prior !== null && point.value < prior;
+                      return (
+                        <td key={point.weekStart} className="py-2 pr-3 text-right text-gray-700">
+                          {format(point.value)}
+                          {up && <TrendingUp className="ml-1 inline h-3 w-3 text-emerald-500" />}
+                          {down && <TrendingUp className="ml-1 inline h-3 w-3 rotate-180 text-rose-500" />}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    );
+
+    return (
+      <div className="space-y-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          {stat("Total Reps", String(data.stats.totalReps))}
+          {stat("Reps Meeting AOV Target", `${data.stats.repsMeetingAovTarget} / ${data.stats.totalReps}`)}
+          {stat("Team Average AOV", money(data.stats.teamAvgAov))}
+          {stat("Team Delivery Rate", pct(data.stats.teamDeliveryRate))}
+          {stat("Team Orders", String(data.stats.teamOrders))}
+        </div>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <h2 className="m-0 text-base font-bold text-gray-900">Team Performance Overview</h2>
+          {data.reps.length === 0 ? (
+            <p className="m-0 mt-3 text-sm italic text-gray-400">No active sales reps yet.</p>
+          ) : (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[760px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                    <th className="py-2 pr-3 font-semibold">Rep</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Orders</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Delivered</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Delivery Rate</th>
+                    <th className="py-2 pr-3 font-semibold text-right">AOV</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Upsell Rate</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Cross-sell Rate</th>
+                    <th className="py-2 pr-3 font-semibold text-right">Vs Last Week</th>
+                    <th className="py-2 font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.reps.map((rep: any) => (
+                    <tr key={rep.repId} className="border-b border-gray-50">
+                      <td className="py-2.5 pr-3 font-bold text-gray-900">{rep.name}</td>
+                      <td className="py-2.5 pr-3 text-right text-gray-700">{rep.ordersAssigned}</td>
+                      <td className="py-2.5 pr-3 text-right text-gray-700">{rep.ordersDelivered}</td>
+                      <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.deliveryRate)}</td>
+                      <td className="py-2.5 pr-3 text-right font-bold text-gray-900">{money(rep.aov)}</td>
+                      <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.upsellRate)}</td>
+                      <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.crossSellRate)}</td>
+                      <td className={`py-2.5 pr-3 text-right font-bold ${rep.vsLastWeekAovPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                        {rep.vsLastWeekAovPct >= 0 ? "+" : ""}{rep.vsLastWeekAovPct}%
+                      </td>
+                      <td className="py-2.5">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${rep.status === "On Target" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                          {rep.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <h2 className="m-0 flex items-center gap-1.5 text-base font-bold text-gray-900">
+            Team Rep Improvement <span title="Compares each rep's AOV this week against their OWN 4-week baseline."><Info className="h-4 w-4 text-gray-300" /></span>
+          </h2>
+          <strong className="mt-2 block text-lg font-black text-gray-900">{data.repImprovement.improvingCount} / {data.repImprovement.totalReps} reps improving AOV</strong>
+          <span className="text-sm text-gray-500">{data.repImprovement.totalReps > 0 ? Math.round((data.repImprovement.improvingCount / data.repImprovement.totalReps) * 100) : 0}% of team showing improvement</span>
+          <div className="mt-3 flex h-2.5 w-full overflow-hidden rounded-full bg-gray-100">
+            {distSegments.map((segment) => segment.value > 0 && (
+              <div key={segment.label} className={segment.color} style={{ width: `${(segment.value / distTotal) * 100}%` }} />
+            ))}
+          </div>
+          <ul className="m-0 mt-4 grid list-none grid-cols-2 gap-2 p-0 sm:grid-cols-4">
+            {distSegments.map((segment) => (
+              <li key={segment.label} className="flex items-center gap-1.5 text-xs text-gray-600">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${segment.dot}`} />
+                {segment.label} ({segment.value})
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {trendTable("AOV by Rep", data.aovByRepTrend, money)}
+          {trendTable("Delivery Rate by Rep", data.deliveryRateByRepTrend, pct)}
+        </div>
       </div>
     );
   };
