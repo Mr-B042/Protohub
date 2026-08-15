@@ -1514,7 +1514,22 @@ export const headOfSalesApi = {
     repId: string; status?: string; completedCount?: number; description?: string; targetCount?: number; dueDate?: string | null;
   }) => patch<any>(`/api/head-of-sales-rep/coaching-plan/action-items/${itemId}`, body),
   deleteCoachingActionItem: (itemId: string, repId: string) =>
-    del<any>(`/api/head-of-sales-rep/coaching-plan/action-items/${itemId}?${new URLSearchParams({ repId }).toString()}`)
+    del<any>(`/api/head-of-sales-rep/coaching-plan/action-items/${itemId}?${new URLSearchParams({ repId }).toString()}`),
+  initiatives: (repId: string) =>
+    get<any>(`/api/head-of-sales-rep/initiatives?${new URLSearchParams({ repId }).toString()}`),
+  createInitiative: (body: {
+    repId: string; title: string; description?: string; targetMetric?: string; startedAt?: string; targetDate?: string;
+  }) => post<any>("/api/head-of-sales-rep/initiatives", body),
+  updateInitiative: (initiativeId: string, body: {
+    repId: string; title?: string; description?: string | null; status?: string; targetMetric?: string | null;
+    startedAt?: string | null; targetDate?: string | null; outcomeSummary?: string | null; wasSuccessful?: boolean | null;
+  }) => patch<any>(`/api/head-of-sales-rep/initiatives/${initiativeId}`, body),
+  deleteInitiative: (initiativeId: string, repId: string) =>
+    del<any>(`/api/head-of-sales-rep/initiatives/${initiativeId}?${new URLSearchParams({ repId }).toString()}`),
+  initiativeLearnings: (initiativeId: string, repId: string) =>
+    get<any>(`/api/head-of-sales-rep/initiatives/${initiativeId}/learnings?${new URLSearchParams({ repId }).toString()}`),
+  addInitiativeLearning: (initiativeId: string, body: { repId: string; note: string }) =>
+    post<any>(`/api/head-of-sales-rep/initiatives/${initiativeId}/learnings`, body)
 };
 
 export const repWeeklyTargetsApi = {
