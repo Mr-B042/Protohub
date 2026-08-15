@@ -1494,7 +1494,27 @@ export const headOfSalesApi = {
     if (selectedRepId) params.set("selectedRepId", selectedRepId);
     if (weekStart) params.set("weekStart", weekStart);
     return get<any>(`/api/head-of-sales-rep/rep-coaching?${params.toString()}`);
-  }
+  },
+  callReviews: (repId: string, selectedRepId: string) => {
+    const params = new URLSearchParams({ repId, selectedRepId });
+    return get<any>(`/api/head-of-sales-rep/call-reviews?${params.toString()}`);
+  },
+  logCallReview: (body: {
+    repId: string; selectedRepId: string; customerName: string; calledAt: string;
+    durationSeconds?: number; outcome: string; starScore?: number; reviewerNotes?: string;
+  }) => post<any>("/api/head-of-sales-rep/call-reviews", body),
+  coachingPlan: (repId: string, selectedRepId: string) => {
+    const params = new URLSearchParams({ repId, selectedRepId });
+    return get<any>(`/api/head-of-sales-rep/coaching-plan?${params.toString()}`);
+  },
+  addCoachingActionItem: (body: {
+    repId: string; selectedRepId: string; description: string; targetCount?: number; dueDate?: string;
+  }) => post<any>("/api/head-of-sales-rep/coaching-plan/action-items", body),
+  updateCoachingActionItem: (itemId: string, body: {
+    repId: string; status?: string; completedCount?: number; description?: string; targetCount?: number; dueDate?: string | null;
+  }) => patch<any>(`/api/head-of-sales-rep/coaching-plan/action-items/${itemId}`, body),
+  deleteCoachingActionItem: (itemId: string, repId: string) =>
+    del<any>(`/api/head-of-sales-rep/coaching-plan/action-items/${itemId}?${new URLSearchParams({ repId }).toString()}`)
 };
 
 export const repWeeklyTargetsApi = {
