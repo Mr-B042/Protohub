@@ -637,4 +637,268 @@ router.get("/rep-coaching", async (req, res) => {
   }
 });
 
+// Shared by the four routes below: resolve an action item's coaching plan
+// and confirm that plan belongs to someone on the requesting Head of Sales
+// Rep's own team, the same boundary loadRepAndTeam already draws elsewhere.
+async function loadActionItemForTeam(orgId: string, itemId: string, repIds: string[]) {
+  const { data: itemRow, error: itemError } = await supabase
+    .from("rep_coaching_action_items")
+    .select("id, coaching_plan_id")
+    .eq("id", itemId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (itemError) throw itemError;
+  if (!itemRow) throw Object.assign(new Error("Action item not found."), { status: 404 });
+  const { data: planRow, error: planError } = await supabase
+    .from("rep_coaching_plans")
+    .select("rep_id")
+    .eq("id", itemRow.coaching_plan_id)
+    .maybeSingle();
+  if (planError) throw planError;
+  if (!planRow || !repIds.includes(planRow.rep_id)) {
+    throw Object.assign(new Error("Action item not found."), { status: 404 });
+  }
+  return itemRow;
+}
+
+const CallReviewsQuerySchema = z.object({
+  repId: z.string().min(1),
+  selectedRepId: z.string().min(1)
+});
+
+router.get("/call-reviews", async (req, res) => {
+  const parsed = CallReviewsQuerySchema.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "repId and selectedRepId are required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    if (!repIds.includes(parsed.data.selectedRepId)) {
+      res.status(404).json({ error: "That rep is not on this team." });
+      return;
+    }
+    const { data, error } = await supabase
+      .from("sales_call_reviews")
+      .select("id, customer_name, called_at, duration_seconds, outcome, star_score, reviewer_notes, reviewer:users!sales_call_reviews_reviewer_id_fkey(name)")
+      .eq("org_id", orgId)
+      .eq("rep_id", parsed.data.selectedRepId)
+      .order("called_at", { ascending: false })
+      .limit(25);
+    if (error) throw error;
+    const reviews = (data ?? []).map((row: any) => ({
+      id: row.id,
+      customerName: row.customer_name,
+      calledAt: row.called_at,
+      durationSeconds: row.duration_seconds,
+      outcome: row.outcome,
+      starScore: row.star_score,
+      reviewerNotes: row.reviewer_notes,
+      reviewerName: row.reviewer?.name ?? null
+    }));
+    res.json({ reviews });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load call reviews." });
+  }
+});
+
+const CreateCallReviewSchema = z.object({
+  repId: z.string().min(1),
+  selectedRepId: z.string().min(1),
+  customerName: z.string().min(1).max(200),
+  calledAt: z.string().min(1),
+  durationSeconds: z.number().int().min(0).optional(),
+  outcome: z.string().min(1).max(120),
+  starScore: z.number().int().min(1).max(5).optional(),
+  reviewerNotes: z.string().max(4000).optional()
+});
+
+router.post("/call-reviews", async (req, res) => {
+  const parsed = CreateCallReviewSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Customer name, call time, and outcome are required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    if (!repIds.includes(parsed.data.selectedRepId)) {
+      res.status(404).json({ error: "That rep is not on this team." });
+      return;
+    }
+    const { data, error } = await supabase
+      .from("sales_call_reviews")
+      .insert({
+        org_id: orgId,
+        rep_id: parsed.data.selectedRepId,
+        customer_name: parsed.data.customerName,
+        called_at: parsed.data.calledAt,
+        duration_seconds: parsed.data.durationSeconds ?? null,
+        outcome: parsed.data.outcome,
+        star_score: parsed.data.starScore ?? null,
+        reviewer_id: req.user!.id,
+        reviewer_notes: parsed.data.reviewerNotes ?? null
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+    res.status(201).json({ id: data.id });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not log the call review." });
+  }
+});
+
+const CoachingPlanQuerySchema = z.object({
+  repId: z.string().min(1),
+  selectedRepId: z.string().min(1)
+});
+
+router.get("/coaching-plan", async (req, res) => {
+  const parsed = CoachingPlanQuerySchema.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "repId and selectedRepId are required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    if (!repIds.includes(parsed.data.selectedRepId)) {
+      res.status(404).json({ error: "That rep is not on this team." });
+      return;
+    }
+    const { data: planRow, error: planError } = await supabase
+      .from("rep_coaching_plans")
+      .select("id, created_at, updated_at")
+      .eq("org_id", orgId)
+      .eq("rep_id", parsed.data.selectedRepId)
+      .maybeSingle();
+    if (planError) throw planError;
+    if (!planRow) { res.json({ plan: null, actionItems: [] }); return; }
+
+    const { data: itemRows, error: itemError } = await supabase
+      .from("rep_coaching_action_items")
+      .select("id, description, target_count, completed_count, due_date, status, created_at")
+      .eq("coaching_plan_id", planRow.id)
+      .order("created_at", { ascending: true });
+    if (itemError) throw itemError;
+
+    res.json({
+      plan: { id: planRow.id, createdAt: planRow.created_at, updatedAt: planRow.updated_at },
+      actionItems: (itemRows ?? []).map((row) => ({
+        id: row.id,
+        description: row.description,
+        targetCount: row.target_count,
+        completedCount: row.completed_count,
+        dueDate: row.due_date,
+        status: row.status
+      }))
+    });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load the coaching plan." });
+  }
+});
+
+const CreateActionItemSchema = z.object({
+  repId: z.string().min(1),
+  selectedRepId: z.string().min(1),
+  description: z.string().min(1).max(500),
+  targetCount: z.number().int().min(0).optional(),
+  dueDate: z.string().regex(DATE_KEY_PATTERN).optional()
+});
+
+router.post("/coaching-plan/action-items", async (req, res) => {
+  const parsed = CreateActionItemSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "A description is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    if (!repIds.includes(parsed.data.selectedRepId)) {
+      res.status(404).json({ error: "That rep is not on this team." });
+      return;
+    }
+
+    let planId: string;
+    const { data: existingPlan, error: planLookupError } = await supabase
+      .from("rep_coaching_plans")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("rep_id", parsed.data.selectedRepId)
+      .maybeSingle();
+    if (planLookupError) throw planLookupError;
+    if (existingPlan) {
+      planId = existingPlan.id;
+    } else {
+      const { data: newPlan, error: createPlanError } = await supabase
+        .from("rep_coaching_plans")
+        .insert({ org_id: orgId, rep_id: parsed.data.selectedRepId, created_by: req.user!.id })
+        .select("id")
+        .single();
+      if (createPlanError) throw createPlanError;
+      planId = newPlan.id;
+    }
+
+    const { data: item, error: itemError } = await supabase
+      .from("rep_coaching_action_items")
+      .insert({
+        coaching_plan_id: planId,
+        org_id: orgId,
+        description: parsed.data.description,
+        target_count: parsed.data.targetCount ?? null,
+        due_date: parsed.data.dueDate ?? null,
+        created_by: req.user!.id
+      })
+      .select("id")
+      .single();
+    if (itemError) throw itemError;
+    res.status(201).json({ id: item.id, planId });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not add the action item." });
+  }
+});
+
+const UpdateActionItemSchema = z.object({
+  repId: z.string().min(1),
+  status: z.enum(["Not Started", "In Progress", "Completed"]).optional(),
+  completedCount: z.number().int().min(0).optional(),
+  description: z.string().min(1).max(500).optional(),
+  targetCount: z.number().int().min(0).optional(),
+  dueDate: z.string().regex(DATE_KEY_PATTERN).nullable().optional()
+});
+
+router.patch("/coaching-plan/action-items/:itemId", async (req, res) => {
+  const parsed = UpdateActionItemSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Nothing valid to update." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    await loadActionItemForTeam(orgId, req.params.itemId, repIds);
+
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (parsed.data.status !== undefined) patch.status = parsed.data.status;
+    if (parsed.data.completedCount !== undefined) patch.completed_count = parsed.data.completedCount;
+    if (parsed.data.description !== undefined) patch.description = parsed.data.description;
+    if (parsed.data.targetCount !== undefined) patch.target_count = parsed.data.targetCount;
+    if (parsed.data.dueDate !== undefined) patch.due_date = parsed.data.dueDate;
+
+    const { error: updateError } = await supabase
+      .from("rep_coaching_action_items")
+      .update(patch)
+      .eq("id", req.params.itemId);
+    if (updateError) throw updateError;
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not update the action item." });
+  }
+});
+
+router.delete("/coaching-plan/action-items/:itemId", async (req, res) => {
+  const repIdRaw = typeof req.query.repId === "string" ? req.query.repId : "";
+  if (!repIdRaw) { res.status(400).json({ error: "repId is required." }); return; }
+  const orgId = req.user!.orgId;
+  try {
+    const { repIds } = await loadRepAndTeam(orgId, repIdRaw, req.user!);
+    await loadActionItemForTeam(orgId, req.params.itemId, repIds);
+    const { error: deleteError } = await supabase
+      .from("rep_coaching_action_items")
+      .delete()
+      .eq("id", req.params.itemId);
+    if (deleteError) throw deleteError;
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not remove the action item." });
+  }
+});
+
 export default router;

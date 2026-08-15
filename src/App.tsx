@@ -11823,6 +11823,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesCoaching, setHeadOfSalesCoaching] = useState<any | null>(null);
   const [headOfSalesCoachingLoading, setHeadOfSalesCoachingLoading] = useState(false);
   const [headOfSalesCoachingError, setHeadOfSalesCoachingError] = useState("");
+  const [headOfSalesCallReviews, setHeadOfSalesCallReviews] = useState<any[]>([]);
+  const [headOfSalesCallReviewsLoading, setHeadOfSalesCallReviewsLoading] = useState(false);
+  const [headOfSalesCoachingPlan, setHeadOfSalesCoachingPlan] = useState<{ plan: any; actionItems: any[] } | null>(null);
+  const [headOfSalesCoachingPlanLoading, setHeadOfSalesCoachingPlanLoading] = useState(false);
+  const [headOfSalesCallReviewFormOpen, setHeadOfSalesCallReviewFormOpen] = useState(false);
+  const [headOfSalesCallReviewSaving, setHeadOfSalesCallReviewSaving] = useState(false);
+  const [headOfSalesCallReviewError, setHeadOfSalesCallReviewError] = useState("");
+  const [headOfSalesCallReviewForm, setHeadOfSalesCallReviewForm] = useState({
+    customerName: "", calledAt: "", durationMinutes: "", outcome: "", starScore: "", reviewerNotes: ""
+  });
+  const [headOfSalesActionItemFormOpen, setHeadOfSalesActionItemFormOpen] = useState(false);
+  const [headOfSalesActionItemSaving, setHeadOfSalesActionItemSaving] = useState(false);
+  const [headOfSalesActionItemError, setHeadOfSalesActionItemError] = useState("");
+  const [headOfSalesActionItemForm, setHeadOfSalesActionItemForm] = useState({ description: "", targetCount: "", dueDate: "" });
   const [pdaSubPage, setPdaSubPage] = useState<PdaSubPage>("Overview");
   const [pdaAgents, setPdaAgents] = useState<PersonalDeliveryAgentRow[]>([]);
   const [pdaOverview, setPdaOverview] = useState<PersonalDeliveryAgentOverview | null>(null);
@@ -43454,6 +43468,126 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart, headOfSalesCoachingSelectedRepId]);
 
+  const loadHeadOfSalesCallReviews = async () => {
+    if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Rep Coaching" || !headOfSalesViewingId || !headOfSalesCoachingSelectedRepId) return;
+    setHeadOfSalesCallReviewsLoading(true);
+    try {
+      const result = await headOfSalesApi.callReviews(headOfSalesViewingId, headOfSalesCoachingSelectedRepId);
+      setHeadOfSalesCallReviews(result?.reviews ?? []);
+    } catch {
+      setHeadOfSalesCallReviews([]);
+    } finally {
+      setHeadOfSalesCallReviewsLoading(false);
+    }
+  };
+  useEffect(() => {
+    void loadHeadOfSalesCallReviews();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesCoachingSelectedRepId]);
+
+  const loadHeadOfSalesCoachingPlan = async () => {
+    if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Rep Coaching" || !headOfSalesViewingId || !headOfSalesCoachingSelectedRepId) return;
+    setHeadOfSalesCoachingPlanLoading(true);
+    try {
+      const result = await headOfSalesApi.coachingPlan(headOfSalesViewingId, headOfSalesCoachingSelectedRepId);
+      setHeadOfSalesCoachingPlan(result ?? { plan: null, actionItems: [] });
+    } catch {
+      setHeadOfSalesCoachingPlan({ plan: null, actionItems: [] });
+    } finally {
+      setHeadOfSalesCoachingPlanLoading(false);
+    }
+  };
+  useEffect(() => {
+    void loadHeadOfSalesCoachingPlan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesCoachingSelectedRepId]);
+
+  // Switching who's being coached should never leave a half-filled form open
+  // against the PREVIOUS rep - close both and drop their errors.
+  useEffect(() => {
+    setHeadOfSalesCallReviewFormOpen(false);
+    setHeadOfSalesCallReviewError("");
+    setHeadOfSalesActionItemFormOpen(false);
+    setHeadOfSalesActionItemError("");
+  }, [headOfSalesCoachingSelectedRepId]);
+
+  const submitHeadOfSalesCallReview = async () => {
+    if (!headOfSalesViewingId || !headOfSalesCoachingSelectedRepId) return;
+    const form = headOfSalesCallReviewForm;
+    if (!form.customerName.trim() || !form.calledAt || !form.outcome.trim()) {
+      setHeadOfSalesCallReviewError("Customer name, call time, and outcome are required.");
+      return;
+    }
+    setHeadOfSalesCallReviewSaving(true);
+    setHeadOfSalesCallReviewError("");
+    try {
+      await headOfSalesApi.logCallReview({
+        repId: headOfSalesViewingId,
+        selectedRepId: headOfSalesCoachingSelectedRepId,
+        customerName: form.customerName.trim(),
+        calledAt: new Date(form.calledAt).toISOString(),
+        durationSeconds: form.durationMinutes ? Math.round(Number(form.durationMinutes) * 60) : undefined,
+        outcome: form.outcome.trim(),
+        starScore: form.starScore ? Number(form.starScore) : undefined,
+        reviewerNotes: form.reviewerNotes.trim() || undefined
+      });
+      setHeadOfSalesCallReviewForm({ customerName: "", calledAt: "", durationMinutes: "", outcome: "", starScore: "", reviewerNotes: "" });
+      setHeadOfSalesCallReviewFormOpen(false);
+      await loadHeadOfSalesCallReviews();
+    } catch (error: any) {
+      setHeadOfSalesCallReviewError(error?.message ?? "Could not log the call review.");
+    } finally {
+      setHeadOfSalesCallReviewSaving(false);
+    }
+  };
+
+  const submitHeadOfSalesActionItem = async () => {
+    if (!headOfSalesViewingId || !headOfSalesCoachingSelectedRepId) return;
+    const form = headOfSalesActionItemForm;
+    if (!form.description.trim()) {
+      setHeadOfSalesActionItemError("A description is required.");
+      return;
+    }
+    setHeadOfSalesActionItemSaving(true);
+    setHeadOfSalesActionItemError("");
+    try {
+      await headOfSalesApi.addCoachingActionItem({
+        repId: headOfSalesViewingId,
+        selectedRepId: headOfSalesCoachingSelectedRepId,
+        description: form.description.trim(),
+        targetCount: form.targetCount ? Number(form.targetCount) : undefined,
+        dueDate: form.dueDate || undefined
+      });
+      setHeadOfSalesActionItemForm({ description: "", targetCount: "", dueDate: "" });
+      setHeadOfSalesActionItemFormOpen(false);
+      await loadHeadOfSalesCoachingPlan();
+    } catch (error: any) {
+      setHeadOfSalesActionItemError(error?.message ?? "Could not add the action item.");
+    } finally {
+      setHeadOfSalesActionItemSaving(false);
+    }
+  };
+
+  const updateHeadOfSalesActionItemStatus = async (itemId: string, status: "Not Started" | "In Progress" | "Completed") => {
+    if (!headOfSalesViewingId) return;
+    try {
+      await headOfSalesApi.updateCoachingActionItem(itemId, { repId: headOfSalesViewingId, status });
+      await loadHeadOfSalesCoachingPlan();
+    } catch {
+      // The list simply won't reflect the change - the button stays clickable to retry.
+    }
+  };
+
+  const deleteHeadOfSalesActionItem = async (itemId: string) => {
+    if (!headOfSalesViewingId) return;
+    try {
+      await headOfSalesApi.deleteCoachingActionItem(itemId, headOfSalesViewingId);
+      await loadHeadOfSalesCoachingPlan();
+    } catch {
+      // Leave the item in place if the delete failed - nothing silently disappears.
+    }
+  };
+
   const loadRecoveryCandidates = async () => {
     if (activePage !== "Recovery Rep Dashboard") return;
     try {
@@ -59161,14 +59295,148 @@ ${waybillLineItems(w).length > 1
               </section>
 
               <section className="rounded-2xl border border-gray-200 bg-white p-5">
-                <h2 className="m-0 text-base font-bold text-gray-900">Recent Calls Reviewed</h2>
-                <p className="m-0 mt-3 text-sm italic text-gray-400">Call review logging is coming in a later update - nothing logged yet.</p>
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="m-0 text-base font-bold text-gray-900">Recent Calls Reviewed</h2>
+                  <button type="button"
+                    className="!min-h-0 rounded-lg border border-[#1F8FE0] bg-blue-50/60 px-3 py-1.5 text-xs font-bold text-[#1F8FE0] hover:bg-blue-100"
+                    onClick={() => { setHeadOfSalesCallReviewError(""); setHeadOfSalesCallReviewFormOpen((open) => !open); }}>
+                    {headOfSalesCallReviewFormOpen ? "Cancel" : "+ Log a Call"}
+                  </button>
+                </div>
+
+                {headOfSalesCallReviewFormOpen && (
+                  <div className="mt-3 space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                    <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Customer name"
+                      value={headOfSalesCallReviewForm.customerName}
+                      onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, customerName: e.target.value }))} />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="datetime-local" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                        value={headOfSalesCallReviewForm.calledAt}
+                        onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, calledAt: e.target.value }))} />
+                      <input type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Duration (minutes)"
+                        value={headOfSalesCallReviewForm.durationMinutes}
+                        onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, durationMinutes: e.target.value }))} />
+                    </div>
+                    <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Outcome (e.g. Upsell accepted, No answer)"
+                      value={headOfSalesCallReviewForm.outcome}
+                      onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, outcome: e.target.value }))} />
+                    <select className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                      value={headOfSalesCallReviewForm.starScore}
+                      onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, starScore: e.target.value }))}>
+                      <option value="">Star rating (optional)</option>
+                      {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} star{n > 1 ? "s" : ""}</option>)}
+                    </select>
+                    <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" rows={2} placeholder="Notes (optional)"
+                      value={headOfSalesCallReviewForm.reviewerNotes}
+                      onChange={(e) => setHeadOfSalesCallReviewForm((f) => ({ ...f, reviewerNotes: e.target.value }))} />
+                    {headOfSalesCallReviewError && <p className="m-0 text-xs font-bold text-rose-600">{headOfSalesCallReviewError}</p>}
+                    <button type="button" disabled={headOfSalesCallReviewSaving}
+                      className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
+                      onClick={() => void submitHeadOfSalesCallReview()}>
+                      {headOfSalesCallReviewSaving ? "Saving..." : "Save Call Review"}
+                    </button>
+                  </div>
+                )}
+
+                {headOfSalesCallReviewsLoading && headOfSalesCallReviews.length === 0 ? (
+                  <p className="m-0 mt-3 text-sm italic text-gray-400">Loading...</p>
+                ) : headOfSalesCallReviews.length === 0 ? (
+                  <p className="m-0 mt-3 text-sm italic text-gray-400">No calls logged for {snapshot.name} yet.</p>
+                ) : (
+                  <ul className="m-0 mt-3 list-none space-y-2 p-0 max-h-80 overflow-y-auto">
+                    {headOfSalesCallReviews.map((review: any) => (
+                      <li key={review.id} className="rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <strong className="text-gray-900">{review.customerName}</strong>
+                          {review.starScore ? (
+                            <span className="text-xs font-bold text-amber-500">{"★".repeat(review.starScore)}{"☆".repeat(5 - review.starScore)}</span>
+                          ) : null}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-gray-500">
+                          <span>{formatDateTime(review.calledAt)}</span>
+                          {review.durationSeconds ? <span>· {Math.round(review.durationSeconds / 60)} min</span> : null}
+                          <span>· {review.outcome}</span>
+                          {review.reviewerName ? <span>· reviewed by {review.reviewerName}</span> : null}
+                        </div>
+                        {review.reviewerNotes ? <p className="m-0 mt-1 text-xs text-gray-600">{review.reviewerNotes}</p> : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </section>
             </div>
 
             <section className="rounded-2xl border border-gray-200 bg-white p-5">
-              <h2 className="m-0 text-base font-bold text-gray-900">Coaching Plan for {snapshot.name}</h2>
-              <p className="m-0 mt-3 text-sm italic text-gray-400">Coaching plans are coming in a later update - nothing set yet.</p>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="m-0 text-base font-bold text-gray-900">Coaching Plan for {snapshot.name}</h2>
+                <button type="button"
+                  className="!min-h-0 rounded-lg border border-[#1F8FE0] bg-blue-50/60 px-3 py-1.5 text-xs font-bold text-[#1F8FE0] hover:bg-blue-100"
+                  onClick={() => { setHeadOfSalesActionItemError(""); setHeadOfSalesActionItemFormOpen((open) => !open); }}>
+                  {headOfSalesActionItemFormOpen ? "Cancel" : "+ Add Action Item"}
+                </button>
+              </div>
+
+              {headOfSalesActionItemFormOpen && (
+                <div className="mt-3 space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                  <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="What should they work on?"
+                    value={headOfSalesActionItemForm.description}
+                    onChange={(e) => setHeadOfSalesActionItemForm((f) => ({ ...f, description: e.target.value }))} />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="number" min="0" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Target count (optional)"
+                      value={headOfSalesActionItemForm.targetCount}
+                      onChange={(e) => setHeadOfSalesActionItemForm((f) => ({ ...f, targetCount: e.target.value }))} />
+                    <input type="date" className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                      value={headOfSalesActionItemForm.dueDate}
+                      onChange={(e) => setHeadOfSalesActionItemForm((f) => ({ ...f, dueDate: e.target.value }))} />
+                  </div>
+                  {headOfSalesActionItemError && <p className="m-0 text-xs font-bold text-rose-600">{headOfSalesActionItemError}</p>}
+                  <button type="button" disabled={headOfSalesActionItemSaving}
+                    className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
+                    onClick={() => void submitHeadOfSalesActionItem()}>
+                    {headOfSalesActionItemSaving ? "Saving..." : "Add to Plan"}
+                  </button>
+                </div>
+              )}
+
+              {headOfSalesCoachingPlanLoading && !headOfSalesCoachingPlan ? (
+                <p className="m-0 mt-3 text-sm italic text-gray-400">Loading...</p>
+              ) : !headOfSalesCoachingPlan?.actionItems?.length ? (
+                <p className="m-0 mt-3 text-sm italic text-gray-400">No coaching plan set for {snapshot.name} yet.</p>
+              ) : (
+                <ul className="m-0 mt-3 list-none space-y-2 p-0">
+                  {headOfSalesCoachingPlan.actionItems.map((item: any) => {
+                    const statusTone = item.status === "Completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : item.status === "In Progress" ? "border-sky-200 bg-sky-50 text-sky-700"
+                      : "border-gray-200 bg-gray-50 text-gray-600";
+                    return (
+                      <li key={item.id} className="rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <strong className="block text-gray-900">{item.description}</strong>
+                            <span className="text-[11px] text-gray-500">
+                              {item.targetCount ? `${item.completedCount}/${item.targetCount} · ` : ""}
+                              {item.dueDate ? `Due ${formatDateOnly(item.dueDate)}` : "No due date"}
+                            </span>
+                          </div>
+                          <button type="button" className="!min-h-0 shrink-0 rounded-md p-1 text-gray-300 hover:bg-rose-50 hover:text-rose-500"
+                            onClick={() => void deleteHeadOfSalesActionItem(item.id)} title="Remove">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <div className="mt-2 flex gap-1.5">
+                          {(["Not Started", "In Progress", "Completed"] as const).map((status) => (
+                            <button key={status} type="button"
+                              className={`!min-h-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${item.status === status ? statusTone : "border-gray-200 text-gray-400 hover:bg-gray-50"}`}
+                              onClick={() => void updateHeadOfSalesActionItemStatus(item.id, status)}>
+                              {status}
+                            </button>
+                          ))}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </section>
           </>
         )}
