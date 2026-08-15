@@ -730,7 +730,9 @@ async function loadActionItemForTeam(orgId: string, itemId: string, repIds: stri
 
 const CallReviewsQuerySchema = z.object({
   repId: z.string().min(1),
-  selectedRepId: z.string().min(1)
+  selectedRepId: z.string().min(1),
+  weekStart: z.string().regex(DATE_KEY_PATTERN).optional(),
+  weekEnd: z.string().regex(DATE_KEY_PATTERN).optional()
 });
 
 router.get("/call-reviews", async (req, res) => {
@@ -743,13 +745,18 @@ router.get("/call-reviews", async (req, res) => {
       res.status(404).json({ error: "That rep is not on this team." });
       return;
     }
-    const { data, error } = await supabase
+    let query = supabase
       .from("sales_call_reviews")
       .select("id, customer_name, called_at, duration_seconds, outcome, star_score, reviewer_notes, reviewer:users!sales_call_reviews_reviewer_id_fkey(name)")
       .eq("org_id", orgId)
-      .eq("rep_id", parsed.data.selectedRepId)
-      .order("called_at", { ascending: false })
-      .limit(25);
+      .eq("rep_id", parsed.data.selectedRepId);
+    // Week-scoped when a week is given (Rep Coaching's "This Week" panel);
+    // unscoped (last 25 overall) otherwise, matching prior behavior for any
+    // other caller of this endpoint.
+    if (parsed.data.weekStart && parsed.data.weekEnd) {
+      query = query.gte("called_at", `${parsed.data.weekStart}T00:00:00Z`).lte("called_at", `${parsed.data.weekEnd}T23:59:59Z`);
+    }
+    const { data, error } = await query.order("called_at", { ascending: false }).limit(25);
     if (error) throw error;
     const reviews = (data ?? []).map((row: any) => ({
       id: row.id,
@@ -836,7 +843,7 @@ router.get("/coaching-plan", async (req, res) => {
 
     const { data: itemRows, error: itemError } = await supabase
       .from("rep_coaching_action_items")
-      .select("id, description, target_count, completed_count, due_date, status, created_at")
+      .select("id, description, target_count, completed_count, target_is_percentage, due_date, status, created_at")
       .eq("coaching_plan_id", planRow.id)
       .order("created_at", { ascending: true });
     if (itemError) throw itemError;
@@ -848,6 +855,7 @@ router.get("/coaching-plan", async (req, res) => {
         description: row.description,
         targetCount: row.target_count,
         completedCount: row.completed_count,
+        targetIsPercentage: row.target_is_percentage,
         dueDate: row.due_date,
         status: row.status
       }))
@@ -862,6 +870,7 @@ const CreateActionItemSchema = z.object({
   selectedRepId: z.string().min(1),
   description: z.string().min(1).max(500),
   targetCount: z.number().int().min(0).optional(),
+  targetIsPercentage: z.boolean().optional(),
   dueDate: z.string().regex(DATE_KEY_PATTERN).optional()
 });
 
@@ -903,6 +912,7 @@ router.post("/coaching-plan/action-items", async (req, res) => {
         org_id: orgId,
         description: parsed.data.description,
         target_count: parsed.data.targetCount ?? null,
+        target_is_percentage: parsed.data.targetIsPercentage ?? false,
         due_date: parsed.data.dueDate ?? null,
         created_by: req.user!.id
       })
@@ -921,6 +931,7 @@ const UpdateActionItemSchema = z.object({
   completedCount: z.number().int().min(0).optional(),
   description: z.string().min(1).max(500).optional(),
   targetCount: z.number().int().min(0).optional(),
+  targetIsPercentage: z.boolean().optional(),
   dueDate: z.string().regex(DATE_KEY_PATTERN).nullable().optional()
 });
 
@@ -937,6 +948,7 @@ router.patch("/coaching-plan/action-items/:itemId", async (req, res) => {
     if (parsed.data.completedCount !== undefined) patch.completed_count = parsed.data.completedCount;
     if (parsed.data.description !== undefined) patch.description = parsed.data.description;
     if (parsed.data.targetCount !== undefined) patch.target_count = parsed.data.targetCount;
+    if (parsed.data.targetIsPercentage !== undefined) patch.target_is_percentage = parsed.data.targetIsPercentage;
     if (parsed.data.dueDate !== undefined) patch.due_date = parsed.data.dueDate;
 
     const { error: updateError } = await supabase
