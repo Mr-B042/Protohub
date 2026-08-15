@@ -11819,6 +11819,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesUpsellCrossSell, setHeadOfSalesUpsellCrossSell] = useState<any | null>(null);
   const [headOfSalesUpsellCrossSellLoading, setHeadOfSalesUpsellCrossSellLoading] = useState(false);
   const [headOfSalesUpsellCrossSellError, setHeadOfSalesUpsellCrossSellError] = useState("");
+  const [headOfSalesCoachingSelectedRepId, setHeadOfSalesCoachingSelectedRepId] = useState("");
+  const [headOfSalesCoaching, setHeadOfSalesCoaching] = useState<any | null>(null);
+  const [headOfSalesCoachingLoading, setHeadOfSalesCoachingLoading] = useState(false);
+  const [headOfSalesCoachingError, setHeadOfSalesCoachingError] = useState("");
   const [pdaSubPage, setPdaSubPage] = useState<PdaSubPage>("Overview");
   const [pdaAgents, setPdaAgents] = useState<PersonalDeliveryAgentRow[]>([]);
   const [pdaOverview, setPdaOverview] = useState<PersonalDeliveryAgentOverview | null>(null);
@@ -43427,6 +43431,29 @@ ${waybillLineItems(w).length > 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart]);
 
+  const loadHeadOfSalesCoaching = async () => {
+    if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Rep Coaching" || !headOfSalesViewingId) return;
+    setHeadOfSalesCoachingLoading(true);
+    setHeadOfSalesCoachingError("");
+    try {
+      const result = await headOfSalesApi.repCoaching(headOfSalesViewingId, headOfSalesCoachingSelectedRepId || undefined, headOfSalesOverviewWeekStart || undefined);
+      setHeadOfSalesCoaching(result);
+      // Keep the picker in sync with whichever rep the server actually
+      // resolved (e.g. the first team member, the first time this loads).
+      if (result?.snapshot?.repId && result.snapshot.repId !== headOfSalesCoachingSelectedRepId) {
+        setHeadOfSalesCoachingSelectedRepId(result.snapshot.repId);
+      }
+    } catch (error: any) {
+      setHeadOfSalesCoachingError(error?.message ?? "Could not load Rep Coaching.");
+    } finally {
+      setHeadOfSalesCoachingLoading(false);
+    }
+  };
+  useEffect(() => {
+    void loadHeadOfSalesCoaching();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesOverviewWeekStart, headOfSalesCoachingSelectedRepId]);
+
   const loadRecoveryCandidates = async () => {
     if (activePage !== "Recovery Rep Dashboard") return;
     try {
@@ -58184,7 +58211,8 @@ ${waybillLineItems(w).length > 1
             {headOfSalesSubPage === "Overview" ? renderHeadOfSalesOverview()
               : headOfSalesSubPage === "Weekly Scorecard" ? renderHeadOfSalesScorecard()
               : headOfSalesSubPage === "Team Performance" ? renderHeadOfSalesTeamPerformance()
-              : headOfSalesSubPage === "Upsell & Cross-sell" ? renderHeadOfSalesUpsellCrossSell() : (
+              : headOfSalesSubPage === "Upsell & Cross-sell" ? renderHeadOfSalesUpsellCrossSell()
+              : headOfSalesSubPage === "Rep Coaching" ? renderHeadOfSalesRepCoaching() : (
               <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
                 <h2 className="text-base font-bold text-gray-900">{headOfSalesSubPage}</h2>
                 <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
@@ -59025,6 +59053,138 @@ ${waybillLineItems(w).length > 1
             </div>
           </section>
         </div>
+      </div>
+    );
+  };
+
+  const HEAD_OF_SALES_COACHING_TIPS: Array<{ title: string; description: string; icon: typeof LayoutPanelTop }> = [
+    { title: "Upsell Best Practices", description: "Learn proven upsell techniques that convert.", icon: TrendingUp },
+    { title: "AOV Improvement Strategies", description: "Ways to increase average order value effectively.", icon: HandCoins },
+    { title: "Handling Objections", description: "Common objections and how to overcome them.", icon: MessageCircle },
+    { title: "Call Quality Checklist", description: "Ensure every call hits the key success points.", icon: ClipboardCheck },
+    { title: "Script Library", description: "Access all approved upsell and cross-sell scripts.", icon: BookOpen }
+  ];
+
+  const renderHeadOfSalesRepCoaching = () => {
+    const data = headOfSalesCoaching;
+    if (headOfSalesCoachingLoading && !data) {
+      return (
+        <section className="flex flex-col items-center gap-3 rounded-xl border border-gray-200 bg-white px-5 py-16 text-center shadow-sm">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-[#1F8FE0]" />
+          <p className="m-0 text-sm font-semibold text-gray-500">Loading rep coaching...</p>
+        </section>
+      );
+    }
+    if (headOfSalesCoachingError || !data) {
+      return (
+        <section className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-10 text-center">
+          <p className="m-0 text-sm font-semibold text-rose-800">{headOfSalesCoachingError || "Nothing to show yet."}</p>
+          <button className="!min-h-0 mt-3 rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100" onClick={() => void loadHeadOfSalesCoaching()}>
+            Try again
+          </button>
+        </section>
+      );
+    }
+
+    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const pct = (value: number) => `${value}%`;
+    const severityTone = (severity: string) =>
+      severity === "High" ? "bg-rose-50 text-rose-700 border-rose-200"
+        : severity === "Medium" ? "bg-amber-50 text-amber-700 border-amber-200"
+        : "bg-sky-50 text-sky-700 border-sky-200";
+    const snapshot = data.snapshot;
+    const snapshotCard = (label: string, value: string, deltaPct: number, targetLabel: string) => (
+      <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
+        <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">{label}</span>
+        <strong className="mt-1 block text-xl font-black text-gray-900">{value}</strong>
+        <span className={`text-[11px] font-bold ${deltaPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{deltaPct >= 0 ? "+" : ""}{deltaPct}% vs last week</span>
+        <span className="mt-0.5 block text-[11px] text-gray-400">Target: {targetLabel}</span>
+      </div>
+    );
+
+    return (
+      <div className="space-y-5">
+        <div className="-mx-1 overflow-x-auto px-1">
+          <div className="flex min-w-max gap-2">
+            {data.reps.map((rep: any) => (
+              <button key={rep.repId} type="button" onClick={() => setHeadOfSalesCoachingSelectedRepId(rep.repId)}
+                className={`!min-h-0 flex items-center gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                  headOfSalesCoachingSelectedRepId === rep.repId ? "border-[#1F8FE0] bg-blue-50/40" : "border-gray-200 bg-white hover:bg-gray-50"}`}>
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-black ${customerAvatarTone(rep.repId)}`}>
+                  {customerInitial(rep.name)}
+                </span>
+                <span>
+                  <strong className="block text-sm font-bold text-gray-900">{rep.name}</strong>
+                  <span className={`inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-bold ${rep.status === "On Target" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{rep.status}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {!snapshot ? (
+          <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
+            <p className="m-0 text-sm italic text-gray-400">No active sales reps yet.</p>
+          </section>
+        ) : (
+          <>
+            <section className="rounded-2xl border border-gray-200 bg-white p-5">
+              <h2 className="m-0 text-base font-bold text-gray-900">Rep Performance Snapshot: {snapshot.name}</h2>
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+                {snapshotCard("AOV (Delivered)", money(snapshot.aov), snapshot.aovDeltaVsLastWeekPct, money(snapshot.aovTarget))}
+                {snapshotCard("Delivery Rate", pct(snapshot.deliveryRate), snapshot.deliveryRateDeltaVsLastWeekPct, pct(snapshot.deliveryRateTarget))}
+                {snapshotCard("Upsell Rate", pct(snapshot.upsellRate), snapshot.upsellRateDeltaVsLastWeekPct, pct(snapshot.upsellRateTarget))}
+                {snapshotCard("Cross-sell Rate", pct(snapshot.crossSellRate), snapshot.crossSellRateDeltaVsLastWeekPct, pct(snapshot.crossSellRateTarget))}
+                <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
+                  <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Orders (Assigned)</span>
+                  <strong className="mt-1 block text-xl font-black text-gray-900">{snapshot.ordersAssigned}</strong>
+                  <span className="text-[11px] text-gray-400">Delivered: {snapshot.ordersDelivered}</span>
+                </div>
+              </div>
+            </section>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <section className="rounded-2xl border border-gray-200 bg-white p-5">
+                <h2 className="m-0 text-base font-bold text-gray-900">Issues Identified</h2>
+                {data.issuesIdentified.length === 0 ? (
+                  <p className="m-0 mt-3 text-sm italic text-gray-400">No issues flagged this week.</p>
+                ) : (
+                  <ul className="m-0 mt-3 list-none space-y-2 p-0">
+                    {data.issuesIdentified.map((issue: any) => (
+                      <li key={issue.label} className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${severityTone(issue.severity)}`}>
+                        <span>{issue.label}</span>
+                        <span className="shrink-0 rounded-full bg-white/60 px-2 py-0.5 text-[10px] font-black uppercase">{issue.severity}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="rounded-2xl border border-gray-200 bg-white p-5">
+                <h2 className="m-0 text-base font-bold text-gray-900">Recent Calls Reviewed</h2>
+                <p className="m-0 mt-3 text-sm italic text-gray-400">Call review logging is coming in a later update - nothing logged yet.</p>
+              </section>
+            </div>
+
+            <section className="rounded-2xl border border-gray-200 bg-white p-5">
+              <h2 className="m-0 text-base font-bold text-gray-900">Coaching Plan for {snapshot.name}</h2>
+              <p className="m-0 mt-3 text-sm italic text-gray-400">Coaching plans are coming in a later update - nothing set yet.</p>
+            </section>
+          </>
+        )}
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <h2 className="m-0 text-base font-bold text-gray-900">Coaching Tips &amp; Resources</h2>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {HEAD_OF_SALES_COACHING_TIPS.map((tip) => (
+              <div key={tip.title} className="rounded-xl border border-gray-200 px-4 py-3.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-[#1F8FE0]"><tip.icon className="h-4 w-4" /></span>
+                <strong className="mt-2 block text-sm font-bold text-gray-900">{tip.title}</strong>
+                <span className="text-[11px] text-gray-500">{tip.description}</span>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
     );
   };

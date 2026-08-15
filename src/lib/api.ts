@@ -1488,6 +1488,12 @@ export const headOfSalesApi = {
     const params = new URLSearchParams({ repId });
     if (weekStart) params.set("weekStart", weekStart);
     return get<any>(`/api/head-of-sales-rep/upsell-cross-sell?${params.toString()}`);
+  },
+  repCoaching: (repId: string, selectedRepId?: string, weekStart?: string) => {
+    const params = new URLSearchParams({ repId });
+    if (selectedRepId) params.set("selectedRepId", selectedRepId);
+    if (weekStart) params.set("weekStart", weekStart);
+    return get<any>(`/api/head-of-sales-rep/rep-coaching?${params.toString()}`);
   }
 };
 
