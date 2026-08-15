@@ -150,8 +150,11 @@ import {
   type FollowUpRecoveryBucket
 } from "./lib/followUpOutcomes";
 import {
+  Cell,
   Line,
   LineChart,
+  Pie,
+  PieChart as RePieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -331,6 +334,8 @@ const HEAD_OF_SALES_SUBNAV_ITEMS: Array<{ key: HeadOfSalesSubPage; label: string
   { key: "Bonus & Payouts", label: "Bonus & Payouts", icon: HandCoins }
 ];
 const HEAD_OF_SALES_INITIATIVE_STATUSES = ["Idea", "Planned", "In Progress", "Completed", "Abandoned"] as const;
+const HEAD_OF_SALES_INITIATIVE_TYPES = ["Upsell", "Cross-sell", "Retention", "Promotion", "Training", "Process", "Offer"] as const;
+const LEARNING_TAG_OPTIONS = ["Use & Scale", "Test More", "Adjust Approach", "Keep Doing"] as const;
 
 type InventoryOperationsNavGroup = {
   label?: string;
@@ -11852,19 +11857,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesActionItemError, setHeadOfSalesActionItemError] = useState("");
   const [headOfSalesActionItemForm, setHeadOfSalesActionItemForm] = useState({ description: "", targetCount: "", dueDate: "" });
   const [headOfSalesInitiatives, setHeadOfSalesInitiatives] = useState<any[]>([]);
+  const [headOfSalesInitiativeStats, setHeadOfSalesInitiativeStats] = useState({ activeCount: 0, completedThisWeekCount: 0, totalIncrementalRevenue: 0, customersImpacted: 0, upgradesGenerated: 0 });
+  const [headOfSalesInitiativeImpactSummary, setHeadOfSalesInitiativeImpactSummary] = useState<any[]>([]);
+  const [headOfSalesInitiativeVsLastWeek, setHeadOfSalesInitiativeVsLastWeek] = useState<any | null>(null);
+  const [headOfSalesInitiativeRecentLearnings, setHeadOfSalesInitiativeRecentLearnings] = useState<any[]>([]);
+  const [headOfSalesInitiativeWeekStart, setHeadOfSalesInitiativeWeekStart] = useState("");
+  const [headOfSalesInitiativeCurrentWeekStart, setHeadOfSalesInitiativeCurrentWeekStart] = useState("");
   const [headOfSalesInitiativesLoading, setHeadOfSalesInitiativesLoading] = useState(false);
   const [headOfSalesInitiativesError, setHeadOfSalesInitiativesError] = useState("");
   const [headOfSalesInitiativeFormOpen, setHeadOfSalesInitiativeFormOpen] = useState(false);
   const [headOfSalesInitiativeSaving, setHeadOfSalesInitiativeSaving] = useState(false);
   const [headOfSalesInitiativeError, setHeadOfSalesInitiativeError] = useState("");
   const [headOfSalesInitiativeForm, setHeadOfSalesInitiativeForm] = useState({
-    title: "", description: "", targetMetric: "", startedAt: "", targetDate: ""
+    title: "", description: "", targetMetric: "", startedAt: "", targetDate: "",
+    initiativeType: "Promotion", targetSegment: "", priority: "Medium", expectedImpact: ""
   });
   const [headOfSalesExpandedInitiativeId, setHeadOfSalesExpandedInitiativeId] = useState<string | null>(null);
   const [headOfSalesInitiativeOutcomeDraft, setHeadOfSalesInitiativeOutcomeDraft] = useState({ outcomeSummary: "", wasSuccessful: "" });
   const [headOfSalesInitiativeOutcomeSaving, setHeadOfSalesInitiativeOutcomeSaving] = useState(false);
   const [headOfSalesInitiativeLearnings, setHeadOfSalesInitiativeLearnings] = useState<any[]>([]);
   const [headOfSalesInitiativeLearningsLoading, setHeadOfSalesInitiativeLearningsLoading] = useState(false);
+  const [headOfSalesTrackResultsDraft, setHeadOfSalesTrackResultsDraft] = useState({
+    customersOffered: "0", customersAccepted: "0", customersDelivered: "0", incrementalRevenue: "0", impactLevel: ""
+  });
+  const [headOfSalesTrackResultsSaving, setHeadOfSalesTrackResultsSaving] = useState(false);
+  const [headOfSalesLearningTag, setHeadOfSalesLearningTag] = useState("");
   const [headOfSalesLearningDraft, setHeadOfSalesLearningDraft] = useState("");
   const [headOfSalesLearningSaving, setHeadOfSalesLearningSaving] = useState(false);
   const [headOfSalesWeeklyReport, setHeadOfSalesWeeklyReport] = useState<any | null>(null);
@@ -43644,8 +43661,19 @@ ${waybillLineItems(w).length > 1
     setHeadOfSalesInitiativesLoading(true);
     setHeadOfSalesInitiativesError("");
     try {
-      const result = await headOfSalesApi.initiatives(headOfSalesViewingId);
+      const wasUnset = !headOfSalesInitiativeWeekStart;
+      const result = await headOfSalesApi.initiatives(headOfSalesViewingId, headOfSalesInitiativeWeekStart || undefined);
       setHeadOfSalesInitiatives(result?.initiatives ?? []);
+      setHeadOfSalesInitiativeStats(result?.stats ?? { activeCount: 0, completedThisWeekCount: 0, totalIncrementalRevenue: 0, customersImpacted: 0, upgradesGenerated: 0 });
+      setHeadOfSalesInitiativeImpactSummary(result?.impactSummary ?? []);
+      setHeadOfSalesInitiativeVsLastWeek(result?.vsLastWeek ?? null);
+      setHeadOfSalesInitiativeRecentLearnings(result?.recentLearnings ?? []);
+      if (result?.weekStart && result.weekStart !== headOfSalesInitiativeWeekStart) {
+        setHeadOfSalesInitiativeWeekStart(result.weekStart);
+      }
+      if (wasUnset && result?.weekStart) {
+        setHeadOfSalesInitiativeCurrentWeekStart(result.weekStart);
+      }
     } catch (error: any) {
       setHeadOfSalesInitiativesError(error?.message ?? "Could not load Initiatives.");
     } finally {
@@ -43658,7 +43686,7 @@ ${waybillLineItems(w).length > 1
     setHeadOfSalesInitiativeFormOpen(false);
     setHeadOfSalesInitiativeError("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId]);
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesInitiativeWeekStart]);
 
   const loadHeadOfSalesInitiativeLearnings = async (initiativeId: string) => {
     if (!headOfSalesViewingId) return;
@@ -43683,7 +43711,15 @@ ${waybillLineItems(w).length > 1
       outcomeSummary: initiative.outcomeSummary ?? "",
       wasSuccessful: initiative.wasSuccessful === true ? "yes" : initiative.wasSuccessful === false ? "no" : ""
     });
+    setHeadOfSalesTrackResultsDraft({
+      customersOffered: String(initiative.customersOffered ?? 0),
+      customersAccepted: String(initiative.customersAccepted ?? 0),
+      customersDelivered: String(initiative.customersDelivered ?? 0),
+      incrementalRevenue: String(initiative.incrementalRevenue ?? 0),
+      impactLevel: initiative.impactLevel ?? ""
+    });
     setHeadOfSalesLearningDraft("");
+    setHeadOfSalesLearningTag("");
     void loadHeadOfSalesInitiativeLearnings(initiative.id);
   };
 
@@ -43703,15 +43739,40 @@ ${waybillLineItems(w).length > 1
         description: form.description.trim() || undefined,
         targetMetric: form.targetMetric.trim() || undefined,
         startedAt: form.startedAt || undefined,
-        targetDate: form.targetDate || undefined
+        targetDate: form.targetDate || undefined,
+        initiativeType: form.initiativeType || undefined,
+        targetSegment: form.targetSegment.trim() || undefined,
+        priority: form.priority || undefined,
+        expectedImpact: form.expectedImpact.trim() || undefined
       });
-      setHeadOfSalesInitiativeForm({ title: "", description: "", targetMetric: "", startedAt: "", targetDate: "" });
+      setHeadOfSalesInitiativeForm({ title: "", description: "", targetMetric: "", startedAt: "", targetDate: "", initiativeType: "Promotion", targetSegment: "", priority: "Medium", expectedImpact: "" });
       setHeadOfSalesInitiativeFormOpen(false);
       await loadHeadOfSalesInitiatives();
     } catch (error: any) {
       setHeadOfSalesInitiativeError(error?.message ?? "Could not create the initiative.");
     } finally {
       setHeadOfSalesInitiativeSaving(false);
+    }
+  };
+
+  const saveHeadOfSalesTrackResults = async (initiativeId: string) => {
+    if (!headOfSalesViewingId) return;
+    setHeadOfSalesTrackResultsSaving(true);
+    try {
+      const draft = headOfSalesTrackResultsDraft;
+      await headOfSalesApi.updateInitiative(initiativeId, {
+        repId: headOfSalesViewingId,
+        customersOffered: Math.max(0, Number(draft.customersOffered) || 0),
+        customersAccepted: Math.max(0, Number(draft.customersAccepted) || 0),
+        customersDelivered: Math.max(0, Number(draft.customersDelivered) || 0),
+        incrementalRevenue: Math.max(0, Number(draft.incrementalRevenue) || 0),
+        impactLevel: draft.impactLevel || null
+      });
+      await loadHeadOfSalesInitiatives();
+    } catch {
+      // Draft stays as typed so nothing is lost - retry stays available.
+    } finally {
+      setHeadOfSalesTrackResultsSaving(false);
     }
   };
 
@@ -43758,9 +43819,11 @@ ${waybillLineItems(w).length > 1
     if (!headOfSalesViewingId || !headOfSalesLearningDraft.trim()) return;
     setHeadOfSalesLearningSaving(true);
     try {
-      await headOfSalesApi.addInitiativeLearning(initiativeId, { repId: headOfSalesViewingId, note: headOfSalesLearningDraft.trim() });
+      await headOfSalesApi.addInitiativeLearning(initiativeId, { repId: headOfSalesViewingId, note: headOfSalesLearningDraft.trim(), tag: headOfSalesLearningTag || undefined });
       setHeadOfSalesLearningDraft("");
+      setHeadOfSalesLearningTag("");
       await loadHeadOfSalesInitiativeLearnings(initiativeId);
+      await loadHeadOfSalesInitiatives();
     } catch {
       // Draft stays in the box so the note isn't lost - retry stays available.
     } finally {
@@ -59828,122 +59891,251 @@ ${waybillLineItems(w).length > 1
       );
     }
 
+    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
     const statusTone = (status: string) =>
       status === "Completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700"
         : status === "Abandoned" ? "border-gray-300 bg-gray-100 text-gray-500"
         : status === "In Progress" ? "border-sky-200 bg-sky-50 text-sky-700"
         : status === "Planned" ? "border-amber-200 bg-amber-50 text-amber-700"
         : "border-violet-200 bg-violet-50 text-violet-700";
+    const typeIcon = (type: string) =>
+      type === "Upsell" ? TrendingUp : type === "Cross-sell" ? ShoppingCart : type === "Retention" ? Repeat2
+        : type === "Training" ? BookOpen : type === "Process" ? Settings : type === "Offer" ? Target : Trophy;
+    const impactTone = (level: string) =>
+      level === "High" ? "bg-emerald-500" : level === "Medium" ? "bg-amber-400" : level === "Low" ? "bg-rose-400" : "bg-gray-200";
+    const impactWidth = (level: string) => level === "High" ? "100%" : level === "Medium" ? "60%" : level === "Low" ? "30%" : "0%";
+    const priorityTone = (priority: string) =>
+      priority === "High" ? "bg-rose-50 text-rose-700" : priority === "Medium" ? "bg-amber-50 text-amber-700" : "bg-sky-50 text-sky-700";
+    const deltaLabel = (delta: any) => delta ? `${delta.deltaPct >= 0 ? "↑" : "↓"} ${Math.abs(delta.deltaPct)}% vs last week` : null;
 
-    const active = headOfSalesInitiatives.filter((row) => row.status !== "Completed" && row.status !== "Abandoned");
-    const resolved = headOfSalesInitiatives.filter((row) => row.status === "Completed" || row.status === "Abandoned");
+    const active = headOfSalesInitiatives.filter((row) => row.status !== "Idea" && row.status !== "Abandoned");
+    const pipeline = headOfSalesInitiatives.filter((row) => row.status === "Idea");
+    const stats = headOfSalesInitiativeStats;
+    const vsLastWeek = headOfSalesInitiativeVsLastWeek;
+    const isCurrentWeek = Boolean(headOfSalesInitiativeCurrentWeekStart) && headOfSalesInitiativeWeekStart >= headOfSalesInitiativeCurrentWeekStart;
 
-    const initiativeCard = (initiative: any) => {
-      const expanded = headOfSalesExpandedInitiativeId === initiative.id;
-      return (
-        <div key={initiative.id} className="rounded-2xl border border-gray-200 bg-white p-4">
-          <div className="flex items-start justify-between gap-3">
-            <button type="button" className="!min-h-0 flex-1 text-left" onClick={() => toggleHeadOfSalesInitiativeExpanded(initiative)}>
-              <div className="flex flex-wrap items-center gap-2">
-                <strong className="text-sm font-bold text-gray-900">{initiative.title}</strong>
-                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase ${statusTone(initiative.status)}`}>{initiative.status}</span>
+    const expandedDetail = (initiative: any) => (
+      <tr>
+        <td colSpan={7} className="bg-gray-50/70 px-4 py-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <span className="block text-[11px] font-bold uppercase tracking-wide text-gray-400">Track Results</span>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-[11px] text-gray-500">Customers Offered
+                  <input type="number" min="0" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                    value={headOfSalesTrackResultsDraft.customersOffered}
+                    onChange={(e) => setHeadOfSalesTrackResultsDraft((d) => ({ ...d, customersOffered: e.target.value }))} />
+                </label>
+                <label className="text-[11px] text-gray-500">Accepted / Upgraded
+                  <input type="number" min="0" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                    value={headOfSalesTrackResultsDraft.customersAccepted}
+                    onChange={(e) => setHeadOfSalesTrackResultsDraft((d) => ({ ...d, customersAccepted: e.target.value }))} />
+                </label>
+                <label className="text-[11px] text-gray-500">Successfully Delivered
+                  <input type="number" min="0" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                    value={headOfSalesTrackResultsDraft.customersDelivered}
+                    onChange={(e) => setHeadOfSalesTrackResultsDraft((d) => ({ ...d, customersDelivered: e.target.value }))} />
+                </label>
+                <label className="text-[11px] text-gray-500">Incremental Revenue (₦)
+                  <input type="number" min="0" className="mt-0.5 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                    value={headOfSalesTrackResultsDraft.incrementalRevenue}
+                    onChange={(e) => setHeadOfSalesTrackResultsDraft((d) => ({ ...d, incrementalRevenue: e.target.value }))} />
+                </label>
               </div>
-              {initiative.description ? <p className="m-0 mt-1 text-xs text-gray-500">{initiative.description}</p> : null}
-              <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
-                {initiative.targetMetric ? <span>Target: {initiative.targetMetric}</span> : null}
-                {initiative.targetDate ? <span>Due {formatDateOnly(initiative.targetDate)}</span> : null}
-                {initiative.completedAt ? <span>Resolved {formatDateOnly(initiative.completedAt)}</span> : null}
-                {initiative.wasSuccessful === true ? <span className="font-bold text-emerald-600">✓ Successful</span> : null}
-                {initiative.wasSuccessful === false ? <span className="font-bold text-rose-500">✗ Not successful</span> : null}
-              </div>
-            </button>
-            <button type="button" className="!min-h-0 shrink-0 rounded-md p-1 text-gray-300 hover:bg-rose-50 hover:text-rose-500"
-              onClick={() => void deleteHeadOfSalesInitiative(initiative.id)} title="Remove">
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {HEAD_OF_SALES_INITIATIVE_STATUSES.map((status) => (
-              <button key={status} type="button"
-                className={`!min-h-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${initiative.status === status ? statusTone(status) : "border-gray-200 text-gray-400 hover:bg-gray-50"}`}
-                onClick={() => void updateHeadOfSalesInitiativeStatus(initiative.id, status)}>
-                {status}
+              <select className="w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                value={headOfSalesTrackResultsDraft.impactLevel}
+                onChange={(e) => setHeadOfSalesTrackResultsDraft((d) => ({ ...d, impactLevel: e.target.value }))}>
+                <option value="">Impact level - not set</option>
+                <option value="Low">Low impact</option>
+                <option value="Medium">Medium impact</option>
+                <option value="High">High impact</option>
+              </select>
+              <button type="button" disabled={headOfSalesTrackResultsSaving}
+                className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
+                onClick={() => void saveHeadOfSalesTrackResults(initiative.id)}>
+                {headOfSalesTrackResultsSaving ? "Saving..." : "Save Results"}
               </button>
-            ))}
-          </div>
+            </div>
 
-          {expanded && (
-            <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
-              <div className="space-y-2">
-                <span className="block text-[11px] font-bold uppercase tracking-wide text-gray-400">Outcome</span>
-                <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" rows={2} placeholder="What actually happened?"
-                  value={headOfSalesInitiativeOutcomeDraft.outcomeSummary}
-                  onChange={(e) => setHeadOfSalesInitiativeOutcomeDraft((d) => ({ ...d, outcomeSummary: e.target.value }))} />
-                <div className="flex flex-wrap items-center gap-2">
-                  <select className="rounded-lg border border-gray-200 bg-white p-2 text-sm"
-                    value={headOfSalesInitiativeOutcomeDraft.wasSuccessful}
-                    onChange={(e) => setHeadOfSalesInitiativeOutcomeDraft((d) => ({ ...d, wasSuccessful: e.target.value }))}>
-                    <option value="">Successful? Not decided</option>
-                    <option value="yes">Yes, successful</option>
-                    <option value="no">No, not successful</option>
-                  </select>
-                  <button type="button" disabled={headOfSalesInitiativeOutcomeSaving}
-                    className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
-                    onClick={() => void saveHeadOfSalesInitiativeOutcome(initiative.id)}>
-                    {headOfSalesInitiativeOutcomeSaving ? "Saving..." : "Save Outcome"}
+            <div className="space-y-2">
+              <span className="block text-[11px] font-bold uppercase tracking-wide text-gray-400">Outcome</span>
+              <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" rows={2} placeholder="What actually happened?"
+                value={headOfSalesInitiativeOutcomeDraft.outcomeSummary}
+                onChange={(e) => setHeadOfSalesInitiativeOutcomeDraft((d) => ({ ...d, outcomeSummary: e.target.value }))} />
+              <select className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                value={headOfSalesInitiativeOutcomeDraft.wasSuccessful}
+                onChange={(e) => setHeadOfSalesInitiativeOutcomeDraft((d) => ({ ...d, wasSuccessful: e.target.value }))}>
+                <option value="">Successful? Not decided</option>
+                <option value="yes">Yes, successful</option>
+                <option value="no">No, not successful</option>
+              </select>
+              <button type="button" disabled={headOfSalesInitiativeOutcomeSaving}
+                className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                onClick={() => void saveHeadOfSalesInitiativeOutcome(initiative.id)}>
+                {headOfSalesInitiativeOutcomeSaving ? "Saving..." : "Save Outcome"}
+              </button>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {HEAD_OF_SALES_INITIATIVE_STATUSES.map((status) => (
+                  <button key={status} type="button"
+                    className={`!min-h-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${initiative.status === status ? statusTone(status) : "border-gray-200 text-gray-400 hover:bg-gray-50"}`}
+                    onClick={() => void updateHeadOfSalesInitiativeStatus(initiative.id, status)}>
+                    {status}
                   </button>
-                </div>
+                ))}
+                <button type="button" className="!min-h-0 rounded-full border border-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-500 hover:bg-rose-50"
+                  onClick={() => void deleteHeadOfSalesInitiative(initiative.id)}>
+                  Delete
+                </button>
               </div>
+            </div>
 
-              <div>
-                <span className="block text-[11px] font-bold uppercase tracking-wide text-gray-400">Learnings</span>
-                {headOfSalesInitiativeLearningsLoading ? (
-                  <p className="m-0 mt-2 text-xs italic text-gray-400">Loading...</p>
-                ) : headOfSalesInitiativeLearnings.length === 0 ? (
-                  <p className="m-0 mt-2 text-xs italic text-gray-400">Nothing logged yet.</p>
-                ) : (
-                  <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
-                    {headOfSalesInitiativeLearnings.map((learning: any) => (
-                      <li key={learning.id} className="rounded-lg bg-gray-50 px-2.5 py-1.5 text-xs text-gray-700">
-                        <p className="m-0">{learning.note}</p>
-                        <span className="mt-0.5 block text-[10px] text-gray-400">
-                          {formatDateTime(learning.createdAt)}{learning.authorName ? ` · ${learning.authorName}` : ""}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <div className="mt-2 flex gap-2">
-                  <input className="flex-1 rounded-lg border border-gray-200 bg-white p-2 text-xs" placeholder="Add a learning..."
-                    value={headOfSalesLearningDraft}
-                    onChange={(e) => setHeadOfSalesLearningDraft(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") void submitHeadOfSalesLearning(initiative.id); }} />
+            <div>
+              <span className="block text-[11px] font-bold uppercase tracking-wide text-gray-400">Learnings</span>
+              {headOfSalesInitiativeLearningsLoading ? (
+                <p className="m-0 mt-2 text-xs italic text-gray-400">Loading...</p>
+              ) : headOfSalesInitiativeLearnings.length === 0 ? (
+                <p className="m-0 mt-2 text-xs italic text-gray-400">Nothing logged yet.</p>
+              ) : (
+                <ul className="m-0 mt-2 list-none space-y-1.5 p-0 max-h-32 overflow-y-auto">
+                  {headOfSalesInitiativeLearnings.map((learning: any) => (
+                    <li key={learning.id} className="rounded-lg bg-white px-2.5 py-1.5 text-xs text-gray-700">
+                      <p className="m-0">{learning.note}</p>
+                      <span className="mt-0.5 block text-[10px] text-gray-400">
+                        {formatDateTime(learning.createdAt)}{learning.authorName ? ` · ${learning.authorName}` : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-2 space-y-1.5">
+                <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-xs" placeholder="Add a learning..."
+                  value={headOfSalesLearningDraft}
+                  onChange={(e) => setHeadOfSalesLearningDraft(e.target.value)} />
+                <div className="flex gap-2">
+                  <select className="flex-1 rounded-lg border border-gray-200 bg-white p-1.5 text-xs"
+                    value={headOfSalesLearningTag} onChange={(e) => setHeadOfSalesLearningTag(e.target.value)}>
+                    <option value="">No tag</option>
+                    {LEARNING_TAG_OPTIONS.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+                  </select>
                   <button type="button" disabled={headOfSalesLearningSaving || !headOfSalesLearningDraft.trim()}
-                    className="!min-h-0 shrink-0 rounded-lg bg-gray-800 px-3 py-2 text-xs font-bold text-white hover:bg-gray-700 disabled:opacity-50"
+                    className="!min-h-0 shrink-0 rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-bold text-white hover:bg-gray-700 disabled:opacity-50"
                     onClick={() => void submitHeadOfSalesLearning(initiative.id)}>
                     Add
                   </button>
                 </div>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        </td>
+      </tr>
+    );
+
+    const activeRow = (initiative: any) => {
+      const Icon = typeIcon(initiative.initiativeType);
+      const expanded = headOfSalesExpandedInitiativeId === initiative.id;
+      const convPct = initiative.customersOffered > 0 ? Math.round((initiative.customersAccepted / initiative.customersOffered) * 1000) / 10 : 0;
+      return (
+        <Fragment key={initiative.id}>
+          <tr className="cursor-pointer border-b border-gray-50 hover:bg-gray-50" onClick={() => toggleHeadOfSalesInitiativeExpanded(initiative)}>
+            <td className="py-2.5 pr-3">
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-[#1F8FE0]"><Icon className="h-3.5 w-3.5" /></span>
+                <div>
+                  <strong className="block text-sm font-bold text-gray-900">{initiative.title}</strong>
+                  {initiative.description && <span className="block text-[11px] text-gray-400">{initiative.description}</span>}
+                </div>
+              </div>
+            </td>
+            <td className="py-2.5 pr-3"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-600">{initiative.initiativeType}</span></td>
+            <td className="py-2.5 pr-3"><span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${statusTone(initiative.status)}`}>{initiative.status}</span></td>
+            <td className="py-2.5 pr-3 text-gray-700">{initiative.customersOffered}</td>
+            <td className="py-2.5 pr-3 text-gray-700">
+              {initiative.customersAccepted} / {initiative.customersDelivered}
+              {initiative.customersOffered > 0 && <span className="block text-[10px] text-gray-400">{convPct}% conv.</span>}
+            </td>
+            <td className="py-2.5 pr-3 font-bold text-gray-900">{money(initiative.incrementalRevenue)}</td>
+            <td className="py-2.5 pr-3">
+              <div className="flex items-center gap-1.5">
+                <div className="h-1.5 w-12 overflow-hidden rounded-full bg-gray-100"><div className={`h-full rounded-full ${impactTone(initiative.impactLevel)}`} style={{ width: impactWidth(initiative.impactLevel) }} /></div>
+                <span className="text-[10px] text-gray-500">{initiative.impactLevel ?? "—"}</span>
+              </div>
+            </td>
+            <td className="py-2.5 pr-3 text-[11px] text-gray-400">{initiative.startedAt ? formatDateOnly(initiative.startedAt) : "—"}</td>
+          </tr>
+          {expanded && expandedDetail(initiative)}
+        </Fragment>
       );
     };
 
+    const pipelineRow = (initiative: any) => {
+      const Icon = typeIcon(initiative.initiativeType);
+      const expanded = headOfSalesExpandedInitiativeId === initiative.id;
+      return (
+        <Fragment key={initiative.id}>
+          <tr className="cursor-pointer border-b border-gray-50 hover:bg-gray-50" onClick={() => toggleHeadOfSalesInitiativeExpanded(initiative)}>
+            <td className="py-2.5 pr-3">
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600"><Icon className="h-3.5 w-3.5" /></span>
+                <div>
+                  <strong className="block text-sm font-bold text-gray-900">{initiative.title}</strong>
+                  {initiative.description && <span className="block text-[11px] text-gray-400">{initiative.description}</span>}
+                </div>
+              </div>
+            </td>
+            <td className="py-2.5 pr-3"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-600">{initiative.initiativeType}</span></td>
+            <td className="py-2.5 pr-3 text-gray-700">{initiative.description ?? "—"}</td>
+            <td className="py-2.5 pr-3 text-gray-500">{initiative.expectedImpact ?? "—"}</td>
+            <td className="py-2.5 pr-3">
+              {initiative.priority ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${priorityTone(initiative.priority)}`}>{initiative.priority}</span> : "—"}
+            </td>
+            <td className="py-2.5 pr-3 text-[11px] text-gray-400">{initiative.startedAt ? formatDateOnly(initiative.startedAt) : "—"}</td>
+          </tr>
+          {expanded && (
+            <tr>
+              <td colSpan={6} className="bg-gray-50/70 px-4 py-4">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {HEAD_OF_SALES_INITIATIVE_STATUSES.map((status) => (
+                    <button key={status} type="button"
+                      className={`!min-h-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${initiative.status === status ? statusTone(status) : "border-gray-200 text-gray-400 hover:bg-gray-50"}`}
+                      onClick={() => void updateHeadOfSalesInitiativeStatus(initiative.id, status)}>
+                      {status}
+                    </button>
+                  ))}
+                  <button type="button" className="!min-h-0 rounded-full border border-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-500 hover:bg-rose-50"
+                    onClick={() => void deleteHeadOfSalesInitiative(initiative.id)}>
+                    Delete
+                  </button>
+                </div>
+              </td>
+            </tr>
+          )}
+        </Fragment>
+      );
+    };
+
+    const PIE_COLORS: Record<string, string> = { Upsell: "#1F8FE0", "Cross-sell": "#10B981", Retention: "#8B5CF6" };
+
     return (
       <div className="space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="m-0 text-base font-bold text-gray-900">Initiatives</h2>
-            <p className="m-0 mt-0.5 text-xs text-gray-500">Leadership initiatives to make the whole team better - the kind of work Level 3 bonus rewards.</p>
+            <h2 className="m-0 text-xl font-bold text-gray-900">Initiatives</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Track experiments, strategies and actions that drive team performance.</p>
           </div>
-          <button type="button"
-            className="!min-h-0 rounded-lg border border-[#1F8FE0] bg-blue-50/60 px-3 py-1.5 text-xs font-bold text-[#1F8FE0] hover:bg-blue-100"
-            onClick={() => { setHeadOfSalesInitiativeError(""); setHeadOfSalesInitiativeFormOpen((open) => !open); }}>
-            {headOfSalesInitiativeFormOpen ? "Cancel" : "+ New Initiative"}
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
+              <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesInitiativeWeekStart((w) => shiftDateKey(w, -7))}>←</button>
+              <span className="px-1 text-xs font-semibold text-gray-700">
+                {formatDateOnly(headOfSalesInitiativeWeekStart)}{headOfSalesInitiativeWeekStart ? ` – ${formatDateOnly(shiftDateKey(headOfSalesInitiativeWeekStart, 6))}` : ""}
+              </span>
+              <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesInitiativeWeekStart((w) => shiftDateKey(w, 7))}>→</button>
+            </div>
+            <button type="button"
+              className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4]"
+              onClick={() => { setHeadOfSalesInitiativeError(""); setHeadOfSalesInitiativeFormOpen((open) => !open); }}>
+              {headOfSalesInitiativeFormOpen ? "Cancel" : "+ Create Initiative"}
+            </button>
+          </div>
         </div>
 
         {headOfSalesInitiativeFormOpen && (
@@ -59951,9 +60143,19 @@ ${waybillLineItems(w).length > 1
             <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Title"
               value={headOfSalesInitiativeForm.title}
               onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, title: e.target.value }))} />
-            <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" rows={2} placeholder="Description (optional)"
+            <textarea className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" rows={2} placeholder="Description / objective (optional)"
               value={headOfSalesInitiativeForm.description}
               onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, description: e.target.value }))} />
+            <div className="grid grid-cols-2 gap-2">
+              <select className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                value={headOfSalesInitiativeForm.initiativeType}
+                onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, initiativeType: e.target.value }))}>
+                {HEAD_OF_SALES_INITIATIVE_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+              </select>
+              <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Target segment (e.g. All Reps)"
+                value={headOfSalesInitiativeForm.targetSegment}
+                onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, targetSegment: e.target.value }))} />
+            </div>
             <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Target metric (e.g. Raise cross-sell rate by 5%)"
               value={headOfSalesInitiativeForm.targetMetric}
               onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, targetMetric: e.target.value }))} />
@@ -59971,6 +60173,18 @@ ${waybillLineItems(w).length > 1
                   onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, targetDate: e.target.value }))} />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <select className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm"
+                value={headOfSalesInitiativeForm.priority}
+                onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, priority: e.target.value }))}>
+                <option value="Low">Priority: Low</option>
+                <option value="Medium">Priority: Medium</option>
+                <option value="High">Priority: High</option>
+              </select>
+              <input className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder="Expected impact (pipeline ideas)"
+                value={headOfSalesInitiativeForm.expectedImpact}
+                onChange={(e) => setHeadOfSalesInitiativeForm((f) => ({ ...f, expectedImpact: e.target.value }))} />
+            </div>
             {headOfSalesInitiativeError && <p className="m-0 text-xs font-bold text-rose-600">{headOfSalesInitiativeError}</p>}
             <button type="button" disabled={headOfSalesInitiativeSaving}
               className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
@@ -59980,21 +60194,155 @@ ${waybillLineItems(w).length > 1
           </section>
         )}
 
-        <section>
-          <h3 className="m-0 mb-2 text-xs font-bold uppercase tracking-wide text-gray-400">Active &amp; Pipeline ({active.length})</h3>
-          {active.length === 0 ? (
-            <p className="m-0 rounded-xl border border-gray-200 bg-white px-4 py-6 text-center text-sm italic text-gray-400">Nothing here yet.</p>
-          ) : (
-            <div className="space-y-3">{active.map(initiativeCard)}</div>
-          )}
-        </section>
-
-        {resolved.length > 0 && (
-          <section>
-            <h3 className="m-0 mb-2 text-xs font-bold uppercase tracking-wide text-gray-400">Resolved ({resolved.length})</h3>
-            <div className="space-y-3">{resolved.map(initiativeCard)}</div>
-          </section>
+        {headOfSalesInitiativesError && (
+          <p className="m-0 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{headOfSalesInitiativesError}</p>
         )}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-2xl border border-gray-200 bg-white p-4">
+            <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Active Initiatives</span>
+            <strong className="mt-1 block text-2xl font-black text-gray-900">{stats.activeCount}</strong>
+            <span className="text-[11px] text-gray-400">Testing &amp; implementing</span>
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-4">
+            <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Completed This Week</span>
+            <strong className="mt-1 block text-2xl font-black text-gray-900">{stats.completedThisWeekCount}</strong>
+            <span className="text-[11px] text-gray-400">Successfully implemented</span>
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-4">
+            <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Total Incremental Revenue</span>
+            <strong className="mt-1 block text-2xl font-black text-gray-900">{money(stats.totalIncrementalRevenue)}</strong>
+            {vsLastWeek && <span className="text-[11px] font-bold text-emerald-600">{deltaLabel(vsLastWeek.totalIncrementalRevenue)}</span>}
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-4">
+            <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Customers Impacted</span>
+            <strong className="mt-1 block text-2xl font-black text-gray-900">{stats.customersImpacted}</strong>
+            <span className="text-[11px] text-gray-400">Offered improved offers</span>
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-4">
+            <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Upgrades Generated</span>
+            <strong className="mt-1 block text-2xl font-black text-gray-900">{stats.upgradesGenerated}</strong>
+            <span className="text-[11px] text-gray-400">Delivered upgrades</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Active &amp; Recent Initiatives</h3>
+            {active.length === 0 ? (
+              <p className="m-0 mt-3 text-sm italic text-gray-400">Nothing active yet.</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[640px] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                      <th className="py-2 pr-3">Initiative</th>
+                      <th className="py-2 pr-3">Type</th>
+                      <th className="py-2 pr-3">Status</th>
+                      <th className="py-2 pr-3">Offered</th>
+                      <th className="py-2 pr-3">Upgrades / Delivered</th>
+                      <th className="py-2 pr-3">Incremental Revenue</th>
+                      <th className="py-2 pr-3">Impact</th>
+                    </tr>
+                  </thead>
+                  <tbody>{active.map(activeRow)}</tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Initiatives Impact Summary</h3>
+            {headOfSalesInitiativeImpactSummary.every((row: any) => row.amount === 0) ? (
+              <p className="m-0 mt-3 text-sm italic text-gray-400">No incremental revenue tracked yet.</p>
+            ) : (
+              <>
+                <div className="mt-2 flex items-center gap-4">
+                  <div className="h-32 w-32 shrink-0">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RePieChart>
+                        <Pie data={headOfSalesInitiativeImpactSummary} dataKey="amount" nameKey="bucket" innerRadius={35} outerRadius={55} paddingAngle={2}>
+                          {headOfSalesInitiativeImpactSummary.map((row: any) => <Cell key={row.bucket} fill={PIE_COLORS[row.bucket] ?? "#9CA3AF"} />)}
+                        </Pie>
+                        <Tooltip formatter={(value: any) => money(Number(value))} />
+                      </RePieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="space-y-1.5">
+                    <strong className="block text-lg font-black text-gray-900">{money(stats.totalIncrementalRevenue)}</strong>
+                    {vsLastWeek && <span className="block text-[11px] font-bold text-emerald-600">{deltaLabel(vsLastWeek.totalIncrementalRevenue)}</span>}
+                    {headOfSalesInitiativeImpactSummary.map((row: any) => (
+                      <div key={row.bucket} className="flex items-center gap-1.5 text-xs text-gray-600">
+                        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PIE_COLORS[row.bucket] ?? "#9CA3AF" }} />
+                        {row.bucket} ({row.pct}%)
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+            <div className="mt-4 grid grid-cols-2 gap-3 border-t border-gray-100 pt-3">
+              <div>
+                <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Customers Impacted</span>
+                <strong className="mt-0.5 block text-lg font-black text-gray-900">{stats.customersImpacted}</strong>
+                {vsLastWeek && <span className="text-[11px] font-bold text-emerald-600">{deltaLabel(vsLastWeek.customersImpacted)}</span>}
+              </div>
+              <div>
+                <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Upgrades Delivered</span>
+                <strong className="mt-0.5 block text-lg font-black text-gray-900">{stats.upgradesGenerated}</strong>
+                {vsLastWeek && <span className="text-[11px] font-bold text-emerald-600">{deltaLabel(vsLastWeek.upgradesGenerated)}</span>}
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Initiative Pipeline (Upcoming Ideas)</h3>
+            {pipeline.length === 0 ? (
+              <p className="m-0 mt-3 text-sm italic text-gray-400">No pipeline ideas yet.</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[560px] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                      <th className="py-2 pr-3">Idea / Initiative</th>
+                      <th className="py-2 pr-3">Type</th>
+                      <th className="py-2 pr-3">Objective</th>
+                      <th className="py-2 pr-3">Expected Impact</th>
+                      <th className="py-2 pr-3">Priority</th>
+                      <th className="py-2 pr-3">Target Start</th>
+                    </tr>
+                  </thead>
+                  <tbody>{pipeline.map(pipelineRow)}</tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Initiative Learnings</h3>
+            {headOfSalesInitiativeRecentLearnings.length === 0 ? (
+              <p className="m-0 mt-3 text-sm italic text-gray-400">Nothing logged yet.</p>
+            ) : (
+              <ul className="m-0 mt-3 list-none space-y-2 p-0">
+                {headOfSalesInitiativeRecentLearnings.map((learning: any) => (
+                  <li key={learning.id} className="flex items-start justify-between gap-2 rounded-xl border border-gray-100 px-3 py-2.5">
+                    <div>
+                      <p className="m-0 text-sm text-gray-700">{learning.note}</p>
+                      <span className="mt-0.5 block text-[11px] text-gray-400">{learning.initiativeTitle}</span>
+                    </div>
+                    {learning.tag && <span className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-[#1F8FE0]">{learning.tag}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+
+        <p className="m-0 flex items-center gap-1.5 rounded-lg bg-blue-50/60 px-3 py-2.5 text-xs text-blue-800">
+          <Info className="h-3.5 w-3.5 shrink-0" /> Great initiatives come from testing. Keep testing, measuring, and scaling what works!
+        </p>
       </div>
     );
   };
