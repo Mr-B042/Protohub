@@ -240,13 +240,22 @@ router.get("/scorecard", async (req, res) => {
     const bonusSettings = await loadHeadOfSalesBonusSettings(orgId);
     const bonus = evaluateHeadOfSalesBonus(bonusSettings, thisWeek.team.aov, thisWeek.team.deliveryRate);
 
+    // Last week's own AOV per rep, just for the Trend column - a smaller,
+    // separate question from "vs target," using the same computeRepWeekMetrics
+    // every other week-over-week comparison in this file already calls.
+    const lastWeekStart = addDaysToDateKey(weekStart, -7);
+    const lastWeekAovByRepId = new Map(repIds.map((repId) => [repId, computeRepWeekMetrics(orders, repId, lastWeekStart).aov]));
     const teamAovByRep = thisWeek.reps
-      .map((rep2) => ({
-        repId: rep2.repId,
-        name: repNameById.get(rep2.repId) ?? "Unknown",
-        aov: rep2.aov,
-        vsTargetPct: vsTarget(rep2.aov, target.aov)
-      }))
+      .map((rep2) => {
+        const lastWeekAov = lastWeekAovByRepId.get(rep2.repId) ?? 0;
+        return {
+          repId: rep2.repId,
+          name: repNameById.get(rep2.repId) ?? "Unknown",
+          aov: rep2.aov,
+          vsTargetPct: vsTarget(rep2.aov, target.aov),
+          vsLastWeekPct: lastWeekAov > 0 ? Math.round(((rep2.aov - lastWeekAov) / lastWeekAov) * 1000) / 10 : (rep2.aov > 0 ? 100 : 0)
+        };
+      })
       .sort((a, b) => b.aov - a.aov);
 
     // "Potential lost" is explicitly an ESTIMATE, not a hard number: no
