@@ -195,6 +195,55 @@ router.get("/overview", async (req, res) => {
       })
       .filter((rep2) => rep2.reasons.length > 0);
 
+    // Condensed preview of this week's Weekly Report (draft or submitted) -
+    // Stage 9 shipped after this endpoint was first built, this was left
+    // hardcoded null and never wired back in. First line of each section
+    // only - the full report lives on its own page.
+    const firstLine = (text: string | null) => {
+      if (!text) return null;
+      const line = text.split("\n").map((l) => l.trim()).filter(Boolean)[0];
+      return line ?? null;
+    };
+    const { data: reportRow, error: reportError } = await supabase
+      .from("head_of_sales_weekly_reports")
+      .select("summary_wins, summary_challenges, next_week_plan, submitted_at")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .eq("week_start", weekStart)
+      .maybeSingle();
+    if (reportError) throw reportError;
+    const weeklyReport = reportRow ? {
+      submitted: Boolean(reportRow.submitted_at),
+      firstWin: firstLine(reportRow.summary_wins),
+      firstChallenge: firstLine(reportRow.summary_challenges),
+      firstNextStep: firstLine(reportRow.next_week_plan)
+    } : null;
+
+    // The 2 most recently-touched active/completed initiatives - same
+    // shape Initiatives' own table already produces, just capped to 2 for
+    // this summary card.
+    const { data: initiativeRows, error: initiativeError } = await supabase
+      .from("sales_initiatives")
+      .select("id, title, status, initiative_type, customers_offered, customers_accepted, customers_delivered, incremental_revenue, started_at")
+      .eq("org_id", orgId)
+      .eq("head_of_sales_rep_id", rep.id)
+      .neq("status", "Idea")
+      .neq("status", "Abandoned")
+      .order("updated_at", { ascending: false })
+      .limit(2);
+    if (initiativeError) throw initiativeError;
+    const initiatives = (initiativeRows ?? []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      status: row.status,
+      initiativeType: row.initiative_type,
+      customersOffered: row.customers_offered,
+      customersAccepted: row.customers_accepted,
+      customersDelivered: row.customers_delivered,
+      incrementalRevenue: Number(row.incremental_revenue),
+      startedAt: row.started_at
+    }));
+
     res.json({
       rep: { id: rep.id, name: rep.name },
       appointment: appointmentFromRow(rep.head_of_sales_rep_appointed_at),
@@ -210,8 +259,8 @@ router.get("/overview", async (req, res) => {
       trend,
       repsNeedingAttention,
       bonus,
-      // Placeholder until Stage 9 (Weekly Report) exists.
-      weeklyReport: null
+      weeklyReport,
+      initiatives
     });
   } catch (error: any) {
     res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load the Head of Sales Rep overview." });
