@@ -60131,41 +60131,82 @@ ${waybillLineItems(w).length > 1
     const tiers: any[] = data?.settings?.tiers ?? [];
     const record = data?.record;
     const preview = data?.preview;
+    const scorecard: any[] = data?.scorecard ?? [];
+    const totalWeightedScore = data?.totalWeightedScore ?? 0;
+    const summary = data?.summary ?? { totalEarned: 0, highestBonus: 0, averageBonus: 0, weeksPaid: 0, weeksTotal: 0 };
+    const appointment = data?.appointment;
     const canConfirm = headOfSalesIsOwnerLike;
     const isCurrentWeek = Boolean(headOfSalesBonusCurrentWeekStart) && headOfSalesBonusWeekStart >= headOfSalesBonusCurrentWeekStart;
 
+    const currentLevel = record ? record.bonusLevel : preview?.level ?? "none";
+    const currentAmount = record ? record.amount : preview?.amount ?? 0;
+
+    // Level colors intentionally match the supplied design (blue/green/purple),
+    // not the amber/sky/emerald this page used before it was rebuilt to spec.
     const levelTone = (level: string) =>
-      level === "level3" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-        : level === "level2" ? "bg-sky-50 text-sky-700 border-sky-200"
-        : level === "level1" ? "bg-amber-50 text-amber-700 border-amber-200"
+      level === "level3" ? "bg-violet-50 text-violet-700 border-violet-200"
+        : level === "level2" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+        : level === "level1" ? "bg-sky-50 text-sky-700 border-sky-200"
         : "bg-gray-50 text-gray-500 border-gray-200";
     const levelLabel = (level: string) =>
       tiers.find((t) => t.id === level)?.label ?? (level === "none" ? "Below Level 1" : level);
 
+    const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    const metricIcon = (key: string) =>
+      key === "teamAov" ? TrendingUp : key === "upsellRate" ? Filter : key === "crossSellRate" ? ShoppingCart
+        : key === "incrementalRevenue" ? CircleDollarSign : Truck;
+    const formatMetricActual = (key: string, value: number) =>
+      key === "teamAov" || key === "incrementalRevenue" ? money(value) : `${value}%`;
+    const formatMetricTarget = (key: string, target: number) =>
+      key === "teamAov" || key === "incrementalRevenue" ? `≥ ${money(target)}`
+        : key === "teamDeliveryRate" ? `≥ ${target}%`
+        : `↑ vs baseline ${target}%`;
+    const metricStatus = (row: any) =>
+      row.actual >= row.target ? { label: "Achieved", tone: "bg-emerald-50 text-emerald-700" }
+        : row.vsTargetPct >= 85 ? { label: "Close", tone: "bg-amber-50 text-amber-700" }
+        : { label: "Below Target", tone: "bg-rose-50 text-rose-700" };
+    const totalScoreBand = totalWeightedScore >= 95 ? "Strong Performance" : totalWeightedScore >= 80 ? "Good Performance"
+      : totalWeightedScore >= 60 ? "Needs Improvement" : "Below Standard";
+
+    const historyChronological = [...(data?.history ?? [])].reverse();
+    const exportHistory = () => triggerCsvDownload(
+      "bonus-payout-history",
+      [
+        ["Week", "Team AOV", "Delivery Rate", "Bonus Level", "Bonus Earned", "Paid Date", "Status"],
+        ...historyChronological.map((row: any) => [
+          row.weekStart, row.teamAov, `${row.teamDeliveryRate}%`, levelLabel(row.bonusLevel), row.amount, row.paidAt ? formatDateOnly(row.paidAt) : "—", row.status
+        ])
+      ],
+      "Bonus payout history exported"
+    );
+
     return (
       <div className="space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="m-0 text-base font-bold text-gray-900">Bonus &amp; Payouts</h2>
-          <div className="flex items-center gap-2">
-            <button type="button" className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50"
-              onClick={() => setHeadOfSalesBonusWeekStart((w) => shiftDateKey(w, -7))}>
-              ← Previous week
-            </button>
-            <button type="button" disabled={isCurrentWeek}
-              className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
-              onClick={() => setHeadOfSalesBonusWeekStart((w) => shiftDateKey(w, 7))}>
-              Next week →
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-xl font-bold text-gray-900">Bonus &amp; Payouts</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">Your weekly bonus based on performance and leadership impact.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5">
+              <button type="button" className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50" onClick={() => setHeadOfSalesBonusWeekStart((w) => shiftDateKey(w, -7))}>←</button>
+              <span className="px-1 text-xs font-semibold text-gray-700">
+                {formatDateOnly(headOfSalesBonusWeekStart)}{data?.weekEnd ? ` – ${formatDateOnly(data.weekEnd)}` : ""}
+              </span>
+              <button type="button" disabled={isCurrentWeek} className="!min-h-0 rounded-md px-1.5 py-0.5 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => setHeadOfSalesBonusWeekStart((w) => shiftDateKey(w, 7))}>→</button>
+            </div>
+            <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50" onClick={exportHistory}>
+              <Download className="h-3.5 w-3.5" /> Export History
             </button>
             {currentRole === "Owner" && (
-              <button type="button" className="!min-h-0 rounded-lg border border-[#1F8FE0] bg-blue-50/60 px-3 py-1.5 text-xs font-bold text-[#1F8FE0] hover:bg-blue-100"
+              <button type="button" className="!min-h-0 rounded-lg border border-[#1F8FE0] bg-blue-50/60 px-3 py-2 text-xs font-bold text-[#1F8FE0] hover:bg-blue-100"
                 onClick={() => headOfSalesBonusSettingsOpen ? setHeadOfSalesBonusSettingsOpen(false) : openHeadOfSalesBonusSettings()}>
                 {headOfSalesBonusSettingsOpen ? "Cancel" : "Edit Tiers"}
               </button>
             )}
           </div>
         </div>
-
-        <p className="m-0 text-xs text-gray-500">Week of {formatDateOnly(headOfSalesBonusWeekStart)}</p>
 
         {headOfSalesBonusError && (
           <p className="m-0 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{headOfSalesBonusError}</p>
@@ -60207,44 +60248,212 @@ ${waybillLineItems(w).length > 1
           </section>
         )}
 
-        <section className="rounded-2xl border border-gray-200 bg-white p-5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="m-0 text-sm font-bold text-gray-900">This Week's Bonus</h3>
-            {record ? (
-              <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${record.status === "Paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                {record.status}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">This Week's Bonus Status</h3>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <div>
+                <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase ${levelTone(currentLevel)}`}>{levelLabel(currentLevel)}</span>
+                <strong className="mt-2 block text-2xl font-black text-gray-900">{currentAmount > 0 ? money(currentAmount) : "—"}</strong>
+                <span className="text-xs text-gray-500">Weekly Head Bonus Earned</span>
+              </div>
+              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-500">
+                <Trophy className="h-6 w-6" />
               </span>
-            ) : null}
-          </div>
+            </div>
+            {!record && <p className="m-0 mt-2 text-[11px] italic text-gray-400">Live preview - nothing confirmed yet for this week.</p>}
+            <button type="button" className="!min-h-0 mt-3 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={() => scrollToSection("bonus-breakdown-section")}>
+              See breakdown →
+            </button>
+          </section>
 
-          {(() => {
-            const teamAov = record ? record.teamAov : preview?.teamAov ?? 0;
-            const teamDeliveryRate = record ? record.teamDeliveryRate : preview?.teamDeliveryRate ?? 0;
-            const level = record ? record.bonusLevel : preview?.level ?? "none";
-            const amount = record ? record.amount : preview?.amount ?? 0;
-            return (
-              <>
-                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <div className="rounded-xl border border-gray-200 px-4 py-3">
-                    <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Team AOV</span>
-                    <strong className="mt-1 block text-lg font-black text-gray-900">{money(teamAov)}</strong>
-                  </div>
-                  <div className="rounded-xl border border-gray-200 px-4 py-3">
-                    <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Team Delivery Rate</span>
-                    <strong className="mt-1 block text-lg font-black text-gray-900">{teamDeliveryRate}%</strong>
-                  </div>
-                  <div className="rounded-xl border border-gray-200 px-4 py-3 sm:col-span-2">
-                    <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">Bonus Level</span>
-                    <span className={`mt-1 inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${levelTone(level)}`}>{levelLabel(level)}</span>
-                    <strong className="ml-2 text-lg font-black text-gray-900">{amount > 0 ? money(amount) : "—"}</strong>
-                  </div>
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <div className="flex items-center gap-1.5">
+              <h3 className="m-0 text-sm font-bold text-gray-900">90-Day Appointment Progress</h3>
+              <Info className="h-3.5 w-3.5 text-gray-300" />
+            </div>
+            {appointment?.dayNumber ? (
+              <div className="mt-3 flex items-center gap-4">
+                {(() => {
+                  const radius = 40;
+                  const circumference = 2 * Math.PI * radius;
+                  const progress = Math.min(1, appointment.dayNumber / appointment.totalDays);
+                  return (
+                    <svg width="96" height="96" viewBox="0 0 96 96" className="shrink-0">
+                      <circle cx="48" cy="48" r={radius} fill="none" stroke="#E5E7EB" strokeWidth="8" />
+                      <circle cx="48" cy="48" r={radius} fill="none" stroke="#1F8FE0" strokeWidth="8" strokeLinecap="round"
+                        strokeDasharray={circumference} strokeDashoffset={circumference * (1 - progress)}
+                        transform="rotate(-90 48 48)" />
+                      <text x="48" y="46" textAnchor="middle" fontSize="20" fontWeight="900" fill="#111827">{appointment.dayNumber}</text>
+                      <text x="48" y="62" textAnchor="middle" fontSize="9" fill="#9CA3AF">of {appointment.totalDays} days</text>
+                    </svg>
+                  );
+                })()}
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between gap-4"><span className="text-gray-500">Days Completed</span><strong className="text-gray-900">{appointment.dayNumber} days</strong></div>
+                  <div className="flex justify-between gap-4"><span className="text-gray-500">Days Remaining</span><strong className="text-gray-900">{Math.max(0, appointment.totalDays - appointment.dayNumber)} days</strong></div>
+                  <div className="flex justify-between gap-4"><span className="text-gray-500">Next Review (4-Week)</span><strong className="text-gray-900">{formatDateOnly(appointment.nextReviewAt)}</strong></div>
+                  <div className="flex justify-between gap-4"><span className="text-gray-500">Final Review (90-Day)</span><strong className="text-gray-900">{formatDateOnly(appointment.finalReviewAt)}</strong></div>
                 </div>
-                {!record && <p className="m-0 mt-2 text-[11px] italic text-gray-400">Live preview - nothing confirmed yet for this week.</p>}
-              </>
-            );
-          })()}
+              </div>
+            ) : (
+              <p className="m-0 mt-3 text-sm italic text-gray-400">No appointment date on record.</p>
+            )}
+            <button type="button" className="!min-h-0 mt-3 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={() => scrollToSection("bonus-criteria-section")}>
+              View appointment details →
+            </button>
+          </section>
 
-          <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <div className="flex items-center gap-1.5">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Bonus Summary (All Weeks)</h3>
+              <Info className="h-3.5 w-3.5 text-gray-300" />
+            </div>
+            <div className="mt-3 space-y-1.5 text-xs">
+              <div className="flex justify-between gap-4"><span className="text-gray-500">Total Earned</span><strong className="text-emerald-600">{money(summary.totalEarned)}</strong></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-500">Highest Bonus</span><strong className="text-gray-900">{money(summary.highestBonus)}</strong></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-500">Average Bonus</span><strong className="text-gray-900">{money(summary.averageBonus)}</strong></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-500">Weeks Paid</span><strong className="text-gray-900">{summary.weeksPaid} of {summary.weeksTotal}</strong></div>
+            </div>
+            <button type="button" className="!min-h-0 mt-3 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={() => scrollToSection("bonus-history-section")}>
+              View payment history →
+            </button>
+          </section>
+        </div>
+
+        <section id="bonus-criteria-section" className="rounded-2xl border border-gray-200 bg-white p-5">
+          <h3 className="m-0 text-sm font-bold text-gray-900">Bonus Level Criteria</h3>
+          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+            {tiers.map((tier) => {
+              const isCurrent = tier.id === currentLevel;
+              const tone = tier.id === "level3" ? "border-violet-200 bg-violet-50/40" : tier.id === "level2" ? "border-emerald-200 bg-emerald-50/40" : "border-sky-200 bg-sky-50/40";
+              const labelTone = tier.id === "level3" ? "text-violet-700" : tier.id === "level2" ? "text-emerald-700" : "text-sky-700";
+              return (
+                <div key={tier.id} className={`rounded-xl border p-4 ${isCurrent ? tone : "border-gray-200"}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <strong className={`text-[11px] font-black uppercase ${labelTone}`}>{tier.label}</strong>
+                    {isCurrent && <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[9px] font-black uppercase text-white">Current Level</span>}
+                  </div>
+                  <strong className="mt-1 block text-lg font-black text-gray-900">{money(tier.amount)} <span className="text-xs font-semibold text-gray-400">/ week</span></strong>
+                  <ul className="m-0 mt-2 list-none space-y-1 p-0 text-xs text-gray-600">
+                    <li className="flex items-center gap-1.5"><span className="text-emerald-600">✓</span> Team AOV ≥ {money(tier.minTeamAov)}</li>
+                    <li className="flex items-center gap-1.5"><span className="text-emerald-600">✓</span> Delivery Rate ≥ {tier.minDeliveryRate}%</li>
+                    {tier.requiresUpsellImprovement && <li className="flex items-center gap-1.5"><span className="text-emerald-600">✓</span> Measurable improvement in upsell / cross-sell</li>}
+                    {tier.requiresInitiativeSuccess && <li className="flex items-center gap-1.5"><span className="text-emerald-600">✓</span> Successful implementation of new initiatives</li>}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <section id="bonus-breakdown-section" className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Weekly Bonus Breakdown</h3>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[460px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                    <th className="py-2 pr-3">Metric</th>
+                    <th className="py-2 pr-3">Weight</th>
+                    <th className="py-2 pr-3">Target</th>
+                    <th className="py-2 pr-3">Actual</th>
+                    <th className="py-2 pr-3">Score</th>
+                    <th className="py-2 pr-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scorecard.map((row) => {
+                    const Icon = metricIcon(row.key);
+                    const status = metricStatus(row);
+                    return (
+                      <tr key={row.key} className="border-b border-gray-50">
+                        <td className="py-2 pr-3">
+                          <span className="inline-flex items-center gap-1.5 text-gray-700">
+                            <Icon className="h-3.5 w-3.5 text-gray-400" /> {row.label}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 text-gray-500">{row.weight}%</td>
+                        <td className="py-2 pr-3 text-gray-500">{formatMetricTarget(row.key, row.target)}</td>
+                        <td className="py-2 pr-3 font-bold text-gray-900">{formatMetricActual(row.key, row.actual)}</td>
+                        <td className="py-2 pr-3 text-gray-700">{Math.min(100, Math.round(row.vsTargetPct))}%</td>
+                        <td className="py-2 pr-3"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${status.tone}`}>{status.label}</span></td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="font-bold text-gray-900">
+                    <td className="py-2 pr-3">Total Score</td>
+                    <td className="py-2 pr-3">—</td>
+                    <td className="py-2 pr-3">—</td>
+                    <td className="py-2 pr-3">—</td>
+                    <td className="py-2 pr-3">{totalWeightedScore}%</td>
+                    <td className="py-2 pr-3"><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">{totalScoreBand}</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="m-0 mt-3 flex items-start gap-1.5 rounded-lg bg-blue-50/60 px-3 py-2 text-[11px] text-blue-800">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Score is calculated based on your performance relative to targets and baseline.
+            </p>
+          </section>
+
+          <section id="bonus-history-section" className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h3 className="m-0 text-sm font-bold text-gray-900">Bonus History</h3>
+            {historyChronological.length > 0 && (
+              <div className="mt-3 h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={historyChronological.map((row: any) => ({ ...row, label: formatDateOnly(row.weekStart) }))}>
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `₦${Number(v).toLocaleString("en-NG")}`} width={60} />
+                    <Tooltip formatter={(value: any) => money(Number(value))} />
+                    <Line type="monotone" dataKey="amount" stroke="#1F8FE0" strokeWidth={2} dot={{ r: 4 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[560px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                    <th className="py-2 pr-3">Week</th>
+                    <th className="py-2 pr-3">AOV</th>
+                    <th className="py-2 pr-3">Delivery Rate</th>
+                    <th className="py-2 pr-3">Bonus Level</th>
+                    <th className="py-2 pr-3">Bonus Earned</th>
+                    <th className="py-2 pr-3">Paid Date</th>
+                    <th className="py-2 pr-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data?.history ?? []).map((row: any) => (
+                    <tr key={row.weekStart} className="border-b border-gray-50">
+                      <td className="py-2 pr-3 text-gray-700">{formatDateOnly(row.weekStart)}</td>
+                      <td className="py-2 pr-3 text-gray-700">{money(row.teamAov)}</td>
+                      <td className="py-2 pr-3 text-gray-700">{row.teamDeliveryRate}%</td>
+                      <td className="py-2 pr-3">
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${levelTone(row.bonusLevel)}`}>{levelLabel(row.bonusLevel)}</span>
+                      </td>
+                      <td className="py-2 pr-3 font-bold text-gray-900">{row.amount > 0 ? money(row.amount) : "—"}</td>
+                      <td className="py-2 pr-3 text-gray-500">{row.paidAt ? formatDateOnly(row.paidAt) : "—"}</td>
+                      <td className="py-2 pr-3">
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${row.status === "Paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                          {row.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button type="button" className="!min-h-0 mt-3 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={exportHistory}>
+              View full payment history →
+            </button>
+          </section>
+        </div>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5">
+          <h3 className="m-0 text-sm font-bold text-gray-900">Confirm This Week</h3>
+          <div className="mt-3 space-y-3">
             <div className="flex flex-wrap gap-4">
               <label className="flex items-center gap-2 text-sm text-gray-700">
                 <input type="checkbox" disabled={!canConfirm || record?.status === "Paid"}
@@ -60285,40 +60494,6 @@ ${waybillLineItems(w).length > 1
             )}
           </div>
         </section>
-
-        {data?.history?.length > 0 && (
-          <section className="rounded-2xl border border-gray-200 bg-white p-5">
-            <h3 className="m-0 text-sm font-bold text-gray-900">Payout History</h3>
-            <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[420px] border-collapse text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 text-left text-[11px] font-bold uppercase tracking-wide text-gray-400">
-                    <th className="py-2 pr-3">Week</th>
-                    <th className="py-2 pr-3">Level</th>
-                    <th className="py-2 pr-3">Amount</th>
-                    <th className="py-2 pr-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.history.map((row: any) => (
-                    <tr key={row.weekStart} className="border-b border-gray-50">
-                      <td className="py-2 pr-3 text-gray-700">{formatDateOnly(row.weekStart)}</td>
-                      <td className="py-2 pr-3">
-                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${levelTone(row.bonusLevel)}`}>{levelLabel(row.bonusLevel)}</span>
-                      </td>
-                      <td className="py-2 pr-3 font-bold text-gray-900">{row.amount > 0 ? money(row.amount) : "—"}</td>
-                      <td className="py-2 pr-3">
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${row.status === "Paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                          {row.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
       </div>
     );
   };
