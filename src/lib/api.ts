@@ -1468,6 +1468,14 @@ export const upsellBonusApi = {
   updateSettings: (body: unknown) => patch<any>("/api/upsell-bonuses/settings", body)
 };
 
+export const headOfSalesApi = {
+  overview: (repId: string, weekStart?: string) => {
+    const params = new URLSearchParams({ repId });
+    if (weekStart) params.set("weekStart", weekStart);
+    return get<any>(`/api/head-of-sales-rep/overview?${params.toString()}`);
+  }
+};
+
 export const repWeeklyTargetsApi = {
   list: (weekStart: string) => get<any>(`/api/rep-weekly-targets?${new URLSearchParams({ weekStart }).toString()}`),
   save: (body: unknown) => patch<any>("/api/rep-weekly-targets", body)
