@@ -68822,7 +68822,7 @@ ${waybillLineItems(w).length > 1
 
                 <ManagerProductChallenges
                   role={currentRole}
-                  products={products.map((product) => ({
+                  products={readyEmbedProducts.map((product) => ({
                     id: product.id,
                     name: product.name,
                     active: product.active,
