@@ -115,6 +115,11 @@ import {
 } from "lucide-react";
 import { OrderSourceLogo } from "./components/OrderSourceLogo";
 import { WhatsAppIcon } from "./components/WhatsAppIcon";
+import {
+  ManagerProductChallenges,
+  type ManagerChallengeDraft,
+  type ManagerProductChallenge
+} from "./components/ManagerProductChallenges";
 import { auth } from "./lib/auth";
 import { snakeToCamel } from "./lib/normalize";
 import { realtimeClient } from "./lib/realtime";
@@ -134,7 +139,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, headOfSalesApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, headOfSalesApi,
   setApiSpyUserId,
   setApiPreviewReadOnly,
   PreviewReadOnlyError
@@ -8954,6 +8959,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerNavSpan, setManagerNavSpan] = useState<NavSpan>("1W");
   const [managerRestockThreshold, setManagerRestockThreshold] = useState(7);
   const [managerDashboardTab, setManagerDashboardTab] = useState<ManagerDashboardTab>("Overview");
+  const [managerProductChallenges, setManagerProductChallenges] = useState<ManagerProductChallenge[]>([]);
+  const [managerProductChallengesLoading, setManagerProductChallengesLoading] = useState(false);
+  const [managerProductChallengesError, setManagerProductChallengesError] = useState("");
   // Which state the Inventory tab's agent breakdown is showing. null = the
   // state that needs attention most, so the panel opens on the problem.
   const [managerInventoryState, setManagerInventoryState] = useState<string | null>(null);
@@ -26951,6 +26959,42 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   ]);
 
   const showToast = (message: string) => setToast(message);
+  const loadManagerProductChallenges = useCallback(async (options?: { quiet?: boolean }) => {
+    const canView = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
+    if (!canView || activePage !== "Manager Dashboard") return;
+    setManagerProductChallengesLoading(true);
+    setManagerProductChallengesError("");
+    try {
+      const result = await managerProductChallengesApi.list();
+      setManagerProductChallenges(Array.isArray(result?.challenges) ? result.challenges : []);
+    } catch (error: any) {
+      const message = error?.message ?? "Could not load product challenges.";
+      setManagerProductChallenges([]);
+      setManagerProductChallengesError(message);
+      if (!options?.quiet) showToast(message);
+    } finally {
+      setManagerProductChallengesLoading(false);
+    }
+  }, [activePage, currentRole]);
+
+  useEffect(() => {
+    if (activePage !== "Manager Dashboard" || managerDashboardTab !== "Overview") return;
+    void loadManagerProductChallenges({ quiet: true });
+  }, [activePage, managerDashboardTab, loadManagerProductChallenges]);
+
+  const saveManagerProductChallenge = async (draft: ManagerChallengeDraft, id?: string) => {
+    if (id) await managerProductChallengesApi.update(id, draft);
+    else await managerProductChallengesApi.create(draft);
+    await loadManagerProductChallenges({ quiet: true });
+    showToast(id ? "Product challenge updated." : "Product challenge created.");
+  };
+
+  const deleteManagerProductChallenge = async (id: string) => {
+    await managerProductChallengesApi.remove(id);
+    await loadManagerProductChallenges({ quiet: true });
+    showToast("Product challenge removed.");
+  };
+
   const managerBonusWeekEnd = (weekStart: string) => {
     const date = new Date(`${weekStart}T00:00:00`);
     date.setDate(date.getDate() + 6);
@@ -68775,6 +68819,23 @@ ${waybillLineItems(w).length > 1
                   </div>
                   {renderWeekNav(managerNavStart, setManagerNavStart, managerNavSpan, setManagerNavSpan, setManagerPeriod, setManagerDateRange, managerPeriod, managerDateRange)}
                 </div>
+
+                <ManagerProductChallenges
+                  role={currentRole}
+                  products={products.map((product) => ({
+                    id: product.id,
+                    name: product.name,
+                    active: product.active,
+                    imageUrl: product.packages.find((pkg) => Boolean(pkg.imageUrl))?.imageUrl
+                  }))}
+                  challenges={managerProductChallenges}
+                  loading={managerProductChallengesLoading}
+                  error={managerProductChallengesError}
+                  formatMoney={(amount, currency) => formatManagerBonusMoney(amount, currency as CurrencyCode)}
+                  onSave={saveManagerProductChallenge}
+                  onDelete={deleteManagerProductChallenge}
+                  onOpenBonusRules={() => setManagerDashboardTab("Bonus")}
+                />
 
                 {managerProductFilterKeys.size > 0 && (() => {
                   return (
