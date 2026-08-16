@@ -2090,6 +2090,47 @@ export const customerRetentionApi = {
     patch<{ row: RetentionReferral }>(`/api/customer-retention/referrals/${encodeURIComponent(id)}`, body)
 };
 
+// ── Sales Closer: manually logged social-DM leads ──────────────────────
+export type SalesLead = {
+  id: string;
+  fullName: string;
+  phone: string;
+  alternatePhone: string;
+  whatsappNumber: string;
+  email: string;
+  preferredContactMethod: "whatsapp" | "call" | "sms" | "email";
+  state: string;
+  city: string;
+  address: string;
+  source: "whatsapp" | "instagram" | "tiktok" | "facebook" | "website" | "phone" | "referral" | "other";
+  campaign: string;
+  interestedProductIds: string[];
+  packageId: string | null;
+  notes: string;
+  status: "new_lead" | "contacted" | "qualified" | "follow_up" | "order_created" | "not_interested";
+  tags: string[];
+  priority: "low" | "medium" | "high";
+  assignedCloserId: string | null;
+  followUpAt: string | null;
+  convertedOrderId: string | null;
+  convertedAt: string | null;
+  lastActivityAt: string;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SalesLeadInput = Partial<Omit<SalesLead, "id" | "convertedOrderId" | "convertedAt" | "lastActivityAt" | "createdBy" | "createdAt" | "updatedAt">>;
+
+export const salesLeadsApi = {
+  list: (status?: string) => {
+    const qs = status && status !== "all" ? `?status=${encodeURIComponent(status)}` : "";
+    return get<{ leads: SalesLead[] }>(`/api/sales-leads${qs}`);
+  },
+  detail: (id: string) => get<SalesLead>(`/api/sales-leads/${encodeURIComponent(id)}`),
+  create: (body: SalesLeadInput) => post<SalesLead>("/api/sales-leads", body),
+  update: (id: string, body: SalesLeadInput) => patch<SalesLead>(`/api/sales-leads/${encodeURIComponent(id)}`, body)
+};
 
 // ── Recovery templates: offers, call scripts, broadcast messages ──────────
 // Migration 182. Sending is NOT done here - the app dispatches through the
