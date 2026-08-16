@@ -149,7 +149,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserLeaderboardRow } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -206,6 +206,7 @@ import {
   type SalesLeadDraft,
   type SalesLeadStatus,
 } from "./pages/SalesCloserWorkspacePage";
+import { SalesClosersOwnerPage } from "./pages/SalesClosersOwnerPage";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
 // These screens monitor trends rather than a single live cart. They load the
@@ -609,7 +610,7 @@ function waybillLineItems(w: WaybillRecord): WaybillItem[] {
   return [{ productId: w.productId, productName: w.productName, quantity: w.quantity }];
 }
 type RepConsoleTab = "Dashboard" | "Bonuses" | "Upsell & Cross-sell Log" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
-type SalesRepsPageTab = "Overview" | "Bonuses";
+type SalesRepsPageTab = "Overview" | "Bonuses" | "Sales Closers";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
 type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed" | "order_rescheduled" | "order_assigned" | "order_follow_up" | "needs_attention"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string; recipientId?: string };
@@ -8485,6 +8486,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [salesCloserBonusLoading, setSalesCloserBonusLoading] = useState(false);
   const [salesCloserBonusError, setSalesCloserBonusError] = useState("");
   const [salesCloserBonusActionPending, setSalesCloserBonusActionPending] = useState(false);
+  const [salesClosersLeaderboard, setSalesClosersLeaderboard] = useState<SalesCloserLeaderboardRow[]>([]);
+  const [salesClosersLeaderboardLoading, setSalesClosersLeaderboardLoading] = useState(false);
+  const [salesClosersLeaderboardError, setSalesClosersLeaderboardError] = useState("");
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
   const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>(() =>
     readPref("protohub.inventory.expandedSets", {} as Record<string, boolean>, (raw) => {
@@ -40129,7 +40133,11 @@ ${waybillLineItems(w).length > 1
     setSalesRepsPageTab(tab);
     setSalesRepView("list");
     setSelectedSalesRepId("");
-    syncHashRoute(tab === "Bonuses" ? "#/dashboard/admin/sales-reps/bonuses" : "#/dashboard/admin/sales-reps");
+    syncHashRoute(
+      tab === "Bonuses" ? "#/dashboard/admin/sales-reps/bonuses"
+        : tab === "Sales Closers" ? "#/dashboard/admin/sales-reps/sales-closers"
+        : "#/dashboard/admin/sales-reps"
+    );
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -40940,6 +40948,23 @@ ${waybillLineItems(w).length > 1
       setSalesCloserBonusActionPending(false);
     }
   };
+  const loadSalesClosersLeaderboard = useCallback(async () => {
+    setSalesClosersLeaderboardLoading(true);
+    setSalesClosersLeaderboardError("");
+    try {
+      const result = await salesLeadsApi.closersLeaderboard();
+      setSalesClosersLeaderboard(result.rows);
+    } catch (error: any) {
+      setSalesClosersLeaderboardError(error?.message ?? "Could not load the leaderboard.");
+    } finally {
+      setSalesClosersLeaderboardLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (activePage === "Sales Reps" && salesRepsPageTab === "Sales Closers") {
+      void loadSalesClosersLeaderboard();
+    }
+  }, [activePage, salesRepsPageTab, loadSalesClosersLeaderboard]);
   useEffect(() => {
     if (activePage === "Sales Closer Workspace" && salesCloserSection === "my-performance") {
       void loadSalesPerformance();
@@ -42907,8 +42932,8 @@ ${waybillLineItems(w).length > 1
 
   const renderSalesRepsPageTabs = () => (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      <nav className="grid grid-cols-2 gap-1 rounded-2xl border border-gray-200 bg-gray-100 p-1 dark:border-slate-700 dark:bg-slate-900 sm:inline-grid" aria-label="Sales representatives sections">
-        {(["Overview", "Bonuses"] as SalesRepsPageTab[]).map((tab) => (
+      <nav className="grid grid-cols-3 gap-1 rounded-2xl border border-gray-200 bg-gray-100 p-1 dark:border-slate-700 dark:bg-slate-900 sm:inline-grid" aria-label="Sales representatives sections">
+        {(["Overview", "Sales Closers", "Bonuses"] as SalesRepsPageTab[]).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -42919,7 +42944,7 @@ ${waybillLineItems(w).length > 1
             }`}
             onClick={() => openSalesRepsPageTab(tab)}
           >
-            {tab === "Overview" ? "Sales reps" : "Bonuses"}
+            {tab === "Overview" ? "Sales reps" : tab}
           </button>
         ))}
       </nav>
@@ -71508,6 +71533,11 @@ ${waybillLineItems(w).length > 1
             <div className="space-y-6">
               {renderSalesRepsPageTabs()}
               {renderSalesBonusAdminPage()}
+            </div>
+          ) : activePage === "Sales Reps" && salesRepsPageTab === "Sales Closers" ? (
+            <div className="space-y-6">
+              {renderSalesRepsPageTabs()}
+              <SalesClosersOwnerPage rows={salesClosersLeaderboard} loading={salesClosersLeaderboardLoading} error={salesClosersLeaderboardError} />
             </div>
           ) : activePage === "Sales Reps" && salesRepView === "detail" && selectedSalesRepId && users.find((u) => u.id === selectedSalesRepId) ? (
             (() => {

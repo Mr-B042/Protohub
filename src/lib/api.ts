@@ -2201,6 +2201,19 @@ export type SalesCloserBonus = {
   history: Array<{ monthStart: string; totalAmount: number; status: "Pending" | "Paid"; paidAt: string | null }>;
 };
 
+export type SalesCloserLeaderboardRow = {
+  closerId: string;
+  closerName: string;
+  active: boolean;
+  leads: number;
+  orders: number;
+  leadToOrderRate: number;
+  delivered: number;
+  leadToDeliveredRate: number;
+  aov: number;
+  revenue: number;
+};
+
 export const salesLeadsApi = {
   list: (status?: string) => {
     const qs = status && status !== "all" ? `?status=${encodeURIComponent(status)}` : "";
@@ -2223,7 +2236,11 @@ export const salesLeadsApi = {
     return get<SalesCloserBonus>(`/api/sales-leads/bonus${suffix ? `?${suffix}` : ""}`);
   },
   saveBonus: (body: { closerId: string; monthStart: string; notes?: string }) => put<{ id: string; totalAmount: number }>("/api/sales-leads/bonus", body),
-  markBonusPaid: (body: { closerId: string; monthStart: string }) => post<{ id: string; status: "Paid" }>("/api/sales-leads/bonus/mark-paid", body)
+  markBonusPaid: (body: { closerId: string; monthStart: string }) => post<{ id: string; status: "Paid" }>("/api/sales-leads/bonus/mark-paid", body),
+  closersLeaderboard: (monthStart?: string) => {
+    const qs = monthStart ? `?monthStart=${encodeURIComponent(monthStart)}` : "";
+    return get<{ monthStart: string; rows: SalesCloserLeaderboardRow[] }>(`/api/sales-leads/closers-leaderboard${qs}`);
+  }
 };
 
 // ── Recovery templates: offers, call scripts, broadcast messages ──────────
