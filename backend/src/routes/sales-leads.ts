@@ -300,6 +300,97 @@ router.get("/follow-ups", async (req, res) => {
   }
 });
 
+const previousMonthStart = (monthStartKey: string) => {
+  const [year, month] = monthStartKey.split("-").map(Number);
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  return `${prevYear}-${String(prevMonth).padStart(2, "0")}-01`;
+};
+
+// Query key is closed_by_closer_id, not assigned_rep_id - this must show
+// every order she ever closed permanently, even one later reassigned to a
+// different rep for delivery/follow-up handoffs (orders.ts PATCH /:id).
+router.get("/orders", async (req, res) => {
+  try {
+    const scope = scopeOf(req);
+    const orgId = req.user!.orgId;
+    const today = lagosDateKey();
+    const thisMonthStart = `${today.slice(0, 7)}-01`;
+    const lastMonthStart = previousMonthStart(thisMonthStart);
+
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, customer, product_name, package_name, amount, currency, status, created_at, delivered_date, closed_by_closer_name, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
+      .eq("org_id", orgId)
+      .eq("closed_by_closer_id", scope.id)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const orders = (data ?? []) as (HeadOfSalesOrder & { customer?: string; product_name?: string; package_name?: string; currency?: string; closed_by_closer_name?: string })[];
+
+    const thisMonth = orders.filter((order) => order.created_at && lagosDateKey(order.created_at) >= thisMonthStart);
+    const lastMonth = orders.filter((order) => order.created_at && lagosDateKey(order.created_at) >= lastMonthStart && lagosDateKey(order.created_at) < thisMonthStart);
+    const deliveredIn = (rows: typeof orders) => rows.filter((order) => order.status === "Delivered");
+    const revenueOf = (rows: typeof orders) => rows.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
+
+    const thisMonthDelivered = deliveredIn(thisMonth);
+    const lastMonthDelivered = deliveredIn(lastMonth);
+    const thisMonthRevenue = revenueOf(thisMonthDelivered);
+    const lastMonthRevenue = revenueOf(lastMonthDelivered);
+    const thisMonthAov = thisMonthDelivered.length > 0 ? thisMonthRevenue / thisMonthDelivered.length : 0;
+    const lastMonthAov = lastMonthDelivered.length > 0 ? lastMonthRevenue / lastMonthDelivered.length : 0;
+    const thisMonthDeliveryRate = thisMonth.length > 0 ? Math.round((thisMonthDelivered.length / thisMonth.length) * 1000) / 10 : 0;
+    const lastMonthDeliveryRate = lastMonth.length > 0 ? Math.round((lastMonthDelivered.length / lastMonth.length) * 1000) / 10 : 0;
+
+    const leadsQuery = await supabase.from("sales_leads").select("status, created_at").eq("org_id", orgId).eq("assigned_closer_id", scope.id);
+    const monthLeads = (leadsQuery.data ?? []).filter((lead) => lead.created_at && lagosDateKey(lead.created_at) >= thisMonthStart);
+
+    const productRevenue = new Map<string, { orders: number; revenue: number }>();
+    for (const order of thisMonth) {
+      const name = order.product_name ?? "Unknown product";
+      const entry = productRevenue.get(name) ?? { orders: 0, revenue: 0 };
+      entry.orders += 1;
+      entry.revenue += Number(order.amount ?? 0);
+      productRevenue.set(name, entry);
+    }
+    const topProducts = [...productRevenue.entries()]
+      .sort((a, b) => b[1].revenue - a[1].revenue)
+      .slice(0, 5)
+      .map(([productName, stats]) => ({ productName, orders: stats.orders, revenue: stats.revenue }));
+
+    res.json({
+      kpis: {
+        ordersCreated: { value: thisMonth.length, deltaVsLastMonth: thisMonth.length - lastMonth.length },
+        deliveredOrders: { value: thisMonthDelivered.length, deltaVsLastMonth: thisMonthDelivered.length - lastMonthDelivered.length },
+        deliveredRevenue: { value: thisMonthRevenue, deltaVsLastMonth: thisMonthRevenue - lastMonthRevenue },
+        aov: { value: Math.round(thisMonthAov), deltaVsLastMonth: Math.round(thisMonthAov - lastMonthAov) },
+        deliveryRate: { value: thisMonthDeliveryRate, deltaVsLastMonth: Math.round((thisMonthDeliveryRate - lastMonthDeliveryRate) * 10) / 10 }
+      },
+      orders: orders.map((order) => ({
+        id: order.id,
+        customer: order.customer ?? "",
+        productName: order.product_name ?? "",
+        packageName: order.package_name ?? "",
+        amount: Number(order.amount ?? 0),
+        currency: order.currency ?? "NGN",
+        status: order.status ?? "New",
+        createdAt: order.created_at ?? "",
+        closedByCloserName: order.closed_by_closer_name ?? "",
+        deliveredDate: order.delivered_date ?? null
+      })),
+      conversionSummaryThisMonth: {
+        leadsCaptured: monthLeads.length,
+        ordersCreated: thisMonth.length,
+        deliveredOrders: thisMonthDelivered.length,
+        leadToOrderRate: monthLeads.length > 0 ? Math.round((thisMonth.length / monthLeads.length) * 1000) / 10 : 0,
+        leadToDeliveredRate: monthLeads.length > 0 ? Math.round((thisMonthDelivered.length / monthLeads.length) * 1000) / 10 : 0
+      },
+      topProducts
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load orders." });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const scope = scopeOf(req);

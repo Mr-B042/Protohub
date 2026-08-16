@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { NIGERIA_STATES } from "../lib/nigeria";
 import { WhatsAppIcon } from "../components/WhatsAppIcon";
-import type { SalesCloserFollowUps, SalesCloserOverview, SalesLeadKpi } from "../lib/api";
+import type { SalesCloserFollowUps, SalesCloserOrders, SalesCloserOverview, SalesLeadKpi } from "../lib/api";
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -125,6 +125,9 @@ type Props = {
   followUps: SalesCloserFollowUps | null;
   followUpsLoading: boolean;
   followUpsError: string;
+  orders: SalesCloserOrders | null;
+  ordersLoading: boolean;
+  ordersError: string;
 };
 
 const QUICK_TAGS = ["High Potential", "Price Sensitive", "First Time Buyer", "Repeat Customer", "Needs Follow-up"];
@@ -296,7 +299,7 @@ const dueLabel = (value: string) => {
   return diffMs >= 0 ? `Due in ${unit}` : `Overdue by ${unit}`;
 };
 
-function KpiCard({ icon: Icon, tone, label, value, delta, sublabel }: { icon: typeof Package; tone: string; label: string; value: number; delta?: number; sublabel: string }) {
+function KpiCard({ icon: Icon, tone, label, value, displayValue, delta, deltaLabel = "vs yesterday", deltaIsMoney, sublabel }: { icon: typeof Package; tone: string; label: string; value: number; displayValue?: string; delta?: number; deltaLabel?: string; deltaIsMoney?: boolean; sublabel: string }) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <div className="flex items-center gap-3">
@@ -305,12 +308,12 @@ function KpiCard({ icon: Icon, tone, label, value, delta, sublabel }: { icon: ty
           <p className="truncate text-xs font-bold uppercase tracking-wide text-gray-400">{label}</p>
         </div>
       </div>
-      <p className="mt-3 text-2xl font-black text-gray-950">{value.toLocaleString()}</p>
+      <p className="mt-3 text-2xl font-black text-gray-950">{displayValue ?? value.toLocaleString()}</p>
       <p className="mt-1 text-xs font-medium text-gray-400">{sublabel}</p>
       {typeof delta === "number" && delta !== 0 && (
         <p className={`mt-1 flex items-center gap-1 text-xs font-bold ${delta > 0 ? "text-emerald-600" : "text-rose-600"}`}>
           {delta > 0 ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
-          {Math.abs(delta)} vs yesterday
+          {deltaIsMoney ? money(Math.abs(delta)) : Math.abs(delta)} {deltaLabel}
         </p>
       )}
     </div>
@@ -862,7 +865,143 @@ function FollowUpsSection({
   );
 }
 
-export function SalesCloserWorkspacePage({ section, products, assignees, currentUserId, saving, error, onSaveLead, onCancelAddLead, onAction, leads, leadsLoading, leadsError, onUpdateLeadStatus, onOpenOrder, onConvertLead, overview, overviewLoading, overviewError, followUps, followUpsLoading, followUpsError }: Props) {
+const ORDER_STATUS_TABS = ["All", "New", "Confirmed", "In Process", "Dispatched", "Delivered", "Postponed", "Cancelled", "Failed"] as const;
+const ORDER_STATUS_TONE: Record<string, string> = {
+  New: "border-blue-200 bg-blue-50 text-blue-700",
+  Confirmed: "border-sky-200 bg-sky-50 text-sky-700",
+  "In Process": "border-amber-200 bg-amber-50 text-amber-700",
+  Dispatched: "border-violet-200 bg-violet-50 text-violet-700",
+  Delivered: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  Postponed: "border-gray-200 bg-gray-50 text-gray-600",
+  Cancelled: "border-rose-200 bg-rose-50 text-rose-700",
+  Failed: "border-rose-200 bg-rose-50 text-rose-700"
+};
+
+function downloadCsv(filename: string, rows: string[][]) {
+  const csv = rows.map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function OrdersCreatedSection({ data, loading, error, onOpenOrder }: { data: SalesCloserOrders | null; loading: boolean; error: string; onOpenOrder: (orderId: string) => void }) {
+  const [tab, setTab] = useState<(typeof ORDER_STATUS_TABS)[number]>("All");
+  const orders = data?.orders ?? [];
+  const filtered = tab === "All" ? orders : orders.filter((order) => order.status === tab);
+
+  const exportCsv = () => {
+    const rows = [
+      ["Order ID", "Customer", "Product", "Package", "Amount", "Status", "Created", "Delivery Date"],
+      ...filtered.map((order) => [order.id, order.customer, order.productName, order.packageName, String(order.amount), order.status, order.createdAt, order.deliveredDate ?? ""])
+    ];
+    downloadCsv(`sales-closer-orders-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+  };
+
+  return (
+    <div className="space-y-4 p-4 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-600">Sales Closer</p>
+          <h1 className="mt-1 text-2xl font-black text-gray-950">Orders Created</h1>
+          <p className="mt-1 text-sm font-medium text-gray-500">Orders you have successfully created from leads</p>
+        </div>
+        <button type="button" className="!min-h-0 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50" onClick={exportCsv}>Export</button>
+      </div>
+
+      {error && <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p>}
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <KpiCard icon={ShoppingCart} tone="bg-blue-100 text-blue-600" label="Orders Created" value={data?.kpis.ordersCreated.value ?? 0} delta={data?.kpis.ordersCreated.deltaVsLastMonth} deltaLabel="vs last month" sublabel="This month" />
+        <KpiCard icon={Check} tone="bg-emerald-100 text-emerald-600" label="Delivered Orders" value={data?.kpis.deliveredOrders.value ?? 0} delta={data?.kpis.deliveredOrders.deltaVsLastMonth} deltaLabel="vs last month" sublabel="This month" />
+        <KpiCard icon={Wallet} tone="bg-teal-100 text-teal-600" label="Delivered Revenue" value={data?.kpis.deliveredRevenue.value ?? 0} displayValue={money(data?.kpis.deliveredRevenue.value ?? 0)} delta={data?.kpis.deliveredRevenue.deltaVsLastMonth} deltaLabel="vs last month" deltaIsMoney sublabel="This month" />
+        <KpiCard icon={TrendingUp} tone="bg-violet-100 text-violet-600" label="Average Order Value" value={data?.kpis.aov.value ?? 0} displayValue={money(data?.kpis.aov.value ?? 0)} delta={data?.kpis.aov.deltaVsLastMonth} deltaLabel="vs last month" deltaIsMoney sublabel="This month" />
+        <KpiCard icon={Target} tone="bg-amber-100 text-amber-600" label="Delivery Rate" value={data?.kpis.deliveryRate.value ?? 0} displayValue={`${data?.kpis.deliveryRate.value ?? 0}%`} delta={data?.kpis.deliveryRate.deltaVsLastMonth} deltaLabel="pts vs last month" sublabel="This month" />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <div className="rounded-lg border border-gray-200 bg-white shadow-sm lg:col-span-3">
+          <div className="flex flex-wrap gap-1 border-b border-gray-100 p-2">
+            {ORDER_STATUS_TABS.map((item) => (
+              <button key={item} type="button" className={`!min-h-0 rounded-lg px-3 py-2 text-xs font-bold transition ${tab === item ? "bg-blue-50 text-blue-700" : "text-gray-500 hover:bg-gray-50"}`} onClick={() => setTab(item)}>{item}</button>
+            ))}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                  <th className="px-4 py-3">Order ID</th>
+                  <th className="px-4 py-3">Customer</th>
+                  <th className="px-4 py-3">Product &amp; Package</th>
+                  <th className="px-4 py-3">Amount</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Created</th>
+                  <th className="px-4 py-3">Delivery Date</th>
+                  <th className="px-4 py-3">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">Loading orders...</td></tr>
+                ) : filtered.length === 0 ? (
+                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">No orders yet.</td></tr>
+                ) : filtered.map((order) => (
+                  <tr key={order.id} className="border-b border-gray-50 last:border-0">
+                    <td className="px-4 py-3 font-bold text-gray-900">{order.id}</td>
+                    <td className="px-4 py-3 text-gray-700">{order.customer}</td>
+                    <td className="px-4 py-3 text-xs text-gray-600">{order.productName}{order.packageName ? ` (${order.packageName})` : ""}</td>
+                    <td className="px-4 py-3 font-bold text-gray-900">{money(order.amount)}</td>
+                    <td className="px-4 py-3"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black ${ORDER_STATUS_TONE[order.status] ?? "border-gray-200 bg-gray-50 text-gray-600"}`}>{order.status}</span></td>
+                    <td className="px-4 py-3 text-xs text-gray-500">{new Date(order.createdAt).toLocaleDateString("en-NG", { month: "short", day: "numeric" })}</td>
+                    <td className="px-4 py-3 text-xs text-gray-500">{order.deliveredDate ? new Date(order.deliveredDate).toLocaleDateString("en-NG", { month: "short", day: "numeric" }) : "-"}</td>
+                    <td className="px-4 py-3">
+                      <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-bold text-blue-600 hover:bg-blue-50" onClick={() => onOpenOrder(order.id)}>View Details</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+            <h3 className="text-xs font-black uppercase tracking-wide text-gray-500">Conversion Summary (This Month)</h3>
+            <div className="mt-3 space-y-2 text-sm">
+              <div className="flex items-center justify-between"><span className="text-gray-500">Leads Captured</span><span className="font-bold text-gray-900">{data?.conversionSummaryThisMonth.leadsCaptured ?? 0}</span></div>
+              <div className="flex items-center justify-between"><span className="text-gray-500">Orders Created</span><span className="font-bold text-gray-900">{data?.conversionSummaryThisMonth.ordersCreated ?? 0}</span></div>
+              <div className="flex items-center justify-between"><span className="text-gray-500">Delivered Orders</span><span className="font-bold text-gray-900">{data?.conversionSummaryThisMonth.deliveredOrders ?? 0}</span></div>
+              <div className="flex items-center justify-between border-t border-gray-100 pt-2"><span className="text-gray-500">Lead → Order Rate</span><span className="font-bold text-blue-600">{data?.conversionSummaryThisMonth.leadToOrderRate ?? 0}%</span></div>
+              <div className="flex items-center justify-between"><span className="text-gray-500">Lead → Delivered Rate</span><span className="font-bold text-emerald-600">{data?.conversionSummaryThisMonth.leadToDeliveredRate ?? 0}%</span></div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+            <h3 className="text-xs font-black uppercase tracking-wide text-gray-500">Top Products (by Revenue)</h3>
+            <div className="mt-3 space-y-2.5">
+              {(data?.topProducts ?? []).length === 0 ? (
+                <p className="text-xs text-gray-400">Nothing this month yet.</p>
+              ) : data!.topProducts.map((product) => (
+                <div key={product.productName} className="flex items-center justify-between text-sm">
+                  <div className="min-w-0">
+                    <p className="truncate font-bold text-gray-900">{product.productName}</p>
+                    <p className="text-[11px] text-gray-400">{product.orders} order{product.orders === 1 ? "" : "s"}</p>
+                  </div>
+                  <span className="shrink-0 font-bold text-gray-700">{money(product.revenue)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SalesCloserWorkspacePage({ section, products, assignees, currentUserId, saving, error, onSaveLead, onCancelAddLead, onAction, leads, leadsLoading, leadsError, onUpdateLeadStatus, onOpenOrder, onConvertLead, overview, overviewLoading, overviewError, followUps, followUpsLoading, followUpsError, orders, ordersLoading, ordersError }: Props) {
   const [draft, setDraft] = useState<SalesLeadDraft>(() => defaultDraft(currentUserId));
   const [formError, setFormError] = useState("");
   const [showProductPicker, setShowProductPicker] = useState(false);
@@ -937,16 +1076,18 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
     return <FollowUpsSection data={followUps} loading={followUpsLoading} error={followUpsError} onAddLead={() => onAction("add-lead")} />;
   }
 
+  if (section === "orders-created") {
+    return <OrdersCreatedSection data={orders} loading={ordersLoading} error={ordersError} onOpenOrder={onOpenOrder} />;
+  }
+
   if (section !== "add-lead") {
-    const label = section === "orders-created" ? "Orders Created"
-      : section === "my-performance" ? "My Performance"
+    const label = section === "my-performance" ? "My Performance"
       : section === "my-bonuses" ? "My Bonuses"
       : section === "scripts-templates" ? "Scripts & Templates"
       : section === "products" ? "Products"
       : section === "report-issue" ? "Report an Issue"
       : "Sales Closer";
-    const icon = section === "orders-created" ? Package
-      : section === "my-performance" ? TrendingUp
+    const icon = section === "my-performance" ? TrendingUp
       : section === "my-bonuses" ? Wallet
       : section === "scripts-templates" ? StickyNote
       : section === "products" ? Package
