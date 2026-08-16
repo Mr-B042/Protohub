@@ -149,7 +149,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -201,8 +201,10 @@ import {
 } from "./pages/InventoryLogisticsOperationsPage";
 import {
   SalesCloserWorkspacePage,
+  type SalesCloserLead,
   type SalesCloserSection,
   type SalesLeadDraft,
+  type SalesLeadStatus,
 } from "./pages/SalesCloserWorkspacePage";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
@@ -8460,6 +8462,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [salesCloserSection, setSalesCloserSection] = useState<SalesCloserSection>("overview");
   const [salesLeadSaving, setSalesLeadSaving] = useState(false);
   const [salesLeadError, setSalesLeadError] = useState("");
+  const [salesLeads, setSalesLeads] = useState<SalesLead[]>([]);
+  const [salesLeadsLoading, setSalesLeadsLoading] = useState(false);
+  const [salesLeadsListError, setSalesLeadsListError] = useState("");
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
   const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>(() =>
     readPref("protohub.inventory.expandedSets", {} as Record<string, boolean>, (raw) => {
@@ -40719,12 +40724,43 @@ ${waybillLineItems(w).length > 1
       });
       showToast("Lead saved.");
       handleSalesCloserAction("leads");
+      void loadSalesLeads();
     } catch (error: any) {
       setSalesLeadError(error?.message ?? "Could not save this lead.");
       throw error;
     } finally {
       setSalesLeadSaving(false);
     }
+  };
+  const loadSalesLeads = useCallback(async () => {
+    setSalesLeadsLoading(true);
+    setSalesLeadsListError("");
+    try {
+      const result = await salesLeadsApi.list();
+      setSalesLeads(result.leads);
+    } catch (error: any) {
+      setSalesLeadsListError(error?.message ?? "Could not load leads.");
+    } finally {
+      setSalesLeadsLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (activePage === "Sales Closer Workspace") {
+      void loadSalesLeads();
+    }
+  }, [activePage, loadSalesLeads]);
+  const updateSalesLeadStatus = async (leadId: string, status: SalesLeadStatus) => {
+    try {
+      await salesLeadsApi.update(leadId, { status });
+      await loadSalesLeads();
+    } catch (error: any) {
+      showToast(error?.message ?? "Could not update this lead.");
+      throw error;
+    }
+  };
+  const openSalesLeadOrder = (orderId: string) => {
+    setSelectedOrderId(orderId);
+    setModal("orderDetails");
   };
   const openInventoryHistoryWithFilters = (filters: {
     productId?: string;
@@ -88335,24 +88371,48 @@ ${waybillLineItems(w).length > 1
               onViewAgentHistory={(agentId) => openInventoryHistoryWithFilters({ agentId })}
               onAction={handleInventoryOperationsAction}
             />
-          ) : activePage === "Sales Closer Workspace" ? (
-            <SalesCloserWorkspacePage
-              section={salesCloserSection}
-              products={readyEmbedProducts.map((product) => ({
-                id: product.id,
-                name: product.name,
-                active: product.active,
-                packages: product.packages.filter((pkg) => pkg.active).map((pkg) => ({ id: pkg.id, name: pkg.name }))
-              }))}
-              assignees={users.filter((user) => user.role === "Sales Closer" && user.active).map((user) => ({ id: user.id, name: user.name }))}
-              currentUserId={currentManagedUser?.id ?? ""}
-              saving={salesLeadSaving}
-              error={salesLeadError}
-              onSaveLead={saveSalesLead}
-              onCancelAddLead={() => handleSalesCloserAction("overview")}
-              onAction={handleSalesCloserAction}
-            />
-          ) : activePage === "Inventory" ? (
+          ) : activePage === "Sales Closer Workspace" ? (() => {
+            const salesCloserProductNames = new Map(readyEmbedProducts.map((product) => [product.id, product.name]));
+            return (
+              <SalesCloserWorkspacePage
+                section={salesCloserSection}
+                products={readyEmbedProducts.map((product) => ({
+                  id: product.id,
+                  name: product.name,
+                  active: product.active,
+                  packages: product.packages.filter((pkg) => pkg.active).map((pkg) => ({ id: pkg.id, name: pkg.name }))
+                }))}
+                assignees={users.filter((user) => user.role === "Sales Closer" && user.active).map((user) => ({ id: user.id, name: user.name }))}
+                currentUserId={currentManagedUser?.id ?? ""}
+                saving={salesLeadSaving}
+                error={salesLeadError}
+                onSaveLead={saveSalesLead}
+                onCancelAddLead={() => handleSalesCloserAction("overview")}
+                onAction={handleSalesCloserAction}
+                leads={salesLeads.map((lead) => ({
+                  id: lead.id,
+                  fullName: lead.fullName,
+                  phone: lead.phone,
+                  whatsappNumber: lead.whatsappNumber,
+                  state: lead.state,
+                  city: lead.city,
+                  interestedProductIds: lead.interestedProductIds,
+                  productNames: lead.interestedProductIds.map((productId) => salesCloserProductNames.get(productId)).filter((name): name is string => Boolean(name)),
+                  source: lead.source,
+                  campaign: lead.campaign,
+                  status: lead.status,
+                  priority: lead.priority,
+                  convertedOrderId: lead.convertedOrderId,
+                  createdAt: lead.createdAt,
+                  lastActivityAt: lead.lastActivityAt
+                }))}
+                leadsLoading={salesLeadsLoading}
+                leadsError={salesLeadsListError}
+                onUpdateLeadStatus={updateSalesLeadStatus}
+                onOpenOrder={openSalesLeadOrder}
+              />
+            );
+          })() : activePage === "Inventory" ? (
             inventoryView === "combos" ? (
               <div className="space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">

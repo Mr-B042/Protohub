@@ -1,15 +1,21 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { NIGERIA_STATES } from "../lib/nigeria";
+import { WhatsAppIcon } from "../components/WhatsAppIcon";
 import {
   AlertTriangle,
   Calendar,
   Check,
   ChevronDown,
   Clock,
+  ExternalLink,
   HelpCircle,
   Home,
-  Inbox,
+  MapPin,
+  MoreVertical,
   Package,
+  Phone,
+  Plus,
+  Search,
   Sparkles,
   StickyNote,
   Tag,
@@ -40,6 +46,14 @@ export type SalesCloserProduct = {
 
 export type SalesCloserAssignee = { id: string; name: string };
 
+// Sources a Sales Closer can pick when logging a lead by hand.
+export type SalesLeadSource = "whatsapp" | "instagram" | "tiktok" | "facebook" | "website" | "other";
+// The DB allows two more ("phone", "referral") for flexibility/future entry
+// points that don't go through this form - display code must handle them
+// even though nothing here creates them yet.
+export type SalesLeadDisplaySource = SalesLeadSource | "phone" | "referral";
+export type SalesLeadStatus = "new_lead" | "contacted" | "qualified" | "follow_up" | "order_created" | "not_interested";
+
 export type SalesLeadDraft = {
   fullName: string;
   phone: string;
@@ -50,17 +64,35 @@ export type SalesLeadDraft = {
   state: string;
   city: string;
   address: string;
-  source: "whatsapp" | "instagram" | "tiktok" | "facebook" | "website" | "other";
+  source: SalesLeadSource;
   campaign: string;
   interestedProductIds: string[];
   packageId: string;
   notes: string;
-  status: "new_lead" | "contacted" | "qualified" | "follow_up" | "not_interested";
+  status: Exclude<SalesLeadStatus, "order_created">;
   tags: string[];
   priority: "low" | "medium" | "high";
   assignedCloserId: string;
   followUpDate: string;
   followUpTime: string;
+};
+
+export type SalesCloserLead = {
+  id: string;
+  fullName: string;
+  phone: string;
+  whatsappNumber: string;
+  state: string;
+  city: string;
+  interestedProductIds: string[];
+  productNames: string[];
+  source: SalesLeadDisplaySource;
+  campaign: string;
+  status: SalesLeadStatus;
+  priority: "low" | "medium" | "high";
+  convertedOrderId: string | null;
+  createdAt: string;
+  lastActivityAt: string;
 };
 
 type Props = {
@@ -73,6 +105,11 @@ type Props = {
   onSaveLead: (draft: SalesLeadDraft) => Promise<void>;
   onCancelAddLead: () => void;
   onAction: (section: SalesCloserSection) => void;
+  leads: SalesCloserLead[];
+  leadsLoading: boolean;
+  leadsError: string;
+  onUpdateLeadStatus: (leadId: string, status: SalesLeadStatus) => Promise<void>;
+  onOpenOrder: (orderId: string) => void;
 };
 
 const QUICK_TAGS = ["High Potential", "Price Sensitive", "First Time Buyer", "Repeat Customer", "Needs Follow-up"];
@@ -93,6 +130,59 @@ const STATUS_OPTIONS: Array<{ value: SalesLeadDraft["status"]; label: string }> 
   { value: "follow_up", label: "Follow-up" },
   { value: "not_interested", label: "Not Interested" }
 ];
+
+const STATUS_LABELS: Record<SalesLeadStatus, string> = {
+  new_lead: "New",
+  contacted: "Contacted",
+  qualified: "Interested / Qualified",
+  follow_up: "Follow-up",
+  order_created: "Order Created",
+  not_interested: "Not Interested"
+};
+
+const STATUS_TONE: Record<SalesLeadStatus, string> = {
+  new_lead: "border-blue-200 bg-blue-50 text-blue-700",
+  contacted: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  qualified: "border-violet-200 bg-violet-50 text-violet-700",
+  follow_up: "border-amber-200 bg-amber-50 text-amber-700",
+  order_created: "border-emerald-300 bg-emerald-100 text-emerald-800",
+  not_interested: "border-rose-200 bg-rose-50 text-rose-700"
+};
+
+const SOURCE_LABELS: Record<SalesLeadDisplaySource, string> = {
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+  tiktok: "TikTok",
+  facebook: "Facebook",
+  website: "Website Chat",
+  phone: "Phone",
+  referral: "Referral",
+  other: "Other"
+};
+
+const LEAD_TABS: Array<{ key: "all" | SalesLeadStatus; label: string }> = [
+  { key: "all", label: "All Leads" },
+  { key: "new_lead", label: "New" },
+  { key: "contacted", label: "Contacted" },
+  { key: "qualified", label: "Interested / Qualified" },
+  { key: "follow_up", label: "Follow-up" },
+  { key: "order_created", label: "Order Created" },
+  { key: "not_interested", label: "Not Interested" }
+];
+
+// Same digit-normalizing logic App.tsx's normalizeWhatsAppPhone uses -
+// most numbers here are Nigerian local mobiles (080.../070.../090... or
+// the same without the leading zero), converted to WhatsApp's required
+// international format.
+const normalizedWhatsAppDigits = (phone: string | null | undefined) => {
+  let clean = (phone ?? "").replace(/\D/g, "");
+  if (!clean) return null;
+  if (clean.startsWith("00")) clean = clean.slice(2);
+  if (clean.startsWith("234")) return clean.length >= 13 && clean.length <= 15 ? clean : null;
+  if (clean.startsWith("0") && clean.length === 11) return `234${clean.slice(1)}`;
+  if (!clean.startsWith("0") && clean.length === 10) return `234${clean}`;
+  return clean.length >= 11 && clean.length <= 15 ? clean : null;
+};
 
 const fieldClass = "w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100";
 
@@ -164,7 +254,251 @@ function ComingSoon({ icon: Icon, title }: { icon: typeof Package; title: string
   );
 }
 
-export function SalesCloserWorkspacePage({ section, products, assignees, currentUserId, saving, error, onSaveLead, onCancelAddLead, onAction }: Props) {
+const timeAgo = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const diffMs = Date.now() - date.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hr${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+};
+
+const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "?";
+
+const PAGE_SIZE = 10;
+
+function LeadsInboxSection({
+  leads,
+  loading,
+  error,
+  products,
+  onUpdateLeadStatus,
+  onOpenOrder,
+  onAddLead
+}: {
+  leads: SalesCloserLead[];
+  loading: boolean;
+  error: string;
+  products: SalesCloserProduct[];
+  onUpdateLeadStatus: (leadId: string, status: SalesLeadStatus) => Promise<void>;
+  onOpenOrder: (orderId: string) => void;
+  onAddLead: () => void;
+}) {
+  const [tab, setTab] = useState<"all" | SalesLeadStatus>("all");
+  const [search, setSearch] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<"all" | SalesLeadDisplaySource>("all");
+  const [productFilter, setProductFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | SalesLeadStatus>("all");
+  const [sort, setSort] = useState<"newest" | "oldest">("newest");
+  const [page, setPage] = useState(1);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
+
+  const tabCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: leads.length };
+    for (const lead of leads) counts[lead.status] = (counts[lead.status] ?? 0) + 1;
+    return counts;
+  }, [leads]);
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    let rows = leads.filter((lead) => {
+      if (tab !== "all" && lead.status !== tab) return false;
+      if (statusFilter !== "all" && lead.status !== statusFilter) return false;
+      if (sourceFilter !== "all" && lead.source !== sourceFilter) return false;
+      if (productFilter !== "all" && !lead.interestedProductIds.includes(productFilter)) return false;
+      if (query && !`${lead.fullName} ${lead.phone}`.toLowerCase().includes(query)) return false;
+      return true;
+    });
+    rows = [...rows].sort((a, b) => sort === "newest"
+      ? new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      : new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    return rows;
+  }, [leads, tab, statusFilter, sourceFilter, productFilter, search, sort]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const changeStatus = async (leadId: string, status: SalesLeadStatus) => {
+    setOpenMenuId(null);
+    setStatusUpdating(leadId);
+    try {
+      await onUpdateLeadStatus(leadId, status);
+    } finally {
+      setStatusUpdating(null);
+    }
+  };
+
+  return (
+    <div className="relative space-y-4 p-4 sm:p-6">
+      <div>
+        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-600">Sales Closer</p>
+        <h1 className="mt-1 text-2xl font-black text-gray-950">Leads / Inbox</h1>
+        <p className="mt-1 text-sm font-medium text-gray-500">All interested customers from your channels</p>
+      </div>
+
+      <div className="flex flex-wrap gap-1 overflow-x-auto rounded-lg border border-gray-200 bg-white p-1">
+        {LEAD_TABS.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            className={`!min-h-0 flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition ${tab === item.key ? "bg-blue-50 text-blue-700" : "text-gray-500 hover:bg-gray-50"}`}
+            onClick={() => { setTab(item.key); setPage(1); }}
+          >
+            {item.label}
+            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${tab === item.key ? "bg-blue-200 text-blue-800" : "bg-gray-100 text-gray-500"}`}>{tabCounts[item.key] ?? 0}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <input className={`${fieldClass} pl-9`} placeholder="Search by name, phone, product..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
+        </div>
+        <select className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-semibold text-gray-700" value={sourceFilter} onChange={(event) => { setSourceFilter(event.target.value as typeof sourceFilter); setPage(1); }}>
+          <option value="all">All Sources</option>
+          {(Object.keys(SOURCE_LABELS) as SalesLeadDisplaySource[]).map((value) => <option key={value} value={value}>{SOURCE_LABELS[value]}</option>)}
+        </select>
+        <select className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-semibold text-gray-700" value={productFilter} onChange={(event) => { setProductFilter(event.target.value); setPage(1); }}>
+          <option value="all">All Products</option>
+          {products.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+        </select>
+        <select className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-semibold text-gray-700" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as typeof statusFilter); setPage(1); }}>
+          <option value="all">All Statuses</option>
+          {(Object.keys(STATUS_LABELS) as SalesLeadStatus[]).map((value) => <option key={value} value={value}>{STATUS_LABELS[value]}</option>)}
+        </select>
+        <select className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-semibold text-gray-700" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}>
+          <option value="newest">Sort by: Newest</option>
+          <option value="oldest">Sort by: Oldest</option>
+        </select>
+      </div>
+
+      {error && <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p>}
+
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                <th className="px-4 py-3">Lead</th>
+                <th className="px-4 py-3">Product Interested</th>
+                <th className="px-4 py-3">Source</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Added</th>
+                <th className="px-4 py-3">Last Activity</th>
+                <th className="px-4 py-3">Action</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">Loading leads...</td></tr>
+              ) : pageRows.length === 0 ? (
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">No leads match these filters yet.</td></tr>
+              ) : pageRows.map((lead) => {
+                const waDigits = normalizedWhatsAppDigits(lead.whatsappNumber || lead.phone);
+                return (
+                  <tr key={lead.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/60">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-black text-blue-700">{initials(lead.fullName)}</span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-gray-900">{lead.fullName}</p>
+                          <p className="text-xs font-medium text-gray-500">{lead.phone}</p>
+                          {(lead.city || lead.state) && (
+                            <p className="flex items-center gap-1 text-[11px] font-medium text-gray-400"><MapPin className="h-3 w-3" />{[lead.city, lead.state].filter(Boolean).join(", ")}</p>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {lead.productNames.length > 0
+                        ? <span className="inline-flex rounded-full bg-violet-50 px-2.5 py-1 text-xs font-bold text-violet-700">{lead.productNames.join(", ")}</span>
+                        : <span className="text-xs text-gray-400">-</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="text-xs font-bold text-gray-700">{SOURCE_LABELS[lead.source]}</p>
+                      {lead.campaign && <p className="truncate text-[11px] font-medium text-gray-400">{lead.campaign}</p>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-black ${STATUS_TONE[lead.status]}`}>{STATUS_LABELS[lead.status]}</span>
+                    </td>
+                    <td className="px-4 py-3 text-xs font-medium text-gray-500">{timeAgo(lead.createdAt)}</td>
+                    <td className="px-4 py-3 text-xs font-medium text-gray-500">{timeAgo(lead.lastActivityAt)}</td>
+                    <td className="px-4 py-3">
+                      {lead.convertedOrderId ? (
+                        <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700" onClick={() => onOpenOrder(lead.convertedOrderId!)}>
+                          <ExternalLink className="h-3.5 w-3.5" /> View Order
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <a href={`tel:+${normalizedWhatsAppDigits(lead.phone) ?? lead.phone.replace(/\D/g, "")}`} className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600" title="Call"><Phone className="h-3.5 w-3.5" /></a>
+                          {waDigits && (
+                            <a href={`https://wa.me/${waDigits}`} target="_blank" rel="noreferrer" className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-emerald-600 hover:border-emerald-300" title="Chat on WhatsApp"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td className="relative px-4 py-3 text-right">
+                      <button type="button" className="!min-h-0 flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700" onClick={() => setOpenMenuId((current) => current === lead.id ? null : lead.id)}>
+                        <MoreVertical className="h-4 w-4" />
+                      </button>
+                      {openMenuId === lead.id && (
+                        <>
+                          <div className="fixed inset-0 z-20" onClick={() => setOpenMenuId(null)} />
+                          <div className="absolute right-4 top-full z-30 mt-1 w-48 rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
+                            <p className="px-2.5 py-1.5 text-[10px] font-black uppercase text-gray-400">Change status</p>
+                            {(Object.keys(STATUS_LABELS) as SalesLeadStatus[]).filter((value) => value !== "order_created").map((value) => (
+                              <button
+                                key={value}
+                                type="button"
+                                disabled={statusUpdating === lead.id}
+                                className={`!min-h-0 flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-bold ${lead.status === value ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-50"}`}
+                                onClick={() => changeStatus(lead.id, value)}
+                              >
+                                {STATUS_LABELS[value]}
+                                {lead.status === value && <Check className="h-3.5 w-3.5" />}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {filtered.length > 0 && (
+          <div className="flex items-center justify-between border-t border-gray-100 px-4 py-3 text-xs font-medium text-gray-500">
+            <p>Showing {(page - 1) * PAGE_SIZE + 1} to {Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length} leads</p>
+            <div className="flex items-center gap-2">
+              <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 font-bold text-gray-600 disabled:opacity-40" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Prev</button>
+              <span className="font-bold text-gray-700">{page} / {totalPages}</span>
+              <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-3 py-1.5 font-bold text-gray-600 disabled:opacity-40" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <button
+        type="button"
+        className="!min-h-0 fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 rounded-full bg-blue-600 px-5 py-3.5 text-sm font-black text-white shadow-xl shadow-blue-300/50 hover:bg-blue-700"
+        onClick={onAddLead}
+      >
+        <Plus className="h-4 w-4" /> Quick Add Lead
+      </button>
+    </div>
+  );
+}
+
+export function SalesCloserWorkspacePage({ section, products, assignees, currentUserId, saving, error, onSaveLead, onCancelAddLead, onAction, leads, leadsLoading, leadsError, onUpdateLeadStatus, onOpenOrder }: Props) {
   const [draft, setDraft] = useState<SalesLeadDraft>(() => defaultDraft(currentUserId));
   const [formError, setFormError] = useState("");
   const [showProductPicker, setShowProductPicker] = useState(false);
@@ -216,9 +550,22 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
     }
   };
 
+  if (section === "leads") {
+    return (
+      <LeadsInboxSection
+        leads={leads}
+        loading={leadsLoading}
+        error={leadsError}
+        products={products}
+        onUpdateLeadStatus={onUpdateLeadStatus}
+        onOpenOrder={onOpenOrder}
+        onAddLead={() => onAction("add-lead")}
+      />
+    );
+  }
+
   if (section !== "add-lead") {
     const label = section === "overview" ? "Overview"
-      : section === "leads" ? "Leads / Inbox"
       : section === "follow-ups" ? "Follow-ups"
       : section === "orders-created" ? "Orders Created"
       : section === "my-performance" ? "My Performance"
@@ -228,7 +575,6 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
       : section === "report-issue" ? "Report an Issue"
       : "Sales Closer";
     const icon = section === "overview" ? Home
-      : section === "leads" ? Inbox
       : section === "follow-ups" ? Clock
       : section === "orders-created" ? Package
       : section === "my-performance" ? TrendingUp
