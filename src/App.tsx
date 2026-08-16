@@ -149,7 +149,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -8481,6 +8481,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [salesPerformance, setSalesPerformance] = useState<SalesCloserPerformance | null>(null);
   const [salesPerformanceLoading, setSalesPerformanceLoading] = useState(false);
   const [salesPerformanceError, setSalesPerformanceError] = useState("");
+  const [salesCloserBonus, setSalesCloserBonus] = useState<SalesCloserBonus | null>(null);
+  const [salesCloserBonusLoading, setSalesCloserBonusLoading] = useState(false);
+  const [salesCloserBonusError, setSalesCloserBonusError] = useState("");
+  const [salesCloserBonusActionPending, setSalesCloserBonusActionPending] = useState(false);
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
   const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>(() =>
     readPref("protohub.inventory.expandedSets", {} as Record<string, boolean>, (raw) => {
@@ -40894,6 +40898,48 @@ ${waybillLineItems(w).length > 1
       setSalesPerformanceLoading(false);
     }
   }, []);
+  const loadSalesCloserBonus = useCallback(async () => {
+    setSalesCloserBonusLoading(true);
+    setSalesCloserBonusError("");
+    try {
+      setSalesCloserBonus(await salesLeadsApi.bonus());
+    } catch (error: any) {
+      setSalesCloserBonusError(error?.message ?? "Could not load bonus.");
+    } finally {
+      setSalesCloserBonusLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (activePage === "Sales Closer Workspace" && salesCloserSection === "my-bonuses") {
+      void loadSalesCloserBonus();
+    }
+  }, [activePage, salesCloserSection, loadSalesCloserBonus]);
+  const saveSalesCloserBonus = async () => {
+    if (!currentManagedUser?.id || !salesCloserBonus) return;
+    setSalesCloserBonusActionPending(true);
+    try {
+      await salesLeadsApi.saveBonus({ closerId: currentManagedUser.id, monthStart: salesCloserBonus.monthStart });
+      await loadSalesCloserBonus();
+      showToast("This month's bonus was saved.");
+    } catch (error: any) {
+      showToast(error?.message ?? "Could not save the bonus.");
+    } finally {
+      setSalesCloserBonusActionPending(false);
+    }
+  };
+  const markSalesCloserBonusPaid = async () => {
+    if (!currentManagedUser?.id || !salesCloserBonus) return;
+    setSalesCloserBonusActionPending(true);
+    try {
+      await salesLeadsApi.markBonusPaid({ closerId: currentManagedUser.id, monthStart: salesCloserBonus.monthStart });
+      await loadSalesCloserBonus();
+      showToast("Bonus marked as paid.");
+    } catch (error: any) {
+      showToast(error?.message ?? "Could not mark this bonus as paid.");
+    } finally {
+      setSalesCloserBonusActionPending(false);
+    }
+  };
   useEffect(() => {
     if (activePage === "Sales Closer Workspace" && salesCloserSection === "my-performance") {
       void loadSalesPerformance();
@@ -88563,6 +88609,13 @@ ${waybillLineItems(w).length > 1
                 performance={salesPerformance}
                 performanceLoading={salesPerformanceLoading}
                 performanceError={salesPerformanceError}
+                bonus={salesCloserBonus}
+                bonusLoading={salesCloserBonusLoading}
+                bonusError={salesCloserBonusError}
+                canManageBonus={["Owner", "Admin", "Manager"].includes(realRole)}
+                bonusActionPending={salesCloserBonusActionPending}
+                onSaveBonus={saveSalesCloserBonus}
+                onMarkBonusPaid={markSalesCloserBonusPaid}
               />
             );
           })() : activePage === "Inventory" ? (
