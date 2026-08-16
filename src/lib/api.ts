@@ -2172,6 +2172,15 @@ export type SalesCloserOrders = {
   topProducts: Array<{ productName: string; orders: number; revenue: number }>;
 };
 
+export type SalesCloserPerformance = {
+  funnel: { newLeads: number; contacted: number; qualified: number; ordersCreated: number; delivered: number };
+  conversionRates: { leadToOrder: number; leadToDelivered: number; orderConversionRate: number };
+  trend: Array<{ date: string; leads: number; orders: number }>;
+  leadsBySource: Array<{ source: string; count: number }>;
+  topProducts: Array<{ productName: string; orders: number; delivered: number; revenue: number; aov: number; conversionRate: number }>;
+  summary: { leadsCaptured: number; ordersCreated: number; deliveredOrders: number; deliveredRevenue: number; aov: number; leadToOrderRate: number; leadToDeliveredRate: number; upsellRevenue: number; crossSellRevenue: number };
+};
+
 export const salesLeadsApi = {
   list: (status?: string) => {
     const qs = status && status !== "all" ? `?status=${encodeURIComponent(status)}` : "";
@@ -2182,7 +2191,8 @@ export const salesLeadsApi = {
   update: (id: string, body: SalesLeadInput) => patch<SalesLead>(`/api/sales-leads/${encodeURIComponent(id)}`, body),
   overview: () => get<SalesCloserOverview>("/api/sales-leads/overview"),
   followUps: () => get<SalesCloserFollowUps>("/api/sales-leads/follow-ups"),
-  orders: () => get<SalesCloserOrders>("/api/sales-leads/orders")
+  orders: () => get<SalesCloserOrders>("/api/sales-leads/orders"),
+  performance: () => get<SalesCloserPerformance>("/api/sales-leads/performance")
 };
 
 // ── Recovery templates: offers, call scripts, broadcast messages ──────────
