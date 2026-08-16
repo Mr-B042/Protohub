@@ -78,22 +78,29 @@ export function buildChallengeMilestones(input: ChallengeMilestoneInput) {
   const rewards = distributeMoney(input.rewardAmount, count);
   const today = dayNumber(input.today);
 
+  // Milestones are cumulative checkpoints on the way to the one full-period target, not four
+  // independent targets. A slow week does not lock in a loss - it only means more is owed by
+  // the next checkpoint, and a later surplus can still clear an earlier shortfall. A checkpoint
+  // is only ever "Missed" once the whole challenge's deadline has passed without reaching it;
+  // before that, it stays open the same way the overall challenge stays open.
+  const totalProgressToDate = input.orders.reduce((sum, order) => {
+    const orderDay = dayNumber(order.dateKey);
+    return orderDay >= start && orderDay <= Math.min(end, today) ? sum + Math.max(0, Math.trunc(order.units)) : sum;
+  }, 0);
+
+  let cumulativeTarget = 0;
   const milestones = Array.from({ length: count }, (_, index): ChallengeMilestone => {
     const milestoneStart = start + index * baseWindowDays;
     const milestoneEnd = index === count - 1 ? end : Math.min(end, milestoneStart + baseWindowDays - 1);
-    const targetUnits = Math.max(1, targets[index] ?? 1);
-    const progressUnits = input.orders.reduce((sum, order) => {
-      const orderDay = dayNumber(order.dateKey);
-      return orderDay >= milestoneStart && orderDay <= milestoneEnd
-        ? sum + Math.max(0, Math.trunc(order.units))
-        : sum;
-    }, 0);
-    const progressPercent = Math.max(0, Math.round((progressUnits / targetUnits) * 100));
+    const sliceTargetUnits = Math.max(1, targets[index] ?? 1);
+    cumulativeTarget += sliceTargetUnits;
+    const progressUnits = Math.min(totalProgressToDate, cumulativeTarget);
+    const progressPercent = Math.max(0, Math.round((progressUnits / cumulativeTarget) * 100));
     let status: ChallengeMilestoneStatus;
     if (input.status === "draft") status = "Draft";
     else if (input.status === "paused") status = "Paused";
-    else if (progressUnits >= targetUnits) status = "Earned";
-    else if (today > milestoneEnd || input.status === "completed") status = "Missed";
+    else if (totalProgressToDate >= cumulativeTarget) status = "Earned";
+    else if (today > end || input.status === "completed") status = "Missed";
     else if (today < milestoneStart) status = "Upcoming";
     else status = "In Progress";
     const rewardAmount = rewards[index] ?? 0;
@@ -101,7 +108,7 @@ export function buildChallengeMilestones(input: ChallengeMilestoneInput) {
       index: index + 1,
       startDate: dateKeyFromDayNumber(milestoneStart),
       endDate: dateKeyFromDayNumber(milestoneEnd),
-      targetUnits,
+      targetUnits: cumulativeTarget,
       progressUnits,
       progressPercent,
       rewardAmount,
