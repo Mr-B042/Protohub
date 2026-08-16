@@ -1,7 +1,8 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { Cell, Legend, Line, LineChart, Pie, PieChart as RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { NIGERIA_STATES } from "../lib/nigeria";
 import { WhatsAppIcon } from "../components/WhatsAppIcon";
-import type { SalesCloserFollowUps, SalesCloserOrders, SalesCloserOverview, SalesLeadKpi } from "../lib/api";
+import type { SalesCloserFollowUps, SalesCloserOrders, SalesCloserOverview, SalesCloserPerformance, SalesLeadKpi } from "../lib/api";
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -128,6 +129,9 @@ type Props = {
   orders: SalesCloserOrders | null;
   ordersLoading: boolean;
   ordersError: string;
+  performance: SalesCloserPerformance | null;
+  performanceLoading: boolean;
+  performanceError: string;
 };
 
 const QUICK_TAGS = ["High Potential", "Price Sensitive", "First Time Buyer", "Repeat Customer", "Needs Follow-up"];
@@ -1001,7 +1005,163 @@ function OrdersCreatedSection({ data, loading, error, onOpenOrder }: { data: Sal
   );
 }
 
-export function SalesCloserWorkspacePage({ section, products, assignees, currentUserId, saving, error, onSaveLead, onCancelAddLead, onAction, leads, leadsLoading, leadsError, onUpdateLeadStatus, onOpenOrder, onConvertLead, overview, overviewLoading, overviewError, followUps, followUpsLoading, followUpsError, orders, ordersLoading, ordersError }: Props) {
+// Fixed hue order, not cycled by rank - matches the app's own REP_TREND_COLORS
+// convention (App.tsx) so charts across the product read as one system.
+const SERIES_COLORS = ["#1F8FE0", "#10B981", "#8B5CF6", "#F59E0B", "#EF4444", "#EC4899", "#14B8A6", "#6366F1"];
+
+function MyPerformanceSection({ data, loading, error, onAction }: { data: SalesCloserPerformance | null; loading: boolean; error: string; onAction: (section: SalesCloserSection) => void }) {
+  if (loading || !data) {
+    return (
+      <div className="space-y-4 p-4 sm:p-6">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-600">Sales Closer</p>
+          <h1 className="mt-1 text-2xl font-black text-gray-950">My Performance</h1>
+        </div>
+        {error ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p> : <div className="h-64 animate-pulse rounded-lg border border-gray-100 bg-white" />}
+      </div>
+    );
+  }
+
+  const trendData = data.trend.map((point) => ({ ...point, label: new Date(`${point.date}T12:00:00`).toLocaleDateString("en-NG", { month: "short", day: "numeric" }) }));
+  const donutData = data.leadsBySource.filter((row) => row.count > 0);
+  const summaryCards: Array<{ label: string; value: string }> = [
+    { label: "Leads Captured", value: data.summary.leadsCaptured.toLocaleString() },
+    { label: "Orders Created", value: data.summary.ordersCreated.toLocaleString() },
+    { label: "Delivered Orders", value: data.summary.deliveredOrders.toLocaleString() },
+    { label: "Delivered Revenue", value: money(data.summary.deliveredRevenue) },
+    { label: "AOV (Delivered)", value: money(data.summary.aov) },
+    { label: "Lead → Order Rate", value: `${data.summary.leadToOrderRate}%` },
+    { label: "Lead → Delivered Rate", value: `${data.summary.leadToDeliveredRate}%` },
+    { label: "Upsell + Cross-sell", value: money(data.summary.upsellRevenue + data.summary.crossSellRevenue) }
+  ];
+
+  return (
+    <div className="space-y-5 p-4 sm:p-6">
+      <div>
+        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-600">Sales Closer</p>
+        <h1 className="mt-1 text-2xl font-black text-gray-950">My Performance</h1>
+        <p className="mt-1 text-sm font-medium text-gray-500">Your full funnel, trend and product performance</p>
+      </div>
+
+      {error && <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p>}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm lg:col-span-2">
+          <h3 className="text-sm font-bold text-gray-900">Lead → Delivered Funnel</h3>
+          <div className="mt-4 space-y-2.5">
+            <FunnelBar label="New Leads" value={data.funnel.newLeads} total={data.funnel.newLeads} tone="bg-blue-600" />
+            <FunnelBar label="Contacted" value={data.funnel.contacted} total={data.funnel.newLeads} tone="bg-sky-500" />
+            <FunnelBar label="Qualified" value={data.funnel.qualified} total={data.funnel.newLeads} tone="bg-violet-500" />
+            <FunnelBar label="Orders Created" value={data.funnel.ordersCreated} total={data.funnel.newLeads} tone="bg-amber-500" />
+            <FunnelBar label="Delivered" value={data.funnel.delivered} total={data.funnel.newLeads} tone="bg-emerald-600" />
+          </div>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+          <h3 className="text-sm font-bold text-gray-900">Conversion Rates</h3>
+          <div className="mt-4 space-y-4">
+            <div><p className="text-xs font-semibold text-gray-500">Lead → Order</p><p className="text-lg font-black text-gray-950">{data.conversionRates.leadToOrder}%</p></div>
+            <div><p className="text-xs font-semibold text-gray-500">Lead → Delivered</p><p className="text-lg font-black text-gray-950">{data.conversionRates.leadToDelivered}%</p></div>
+            <div><p className="text-xs font-semibold text-gray-500">Order Conversion Rate</p><p className="text-lg font-black text-gray-950">{data.conversionRates.orderConversionRate}%</p></div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm lg:col-span-2">
+          <h3 className="text-sm font-bold text-gray-900">Leads &amp; Orders Trend (14 days)</h3>
+          <div className="mt-3 h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={trendData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9CA3AF" }} axisLine={{ stroke: "#E5E7EB" }} tickLine={false} interval={1} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#9CA3AF" }} axisLine={false} tickLine={false} width={28} />
+                <Tooltip contentStyle={{ borderRadius: 8, borderColor: "#E5E7EB", fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="leads" name="Leads" stroke={SERIES_COLORS[0]} strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="orders" name="Orders" stroke={SERIES_COLORS[1]} strokeWidth={2} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+          <h3 className="text-sm font-bold text-gray-900">Leads by Source</h3>
+          <div className="mt-3 h-56">
+            {donutData.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-xs text-gray-400">No leads yet.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <RePieChart>
+                  <Pie data={donutData} dataKey="count" nameKey="source" innerRadius="55%" outerRadius="85%" paddingAngle={2}>
+                    {donutData.map((entry, index) => <Cell key={entry.source} fill={SERIES_COLORS[index % SERIES_COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip contentStyle={{ borderRadius: 8, borderColor: "#E5E7EB", fontSize: 12 }} formatter={(value: number, name: string) => [value, SOURCE_LABELS[name as SalesLeadDisplaySource] ?? name]} />
+                </RePieChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+            {donutData.map((entry, index) => (
+              <span key={entry.source} className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-600">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: SERIES_COLORS[index % SERIES_COLORS.length] }} />
+                {SOURCE_LABELS[entry.source as SalesLeadDisplaySource] ?? entry.source} ({entry.count})
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="rounded-lg border border-gray-200 bg-white shadow-sm lg:col-span-2">
+          <div className="border-b border-gray-100 px-5 py-4"><h3 className="text-sm font-bold text-gray-900">Top Products (by Delivered Revenue)</h3></div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                  <th className="px-5 py-3">Product</th>
+                  <th className="px-5 py-3">Orders</th>
+                  <th className="px-5 py-3">Delivered</th>
+                  <th className="px-5 py-3">Revenue</th>
+                  <th className="px-5 py-3">AOV</th>
+                  <th className="px-5 py-3">Conv. Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.topProducts.length === 0 ? (
+                  <tr><td colSpan={6} className="px-5 py-8 text-center text-sm text-gray-400">No orders yet.</td></tr>
+                ) : data.topProducts.map((product) => (
+                  <tr key={product.productName} className="border-b border-gray-50 last:border-0">
+                    <td className="px-5 py-3 font-bold text-gray-900">{product.productName}</td>
+                    <td className="px-5 py-3 text-gray-600">{product.orders}</td>
+                    <td className="px-5 py-3 text-gray-600">{product.delivered}</td>
+                    <td className="px-5 py-3 font-bold text-gray-900">{money(product.revenue)}</td>
+                    <td className="px-5 py-3 text-gray-600">{money(product.aov)}</td>
+                    <td className="px-5 py-3 text-gray-600">{product.conversionRate}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h3 className="text-xs font-black uppercase tracking-wide text-gray-500">Performance Summary</h3>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            {summaryCards.map((card) => (
+              <div key={card.label}>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">{card.label}</p>
+                <p className="mt-0.5 text-sm font-black text-gray-950">{card.value}</p>
+              </div>
+            ))}
+          </div>
+          <button type="button" className="!min-h-0 mt-4 flex w-full items-center justify-center gap-1 rounded-lg border border-gray-200 py-2 text-xs font-bold text-blue-600 hover:bg-blue-50" onClick={() => onAction("my-bonuses")}>
+            View My Bonuses <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SalesCloserWorkspacePage({ section, products, assignees, currentUserId, saving, error, onSaveLead, onCancelAddLead, onAction, leads, leadsLoading, leadsError, onUpdateLeadStatus, onOpenOrder, onConvertLead, overview, overviewLoading, overviewError, followUps, followUpsLoading, followUpsError, orders, ordersLoading, ordersError, performance, performanceLoading, performanceError }: Props) {
   const [draft, setDraft] = useState<SalesLeadDraft>(() => defaultDraft(currentUserId));
   const [formError, setFormError] = useState("");
   const [showProductPicker, setShowProductPicker] = useState(false);
@@ -1080,15 +1240,17 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
     return <OrdersCreatedSection data={orders} loading={ordersLoading} error={ordersError} onOpenOrder={onOpenOrder} />;
   }
 
+  if (section === "my-performance") {
+    return <MyPerformanceSection data={performance} loading={performanceLoading} error={performanceError} onAction={onAction} />;
+  }
+
   if (section !== "add-lead") {
-    const label = section === "my-performance" ? "My Performance"
-      : section === "my-bonuses" ? "My Bonuses"
+    const label = section === "my-bonuses" ? "My Bonuses"
       : section === "scripts-templates" ? "Scripts & Templates"
       : section === "products" ? "Products"
       : section === "report-issue" ? "Report an Issue"
       : "Sales Closer";
-    const icon = section === "my-performance" ? TrendingUp
-      : section === "my-bonuses" ? Wallet
+    const icon = section === "my-bonuses" ? Wallet
       : section === "scripts-templates" ? StickyNote
       : section === "products" ? Package
       : section === "report-issue" ? AlertTriangle

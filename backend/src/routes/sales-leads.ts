@@ -391,6 +391,103 @@ router.get("/orders", async (req, res) => {
   }
 });
 
+router.get("/performance", async (req, res) => {
+  try {
+    const scope = scopeOf(req);
+    const orgId = req.user!.orgId;
+    const today = lagosDateKey();
+    const rangeStart = addDaysToDateKey(today, -13); // 14-day trend, matches Overview's daily-granularity approach
+
+    const [{ data: leadRows, error: leadError }, { data: orderRows, error: orderError }, names] = await Promise.all([
+      supabase.from("sales_leads").select("*").eq("org_id", orgId).eq("assigned_closer_id", scope.id),
+      supabase.from("orders").select("id, product_name, status, amount, created_at, delivered_date, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
+        .eq("org_id", orgId).eq("closed_by_closer_id", scope.id),
+      productNameMap(orgId)
+    ]);
+    if (leadError) throw leadError;
+    if (orderError) throw orderError;
+    const leads = leadRows ?? [];
+    const orders = (orderRows ?? []) as (HeadOfSalesOrder & { product_name?: string })[];
+
+    const funnelNewLeads = leads.length;
+    const funnelContacted = leads.filter((lead) => REACHED_CONTACTED.has(lead.status)).length;
+    const funnelQualified = leads.filter((lead) => REACHED_QUALIFIED.has(lead.status)).length;
+    const funnelOrdersCreated = leads.filter((lead) => Boolean(lead.converted_order_id)).length;
+    const deliveredOrderIds = new Set(orders.filter((order) => order.status === "Delivered").map((order) => order.id));
+    const funnelDelivered = leads.filter((lead) => lead.converted_order_id && deliveredOrderIds.has(lead.converted_order_id)).length;
+    const pct = (part: number, whole: number) => whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0;
+
+    const trend: Array<{ date: string; leads: number; orders: number }> = [];
+    for (let index = 0; index < 14; index += 1) {
+      const day = addDaysToDateKey(rangeStart, index);
+      trend.push({
+        date: day,
+        leads: leads.filter((lead) => lead.created_at && lagosDateKey(lead.created_at) === day).length,
+        orders: orders.filter((order) => order.created_at && lagosDateKey(order.created_at) === day).length
+      });
+    }
+
+    const bySource = new Map<string, number>();
+    for (const lead of leads) bySource.set(lead.source, (bySource.get(lead.source) ?? 0) + 1);
+    const leadsBySource = [...bySource.entries()].map(([source, count]) => ({ source, count }));
+
+    const productStats = new Map<string, { orders: number; delivered: number; revenue: number }>();
+    for (const order of orders) {
+      const name = order.product_name ?? "Unknown product";
+      const entry = productStats.get(name) ?? { orders: 0, delivered: 0, revenue: 0 };
+      entry.orders += 1;
+      if (order.status === "Delivered") {
+        entry.delivered += 1;
+        entry.revenue += Number(order.amount ?? 0);
+      }
+      productStats.set(name, entry);
+    }
+    const topProducts = [...productStats.entries()]
+      .sort((a, b) => b[1].revenue - a[1].revenue)
+      .slice(0, 8)
+      .map(([productName, stats]) => ({
+        productName,
+        orders: stats.orders,
+        delivered: stats.delivered,
+        revenue: stats.revenue,
+        aov: stats.delivered > 0 ? Math.round(stats.revenue / stats.delivered) : 0,
+        conversionRate: pct(stats.delivered, stats.orders)
+      }));
+
+    const deliveredOrders = orders.filter((order) => order.status === "Delivered");
+    const totalRevenue = deliveredOrders.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
+    const incremental = deliveredOrders.reduce((sum, order) => {
+      const { upsell, crossSell } = incrementalRevenueForOrder(order);
+      return { upsell: sum.upsell + upsell, crossSell: sum.crossSell + crossSell };
+    }, { upsell: 0, crossSell: 0 });
+
+    res.json({
+      funnel: { newLeads: funnelNewLeads, contacted: funnelContacted, qualified: funnelQualified, ordersCreated: funnelOrdersCreated, delivered: funnelDelivered },
+      conversionRates: {
+        leadToOrder: pct(funnelOrdersCreated, funnelNewLeads),
+        leadToDelivered: pct(funnelDelivered, funnelNewLeads),
+        orderConversionRate: pct(funnelDelivered, funnelOrdersCreated)
+      },
+      trend,
+      leadsBySource,
+      topProducts,
+      summary: {
+        leadsCaptured: leads.length,
+        ordersCreated: orders.length,
+        deliveredOrders: deliveredOrders.length,
+        deliveredRevenue: totalRevenue,
+        aov: deliveredOrders.length > 0 ? Math.round(totalRevenue / deliveredOrders.length) : 0,
+        leadToOrderRate: pct(funnelOrdersCreated, funnelNewLeads),
+        leadToDeliveredRate: pct(funnelDelivered, funnelNewLeads),
+        upsellRevenue: Math.round(incremental.upsell),
+        crossSellRevenue: Math.round(incremental.crossSell)
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load performance." });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const scope = scopeOf(req);
