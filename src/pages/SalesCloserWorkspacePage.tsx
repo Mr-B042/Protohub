@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Cell, Legend, Line, LineChart, Pie, PieChart as RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { NIGERIA_STATES } from "../lib/nigeria";
 import { WhatsAppIcon } from "../components/WhatsAppIcon";
-import type { SalesCloserFollowUps, SalesCloserOrders, SalesCloserOverview, SalesCloserPerformance, SalesLeadKpi } from "../lib/api";
+import type { SalesCloserBonus, SalesCloserFollowUps, SalesCloserOrders, SalesCloserOverview, SalesCloserPerformance, SalesLeadKpi } from "../lib/api";
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -132,6 +132,13 @@ type Props = {
   performance: SalesCloserPerformance | null;
   performanceLoading: boolean;
   performanceError: string;
+  bonus: SalesCloserBonus | null;
+  bonusLoading: boolean;
+  bonusError: string;
+  canManageBonus: boolean;
+  bonusActionPending: boolean;
+  onSaveBonus: () => Promise<void>;
+  onMarkBonusPaid: () => Promise<void>;
 };
 
 const QUICK_TAGS = ["High Potential", "Price Sensitive", "First Time Buyer", "Repeat Customer", "Needs Follow-up"];
@@ -1161,7 +1168,188 @@ function MyPerformanceSection({ data, loading, error, onAction }: { data: SalesC
   );
 }
 
-export function SalesCloserWorkspacePage({ section, products, assignees, currentUserId, saving, error, onSaveLead, onCancelAddLead, onAction, leads, leadsLoading, leadsError, onUpdateLeadStatus, onOpenOrder, onConvertLead, overview, overviewLoading, overviewError, followUps, followUpsLoading, followUpsError, orders, ordersLoading, ordersError, performance, performanceLoading, performanceError }: Props) {
+const BONUS_METRIC_UNIT: Record<string, "percent" | "money"> = {
+  leadToOrderRate: "percent",
+  leadToDeliveredRate: "percent",
+  aov: "money",
+  upsellCrossSellRevenue: "money",
+  activityScore: "percent",
+  deliveryRate: "percent"
+};
+
+const formatMetric = (metric: string, value: number) => BONUS_METRIC_UNIT[metric] === "money" ? money(value) : `${value}%`;
+
+function MyBonusesSection({
+  data,
+  loading,
+  error,
+  canManage,
+  actionPending,
+  onSave,
+  onMarkPaid
+}: {
+  data: SalesCloserBonus | null;
+  loading: boolean;
+  error: string;
+  canManage: boolean;
+  actionPending: boolean;
+  onSave: () => Promise<void>;
+  onMarkPaid: () => Promise<void>;
+}) {
+  if (loading || !data) {
+    return (
+      <div className="space-y-4 p-4 sm:p-6">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-600">Sales Closer</p>
+          <h1 className="mt-1 text-2xl font-black text-gray-950">My Bonuses</h1>
+        </div>
+        {error ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p> : <div className="h-64 animate-pulse rounded-lg border border-gray-100 bg-white" />}
+      </div>
+    );
+  }
+
+  const tiersById = new Map(data.settings.components.map((component) => [component.id, component.tiers]));
+  const componentResults = data.record?.componentResults ?? data.preview?.componentResults ?? [];
+  const isLocked = data.record?.status === "Paid";
+
+  return (
+    <div className="space-y-5 p-4 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-600">Sales Closer</p>
+          <h1 className="mt-1 text-2xl font-black text-gray-950">My Bonuses</h1>
+          <p className="mt-1 text-sm font-medium text-gray-500">Track your bonus earnings, targets and payouts</p>
+        </div>
+        {canManage && (
+          <div className="flex items-center gap-2">
+            <button type="button" disabled={actionPending || isLocked} className="!min-h-0 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50" onClick={onSave}>
+              {isLocked ? "Locked (Paid)" : actionPending ? "Saving..." : data.record ? "Recalculate & Save" : "Save This Month's Bonus"}
+            </button>
+            {data.record && !isLocked && (
+              <button type="button" disabled={actionPending} className="!min-h-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-blue-200 disabled:opacity-50" onClick={onMarkPaid}>
+                Mark as Paid
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {error && <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p>}
+      {!data.record && (
+        <p className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-semibold text-blue-800">
+          This month's numbers are a live preview - nothing is owed until leadership saves and confirms it.
+        </p>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Total Earned (This Month)</p>
+          <p className="mt-2 text-xl font-black text-emerald-700">{money(data.summary.totalEarnedThisMonth)}</p>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Total Potential</p>
+          <p className="mt-2 text-xl font-black text-gray-950">{money(data.summary.totalPotential)}</p>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Bonus Paid</p>
+          <p className="mt-2 text-xl font-black text-gray-950">{money(data.summary.bonusPaid)}</p>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Payout Pending</p>
+          <p className="mt-2 text-xl font-black text-amber-600">{money(data.summary.payoutPending)}</p>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-100 px-5 py-4"><h3 className="text-sm font-bold text-gray-900">Bonus Progress (This Month)</h3></div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                <th className="px-5 py-3">Bonus Component</th>
+                <th className="px-5 py-3">Target</th>
+                <th className="px-5 py-3">Achieved</th>
+                <th className="px-5 py-3">Progress</th>
+                <th className="px-5 py-3">Potential</th>
+              </tr>
+            </thead>
+            <tbody>
+              {componentResults.map((result) => {
+                const tiers = tiersById.get(result.id) ?? [];
+                const sortedTiers = [...tiers].sort((a, b) => a.minValue - b.minValue);
+                const targetTier = sortedTiers.find((tier) => tier.id === result.tierId) ?? sortedTiers[0];
+                const target = targetTier?.minValue ?? 0;
+                const progressPct = target > 0 ? Math.round((result.achieved / target) * 100) : 0;
+                return (
+                  <tr key={result.id} className="border-b border-gray-50 last:border-0">
+                    <td className="px-5 py-3">
+                      <p className="font-bold text-gray-900">{result.label}</p>
+                      <p className="text-xs text-gray-400">{data.settings.components.find((component) => component.id === result.id)?.description}</p>
+                    </td>
+                    <td className="px-5 py-3 text-gray-600">&ge; {formatMetric(result.metric, target)}</td>
+                    <td className="px-5 py-3 font-bold text-emerald-600">{formatMetric(result.metric, result.achieved)}</td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-24 overflow-hidden rounded-full bg-gray-100">
+                          <div className={`h-full rounded-full ${progressPct >= 100 ? "bg-emerald-500" : "bg-blue-500"}`} style={{ width: `${Math.min(100, progressPct)}%` }} />
+                        </div>
+                        <span className="text-xs font-bold text-gray-600">{progressPct}%</span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3">
+                      <p className="font-bold text-gray-900">{money(result.amount)}</p>
+                      {result.tierLabel && <p className="text-[10px] font-bold text-blue-600">{result.tierLabel}</p>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-100 px-5 py-4"><h3 className="text-sm font-bold text-gray-900">Bonus Payout History</h3></div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                  <th className="px-5 py-3">Month</th>
+                  <th className="px-5 py-3">Amount</th>
+                  <th className="px-5 py-3">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.history.length === 0 ? (
+                  <tr><td colSpan={3} className="px-5 py-8 text-center text-sm text-gray-400">No history yet.</td></tr>
+                ) : data.history.map((row) => (
+                  <tr key={row.monthStart} className="border-b border-gray-50 last:border-0">
+                    <td className="px-5 py-3 font-bold text-gray-900">{new Date(`${row.monthStart}T12:00:00`).toLocaleDateString("en-NG", { month: "long", year: "numeric" })}</td>
+                    <td className="px-5 py-3 font-bold text-gray-900">{money(row.totalAmount)}</td>
+                    <td className="px-5 py-3"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black ${row.status === "Paid" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>{row.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-5">
+          <h3 className="text-sm font-bold text-blue-900">How You Earn Bonuses</h3>
+          <div className="mt-3 space-y-3 text-xs font-medium leading-5 text-blue-900">
+            <div className="flex gap-2"><Target className="h-4 w-4 shrink-0 text-blue-600" /><span><strong>Conversion Bonuses</strong> - earn based on your ability to convert leads to orders and delivered orders.</span></div>
+            <div className="flex gap-2"><TrendingUp className="h-4 w-4 shrink-0 text-blue-600" /><span><strong>Value Bonuses</strong> - earn more when you increase average order value and upsell/cross-sell.</span></div>
+            <div className="flex gap-2"><Sparkles className="h-4 w-4 shrink-0 text-blue-600" /><span><strong>Activity Bonus</strong> - stay active, follow up quickly and keep your pipeline moving.</span></div>
+            <div className="flex gap-2"><Check className="h-4 w-4 shrink-0 text-blue-600" /><span><strong>Quality Bonus</strong> - maintain good delivery and reduce failed or cancelled orders.</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SalesCloserWorkspacePage({ section, products, assignees, currentUserId, saving, error, onSaveLead, onCancelAddLead, onAction, leads, leadsLoading, leadsError, onUpdateLeadStatus, onOpenOrder, onConvertLead, overview, overviewLoading, overviewError, followUps, followUpsLoading, followUpsError, orders, ordersLoading, ordersError, performance, performanceLoading, performanceError, bonus, bonusLoading, bonusError, canManageBonus, bonusActionPending, onSaveBonus, onMarkBonusPaid }: Props) {
   const [draft, setDraft] = useState<SalesLeadDraft>(() => defaultDraft(currentUserId));
   const [formError, setFormError] = useState("");
   const [showProductPicker, setShowProductPicker] = useState(false);
@@ -1244,14 +1432,16 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
     return <MyPerformanceSection data={performance} loading={performanceLoading} error={performanceError} onAction={onAction} />;
   }
 
+  if (section === "my-bonuses") {
+    return <MyBonusesSection data={bonus} loading={bonusLoading} error={bonusError} canManage={canManageBonus} actionPending={bonusActionPending} onSave={onSaveBonus} onMarkPaid={onMarkBonusPaid} />;
+  }
+
   if (section !== "add-lead") {
-    const label = section === "my-bonuses" ? "My Bonuses"
-      : section === "scripts-templates" ? "Scripts & Templates"
+    const label = section === "scripts-templates" ? "Scripts & Templates"
       : section === "products" ? "Products"
       : section === "report-issue" ? "Report an Issue"
       : "Sales Closer";
-    const icon = section === "my-bonuses" ? Wallet
-      : section === "scripts-templates" ? StickyNote
+    const icon = section === "scripts-templates" ? StickyNote
       : section === "products" ? Package
       : section === "report-issue" ? AlertTriangle
       : HelpCircle;

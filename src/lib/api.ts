@@ -2181,6 +2181,26 @@ export type SalesCloserPerformance = {
   summary: { leadsCaptured: number; ordersCreated: number; deliveredOrders: number; deliveredRevenue: number; aov: number; leadToOrderRate: number; leadToDeliveredRate: number; upsellRevenue: number; crossSellRevenue: number };
 };
 
+export type SalesCloserBonusTier = { id: string; label: string; minValue: number; amount: number };
+export type SalesCloserBonusComponent = {
+  id: string;
+  label: string;
+  description: string;
+  metric: "leadToOrderRate" | "leadToDeliveredRate" | "aov" | "upsellCrossSellRevenue" | "activityScore" | "deliveryRate";
+  tiers: SalesCloserBonusTier[];
+};
+export type SalesCloserBonusSettings = { currency: string; components: SalesCloserBonusComponent[]; updatedAt: string | null };
+export type SalesCloserBonusComponentResult = { id: string; label: string; metric: string; achieved: number; tierId: string | null; tierLabel: string | null; amount: number };
+export type SalesCloserBonusRecord = { id: string; monthStart: string; componentResults: SalesCloserBonusComponentResult[]; totalAmount: number; status: "Pending" | "Paid"; notes: string | null; paidAt: string | null };
+export type SalesCloserBonus = {
+  monthStart: string;
+  settings: SalesCloserBonusSettings;
+  record: SalesCloserBonusRecord | null;
+  preview: { componentResults: SalesCloserBonusComponentResult[]; totalAmount: number } | null;
+  summary: { totalEarnedThisMonth: number; totalPotential: number; bonusPaid: number; payoutPending: number };
+  history: Array<{ monthStart: string; totalAmount: number; status: "Pending" | "Paid"; paidAt: string | null }>;
+};
+
 export const salesLeadsApi = {
   list: (status?: string) => {
     const qs = status && status !== "all" ? `?status=${encodeURIComponent(status)}` : "";
@@ -2192,7 +2212,18 @@ export const salesLeadsApi = {
   overview: () => get<SalesCloserOverview>("/api/sales-leads/overview"),
   followUps: () => get<SalesCloserFollowUps>("/api/sales-leads/follow-ups"),
   orders: () => get<SalesCloserOrders>("/api/sales-leads/orders"),
-  performance: () => get<SalesCloserPerformance>("/api/sales-leads/performance")
+  performance: () => get<SalesCloserPerformance>("/api/sales-leads/performance"),
+  bonusSettings: () => get<{ settings: SalesCloserBonusSettings }>("/api/sales-leads/bonus-settings"),
+  updateBonusSettings: (body: Pick<SalesCloserBonusSettings, "currency" | "components">) => patch<{ settings: SalesCloserBonusSettings }>("/api/sales-leads/bonus-settings", body),
+  bonus: (monthStart?: string, closerId?: string) => {
+    const qs = new URLSearchParams();
+    if (monthStart) qs.set("monthStart", monthStart);
+    if (closerId) qs.set("closerId", closerId);
+    const suffix = qs.toString();
+    return get<SalesCloserBonus>(`/api/sales-leads/bonus${suffix ? `?${suffix}` : ""}`);
+  },
+  saveBonus: (body: { closerId: string; monthStart: string; notes?: string }) => put<{ id: string; totalAmount: number }>("/api/sales-leads/bonus", body),
+  markBonusPaid: (body: { closerId: string; monthStart: string }) => post<{ id: string; status: "Paid" }>("/api/sales-leads/bonus/mark-paid", body)
 };
 
 // ── Recovery templates: offers, call scripts, broadcast messages ──────────

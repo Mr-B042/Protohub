@@ -488,6 +488,299 @@ router.get("/performance", async (req, res) => {
   }
 });
 
+type BonusTier = { id: string; label: string; minValue: number; amount: number };
+type BonusComponent = { id: string; label: string; description: string; metric: string; tiers: BonusTier[] };
+
+const DEFAULT_BONUS_COMPONENTS: BonusComponent[] = [
+  { id: "lead_to_order", label: "Lead -> Order Conversion Bonus", description: "Earn for high order conversion rate", metric: "leadToOrderRate", tiers: [
+    { id: "tier1", label: "Tier 1", minValue: 20, amount: 10000 },
+    { id: "tier2", label: "Tier 2", minValue: 25, amount: 15000 },
+    { id: "tier3", label: "Tier 3", minValue: 30, amount: 20000 }
+  ] },
+  { id: "lead_to_delivered", label: "Lead -> Delivered Conversion Bonus", description: "Earn for delivered conversion rate", metric: "leadToDeliveredRate", tiers: [
+    { id: "tier1", label: "Tier 1", minValue: 14, amount: 10000 },
+    { id: "tier2", label: "Tier 2", minValue: 18, amount: 15000 },
+    { id: "tier3", label: "Tier 3", minValue: 22, amount: 20000 }
+  ] },
+  { id: "aov", label: "Average Order Value Bonus", description: "Earn for maintaining high AOV", metric: "aov", tiers: [
+    { id: "tier1", label: "Tier 1", minValue: 18000, amount: 7000 },
+    { id: "tier2", label: "Tier 2", minValue: 20000, amount: 10000 },
+    { id: "tier3", label: "Tier 3", minValue: 24000, amount: 15000 }
+  ] },
+  { id: "upsell_cross_sell", label: "Upsell & Cross-sell Bonus", description: "Earn for generating upsell & cross-sell revenue", metric: "upsellCrossSellRevenue", tiers: [
+    { id: "tier1", label: "Tier 1", minValue: 100000, amount: 10000 },
+    { id: "tier2", label: "Tier 2", minValue: 150000, amount: 20000 },
+    { id: "tier3", label: "Tier 3", minValue: 200000, amount: 30000 }
+  ] },
+  { id: "activity", label: "Activity Bonus", description: "Active follow-ups & consistent activity", metric: "activityScore", tiers: [
+    { id: "tier1", label: "Tier 1", minValue: 70, amount: 5000 },
+    { id: "tier2", label: "Tier 2", minValue: 80, amount: 10000 },
+    { id: "tier3", label: "Tier 3", minValue: 90, amount: 15000 }
+  ] },
+  { id: "delivery_quality", label: "Delivery Quality Bonus", description: "Based on delivered order rate", metric: "deliveryRate", tiers: [
+    { id: "tier1", label: "Tier 1", minValue: 50, amount: 5000 },
+    { id: "tier2", label: "Tier 2", minValue: 60, amount: 10000 },
+    { id: "tier3", label: "Tier 3", minValue: 70, amount: 15000 }
+  ] }
+];
+
+async function loadSalesCloserBonusSettings(orgId: string) {
+  const { data, error } = await supabase.from("sales_closer_bonus_settings").select("currency, components, updated_at").eq("org_id", orgId).maybeSingle();
+  if (error) throw error;
+  if (!data) return { currency: "NGN", components: DEFAULT_BONUS_COMPONENTS, updatedAt: null as string | null };
+  return { currency: data.currency as string, components: data.components as BonusComponent[], updatedAt: data.updated_at as string | null };
+}
+
+function achievedTier(tiers: BonusTier[], value: number): BonusTier | null {
+  let achieved: BonusTier | null = null;
+  for (const tier of [...tiers].sort((a, b) => a.minValue - b.minValue)) {
+    if (value >= tier.minValue) achieved = tier;
+  }
+  return achieved;
+}
+
+function requireBonusLeadership(role: string) {
+  if (!SUPERVISOR_ROLES.has(role)) {
+    throw Object.assign(new Error("Only Owner, Admin, or Manager can confirm a bonus."), { status: 403 });
+  }
+}
+
+// Every component metric a bonus tier can be evaluated against, for one
+// closer over one calendar month. Approximated where the schema has no
+// exact equivalent - activityScore is the closest honest proxy available
+// (leads with no activity beyond creation are excluded), not a fabricated
+// number.
+async function computeCloserMonthMetrics(orgId: string, closerId: string, monthStart: string) {
+  const [year, month] = monthStart.split("-").map(Number);
+  const nextMonth = month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, "0")}-01`;
+
+  const [{ data: leadRows, error: leadError }, { data: orderRows, error: orderError }] = await Promise.all([
+    supabase.from("sales_leads").select("status, created_at, last_activity_at, converted_order_id").eq("org_id", orgId).eq("assigned_closer_id", closerId),
+    supabase.from("orders").select("id, status, amount, created_at, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
+      .eq("org_id", orgId).eq("closed_by_closer_id", closerId)
+  ]);
+  if (leadError) throw leadError;
+  if (orderError) throw orderError;
+
+  const leads = (leadRows ?? []).filter((lead) => lead.created_at && lagosDateKey(lead.created_at) >= monthStart && lagosDateKey(lead.created_at) < nextMonth);
+  const orders = ((orderRows ?? []) as HeadOfSalesOrder[]).filter((order) => order.created_at && lagosDateKey(order.created_at) >= monthStart && lagosDateKey(order.created_at) < nextMonth);
+  const delivered = orders.filter((order) => order.status === "Delivered");
+  const revenue = delivered.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
+  const incremental = delivered.reduce((sum, order) => {
+    const { upsell, crossSell } = incrementalRevenueForOrder(order);
+    return sum + upsell + crossSell;
+  }, 0);
+  const pct = (part: number, whole: number) => whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0;
+  const activeLeads = leads.filter((lead) => lead.last_activity_at && lead.created_at && lead.last_activity_at !== lead.created_at);
+  const ordersCreatedFromLeads = leads.filter((lead) => Boolean(lead.converted_order_id)).length;
+  const deliveredOrderIds = new Set(delivered.map((order) => order.id));
+  const deliveredFromLeads = leads.filter((lead) => lead.converted_order_id && deliveredOrderIds.has(lead.converted_order_id)).length;
+
+  return {
+    leadToOrderRate: pct(ordersCreatedFromLeads, leads.length),
+    leadToDeliveredRate: pct(deliveredFromLeads, leads.length),
+    aov: delivered.length > 0 ? Math.round(revenue / delivered.length) : 0,
+    upsellCrossSellRevenue: Math.round(incremental),
+    activityScore: pct(activeLeads.length, leads.length),
+    deliveryRate: pct(delivered.length, orders.length)
+  };
+}
+
+function evaluateCloserBonus(components: BonusComponent[], metrics: Record<string, number>) {
+  const results = components.map((component) => {
+    const achieved = Number(metrics[component.metric] ?? 0);
+    const tier = achievedTier(component.tiers, achieved);
+    return { id: component.id, label: component.label, metric: component.metric, achieved, tierId: tier?.id ?? null, tierLabel: tier?.label ?? null, amount: tier?.amount ?? 0 };
+  });
+  return { results, totalAmount: results.reduce((sum, item) => sum + item.amount, 0) };
+}
+
+router.get("/bonus-settings", async (req, res) => {
+  try {
+    const settings = await loadSalesCloserBonusSettings(req.user!.orgId);
+    res.json({ settings });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load bonus settings." });
+  }
+});
+
+const BonusTierSchema = z.object({ id: z.string().min(1), label: z.string().min(1), minValue: z.number().min(0), amount: z.number().min(0) });
+const BonusComponentSchema = z.object({ id: z.string().min(1), label: z.string().min(1), description: z.string().max(300), metric: z.enum(["leadToOrderRate", "leadToDeliveredRate", "aov", "upsellCrossSellRevenue", "activityScore", "deliveryRate"]), tiers: z.array(BonusTierSchema).min(1) });
+const UpdateBonusSettingsSchema = z.object({ currency: z.enum(["NGN", "GHS", "USD", "GBP", "EUR"]).optional(), components: z.array(BonusComponentSchema).min(1) });
+
+router.patch("/bonus-settings", requireRole("Owner"), async (req, res) => {
+  const parsed = UpdateBonusSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
+    return;
+  }
+  try {
+    const orgId = req.user!.orgId;
+    const { data: existing, error: existingError } = await supabase.from("sales_closer_bonus_settings").select("id").eq("org_id", orgId).maybeSingle();
+    if (existingError) throw existingError;
+    const row = { currency: parsed.data.currency ?? "NGN", components: parsed.data.components, updated_by: req.user!.id, updated_at: new Date().toISOString() };
+    if (existing) {
+      const { error } = await supabase.from("sales_closer_bonus_settings").update(row).eq("id", existing.id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from("sales_closer_bonus_settings").insert({ org_id: orgId, ...row });
+      if (error) throw error;
+    }
+    res.json({ settings: await loadSalesCloserBonusSettings(orgId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not save bonus settings." });
+  }
+});
+
+const MonthQuerySchema = z.object({ monthStart: z.string().regex(/^\d{4}-\d{2}-01$/).optional(), closerId: z.string().uuid().optional() });
+
+router.get("/bonus", async (req, res) => {
+  const parsed = MonthQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid month." });
+    return;
+  }
+  try {
+    const scope = scopeOf(req);
+    const orgId = req.user!.orgId;
+    // A closer can only ever see her own bonus (never chooses closerId);
+    // leadership may pass closerId to review someone else's.
+    const closerId = SUPERVISOR_ROLES.has(scope.role) && parsed.data.closerId ? parsed.data.closerId : scope.id;
+    const monthStart = parsed.data.monthStart ?? `${lagosDateKey().slice(0, 7)}-01`;
+    const settings = await loadSalesCloserBonusSettings(orgId);
+
+    const { data: recordRow, error: recordError } = await supabase
+      .from("sales_closer_bonus_monthly_records")
+      .select("id, month_start, component_results, total_amount, status, notes, paid_at")
+      .eq("org_id", orgId).eq("closer_id", closerId).eq("month_start", monthStart)
+      .maybeSingle();
+    if (recordError) throw recordError;
+
+    const record = recordRow ? {
+      id: recordRow.id, monthStart: recordRow.month_start, componentResults: recordRow.component_results,
+      totalAmount: Number(recordRow.total_amount), status: recordRow.status, notes: recordRow.notes, paidAt: recordRow.paid_at
+    } : null;
+
+    let preview: { componentResults: ReturnType<typeof evaluateCloserBonus>["results"]; totalAmount: number } | null = null;
+    if (!record) {
+      const metrics = await computeCloserMonthMetrics(orgId, closerId, monthStart);
+      const evaluation = evaluateCloserBonus(settings.components, metrics);
+      preview = { componentResults: evaluation.results, totalAmount: evaluation.totalAmount };
+    }
+
+    const { data: historyRows, error: historyError } = await supabase
+      .from("sales_closer_bonus_monthly_records")
+      .select("month_start, total_amount, status, paid_at")
+      .eq("org_id", orgId).eq("closer_id", closerId)
+      .order("month_start", { ascending: false })
+      .limit(12);
+    if (historyError) throw historyError;
+
+    const { data: allRecords, error: allError } = await supabase.from("sales_closer_bonus_monthly_records").select("total_amount, status").eq("org_id", orgId).eq("closer_id", closerId);
+    if (allError) throw allError;
+    const paidAmounts = (allRecords ?? []).filter((row) => row.status === "Paid").map((row) => Number(row.total_amount));
+    const pendingAmount = (allRecords ?? []).filter((row) => row.status === "Pending").reduce((sum, row) => sum + Number(row.total_amount), 0);
+
+    res.json({
+      monthStart,
+      settings,
+      record,
+      preview,
+      summary: {
+        totalEarnedThisMonth: record?.status === "Paid" ? record.totalAmount : (preview?.totalAmount ?? 0),
+        totalPotential: preview?.totalAmount ?? record?.totalAmount ?? 0,
+        bonusPaid: paidAmounts.reduce((sum, amount) => sum + amount, 0),
+        payoutPending: pendingAmount
+      },
+      history: (historyRows ?? []).map((row) => ({ monthStart: row.month_start, totalAmount: Number(row.total_amount), status: row.status, paidAt: row.paid_at }))
+    });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load bonus." });
+  }
+});
+
+const SaveBonusSchema = z.object({ closerId: z.string().uuid(), monthStart: z.string().regex(/^\d{4}-\d{2}-01$/), notes: z.string().max(2000).optional() });
+
+router.put("/bonus", async (req, res) => {
+  const parsed = SaveBonusSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
+    return;
+  }
+  try {
+    // Real role, not scopeOf's spied one: Owner reaches this workspace by
+    // spying AS a specific closer to confirm her bonus (there is no other
+    // entry point for leadership), so the spied role ("Sales Closer") must
+    // not be what gates this leadership-only action.
+    requireBonusLeadership(req.user!.role);
+    const orgId = req.user!.orgId;
+    const { data: existing, error: existingError } = await supabase
+      .from("sales_closer_bonus_monthly_records").select("id, status")
+      .eq("org_id", orgId).eq("closer_id", parsed.data.closerId).eq("month_start", parsed.data.monthStart)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing?.status === "Paid") {
+      res.status(409).json({ error: "This month's bonus is already marked Paid and locked." });
+      return;
+    }
+    const settings = await loadSalesCloserBonusSettings(orgId);
+    const metrics = await computeCloserMonthMetrics(orgId, parsed.data.closerId, parsed.data.monthStart);
+    const evaluation = evaluateCloserBonus(settings.components, metrics);
+    const row = {
+      org_id: orgId, closer_id: parsed.data.closerId, month_start: parsed.data.monthStart,
+      component_results: evaluation.results, total_amount: evaluation.totalAmount,
+      notes: parsed.data.notes ?? null, updated_at: new Date().toISOString()
+    };
+    if (existing) {
+      const { error } = await supabase.from("sales_closer_bonus_monthly_records").update(row).eq("id", existing.id);
+      if (error) throw error;
+      res.json({ id: existing.id, totalAmount: evaluation.totalAmount });
+    } else {
+      const { data: inserted, error } = await supabase.from("sales_closer_bonus_monthly_records").insert({ ...row, created_by: req.user!.id }).select("id").single();
+      if (error) throw error;
+      res.status(201).json({ id: inserted.id, totalAmount: evaluation.totalAmount });
+    }
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not save the bonus." });
+  }
+});
+
+const MarkBonusPaidSchema = z.object({ closerId: z.string().uuid(), monthStart: z.string().regex(/^\d{4}-\d{2}-01$/) });
+
+router.post("/bonus/mark-paid", async (req, res) => {
+  const parsed = MarkBonusPaidSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: humanFieldErrors(parsed.error) });
+    return;
+  }
+  try {
+    // Real role, not scopeOf's spied one: Owner reaches this workspace by
+    // spying AS a specific closer to confirm her bonus (there is no other
+    // entry point for leadership), so the spied role ("Sales Closer") must
+    // not be what gates this leadership-only action.
+    requireBonusLeadership(req.user!.role);
+    const orgId = req.user!.orgId;
+    const { data: existing, error: existingError } = await supabase
+      .from("sales_closer_bonus_monthly_records").select("id, status")
+      .eq("org_id", orgId).eq("closer_id", parsed.data.closerId).eq("month_start", parsed.data.monthStart)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) {
+      res.status(404).json({ error: "Save this month's bonus before marking it Paid." });
+      return;
+    }
+    if (existing.status === "Paid") {
+      res.json({ id: existing.id, status: "Paid" });
+      return;
+    }
+    const { error } = await supabase.from("sales_closer_bonus_monthly_records").update({ status: "Paid", paid_at: new Date().toISOString(), paid_by: req.user!.id }).eq("id", existing.id);
+    if (error) throw error;
+    res.json({ id: existing.id, status: "Paid" });
+  } catch (error: any) {
+    res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not mark this bonus as paid." });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const scope = scopeOf(req);
