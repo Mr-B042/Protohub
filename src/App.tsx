@@ -37,6 +37,8 @@ import {
   Headphones,
   History,
   HandCoins,
+  Home,
+  Inbox,
   Info,
   KeyRound,
   LogOut,
@@ -103,6 +105,8 @@ import {
   Wifi,
   WifiOff,
   WalletCards,
+  Wallet,
+  StickyNote,
   Smartphone,
   Laptop,
   Apple,
@@ -139,7 +143,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, headOfSalesApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, headOfSalesApi, salesLeadsApi,
   setApiSpyUserId,
   setApiPreviewReadOnly,
   PreviewReadOnlyError
@@ -195,6 +199,11 @@ import {
   InventoryLogisticsOperationsPage,
   type InventoryOperationsAction,
 } from "./pages/InventoryLogisticsOperationsPage";
+import {
+  SalesCloserWorkspacePage,
+  type SalesCloserSection,
+  type SalesLeadDraft,
+} from "./pages/SalesCloserWorkspacePage";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
 // These screens monitor trends rather than a single live cart. They load the
@@ -227,7 +236,7 @@ type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" |
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | null;
-type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp";
+type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -376,6 +385,31 @@ const INVENTORY_OPERATIONS_NAV: InventoryOperationsNavGroup[] = [
   { label: "Reports & Settings", items: [
     { action: "reports", label: "Reports", icon: BarChart3 },
     { action: "settings", label: "Settings", icon: Settings },
+  ] },
+];
+
+type SalesCloserNavGroup = {
+  label?: string;
+  items: Array<{ action: SalesCloserSection; label: string; icon: typeof LayoutPanelTop }>;
+};
+
+const SALES_CLOSER_NAV: SalesCloserNavGroup[] = [
+  { items: [
+    { action: "overview", label: "Overview", icon: Home },
+    { action: "leads", label: "Leads / Inbox", icon: Inbox },
+    { action: "add-lead", label: "Add Lead", icon: UserPlus },
+    { action: "follow-ups", label: "Follow-ups", icon: Clock },
+    { action: "orders-created", label: "Orders Created", icon: ShoppingCart },
+    { action: "my-performance", label: "My Performance", icon: TrendingUp },
+    { action: "my-bonuses", label: "My Bonuses", icon: Wallet },
+  ] },
+  { label: "Tools", items: [
+    { action: "scripts-templates", label: "Scripts & Templates", icon: StickyNote },
+    { action: "products", label: "Products", icon: Package },
+  ] },
+  { label: "Support", items: [
+    { action: "help-center", label: "Help Center", icon: HelpCircle },
+    { action: "report-issue", label: "Report an Issue", icon: AlertTriangle },
   ] },
 ];
 
@@ -2647,10 +2681,8 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Delivery Agent": [
     "My Deliveries", "Settings"
   ],
-  // Placeholder until the Sales Closer Workspace page ships - keeps this a
-  // valid, non-crashing role in the meantime (Stage 0 of the staged build).
   "Sales Closer": [
-    "Notifications", "Settings", "WhatsApp"
+    "Sales Closer Workspace", "Notifications", "Settings", "WhatsApp"
   ]
 };
 
@@ -2665,8 +2697,7 @@ const defaultLandingByRole: Record<EditableUserRole, AccessiblePage> = {
   "Viewer":            "Orders",
   "Recovery Rep":      "Recovery Rep Dashboard",
   "Delivery Agent":    "My Deliveries",
-  // Placeholder until the Sales Closer Workspace page ships (Stage 0).
-  "Sales Closer":      "Notifications"
+  "Sales Closer":      "Sales Closer Workspace"
 };
 
 const dashboardHashByPage: Record<ActivePage, string> = {
@@ -2705,7 +2736,8 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Embed Form": "#/dashboard/admin/embed",
   Notifications: "#/dashboard/admin/notifications",
   Settings: "#/dashboard/admin/settings",
-  WhatsApp: "#/dashboard/admin/whatsapp"
+  WhatsApp: "#/dashboard/admin/whatsapp",
+  "Sales Closer Workspace": "#/dashboard/sales-closer"
 };
 
 const dashboardHashForRolePage = (page: ActivePage, role: EditableUserRole): string => {
@@ -8425,6 +8457,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     return stored === "pricing" || stored === "packages" ? "dashboard" : stored;
   });
   const [inventoryOperationsSection, setInventoryOperationsSection] = useState<InventoryOperationsAction>("dashboard");
+  const [salesCloserSection, setSalesCloserSection] = useState<SalesCloserSection>("overview");
+  const [salesLeadSaving, setSalesLeadSaving] = useState(false);
+  const [salesLeadError, setSalesLeadError] = useState("");
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
   const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>(() =>
     readPref("protohub.inventory.expandedSets", {} as Record<string, boolean>, (raw) => {
@@ -40649,6 +40684,48 @@ ${waybillLineItems(w).length > 1
         return;
     }
   };
+  const handleSalesCloserAction = (section: SalesCloserSection) => {
+    setSalesCloserSection(section);
+    setSalesLeadError("");
+    setActivePage("Sales Closer Workspace");
+    setModal(null);
+    syncHashRoute(`#/dashboard/sales-closer${section === "overview" ? "" : `/${section}`}`);
+  };
+  const saveSalesLead = async (draft: SalesLeadDraft) => {
+    setSalesLeadSaving(true);
+    setSalesLeadError("");
+    try {
+      const { iso: followUpAt } = combinePlannedMoment(draft.followUpDate, draft.followUpTime);
+      await salesLeadsApi.create({
+        fullName: draft.fullName,
+        phone: draft.phone,
+        alternatePhone: draft.alternatePhone,
+        whatsappNumber: draft.whatsappNumber,
+        email: draft.email,
+        preferredContactMethod: draft.preferredContactMethod,
+        state: draft.state,
+        city: draft.city,
+        address: draft.address,
+        source: draft.source,
+        campaign: draft.campaign,
+        interestedProductIds: draft.interestedProductIds,
+        packageId: draft.packageId || undefined,
+        notes: draft.notes,
+        status: draft.status,
+        tags: draft.tags,
+        priority: draft.priority,
+        assignedCloserId: draft.assignedCloserId,
+        followUpAt
+      });
+      showToast("Lead saved.");
+      handleSalesCloserAction("leads");
+    } catch (error: any) {
+      setSalesLeadError(error?.message ?? "Could not save this lead.");
+      throw error;
+    } finally {
+      setSalesLeadSaving(false);
+    }
+  };
   const openInventoryHistoryWithFilters = (filters: {
     productId?: string;
     agentId?: string;
@@ -66011,6 +66088,9 @@ ${waybillLineItems(w).length > 1
             const showHeadOfSalesSubnav = item.label === "Head of Sales Rep"
               && activePage === "Head of Sales Rep"
               && !collapsed;
+            const showSalesCloserSubnav = item.label === "Sales Closer Workspace"
+              && activePage === "Sales Closer Workspace"
+              && !collapsed;
             return (
               <Fragment key={item.label}>
                 <button
@@ -66114,6 +66194,35 @@ ${waybillLineItems(w).length > 1
                         </button>
                       );
                     })}
+                  </div>
+                )}
+                {showSalesCloserSubnav && (
+                  <div className="ml-4 mt-1 mb-2 pl-3.5 border-l border-white/10 space-y-3">
+                    {SALES_CLOSER_NAV.map((group, groupIndex) => (
+                      <div key={group.label ?? `sales-closer-${groupIndex}`} className="space-y-1">
+                        {group.label && (
+                          <p className="px-3 pt-1 text-[9px] font-bold uppercase text-gray-500">{group.label}</p>
+                        )}
+                        {group.items.map((sub) => {
+                          const SubIcon = sub.icon;
+                          const subActive = salesCloserSection === sub.action;
+                          return (
+                            <button
+                              key={`${groupIndex}-${sub.action}`}
+                              type="button"
+                              onClick={() => {
+                                handleSalesCloserAction(sub.action);
+                                if (window.matchMedia("(max-width: 1024px)").matches) setMobileMenuOpen(false);
+                              }}
+                              className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-[12px] transition-colors ${subActive ? "bg-[#1F8FE0]/20 text-[#39a9f5] font-bold" : "text-gray-400 font-medium hover:bg-white/5 hover:text-white"}`}
+                            >
+                              <SubIcon className="w-4 h-4 shrink-0" />
+                              <span className="flex-1 text-left leading-4">{sub.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))}
                   </div>
                 )}
                 {showPdaSubnav && (
@@ -88225,6 +88334,23 @@ ${waybillLineItems(w).length > 1
               onEditAgent={openAdminAgentEditRoute}
               onViewAgentHistory={(agentId) => openInventoryHistoryWithFilters({ agentId })}
               onAction={handleInventoryOperationsAction}
+            />
+          ) : activePage === "Sales Closer Workspace" ? (
+            <SalesCloserWorkspacePage
+              section={salesCloserSection}
+              products={readyEmbedProducts.map((product) => ({
+                id: product.id,
+                name: product.name,
+                active: product.active,
+                packages: product.packages.filter((pkg) => pkg.active).map((pkg) => ({ id: pkg.id, name: pkg.name }))
+              }))}
+              assignees={users.filter((user) => user.role === "Sales Closer" && user.active).map((user) => ({ id: user.id, name: user.name }))}
+              currentUserId={currentManagedUser?.id ?? ""}
+              saving={salesLeadSaving}
+              error={salesLeadError}
+              onSaveLead={saveSalesLead}
+              onCancelAddLead={() => handleSalesCloserAction("overview")}
+              onAction={handleSalesCloserAction}
             />
           ) : activePage === "Inventory" ? (
             inventoryView === "combos" ? (
