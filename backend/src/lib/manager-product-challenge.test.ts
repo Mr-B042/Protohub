@@ -40,7 +40,7 @@ test("uses elapsed time to distinguish at-risk and behind challenges", () => {
   assert.equal(behind.computedStatus, "Behind");
 });
 
-test("splits a monthly challenge into four milestone windows without losing units or reward", () => {
+test("splits a monthly challenge into four milestone windows whose cumulative targets reach the full total", () => {
   const result = buildChallengeMilestones({
     cadence: "monthly",
     startDate: "2026-08-01",
@@ -60,32 +60,50 @@ test("splits a monthly challenge into four milestone windows without losing unit
     ["2026-08-15", "2026-08-21"],
     ["2026-08-22", "2026-08-31"]
   ]);
-  assert.equal(result.milestones.reduce((sum, item) => sum + item.targetUnits, 0), 1_003);
+  assert.deepEqual(result.milestones.map((item) => item.targetUnits), [251, 502, 753, 1_003]);
   assert.equal(result.milestones.reduce((sum, item) => sum + item.rewardAmount, 0), 100_001);
 });
 
-test("earns each milestone independently and does not carry excess units into another week", () => {
+test("lets a later week's surplus cover an earlier week's shortfall instead of losing that milestone forever", () => {
   const result = buildChallengeMilestones({
     cadence: "monthly",
     startDate: "2026-08-01",
     endDate: "2026-08-31",
-    targetUnits: 1_000,
-    rewardAmount: 100_000,
+    targetUnits: 200,
+    rewardAmount: 5_000,
     milestoneMode: "weekly",
-    milestoneDistribution: "custom",
-    milestoneTargets: [250, 250, 250, 250],
+    milestoneDistribution: "even",
     status: "active",
-    today: "2026-08-23",
+    today: "2026-08-14",
     orders: [
-      { dateKey: "2026-08-03", units: 300 },
-      { dateKey: "2026-08-10", units: 260 },
-      { dateKey: "2026-08-20", units: 150 },
-      { dateKey: "2026-08-23", units: 100 }
+      { dateKey: "2026-08-03", units: 47 },
+      { dateKey: "2026-08-12", units: 53 }
     ]
   });
-  assert.deepEqual(result.milestones.map((item) => item.status), ["Earned", "Earned", "Missed", "In Progress"]);
-  assert.equal(result.earnedRewardAmount, 50_000);
-  assert.equal(result.milestones[3].progressUnits, 100);
+  assert.deepEqual(result.milestones.map((item) => item.status), ["Earned", "Earned", "Upcoming", "Upcoming"]);
+  assert.equal(result.earnedRewardAmount, 2_500);
+});
+
+test("only marks an unmet checkpoint as missed once the whole challenge deadline has passed, not each week in isolation", () => {
+  const result = buildChallengeMilestones({
+    cadence: "monthly",
+    startDate: "2026-08-01",
+    endDate: "2026-08-31",
+    targetUnits: 200,
+    rewardAmount: 5_000,
+    milestoneMode: "weekly",
+    milestoneDistribution: "even",
+    status: "active",
+    today: "2026-09-01",
+    orders: [
+      { dateKey: "2026-08-03", units: 47 },
+      { dateKey: "2026-08-12", units: 53 },
+      { dateKey: "2026-08-18", units: 40 },
+      { dateKey: "2026-08-25", units: 40 }
+    ]
+  });
+  assert.deepEqual(result.milestones.map((item) => item.status), ["Earned", "Earned", "Earned", "Missed"]);
+  assert.equal(result.earnedRewardAmount, 3_750);
 });
 
 test("whole-number target distribution always reconciles to its parent target", () => {
