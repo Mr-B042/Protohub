@@ -695,7 +695,7 @@ type SmsInboundMessage = {
 type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
 type CreateOrderContext = "admin" | "rep";
 type DateRange = { start: string; end: string };
-type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent";
+type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent" | "Sales Closer";
 type UserPermission =
   | "create_orders" | "edit_orders" | "delete_orders" | "change_order_status" | "reassign_orders"
   | "manage_inventory" | "manage_products"
@@ -2268,7 +2268,7 @@ const financeLensToneClasses: Record<FinanceLens, string> = {
 const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Failed Delivery", "Salary", "Clearing & Shipping", "Waybill", "Airtime & Data", "Stock Loss", "Other"];
 const expenseFilters: ExpenseFilter[] = ["All Types", ...expenseTypes];
 const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent"];
-const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent"];
+const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent", "Sales Closer"];
 const userStatuses: UserStatus[] = ["All Status", "Active", "Inactive"];
 const roundRobinTabs: RoundRobinTab[] = ["Active Sequence", "Temporarily Excluded", "Dedicated Products"];
 const embedTabs: EmbedTab[] = ["Create Order Form", "Extra Offers", "Generate", "Meta & Ads", "Links & Tracking"];
@@ -2571,6 +2571,8 @@ const defaultPermsByRole: Record<EditableUserRole, UserPermission[]> = {
   // An outside individual, not staff. They update only their own deliveries
   // through the portal endpoints, so they hold no company permissions at all.
   "Delivery Agent":    [],
+  // Converts her own leads into orders through the normal create-order flow.
+  "Sales Closer":      ["create_orders"],
 };
 
 const defaultPermissionsForRole = (role: EditableUserRole | undefined): UserPermission[] =>
@@ -2644,6 +2646,11 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   // their own portal and nothing else - no customer list, no company data.
   "Delivery Agent": [
     "My Deliveries", "Settings"
+  ],
+  // Placeholder until the Sales Closer Workspace page ships - keeps this a
+  // valid, non-crashing role in the meantime (Stage 0 of the staged build).
+  "Sales Closer": [
+    "Notifications", "Settings", "WhatsApp"
   ]
 };
 
@@ -2657,7 +2664,9 @@ const defaultLandingByRole: Record<EditableUserRole, AccessiblePage> = {
   "Marketer":          "Marketing",
   "Viewer":            "Orders",
   "Recovery Rep":      "Recovery Rep Dashboard",
-  "Delivery Agent":    "My Deliveries"
+  "Delivery Agent":    "My Deliveries",
+  // Placeholder until the Sales Closer Workspace page ships (Stage 0).
+  "Sales Closer":      "Notifications"
 };
 
 const dashboardHashByPage: Record<ActivePage, string> = {
