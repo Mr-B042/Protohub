@@ -2152,6 +2152,26 @@ export type SalesCloserFollowUps = {
   rows: SalesCloserFollowUpRow[];
 };
 
+export type SalesCloserOrderKpi = { value: number; deltaVsLastMonth: number };
+export type SalesCloserOrderRow = {
+  id: string;
+  customer: string;
+  productName: string;
+  packageName: string;
+  amount: number;
+  currency: string;
+  status: string;
+  createdAt: string;
+  closedByCloserName: string;
+  deliveredDate: string | null;
+};
+export type SalesCloserOrders = {
+  kpis: { ordersCreated: SalesCloserOrderKpi; deliveredOrders: SalesCloserOrderKpi; deliveredRevenue: SalesCloserOrderKpi; aov: SalesCloserOrderKpi; deliveryRate: SalesCloserOrderKpi };
+  orders: SalesCloserOrderRow[];
+  conversionSummaryThisMonth: { leadsCaptured: number; ordersCreated: number; deliveredOrders: number; leadToOrderRate: number; leadToDeliveredRate: number };
+  topProducts: Array<{ productName: string; orders: number; revenue: number }>;
+};
+
 export const salesLeadsApi = {
   list: (status?: string) => {
     const qs = status && status !== "all" ? `?status=${encodeURIComponent(status)}` : "";
@@ -2161,7 +2181,8 @@ export const salesLeadsApi = {
   create: (body: SalesLeadInput) => post<SalesLead>("/api/sales-leads", body),
   update: (id: string, body: SalesLeadInput) => patch<SalesLead>(`/api/sales-leads/${encodeURIComponent(id)}`, body),
   overview: () => get<SalesCloserOverview>("/api/sales-leads/overview"),
-  followUps: () => get<SalesCloserFollowUps>("/api/sales-leads/follow-ups")
+  followUps: () => get<SalesCloserFollowUps>("/api/sales-leads/follow-ups"),
+  orders: () => get<SalesCloserOrders>("/api/sales-leads/orders")
 };
 
 // ── Recovery templates: offers, call scripts, broadcast messages ──────────

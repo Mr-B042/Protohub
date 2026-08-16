@@ -149,7 +149,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -8475,6 +8475,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [salesFollowUps, setSalesFollowUps] = useState<SalesCloserFollowUps | null>(null);
   const [salesFollowUpsLoading, setSalesFollowUpsLoading] = useState(false);
   const [salesFollowUpsError, setSalesFollowUpsError] = useState("");
+  const [salesOrders, setSalesOrders] = useState<SalesCloserOrders | null>(null);
+  const [salesOrdersLoading, setSalesOrdersLoading] = useState(false);
+  const [salesOrdersError, setSalesOrdersError] = useState("");
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
   const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>(() =>
     readPref("protohub.inventory.expandedSets", {} as Record<string, boolean>, (raw) => {
@@ -40861,6 +40864,22 @@ ${waybillLineItems(w).length > 1
       void loadSalesFollowUps();
     }
   }, [activePage, salesCloserSection, loadSalesFollowUps]);
+  const loadSalesOrders = useCallback(async () => {
+    setSalesOrdersLoading(true);
+    setSalesOrdersError("");
+    try {
+      setSalesOrders(await salesLeadsApi.orders());
+    } catch (error: any) {
+      setSalesOrdersError(error?.message ?? "Could not load orders.");
+    } finally {
+      setSalesOrdersLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (activePage === "Sales Closer Workspace" && salesCloserSection === "orders-created") {
+      void loadSalesOrders();
+    }
+  }, [activePage, salesCloserSection, loadSalesOrders]);
   const openInventoryHistoryWithFilters = (filters: {
     productId?: string;
     agentId?: string;
@@ -88519,6 +88538,9 @@ ${waybillLineItems(w).length > 1
                 followUps={salesFollowUps}
                 followUpsLoading={salesFollowUpsLoading}
                 followUpsError={salesFollowUpsError}
+                orders={salesOrders}
+                ordersLoading={salesOrdersLoading}
+                ordersError={salesOrdersError}
               />
             );
           })() : activePage === "Inventory" ? (
