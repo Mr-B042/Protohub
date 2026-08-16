@@ -732,7 +732,11 @@ const OrderSchema = z.object({
   quantity:       z.number().int().min(1).default(1),
   amount:         z.number().min(0),
   currency:       z.enum(["NGN", "USD", "GBP"]).default("NGN"),
-  source:         z.enum(["TikTok", "Facebook", "WhatsApp", "Website", "Direct"]).optional(),
+  // Matches the frontend's full OrderSource union (orderSources, App.tsx) -
+  // the manual Create Order form already offers Instagram/Messenger/Audience
+  // Network/Threads, so validation must accept them too rather than 400
+  // on a source picked from that same dropdown.
+  source:         z.enum(["TikTok", "Facebook", "Instagram", "Messenger", "Audience Network", "Threads", "WhatsApp", "Website", "Direct"]).optional(),
   sourceCartId:   z.string().min(1).max(80).regex(/^[A-Za-z0-9\-_]+$/, "Cart ID must be alphanumeric (hyphens and underscores allowed)").optional(),
   location:       z.string().optional(),
   assignedRepId:  z.string().uuid().optional(),
@@ -751,10 +755,15 @@ const OrderSchema = z.object({
   date:           z.string().optional(),
   response:       z.string().optional(),
   notes:          z.array(TimelineNoteSchema).max(200).optional(),
-  timelineNotes:  z.array(TimelineNoteSchema).max(200).optional()
+  timelineNotes:  z.array(TimelineNoteSchema).max(200).optional(),
+  // Permanent attribution for a Sales Closer's Convert to Order - unlike
+  // assigned_rep_id (which gets reassigned for delivery handoffs), this
+  // never changes after creation. See migration 220.
+  closedByCloserId:   z.string().uuid().optional(),
+  closedByCloserName: z.string().max(160).optional()
 });
 
-router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
+router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep", "Sales Closer"), async (req, res) => {
   const parsed = OrderSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: humanFieldErrors(parsed.error) });
@@ -920,7 +929,9 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
     notes:           legacyNotes,
     date:            d.date,
     response:        d.response,
-    status:          "New"
+    status:          "New",
+    closed_by_closer_id:   d.closedByCloserId ?? null,
+    closed_by_closer_name: d.closedByCloserName ?? null
   };
   const legacyInsert = {
     ...baseInsert

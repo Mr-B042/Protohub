@@ -729,7 +729,7 @@ type SmsInboundMessage = {
   metadata?: Record<string, unknown>;
 };
 type RepOrderStatusTab = "All Orders" | "Pending" | "Confirmed" | "Follow-up";
-type CreateOrderContext = "admin" | "rep";
+type CreateOrderContext = "admin" | "rep" | "closer";
 type DateRange = { start: string; end: string };
 type EditableUserRole = "Owner" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent" | "Sales Closer";
 type UserPermission =
@@ -1222,6 +1222,10 @@ type TrackedOrder = {
   assignedRepId?: string;
   assignedByUserId?: string;
   assignedByNameSnapshot?: string;
+  // Permanent Sales Closer attribution (migration 220) - unlike
+  // assignedRepId, this never changes after Convert to Order creates it.
+  closedByCloserId?: string;
+  closedByCloserName?: string;
   agentId?: string;
   agentLocationId?: string | null;
   agentLocationNameSnapshot?: string | null;
@@ -11849,6 +11853,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [createOrderSource, setCreateOrderSource] = useState<Exclude<OrderSource, "All Sources">>("Website");
   const [createOrderRepId, setCreateOrderRepId] = useState("auto");
   const [createOrderContext, setCreateOrderContext] = useState<CreateOrderContext>("admin");
+  const [convertingLead, setConvertingLead] = useState<SalesLead | null>(null);
   const [createOrderAgentId, setCreateOrderAgentId] = useState("");
   const [createOrderScheduleEnabled, setCreateOrderScheduleEnabled] = useState(false);
   const [reassignRepId, setReassignRepId] = useState("");
@@ -35396,6 +35401,47 @@ ${waybillLineItems(w).length > 1
     setModal("createOrder");
   };
 
+  // Lead sources map 1:1 onto real OrderSource values except "phone",
+  // "referral" and "other" - those fall back to "Direct" since order
+  // creation has no equivalent bucket for them.
+  const orderSourceForLeadSource = (source: SalesLead["source"]): Exclude<OrderSource, "All Sources"> => {
+    if (source === "whatsapp") return "WhatsApp";
+    if (source === "instagram") return "Instagram";
+    if (source === "tiktok") return "TikTok";
+    if (source === "facebook") return "Facebook";
+    if (source === "website") return "Website";
+    return "Direct";
+  };
+
+  // "Don't make her re-enter the customer" - pre-fills the same create-order
+  // form Convert to Order shares with the admin/rep flows, from a lead's own
+  // data. createManualOrder writes the linkage back onto the lead once the
+  // order is actually created.
+  const openCloserConvertLeadModal = (lead: SalesLead) => {
+    setCreateOrderContext("closer");
+    resetCreateOrderForm();
+    setConvertingLead(lead);
+    setCreateOrderCustomer(lead.fullName);
+    setCreateOrderPhone(lead.phone);
+    setCreateOrderWhatsapp(lead.whatsappNumber || lead.phone);
+    setCreateOrderEmail(lead.email);
+    setCreateOrderAddress(lead.address);
+    setCreateOrderCity(lead.city);
+    setCreateOrderState(lead.state);
+    setCreateOrderSource(orderSourceForLeadSource(lead.source));
+    setCreateOrderRepId(currentManagedUser?.id ?? "auto");
+    const firstProductId = lead.interestedProductIds[0];
+    if (firstProductId) {
+      setCreateOrderProductId(firstProductId);
+      const product = products.find((item) => item.id === firstProductId);
+      const packageMatch = lead.packageId ? product?.packages.find((pkg) => pkg.id === lead.packageId) : undefined;
+      const chosenPackage = packageMatch ?? (product ? activeProductPackages(product)[0] : undefined);
+      setCreateOrderPackageId(chosenPackage?.id ?? "");
+      setCreateOrderQuantity(String(chosenPackage?.quantity ?? 1));
+    }
+    setModal("createOrder");
+  };
+
   const createManualOrder = async () => {
     const product = products.find((item) => item.id === createOrderProductId);
     if (!product || !createOrderCustomer.trim() || !createOrderPhone.trim()) {
@@ -35445,9 +35491,14 @@ ${waybillLineItems(w).length > 1
     const scheduleLabel = createOrderScheduleEnabled
       ? formatPlannedMoment(plannedMoment.iso, orderScheduleDate)
       : "";
-    const baseNotes = [{ id: makeNoteId(), text: createOrderContext === "rep" ? "Order created by sales rep console." : "Order created manually.", by: createOrderContext === "rep" ? repScopeName : ownerName, date: nowIso() }];
+    const closerName = currentManagedUser?.name ?? ownerName;
+    const creationAuthor = createOrderContext === "rep" ? repScopeName : createOrderContext === "closer" ? closerName : ownerName;
+    const creationText = createOrderContext === "rep" ? "Order created by sales rep console."
+      : createOrderContext === "closer" ? "Order created by Sales Closer from a converted lead."
+      : "Order created manually.";
+    const baseNotes = [{ id: makeNoteId(), text: creationText, by: creationAuthor, date: nowIso() }];
     const scheduledNotes = createOrderScheduleEnabled && scheduleLabel
-      ? [orderTimelineNote(`Delivery scheduled for ${scheduleLabel}.`, { by: createOrderContext === "rep" ? repScopeName : ownerName, date: nowIso() })]
+      ? [orderTimelineNote(`Delivery scheduled for ${scheduleLabel}.`, { by: creationAuthor, date: nowIso() })]
       : [];
     const draftOrder: Omit<TrackedOrder, "id"> = {
       productId: product.id,
@@ -35473,7 +35524,8 @@ ${waybillLineItems(w).length > 1
       assignedRepId: repForNewRecord(),
       createdAt: nowIso(),
       date: displayDateFromKey(todayKey()),
-      notes: [{ id: makeNoteId(), text: createOrderContext === "rep" ? "Order created by sales rep console." : "Order created manually.", by: createOrderContext === "rep" ? repScopeName : ownerName, date: nowIso() }]
+      notes: [{ id: makeNoteId(), text: creationText, by: creationAuthor, date: nowIso() }],
+      ...(createOrderContext === "closer" ? { closedByCloserId: currentManagedUser?.id, closedByCloserName: closerName } : {})
     };
     try {
       const saved = await ordersApi.create(draftOrder);
@@ -35487,6 +35539,15 @@ ${waybillLineItems(w).length > 1
       };
       setTrackedOrders((value) => [order, ...value]);
       closeModal();
+      if (createOrderContext === "closer" && convertingLead) {
+        try {
+          await salesLeadsApi.update(convertingLead.id, { status: "order_created", convertedOrderId: order.id, convertedAt: nowIso() });
+        } catch (linkError: any) {
+          showToast(`Order ${order.id} was created, but the lead could not be marked converted: ${linkError?.message ?? "please update it manually"}.`);
+        }
+        setConvertingLead(null);
+        void loadSalesLeads();
+      }
       setCreateOrderContext("admin");
       showToast(`${order.id} created and assigned to ${users.find((user) => user.id === order.assignedRepId)?.name ?? "round-robin queue"}.`);
     } catch (err: any) {
@@ -88410,6 +88471,10 @@ ${waybillLineItems(w).length > 1
                 leadsError={salesLeadsListError}
                 onUpdateLeadStatus={updateSalesLeadStatus}
                 onOpenOrder={openSalesLeadOrder}
+                onConvertLead={(leadId) => {
+                  const lead = salesLeads.find((item) => item.id === leadId);
+                  if (lead) openCloserConvertLeadModal(lead);
+                }}
               />
             );
           })() : activePage === "Inventory" ? (
@@ -91883,7 +91948,14 @@ ${waybillLineItems(w).length > 1
                         <div className="flex items-center justify-between gap-3 bg-gray-50 rounded-lg p-3">
                           <div>
                             <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide m-0">Sales rep</p>
-                            <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">{selectedRepUser?.name ?? activeSalesRepUsers[0]?.name ?? "Round-robin"}</p>
+                            <p className="text-sm font-semibold text-gray-900 m-0 mt-0.5">
+                              {createOrderRepId === "auto"
+                                ? "Round-robin"
+                                : assignableUsers.find((user) => user.id === createOrderRepId)?.name
+                                  ?? selectedRepUser?.name
+                                  ?? activeSalesRepUsers[0]?.name
+                                  ?? "Round-robin"}
+                            </p>
                           </div>
                         </div>
                       )}
@@ -92459,6 +92531,12 @@ ${waybillLineItems(w).length > 1
 	                            : "Unassigned")}
 	                      </p>
 	                    </div>
+	                    {selectedOrder.closedByCloserName && (
+	                      <div>
+	                        <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Closed By</p>
+	                        <p className={`text-sm font-semibold m-0 mt-0.5 ${orderTitleTextClass}`}>{selectedOrder.closedByCloserName} <span className="font-normal text-gray-400">(Sales Closer)</span></p>
+	                      </div>
+	                    )}
 	                    <div>
 	                      <p className={`text-xs font-medium uppercase tracking-wide m-0 ${orderFaintTextClass}`}>Agent</p>
 	                      {agentNameForOrder(selectedOrder) === "Unassigned" ? (

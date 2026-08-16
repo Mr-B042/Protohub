@@ -2120,7 +2120,10 @@ export type SalesLead = {
   updatedAt: string;
 };
 
-export type SalesLeadInput = Partial<Omit<SalesLead, "id" | "convertedOrderId" | "convertedAt" | "lastActivityAt" | "createdBy" | "createdAt" | "updatedAt">>;
+// convertedOrderId/convertedAt ARE settable here - Convert to Order writes
+// them once a real order exists (the id/lastActivityAt/createdBy/timestamps
+// below stay server-only).
+export type SalesLeadInput = Partial<Omit<SalesLead, "id" | "lastActivityAt" | "createdBy" | "createdAt" | "updatedAt">>;
 
 export const salesLeadsApi = {
   list: (status?: string) => {

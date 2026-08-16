@@ -110,6 +110,7 @@ type Props = {
   leadsError: string;
   onUpdateLeadStatus: (leadId: string, status: SalesLeadStatus) => Promise<void>;
   onOpenOrder: (orderId: string) => void;
+  onConvertLead: (leadId: string) => void;
 };
 
 const QUICK_TAGS = ["High Potential", "Price Sensitive", "First Time Buyer", "Repeat Customer", "Needs Follow-up"];
@@ -278,6 +279,7 @@ function LeadsInboxSection({
   products,
   onUpdateLeadStatus,
   onOpenOrder,
+  onConvertLead,
   onAddLead
 }: {
   leads: SalesCloserLead[];
@@ -286,6 +288,7 @@ function LeadsInboxSection({
   products: SalesCloserProduct[];
   onUpdateLeadStatus: (leadId: string, status: SalesLeadStatus) => Promise<void>;
   onOpenOrder: (orderId: string) => void;
+  onConvertLead: (leadId: string) => void;
   onAddLead: () => void;
 }) {
   const [tab, setTab] = useState<"all" | SalesLeadStatus>("all");
@@ -437,6 +440,11 @@ function LeadsInboxSection({
                         </button>
                       ) : (
                         <div className="flex items-center gap-1.5">
+                          {lead.status !== "not_interested" && (
+                            <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700" onClick={() => onConvertLead(lead.id)}>
+                              <Check className="h-3.5 w-3.5" /> Convert
+                            </button>
+                          )}
                           <a href={`tel:+${normalizedWhatsAppDigits(lead.phone) ?? lead.phone.replace(/\D/g, "")}`} className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600" title="Call"><Phone className="h-3.5 w-3.5" /></a>
                           {waDigits && (
                             <a href={`https://wa.me/${waDigits}`} target="_blank" rel="noreferrer" className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-emerald-600 hover:border-emerald-300" title="Chat on WhatsApp"><WhatsAppIcon className="h-3.5 w-3.5" /></a>
@@ -498,7 +506,7 @@ function LeadsInboxSection({
   );
 }
 
-export function SalesCloserWorkspacePage({ section, products, assignees, currentUserId, saving, error, onSaveLead, onCancelAddLead, onAction, leads, leadsLoading, leadsError, onUpdateLeadStatus, onOpenOrder }: Props) {
+export function SalesCloserWorkspacePage({ section, products, assignees, currentUserId, saving, error, onSaveLead, onCancelAddLead, onAction, leads, leadsLoading, leadsError, onUpdateLeadStatus, onOpenOrder, onConvertLead }: Props) {
   const [draft, setDraft] = useState<SalesLeadDraft>(() => defaultDraft(currentUserId));
   const [formError, setFormError] = useState("");
   const [showProductPicker, setShowProductPicker] = useState(false);
@@ -559,6 +567,7 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
         products={products}
         onUpdateLeadStatus={onUpdateLeadStatus}
         onOpenOrder={onOpenOrder}
+        onConvertLead={onConvertLead}
         onAddLead={() => onAction("add-lead")}
       />
     );
