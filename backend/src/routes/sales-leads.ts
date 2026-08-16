@@ -3,11 +3,20 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
+import { addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
+import { incrementalRevenueForOrder, type HeadOfSalesOrder } from "../lib/head-of-sales-metrics.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Closer"));
 
 const SUPERVISOR_ROLES = new Set(["Owner", "Admin", "Manager"]);
+// Statuses a lead has "at least reached", approximated from its single
+// current status field - the schema has no per-transition history, so a
+// lead that went new_lead -> contacted -> not_interested is indistinguishable
+// from one that skipped straight to not_interested. Reasonable proxy for a
+// funnel view, not a true reached-this-stage-ever log.
+const REACHED_CONTACTED = new Set(["contacted", "qualified", "follow_up", "order_created"]);
+const REACHED_QUALIFIED = new Set(["qualified", "follow_up", "order_created"]);
 
 const LeadFields = z.object({
   fullName: z.string().trim().min(2).max(160),
@@ -135,6 +144,159 @@ router.get("/", async (req, res) => {
     res.json({ leads: (data ?? []).map(rowToApi) });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load leads." });
+  }
+});
+
+async function productNameMap(orgId: string) {
+  const { data } = await supabase.from("products").select("id, name").eq("org_id", orgId);
+  return new Map((data ?? []).map((row) => [row.id, row.name]));
+}
+
+function productNamesFor(ids: unknown, names: Map<string, string>) {
+  return (Array.isArray(ids) ? ids : [])
+    .map((id) => names.get(id))
+    .filter((name): name is string => Boolean(name));
+}
+
+// Routes below must stay ahead of GET /:id and PATCH /:id or Express would
+// try to match "overview"/"follow-ups" as a lead id.
+router.get("/overview", async (req, res) => {
+  try {
+    const scope = scopeOf(req);
+    const orgId = req.user!.orgId;
+    const today = lagosDateKey();
+    const yesterday = addDaysToDateKey(today, -1);
+
+    // "My" overview - scoped strictly to leads/orders this closer owns, not
+    // the broader own-plus-unassigned set GET / shows for picking up work.
+    const [{ data: leadRows, error: leadError }, { data: orderRows, error: orderError }, names] = await Promise.all([
+      supabase.from("sales_leads").select("*").eq("org_id", orgId).eq("assigned_closer_id", scope.id),
+      supabase.from("orders").select("id, status, amount, quantity, created_at, delivered_date, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
+        .eq("org_id", orgId).eq("closed_by_closer_id", scope.id),
+      productNameMap(orgId)
+    ]);
+    if (leadError) throw leadError;
+    if (orderError) throw orderError;
+    const leads = leadRows ?? [];
+    const orders = (orderRows ?? []) as HeadOfSalesOrder[];
+
+    const countOn = (day: string, predicate: (lead: any) => boolean) =>
+      leads.filter((lead) => predicate(lead) && lagosDateKey(lead.created_at) === day).length;
+    // Approximated from last_activity_at (any edit bumps it, not only a
+    // status change) since there is no per-transition history to read a
+    // true "became Contacted today" count from.
+    const countActiveOn = (day: string, statuses: Set<string>) =>
+      leads.filter((lead) => statuses.has(lead.status) && lagosDateKey(lead.last_activity_at) === day).length;
+    const ordersOn = (day: string) => orders.filter((order) => order.created_at && lagosDateKey(order.created_at) === day).length;
+    const deliveredOn = (day: string) => orders.filter((order) => order.status === "Delivered" && order.delivered_date && String(order.delivered_date).slice(0, 10) === day).length;
+
+    const kpi = (todayCount: number, yesterdayCount: number) => ({ value: todayCount, deltaVsYesterday: todayCount - yesterdayCount });
+
+    const funnelNewLeads = leads.length;
+    const funnelContacted = leads.filter((lead) => REACHED_CONTACTED.has(lead.status)).length;
+    const funnelQualified = leads.filter((lead) => REACHED_QUALIFIED.has(lead.status)).length;
+    const funnelOrdersCreated = leads.filter((lead) => Boolean(lead.converted_order_id)).length;
+    const deliveredOrderIds = new Set(orders.filter((order) => order.status === "Delivered").map((order) => order.id));
+    const funnelDelivered = leads.filter((lead) => lead.converted_order_id && deliveredOrderIds.has(lead.converted_order_id)).length;
+
+    const pct = (part: number, whole: number) => whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0;
+
+    const monthStart = `${today.slice(0, 7)}-01`;
+    const monthLeads = leads.filter((lead) => lead.created_at && lagosDateKey(lead.created_at) >= monthStart);
+    const monthOrders = orders.filter((order) => order.created_at && lagosDateKey(order.created_at) >= monthStart);
+    const monthDelivered = monthOrders.filter((order) => order.status === "Delivered");
+    const monthDeliveredRevenue = monthDelivered.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
+    const monthIncremental = monthDelivered.reduce((sum, order) => {
+      const { upsell, crossSell } = incrementalRevenueForOrder(order);
+      return { upsell: sum.upsell + upsell, crossSell: sum.crossSell + crossSell };
+    }, { upsell: 0, crossSell: 0 });
+
+    const followUpsDue = leads
+      .filter((lead) => lead.follow_up_at && !["order_created", "not_interested"].includes(lead.status) && lead.follow_up_at <= new Date(Date.now() + 86_400_000).toISOString())
+      .sort((a, b) => String(a.follow_up_at).localeCompare(String(b.follow_up_at)))
+      .slice(0, 6)
+      .map((lead) => ({ id: lead.id, fullName: lead.full_name, productNames: productNamesFor(lead.interested_product_ids, names), followUpAt: lead.follow_up_at }));
+
+    const recentLeads = [...leads]
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+      .slice(0, 6)
+      .map((lead) => ({ id: lead.id, fullName: lead.full_name, productNames: productNamesFor(lead.interested_product_ids, names), source: lead.source, status: lead.status, createdAt: lead.created_at }));
+
+    res.json({
+      kpis: {
+        newLeads: kpi(countOn(today, () => true), countOn(yesterday, () => true)),
+        contacted: kpi(countActiveOn(today, REACHED_CONTACTED), countActiveOn(yesterday, REACHED_CONTACTED)),
+        qualified: kpi(countActiveOn(today, REACHED_QUALIFIED), countActiveOn(yesterday, REACHED_QUALIFIED)),
+        ordersCreated: kpi(ordersOn(today), ordersOn(yesterday)),
+        delivered: kpi(deliveredOn(today), deliveredOn(yesterday))
+      },
+      funnel: { newLeads: funnelNewLeads, contacted: funnelContacted, qualified: funnelQualified, ordersCreated: funnelOrdersCreated, delivered: funnelDelivered },
+      conversionRates: {
+        leadToOrder: pct(funnelOrdersCreated, funnelNewLeads),
+        leadToDelivered: pct(funnelDelivered, funnelNewLeads),
+        orderConversionRate: pct(funnelDelivered, funnelOrdersCreated)
+      },
+      followUpsDue,
+      performanceThisMonth: {
+        leads: monthLeads.length,
+        ordersCreated: monthOrders.length,
+        deliveredOrders: monthDelivered.length,
+        deliveryRate: pct(monthDelivered.length, monthOrders.length),
+        aovDelivered: monthDelivered.length > 0 ? Math.round(monthDeliveredRevenue / monthDelivered.length) : 0,
+        deliveredRevenue: monthDeliveredRevenue,
+        upsellRevenue: Math.round(monthIncremental.upsell),
+        crossSellRevenue: Math.round(monthIncremental.crossSell)
+      },
+      recentLeads
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the overview." });
+  }
+});
+
+router.get("/follow-ups", async (req, res) => {
+  try {
+    const scope = scopeOf(req);
+    const orgId = req.user!.orgId;
+    const today = lagosDateKey();
+    const names = await productNameMap(orgId);
+    const { data, error } = await supabase.from("sales_leads").select("*").eq("org_id", orgId).eq("assigned_closer_id", scope.id);
+    if (error) throw error;
+    const leads = data ?? [];
+    const withFollowUp = leads.filter((lead) => lead.follow_up_at);
+    const dueToday = withFollowUp.filter((lead) => lagosDateKey(lead.follow_up_at) === today && !["order_created", "not_interested"].includes(lead.status));
+    const overdue = withFollowUp.filter((lead) => lagosDateKey(lead.follow_up_at) < today && !["order_created", "not_interested"].includes(lead.status));
+    const dueThisWeek = withFollowUp.filter((lead) => {
+      const day = lagosDateKey(lead.follow_up_at);
+      return day >= today && day <= addDaysToDateKey(today, 6) && !["order_created", "not_interested"].includes(lead.status);
+    });
+    const converted = withFollowUp.filter((lead) => lead.status === "order_created");
+    res.json({
+      kpis: {
+        totalFollowUps: withFollowUp.filter((lead) => !["order_created", "not_interested"].includes(lead.status)).length,
+        dueToday: dueToday.length,
+        dueThisWeek: dueThisWeek.length,
+        overdue: overdue.length,
+        converted: converted.length
+      },
+      rows: withFollowUp
+        .sort((a, b) => String(a.follow_up_at).localeCompare(String(b.follow_up_at)))
+        .map((lead) => ({
+          id: lead.id,
+          fullName: lead.full_name,
+          phone: lead.phone,
+          whatsappNumber: lead.whatsapp_number,
+          productNames: productNamesFor(lead.interested_product_ids, names),
+          source: lead.source,
+          status: lead.status,
+          priority: lead.priority,
+          followUpAt: lead.follow_up_at,
+          lastActivityAt: lead.last_activity_at,
+          overdue: lagosDateKey(lead.follow_up_at) < today && !["order_created", "not_interested"].includes(lead.status)
+        }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load follow-ups." });
   }
 });
 

@@ -2125,6 +2125,33 @@ export type SalesLead = {
 // below stay server-only).
 export type SalesLeadInput = Partial<Omit<SalesLead, "id" | "lastActivityAt" | "createdBy" | "createdAt" | "updatedAt">>;
 
+export type SalesLeadKpi = { value: number; deltaVsYesterday: number };
+export type SalesCloserOverview = {
+  kpis: { newLeads: SalesLeadKpi; contacted: SalesLeadKpi; qualified: SalesLeadKpi; ordersCreated: SalesLeadKpi; delivered: SalesLeadKpi };
+  funnel: { newLeads: number; contacted: number; qualified: number; ordersCreated: number; delivered: number };
+  conversionRates: { leadToOrder: number; leadToDelivered: number; orderConversionRate: number };
+  followUpsDue: Array<{ id: string; fullName: string; productNames: string[]; followUpAt: string }>;
+  performanceThisMonth: { leads: number; ordersCreated: number; deliveredOrders: number; deliveryRate: number; aovDelivered: number; deliveredRevenue: number; upsellRevenue: number; crossSellRevenue: number };
+  recentLeads: Array<{ id: string; fullName: string; productNames: string[]; source: string; status: string; createdAt: string }>;
+};
+export type SalesCloserFollowUpRow = {
+  id: string;
+  fullName: string;
+  phone: string;
+  whatsappNumber: string;
+  productNames: string[];
+  source: string;
+  status: string;
+  priority: string;
+  followUpAt: string;
+  lastActivityAt: string;
+  overdue: boolean;
+};
+export type SalesCloserFollowUps = {
+  kpis: { totalFollowUps: number; dueToday: number; dueThisWeek: number; overdue: number; converted: number };
+  rows: SalesCloserFollowUpRow[];
+};
+
 export const salesLeadsApi = {
   list: (status?: string) => {
     const qs = status && status !== "all" ? `?status=${encodeURIComponent(status)}` : "";
@@ -2132,7 +2159,9 @@ export const salesLeadsApi = {
   },
   detail: (id: string) => get<SalesLead>(`/api/sales-leads/${encodeURIComponent(id)}`),
   create: (body: SalesLeadInput) => post<SalesLead>("/api/sales-leads", body),
-  update: (id: string, body: SalesLeadInput) => patch<SalesLead>(`/api/sales-leads/${encodeURIComponent(id)}`, body)
+  update: (id: string, body: SalesLeadInput) => patch<SalesLead>(`/api/sales-leads/${encodeURIComponent(id)}`, body),
+  overview: () => get<SalesCloserOverview>("/api/sales-leads/overview"),
+  followUps: () => get<SalesCloserFollowUps>("/api/sales-leads/follow-ups")
 };
 
 // ── Recovery templates: offers, call scripts, broadcast messages ──────────
