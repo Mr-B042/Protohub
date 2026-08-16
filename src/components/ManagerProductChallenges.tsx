@@ -529,8 +529,12 @@ export function ManagerProductChallenges({
           ) : challenges.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-indigo-200 bg-white/70 px-5 py-8 text-center">
               <Target className="h-7 w-7 text-indigo-300" />
-              <h3 className="mt-3 text-sm font-black text-gray-900">No product challenge has been created yet</h3>
-              <p className="mt-1 max-w-lg text-xs font-medium leading-5 text-gray-500">Create a monthly challenge and split its reward across weekly milestones.</p>
+              <h3 className="mt-3 text-sm font-black text-gray-900">No product challenge is active right now</h3>
+              <p className="mt-1 max-w-lg text-xs font-medium leading-5 text-gray-500">
+                {canEdit
+                  ? "Create a monthly challenge and split its reward across weekly milestones."
+                  : "The Owner has not set up a product challenge yet."}
+              </p>
               {canEdit && <button type="button" className="!min-h-0 mt-4 inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-black text-indigo-700" onClick={openNew}><Plus className="h-3.5 w-3.5" /> Create first challenge</button>}
             </div>
           ) : challenges.length >= 2 ? (
