@@ -158,11 +158,19 @@ function productNamesFor(ids: unknown, names: Map<string, string>) {
     .filter((name): name is string => Boolean(name));
 }
 
+// A closer only ever sees her own data; leadership may pass ?closerId= to
+// review a specific closer's page (the Sales Closers leaderboard drill-in).
+function resolveCloserId(req: any): string {
+  const scope = scopeOf(req);
+  const requested = typeof req.query.closerId === "string" ? req.query.closerId : undefined;
+  return SUPERVISOR_ROLES.has(scope.role) && requested ? requested : scope.id;
+}
+
 // Routes below must stay ahead of GET /:id and PATCH /:id or Express would
 // try to match "overview"/"follow-ups" as a lead id.
 router.get("/overview", async (req, res) => {
   try {
-    const scope = scopeOf(req);
+    const closerId = resolveCloserId(req);
     const orgId = req.user!.orgId;
     const today = lagosDateKey();
     const yesterday = addDaysToDateKey(today, -1);
@@ -170,9 +178,9 @@ router.get("/overview", async (req, res) => {
     // "My" overview - scoped strictly to leads/orders this closer owns, not
     // the broader own-plus-unassigned set GET / shows for picking up work.
     const [{ data: leadRows, error: leadError }, { data: orderRows, error: orderError }, names] = await Promise.all([
-      supabase.from("sales_leads").select("*").eq("org_id", orgId).eq("assigned_closer_id", scope.id),
+      supabase.from("sales_leads").select("*").eq("org_id", orgId).eq("assigned_closer_id", closerId),
       supabase.from("orders").select("id, status, amount, quantity, created_at, delivered_date, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
-        .eq("org_id", orgId).eq("closed_by_closer_id", scope.id),
+        .eq("org_id", orgId).eq("closed_by_closer_id", closerId),
       productNameMap(orgId)
     ]);
     if (leadError) throw leadError;
@@ -312,7 +320,7 @@ const previousMonthStart = (monthStartKey: string) => {
 // different rep for delivery/follow-up handoffs (orders.ts PATCH /:id).
 router.get("/orders", async (req, res) => {
   try {
-    const scope = scopeOf(req);
+    const closerId = resolveCloserId(req);
     const orgId = req.user!.orgId;
     const today = lagosDateKey();
     const thisMonthStart = `${today.slice(0, 7)}-01`;
@@ -322,7 +330,7 @@ router.get("/orders", async (req, res) => {
       .from("orders")
       .select("id, customer, product_name, package_name, amount, currency, status, created_at, delivered_date, closed_by_closer_name, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
       .eq("org_id", orgId)
-      .eq("closed_by_closer_id", scope.id)
+      .eq("closed_by_closer_id", closerId)
       .order("created_at", { ascending: false });
     if (error) throw error;
     const orders = (data ?? []) as (HeadOfSalesOrder & { customer?: string; product_name?: string; package_name?: string; currency?: string; closed_by_closer_name?: string })[];
@@ -341,7 +349,7 @@ router.get("/orders", async (req, res) => {
     const thisMonthDeliveryRate = thisMonth.length > 0 ? Math.round((thisMonthDelivered.length / thisMonth.length) * 1000) / 10 : 0;
     const lastMonthDeliveryRate = lastMonth.length > 0 ? Math.round((lastMonthDelivered.length / lastMonth.length) * 1000) / 10 : 0;
 
-    const leadsQuery = await supabase.from("sales_leads").select("status, created_at").eq("org_id", orgId).eq("assigned_closer_id", scope.id);
+    const leadsQuery = await supabase.from("sales_leads").select("status, created_at").eq("org_id", orgId).eq("assigned_closer_id", closerId);
     const monthLeads = (leadsQuery.data ?? []).filter((lead) => lead.created_at && lagosDateKey(lead.created_at) >= thisMonthStart);
 
     const productRevenue = new Map<string, { orders: number; revenue: number }>();
@@ -393,15 +401,15 @@ router.get("/orders", async (req, res) => {
 
 router.get("/performance", async (req, res) => {
   try {
-    const scope = scopeOf(req);
+    const closerId = resolveCloserId(req);
     const orgId = req.user!.orgId;
     const today = lagosDateKey();
     const rangeStart = addDaysToDateKey(today, -13); // 14-day trend, matches Overview's daily-granularity approach
 
     const [{ data: leadRows, error: leadError }, { data: orderRows, error: orderError }, names] = await Promise.all([
-      supabase.from("sales_leads").select("*").eq("org_id", orgId).eq("assigned_closer_id", scope.id),
+      supabase.from("sales_leads").select("*").eq("org_id", orgId).eq("assigned_closer_id", closerId),
       supabase.from("orders").select("id, product_name, status, amount, created_at, delivered_date, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
-        .eq("org_id", orgId).eq("closed_by_closer_id", scope.id),
+        .eq("org_id", orgId).eq("closed_by_closer_id", closerId),
       productNameMap(orgId)
     ]);
     if (leadError) throw leadError;
@@ -778,6 +786,60 @@ router.post("/bonus/mark-paid", async (req, res) => {
     res.json({ id: existing.id, status: "Paid" });
   } catch (error: any) {
     res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not mark this bonus as paid." });
+  }
+});
+
+// Owner-side cross-closer view (as opposed to every route above, which is
+// scoped to "my own" or one closer at a time via ?closerId=) - the
+// leaderboard Bright's spec calls for, not reachable via spy-as since it
+// spans every closer at once.
+router.get("/closers-leaderboard", requireRole("Owner", "Admin", "Manager"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const today = lagosDateKey();
+    const monthStart = typeof req.query.monthStart === "string" && /^\d{4}-\d{2}-01$/.test(req.query.monthStart) ? req.query.monthStart : `${today.slice(0, 7)}-01`;
+
+    const { data: closerUsers, error: usersError } = await supabase.from("users").select("id, name, active").eq("org_id", orgId).eq("role", "Sales Closer");
+    if (usersError) throw usersError;
+    const closerIds = (closerUsers ?? []).map((user) => user.id);
+    if (closerIds.length === 0) {
+      res.json({ monthStart, rows: [] });
+      return;
+    }
+
+    const [{ data: leadRows, error: leadError }, { data: orderRows, error: orderError }] = await Promise.all([
+      supabase.from("sales_leads").select("assigned_closer_id, status, created_at, converted_order_id").eq("org_id", orgId).in("assigned_closer_id", closerIds),
+      supabase.from("orders").select("id, closed_by_closer_id, status, amount, created_at").eq("org_id", orgId).in("closed_by_closer_id", closerIds)
+    ]);
+    if (leadError) throw leadError;
+    if (orderError) throw orderError;
+
+    const pct = (part: number, whole: number) => whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0;
+    const rows = (closerUsers ?? []).map((user) => {
+      const leads = (leadRows ?? []).filter((lead) => lead.assigned_closer_id === user.id && lead.created_at && lagosDateKey(lead.created_at) >= monthStart);
+      const orders = (orderRows ?? []).filter((order) => order.closed_by_closer_id === user.id && order.created_at && lagosDateKey(order.created_at) >= monthStart);
+      const delivered = orders.filter((order) => order.status === "Delivered");
+      const revenue = delivered.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
+      const ordersFromLeads = leads.filter((lead) => Boolean(lead.converted_order_id)).length;
+      const deliveredOrderIds = new Set(delivered.map((order) => order.id));
+      const deliveredFromLeads = leads.filter((lead) => lead.converted_order_id && deliveredOrderIds.has(lead.converted_order_id)).length;
+      return {
+        closerId: user.id,
+        closerName: user.name,
+        active: user.active,
+        leads: leads.length,
+        orders: orders.length,
+        leadToOrderRate: pct(ordersFromLeads, leads.length),
+        delivered: delivered.length,
+        leadToDeliveredRate: pct(deliveredFromLeads, leads.length),
+        aov: delivered.length > 0 ? Math.round(revenue / delivered.length) : 0,
+        revenue
+      };
+    }).sort((a, b) => b.revenue - a.revenue);
+
+    res.json({ monthStart, rows });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the leaderboard." });
   }
 });
 
