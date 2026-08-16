@@ -28,7 +28,10 @@ const LeadFields = z.object({
   tags: z.array(z.string().trim().max(40)).max(10).default([]),
   priority: z.enum(["low", "medium", "high"]).default("medium"),
   assignedCloserId: z.string().uuid().optional(),
-  followUpAt: z.string().datetime().optional()
+  followUpAt: z.string().datetime().optional(),
+  // Set once, by Convert to Order (never by the Add Lead / edit form).
+  convertedOrderId: z.string().min(1).max(50).optional(),
+  convertedAt: z.string().datetime().optional()
 }).strict();
 
 const CreateSchema = LeadFields;
@@ -83,6 +86,8 @@ type LeadFieldValues = {
   priority: string;
   assignedCloserId?: string;
   followUpAt?: string;
+  convertedOrderId?: string;
+  convertedAt?: string;
 };
 
 const rowPayload = (value: LeadFieldValues, req: any) => ({
@@ -106,6 +111,8 @@ const rowPayload = (value: LeadFieldValues, req: any) => ({
   priority: value.priority,
   assigned_closer_id: value.assignedCloserId || null,
   follow_up_at: value.followUpAt || null,
+  converted_order_id: value.convertedOrderId || null,
+  converted_at: value.convertedAt || null,
   updated_at: new Date().toISOString()
 });
 
@@ -233,6 +240,8 @@ router.patch("/:id", async (req, res) => {
       priority: existing.priority,
       assignedCloserId: existing.assigned_closer_id ?? undefined,
       followUpAt: existing.follow_up_at ?? undefined,
+      convertedOrderId: existing.converted_order_id ?? undefined,
+      convertedAt: existing.converted_at ?? undefined,
       ...parsed.data
     };
     const { data, error } = await supabase
