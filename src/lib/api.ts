@@ -2189,7 +2189,7 @@ export type SalesCloserBonusComponent = {
   metric: "leadToOrderRate" | "leadToDeliveredRate" | "aov" | "upsellCrossSellRevenue" | "activityScore" | "deliveryRate";
   tiers: SalesCloserBonusTier[];
 };
-export type SalesCloserBonusSettings = { currency: string; components: SalesCloserBonusComponent[]; updatedAt: string | null };
+export type SalesCloserBonusSettings = { currency: string; components: SalesCloserBonusComponent[]; allocatedSalaryMonthly: number; packagingCostPerUnit: number; updatedAt: string | null };
 export type SalesCloserBonusComponentResult = { id: string; label: string; metric: string; achieved: number; tierId: string | null; tierLabel: string | null; amount: number };
 export type SalesCloserBonusRecord = { id: string; monthStart: string; componentResults: SalesCloserBonusComponentResult[]; totalAmount: number; status: "Pending" | "Paid"; notes: string | null; paidAt: string | null };
 export type SalesCloserBonus = {
@@ -2214,6 +2214,20 @@ export type SalesCloserLeaderboardRow = {
   revenue: number;
 };
 
+export type SalesCloserCostProfitability = {
+  monthStart: string;
+  deliveredRevenue: number;
+  productCost: number;
+  deliveryCost: number;
+  packaging: number;
+  discounts: number;
+  closerBonus: number;
+  allocatedSalary: number;
+  netProfit: number;
+  deliveredOrders: number;
+  deliveredUnits: number;
+};
+
 export const salesLeadsApi = {
   list: (status?: string) => {
     const qs = status && status !== "all" ? `?status=${encodeURIComponent(status)}` : "";
@@ -2227,7 +2241,7 @@ export const salesLeadsApi = {
   orders: () => get<SalesCloserOrders>("/api/sales-leads/orders"),
   performance: () => get<SalesCloserPerformance>("/api/sales-leads/performance"),
   bonusSettings: () => get<{ settings: SalesCloserBonusSettings }>("/api/sales-leads/bonus-settings"),
-  updateBonusSettings: (body: Pick<SalesCloserBonusSettings, "currency" | "components">) => patch<{ settings: SalesCloserBonusSettings }>("/api/sales-leads/bonus-settings", body),
+  updateBonusSettings: (body: Partial<Pick<SalesCloserBonusSettings, "currency" | "components" | "allocatedSalaryMonthly" | "packagingCostPerUnit">>) => patch<{ settings: SalesCloserBonusSettings }>("/api/sales-leads/bonus-settings", body),
   bonus: (monthStart?: string, closerId?: string) => {
     const qs = new URLSearchParams();
     if (monthStart) qs.set("monthStart", monthStart);
@@ -2240,6 +2254,11 @@ export const salesLeadsApi = {
   closersLeaderboard: (monthStart?: string) => {
     const qs = monthStart ? `?monthStart=${encodeURIComponent(monthStart)}` : "";
     return get<{ monthStart: string; rows: SalesCloserLeaderboardRow[] }>(`/api/sales-leads/closers-leaderboard${qs}`);
+  },
+  costProfitability: (closerId: string, monthStart?: string) => {
+    const qs = new URLSearchParams({ closerId });
+    if (monthStart) qs.set("monthStart", monthStart);
+    return get<SalesCloserCostProfitability>(`/api/sales-leads/cost-profitability?${qs.toString()}`);
   }
 };
 

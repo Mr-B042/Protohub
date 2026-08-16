@@ -8489,6 +8489,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [salesClosersLeaderboard, setSalesClosersLeaderboard] = useState<SalesCloserLeaderboardRow[]>([]);
   const [salesClosersLeaderboardLoading, setSalesClosersLeaderboardLoading] = useState(false);
   const [salesClosersLeaderboardError, setSalesClosersLeaderboardError] = useState("");
+  const [salesCloserCostSettings, setSalesCloserCostSettings] = useState<{ allocatedSalaryMonthly: number; packagingCostPerUnit: number } | null>(null);
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
   const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>(() =>
     readPref("protohub.inventory.expandedSets", {} as Record<string, boolean>, (raw) => {
@@ -40963,8 +40964,21 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     if (activePage === "Sales Reps" && salesRepsPageTab === "Sales Closers") {
       void loadSalesClosersLeaderboard();
+      salesLeadsApi.bonusSettings()
+        .then((result) => setSalesCloserCostSettings({ allocatedSalaryMonthly: result.settings.allocatedSalaryMonthly, packagingCostPerUnit: result.settings.packagingCostPerUnit }))
+        .catch(() => {});
     }
   }, [activePage, salesRepsPageTab, loadSalesClosersLeaderboard]);
+  const saveSalesCloserCostSettings = async (values: { allocatedSalaryMonthly: number; packagingCostPerUnit: number }) => {
+    try {
+      const result = await salesLeadsApi.updateBonusSettings(values);
+      setSalesCloserCostSettings({ allocatedSalaryMonthly: result.settings.allocatedSalaryMonthly, packagingCostPerUnit: result.settings.packagingCostPerUnit });
+      showToast("Cost settings saved.");
+    } catch (error: any) {
+      showToast(error?.message ?? "Could not save cost settings.");
+    }
+  };
+  const loadSalesCloserCostProfitability = (closerId: string) => salesLeadsApi.costProfitability(closerId);
   useEffect(() => {
     if (activePage === "Sales Closer Workspace" && salesCloserSection === "my-performance") {
       void loadSalesPerformance();
@@ -71537,7 +71551,15 @@ ${waybillLineItems(w).length > 1
           ) : activePage === "Sales Reps" && salesRepsPageTab === "Sales Closers" ? (
             <div className="space-y-6">
               {renderSalesRepsPageTabs()}
-              <SalesClosersOwnerPage rows={salesClosersLeaderboard} loading={salesClosersLeaderboardLoading} error={salesClosersLeaderboardError} />
+              <SalesClosersOwnerPage
+                rows={salesClosersLeaderboard}
+                loading={salesClosersLeaderboardLoading}
+                error={salesClosersLeaderboardError}
+                canEditCostSettings={realRole === "Owner"}
+                costSettings={salesCloserCostSettings}
+                onSaveCostSettings={saveSalesCloserCostSettings}
+                onLoadCostProfitability={loadSalesCloserCostProfitability}
+              />
             </div>
           ) : activePage === "Sales Reps" && salesRepView === "detail" && selectedSalesRepId && users.find((u) => u.id === selectedSalesRepId) ? (
             (() => {

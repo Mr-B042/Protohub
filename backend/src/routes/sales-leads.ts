@@ -5,6 +5,7 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
 import { incrementalRevenueForOrder, type HeadOfSalesOrder } from "../lib/head-of-sales-metrics.js";
+import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Closer"));
@@ -533,10 +534,16 @@ const DEFAULT_BONUS_COMPONENTS: BonusComponent[] = [
 ];
 
 async function loadSalesCloserBonusSettings(orgId: string) {
-  const { data, error } = await supabase.from("sales_closer_bonus_settings").select("currency, components, updated_at").eq("org_id", orgId).maybeSingle();
+  const { data, error } = await supabase.from("sales_closer_bonus_settings").select("currency, components, allocated_salary_monthly, packaging_cost_per_unit, updated_at").eq("org_id", orgId).maybeSingle();
   if (error) throw error;
-  if (!data) return { currency: "NGN", components: DEFAULT_BONUS_COMPONENTS, updatedAt: null as string | null };
-  return { currency: data.currency as string, components: data.components as BonusComponent[], updatedAt: data.updated_at as string | null };
+  if (!data) return { currency: "NGN", components: DEFAULT_BONUS_COMPONENTS, allocatedSalaryMonthly: 70000, packagingCostPerUnit: 0, updatedAt: null as string | null };
+  return {
+    currency: data.currency as string,
+    components: data.components as BonusComponent[],
+    allocatedSalaryMonthly: Number(data.allocated_salary_monthly ?? 70000),
+    packagingCostPerUnit: Number(data.packaging_cost_per_unit ?? 0),
+    updatedAt: data.updated_at as string | null
+  };
 }
 
 function achievedTier(tiers: BonusTier[], value: number): BonusTier | null {
@@ -614,7 +621,16 @@ router.get("/bonus-settings", async (req, res) => {
 
 const BonusTierSchema = z.object({ id: z.string().min(1), label: z.string().min(1), minValue: z.number().min(0), amount: z.number().min(0) });
 const BonusComponentSchema = z.object({ id: z.string().min(1), label: z.string().min(1), description: z.string().max(300), metric: z.enum(["leadToOrderRate", "leadToDeliveredRate", "aov", "upsellCrossSellRevenue", "activityScore", "deliveryRate"]), tiers: z.array(BonusTierSchema).min(1) });
-const UpdateBonusSettingsSchema = z.object({ currency: z.enum(["NGN", "GHS", "USD", "GBP", "EUR"]).optional(), components: z.array(BonusComponentSchema).min(1) });
+// Every field optional and merged onto the existing row - a settings form
+// that only edits Allocated Salary/Packaging (Stage 10) must not have to
+// resubmit the full 6-component tier ladder just to change one number, and
+// must not silently blank it out if it omits it.
+const UpdateBonusSettingsSchema = z.object({
+  currency: z.enum(["NGN", "GHS", "USD", "GBP", "EUR"]).optional(),
+  components: z.array(BonusComponentSchema).min(1).optional(),
+  allocatedSalaryMonthly: z.number().min(0).optional(),
+  packagingCostPerUnit: z.number().min(0).optional()
+});
 
 router.patch("/bonus-settings", requireRole("Owner"), async (req, res) => {
   const parsed = UpdateBonusSettingsSchema.safeParse(req.body);
@@ -626,7 +642,15 @@ router.patch("/bonus-settings", requireRole("Owner"), async (req, res) => {
     const orgId = req.user!.orgId;
     const { data: existing, error: existingError } = await supabase.from("sales_closer_bonus_settings").select("id").eq("org_id", orgId).maybeSingle();
     if (existingError) throw existingError;
-    const row = { currency: parsed.data.currency ?? "NGN", components: parsed.data.components, updated_by: req.user!.id, updated_at: new Date().toISOString() };
+    const current = await loadSalesCloserBonusSettings(orgId);
+    const row = {
+      currency: parsed.data.currency ?? current.currency,
+      components: parsed.data.components ?? current.components,
+      allocated_salary_monthly: parsed.data.allocatedSalaryMonthly ?? current.allocatedSalaryMonthly,
+      packaging_cost_per_unit: parsed.data.packagingCostPerUnit ?? current.packagingCostPerUnit,
+      updated_by: req.user!.id,
+      updated_at: new Date().toISOString()
+    };
     if (existing) {
       const { error } = await supabase.from("sales_closer_bonus_settings").update(row).eq("id", existing.id);
       if (error) throw error;
@@ -840,6 +864,105 @@ router.get("/closers-leaderboard", requireRole("Owner", "Admin", "Manager"), asy
     res.json({ monthStart, rows });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load the leaderboard." });
+  }
+});
+
+// Real per-order COGS lookup, same pattern as manager-bonuses.ts's
+// loadPricingMap/cogsForOrder and customer-retention.ts's own copy -
+// duplicated locally (small, ~20 lines) rather than refactoring those
+// working files to export it, to keep this change scoped to Sales Closer.
+type PricingMap = Map<string, { byCurrency: Map<string, number>; primary: number; hasPrimary: boolean }>;
+async function loadPricingMap(productIds: string[]): Promise<PricingMap> {
+  const map: PricingMap = new Map();
+  if (productIds.length === 0) return map;
+  const { data } = await supabase.from("product_pricings").select("product_id, currency, unit_cost, is_primary").in("product_id", productIds);
+  for (const row of data ?? []) {
+    let entry = map.get(row.product_id);
+    if (!entry) { entry = { byCurrency: new Map(), primary: 0, hasPrimary: false }; map.set(row.product_id, entry); }
+    const cost = Number(row.unit_cost ?? 0);
+    if (row.currency) entry.byCurrency.set(row.currency, cost);
+    if (row.is_primary) { entry.primary = cost; entry.hasPrimary = true; }
+  }
+  return map;
+}
+const unitCostFor = (pricingMap: PricingMap, productId?: string | null, currency?: string | null) => {
+  if (!productId) return 0;
+  const entry = pricingMap.get(productId);
+  if (!entry) return 0;
+  if (currency && entry.byCurrency.has(currency)) return entry.byCurrency.get(currency) ?? 0;
+  if (entry.hasPrimary) return entry.primary;
+  const first = entry.byCurrency.values().next();
+  return first.done ? 0 : first.value;
+};
+const cogsForOrder = (order: any, pricingMap: PricingMap) =>
+  orderInventoryLinesFromRow(order).reduce((sum, line) => sum + line.quantity * unitCostFor(pricingMap, line.productId, order.currency), 0);
+
+// Owner/Admin only - never visible on the closer's own pages. Advertising
+// is deliberately NOT included: ad spend is logged by the Marketer role
+// against marketing_spend_records, which has no reliable link back to
+// which Sales Closer eventually worked the resulting lead (a closer's
+// own "campaign" field on a lead is freeform text she typed, not a real
+// UTM match) - showing a number here would mean fabricating an
+// attribution that doesn't exist in the data.
+router.get("/cost-profitability", requireRole("Owner", "Admin"), async (req, res) => {
+  const parsed = MonthQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid month." });
+    return;
+  }
+  if (!parsed.data.closerId) {
+    res.status(400).json({ error: "closerId is required." });
+    return;
+  }
+  try {
+    const orgId = req.user!.orgId;
+    const monthStart = parsed.data.monthStart ?? `${lagosDateKey().slice(0, 7)}-01`;
+    const [year, month] = monthStart.split("-").map(Number);
+    const nextMonth = month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, "0")}-01`;
+
+    const { data: orderRows, error: orderError } = await supabase
+      .from("orders")
+      .select("id, status, amount, original_amount, quantity, currency, logistics_cost, created_at, product_id, package_id, package_components_snapshot, cross_sell_lines, free_gift_lines")
+      .eq("org_id", orgId).eq("closed_by_closer_id", parsed.data.closerId);
+    if (orderError) throw orderError;
+    const orders = (orderRows ?? []).filter((order) => order.created_at && lagosDateKey(order.created_at) >= monthStart && lagosDateKey(order.created_at) < nextMonth);
+    const delivered = orders.filter((order) => order.status === "Delivered");
+
+    const productIds = new Set<string>();
+    for (const order of delivered) for (const line of orderInventoryLinesFromRow(order)) if (line.productId) productIds.add(line.productId);
+    const pricingMap = await loadPricingMap([...productIds]);
+
+    const settings = await loadSalesCloserBonusSettings(orgId);
+    const deliveredRevenue = delivered.reduce((sum, order) => sum + Number(order.amount ?? 0), 0);
+    const productCost = delivered.reduce((sum, order) => sum + cogsForOrder(order, pricingMap), 0);
+    const deliveryCost = delivered.reduce((sum, order) => sum + Number(order.logistics_cost ?? 0), 0);
+    const discounts = delivered.reduce((sum, order) => sum + Math.max(0, Number(order.original_amount ?? order.amount ?? 0) - Number(order.amount ?? 0)), 0);
+    const deliveredUnits = delivered.reduce((sum, order) => sum + Math.max(0, Number(order.quantity ?? 0)), 0);
+    const packaging = deliveredUnits * settings.packagingCostPerUnit;
+
+    const { data: bonusRecord } = await supabase
+      .from("sales_closer_bonus_monthly_records").select("total_amount")
+      .eq("org_id", orgId).eq("closer_id", parsed.data.closerId).eq("month_start", monthStart).maybeSingle();
+    const closerBonus = Number(bonusRecord?.total_amount ?? 0);
+    const allocatedSalary = settings.allocatedSalaryMonthly;
+
+    const netProfit = deliveredRevenue - productCost - deliveryCost - packaging - discounts - closerBonus - allocatedSalary;
+
+    res.json({
+      monthStart,
+      deliveredRevenue,
+      productCost,
+      deliveryCost,
+      packaging,
+      discounts,
+      closerBonus,
+      allocatedSalary,
+      netProfit,
+      deliveredOrders: delivered.length,
+      deliveredUnits
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load cost & profitability." });
   }
 });
 
