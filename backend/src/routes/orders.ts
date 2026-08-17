@@ -2445,7 +2445,11 @@ router.post("/open-remittance", requireRole("Owner"), async (req, res) => {
   res.json({ opened: (data ?? []).length });
 });
 
-router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep"), async (req, res) => {
+// Sales Closer is here so she can add the cross-sell/upsell and discount her
+// own converted orders - the buttons already rendered on her Orders Created
+// page but every save 403'd, while one of her six bonus components is scored
+// on exactly that cross-sell revenue. Scoped to her own orders inside.
+router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery Rep", "Sales Closer"), async (req, res) => {
   const remittanceReceivedAt = remittanceReceivedAtToIso(
     req.body.remittance_received_at ?? req.body.remittanceReceivedAt
   );
@@ -2464,6 +2468,27 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
     .eq("org_id", req.user!.orgId)
     .single();
   if (!current) { res.status(404).json({ error: "Order not found." }); return; }
+
+  // A Sales Closer may only edit orders she closed herself - that is the whole
+  // basis on which the role was added to this route, so it is enforced here
+  // rather than assumed.
+  //
+  // Deliberately scoped to this one role instead of every frontline rep: this
+  // handler has never carried a general per-order ownership gate, so widening
+  // the check to Sales Rep / Recovery Rep would quietly revoke access those
+  // roles have been relying on. That is a separate decision, not a side effect
+  // of enabling closers.
+  //
+  // Keyed on closed_by_closer_id, not assigned_rep_id, because assignment moves
+  // to whoever handles delivery or follow-up while the closer's credit (and her
+  // Upsell & Cross-sell bonus) stays with the order permanently.
+  //
+  // Real role, not the spied one: an Owner viewing as a closer is still an
+  // Owner and must not be blocked from her own order.
+  if (req.user!.role === "Sales Closer" && current.closed_by_closer_id !== req.user!.id) {
+    res.status(403).json({ error: "You can only edit orders you closed." });
+    return;
+  }
 
   const isTerminal = current.status === "Delivered";
   const requestedKeys = Object.keys(req.body);
