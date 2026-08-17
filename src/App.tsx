@@ -88624,11 +88624,17 @@ ${waybillLineItems(w).length > 1
               onAction={handleInventoryOperationsAction}
             />
           ) : activePage === "Sales Closer Workspace" ? (() => {
-            const salesCloserProductNames = new Map(readyEmbedProducts.map((product) => [product.id, product.name]));
+            // readyEmbedProducts is scoped to the public embed form (active
+            // product AND at least one persisted active package) - too narrow
+            // here, since it silently drops raw/unpackaged products a closer
+            // can still sell. catalogProducts (active-only) matches the same
+            // universe the real Create Order modal's own product picker uses.
+            const salesCloserSellableProducts = catalogProducts.filter((product) => product.active);
+            const salesCloserProductNames = new Map(salesCloserSellableProducts.map((product) => [product.id, product.name]));
             return (
               <SalesCloserWorkspacePage
                 section={salesCloserSection}
-                products={readyEmbedProducts.map((product) => ({
+                products={salesCloserSellableProducts.map((product) => ({
                   id: product.id,
                   name: product.name,
                   active: product.active,
