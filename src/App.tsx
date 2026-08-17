@@ -40792,6 +40792,15 @@ ${waybillLineItems(w).length > 1
     setSalesLeadSaving(true);
     setSalesLeadError("");
     try {
+      // Follow-ups are scheduled work, so they answer to the same working-hours
+      // rules every other scheduling surface in the app enforces - this form
+      // was the one that let a reminder land at 11pm or on a Sunday.
+      if (draft.followUpDate && isSundayDateValue(draft.followUpDate)) {
+        throw new Error(SUNDAY_SCHEDULE_ERROR);
+      }
+      if (draft.followUpTime && !isWithinBusinessHours(draft.followUpTime)) {
+        throw new Error(BUSINESS_HOURS_ERROR);
+      }
       const { iso: followUpAt } = combinePlannedMoment(draft.followUpDate, draft.followUpTime);
       await salesLeadsApi.create({
         fullName: draft.fullName,
@@ -40811,7 +40820,8 @@ ${waybillLineItems(w).length > 1
         status: draft.status,
         tags: draft.tags,
         priority: draft.priority,
-        assignedCloserId: draft.assignedCloserId,
+        // Never send "" - the backend validates this as a uuid and would 400.
+        assignedCloserId: draft.assignedCloserId || undefined,
         followUpAt
       });
       showToast("Lead saved.");
