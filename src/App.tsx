@@ -11921,6 +11921,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Which Head of Sales Rep's dashboard Owner/Admin/Manager are browsing - a
   // plain picker, not view-as (mirrors recoveryRepScopeId).
   const [headOfSalesScopeId, setHeadOfSalesScopeId] = useState("");
+  // Off by default so a deactivated rep stays out of the way, but the Owner can
+  // opt in to read their historical numbers instead of being blocked outright.
+  const [headOfSalesShowInactive, setHeadOfSalesShowInactive] = useState(false);
   // ONE shared filter for the entire Head of Sales Rep section (same
   // Today/This Week/Last Week/This Month/.../Custom band Dashboard, Orders,
   // Recovery Rep Dashboard etc. all already use) - not per-page state,
@@ -43873,14 +43876,20 @@ ${waybillLineItems(w).length > 1
   // picker over whichever Sales Reps are flagged isHeadOfSalesRep (there can
   // be more than one), never view-as. The Sales Rep holding the flag is
   // locked to themself.
-  const headOfSalesRepUsers = users.filter((user) => user.role === "Sales Rep" && user.isHeadOfSalesRep && user.active);
+  const headOfSalesActiveHolders = users.filter((user) => user.role === "Sales Rep" && user.isHeadOfSalesRep && user.active);
   // Someone can hold the flag while their account is switched off. The picker
-  // above deliberately skips them (a deactivated rep is offered nowhere), but
-  // the empty state must not then claim nobody was ever appointed - that reads
-  // as a broken page and sends the Owner to User Management to redo something
+  // skips them by default (a deactivated rep is offered nowhere), but the empty
+  // state must not then claim nobody was ever appointed - that reads as a
+  // broken page and sends the Owner to User Management to redo something
   // already done. Divine held it while deactivated and this said "Nobody is
   // Head of Sales Rep yet", which cost real debugging time.
   const headOfSalesInactiveHolders = users.filter((user) => user.role === "Sales Rep" && user.isHeadOfSalesRep && !user.active);
+  // Opt-in: the Owner can pull a deactivated holder back into the picker to
+  // read their historical numbers. Their account stays switched off - this only
+  // changes what this page is willing to show.
+  const headOfSalesRepUsers = headOfSalesShowInactive
+    ? [...headOfSalesActiveHolders, ...headOfSalesInactiveHolders]
+    : headOfSalesActiveHolders;
   const headOfSalesIsOwnerLike = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
   const headOfSalesViewingId = headOfSalesIsOwnerLike
     ? (headOfSalesScopeId || headOfSalesRepUsers[0]?.id || "")
@@ -59194,10 +59203,27 @@ ${waybillLineItems(w).length > 1
               onChange={(event) => setHeadOfSalesScopeId(event.target.value)}
               aria-label="Choose which Head of Sales Rep to view"
             >
-              {headOfSalesRepUsers.map((rep) => <option key={rep.id} value={rep.id}>{rep.name}</option>)}
+              {headOfSalesRepUsers.map((rep) => <option key={rep.id} value={rep.id}>{rep.name}{rep.active ? "" : " (deactivated)"}</option>)}
             </select>
           )}
         </div>
+
+        {/* Numbers from a switched-off account are historical, so say so rather
+            than letting them read as this week's performance. */}
+        {headOfSalesIsOwnerLike && headOfSalesViewingUser && !headOfSalesViewingUser.active && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3">
+            <p className="m-0 text-sm font-semibold text-amber-900">
+              {headOfSalesViewingUser.name}'s account is deactivated - these are historical numbers, not current performance.
+            </p>
+            <button
+              type="button"
+              className="!min-h-0 shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-50"
+              onClick={() => { setHeadOfSalesShowInactive(false); setHeadOfSalesScopeId(""); }}
+            >
+              Hide deactivated
+            </button>
+          </div>
+        )}
 
         {headOfSalesIsOwnerLike && headOfSalesRepUsers.length === 0 ? (
           headOfSalesInactiveHolders.length > 0 ? (
@@ -59206,8 +59232,15 @@ ${waybillLineItems(w).length > 1
                 {headOfSalesInactiveHolders.map((rep) => rep.name).join(", ")} {headOfSalesInactiveHolders.length > 1 ? "hold" : "holds"} Head of Sales Rep, but {headOfSalesInactiveHolders.length > 1 ? "those accounts are" : "that account is"} deactivated
               </h2>
               <p className="mx-auto mt-2 max-w-lg text-sm text-gray-600">
-                A deactivated rep is paused everywhere, so there is nothing to score here. Reactivate {headOfSalesInactiveHolders.length > 1 ? "them" : "the account"} in User Management, or promote an active Sales Rep to take over.
+                A deactivated rep is paused everywhere, so there is nothing new to score here. Reactivate {headOfSalesInactiveHolders.length > 1 ? "them" : "the account"} in User Management, or promote an active Sales Rep to take over.
               </p>
+              <button
+                type="button"
+                className="!min-h-0 mt-4 inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3.5 py-2 text-xs font-bold text-amber-800 hover:bg-amber-50"
+                onClick={() => setHeadOfSalesShowInactive(true)}
+              >
+                <Eye className="h-3.5 w-3.5" /> Show {headOfSalesInactiveHolders.length > 1 ? "their" : "their"} data anyway
+              </button>
             </section>
           ) : (
             <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
