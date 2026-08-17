@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Award, Package, Settings, ShoppingCart, Target, TrendingDown, TrendingUp, Trophy, UserPlus, Wallet } from "lucide-react";
-import type { SalesCloserCostProfitability, SalesCloserLeaderboardRow } from "../lib/api";
+import type { SalesCloserBonusComponent, SalesCloserCostProfitability, SalesCloserLeaderboardRow } from "../lib/api";
 
 type Props = {
   rows: SalesCloserLeaderboardRow[];
@@ -9,12 +9,23 @@ type Props = {
   canEditCostSettings: boolean;
   costSettings: { allocatedSalaryMonthly: number; packagingCostPerUnit: number } | null;
   onSaveCostSettings: (values: { allocatedSalaryMonthly: number; packagingCostPerUnit: number }) => Promise<void>;
+  bonusComponents: SalesCloserBonusComponent[] | null;
+  onSaveBonusComponents: (components: SalesCloserBonusComponent[]) => Promise<void>;
   onLoadCostProfitability: (closerId: string) => Promise<SalesCloserCostProfitability>;
 };
 
 const money = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
 
 const MEDAL_TONE = ["bg-amber-100 text-amber-700", "bg-gray-200 text-gray-600", "bg-orange-100 text-orange-700"];
+
+const BONUS_METRIC_UNIT: Record<string, "percent" | "money"> = {
+  leadToOrderRate: "percent",
+  leadToDeliveredRate: "percent",
+  aov: "money",
+  upsellCrossSellRevenue: "money",
+  activityScore: "percent",
+  deliveryRate: "percent"
+};
 
 function StatCard({ icon: Icon, label, value, tone }: { icon: typeof Package; label: string; value: string; tone: string }) {
   return (
@@ -78,7 +89,81 @@ function CostSettingsPanel({
   );
 }
 
-export function SalesClosersOwnerPage({ rows, loading, error, canEditCostSettings, costSettings, onSaveCostSettings, onLoadCostProfitability }: Props) {
+function BonusRulesSettingsPanel({
+  components,
+  onSave
+}: {
+  components: SalesCloserBonusComponent[];
+  onSave: (components: SalesCloserBonusComponent[]) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<SalesCloserBonusComponent[]>(components);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) setDraft(components);
+  }, [components, open]);
+
+  const updateTier = (componentId: string, tierId: string, field: "minValue" | "amount", value: number) => {
+    setDraft((prev) => prev.map((component) => component.id === componentId
+      ? { ...component, tiers: component.tiers.map((tier) => tier.id === tierId ? { ...tier, [field]: value } : tier) }
+      : component));
+  };
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
+      <button type="button" className="!min-h-0 flex w-full items-center justify-between px-4 py-3 text-left" onClick={() => setOpen((v) => !v)}>
+        <span className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-gray-500"><Target className="h-4 w-4" /> Bonus Tier Settings</span>
+        <span className="text-xs font-bold text-blue-600">{open ? "Close" : "Edit"}</span>
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-gray-100 p-4">
+          {draft.map((component) => (
+            <div key={component.id} className="rounded-lg border border-gray-100 bg-gray-50/60 p-3">
+              <p className="text-xs font-black text-gray-900">{component.label}</p>
+              <p className="text-[11px] font-medium text-gray-400">{component.description}</p>
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {component.tiers.map((tier) => (
+                  <div key={tier.id} className="rounded-lg border border-gray-200 bg-white p-2.5">
+                    <p className="text-[10px] font-black uppercase text-gray-400">{tier.label}</p>
+                    <label className="mt-1.5 block text-[10px] font-bold text-gray-500">
+                      Min {BONUS_METRIC_UNIT[component.metric] === "money" ? "value (₦)" : "%"}
+                      <input type="number" min="0" className="mt-1 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-semibold text-gray-900"
+                        value={tier.minValue} onChange={(event) => updateTier(component.id, tier.id, "minValue", Number(event.target.value) || 0)} />
+                    </label>
+                    <label className="mt-1.5 block text-[10px] font-bold text-gray-500">
+                      Amount (₦)
+                      <input type="number" min="0" className="mt-1 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-semibold text-gray-900"
+                        value={tier.amount} onChange={(event) => updateTier(component.id, tier.id, "amount", Number(event.target.value) || 0)} />
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          <button
+            type="button"
+            disabled={saving}
+            className="!min-h-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-blue-200 disabled:opacity-50"
+            onClick={async () => {
+              setSaving(true);
+              try {
+                await onSave(draft);
+                setOpen(false);
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {saving ? "Saving..." : "Save Bonus Tiers"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function SalesClosersOwnerPage({ rows, loading, error, canEditCostSettings, costSettings, onSaveCostSettings, bonusComponents, onSaveBonusComponents, onLoadCostProfitability }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [cost, setCost] = useState<SalesCloserCostProfitability | null>(null);
   const [costLoading, setCostLoading] = useState(false);
@@ -178,6 +263,7 @@ export function SalesClosersOwnerPage({ rows, loading, error, canEditCostSetting
 
       {error && <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p>}
       {canEditCostSettings && costSettings && <CostSettingsPanel settings={costSettings} onSave={onSaveCostSettings} />}
+      {canEditCostSettings && bonusComponents && <BonusRulesSettingsPanel components={bonusComponents} onSave={onSaveBonusComponents} />}
 
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">

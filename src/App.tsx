@@ -149,7 +149,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserLeaderboardRow } from "./lib/api";
+import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -8491,6 +8491,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [salesClosersLeaderboardLoading, setSalesClosersLeaderboardLoading] = useState(false);
   const [salesClosersLeaderboardError, setSalesClosersLeaderboardError] = useState("");
   const [salesCloserCostSettings, setSalesCloserCostSettings] = useState<{ allocatedSalaryMonthly: number; packagingCostPerUnit: number } | null>(null);
+  const [salesCloserBonusComponents, setSalesCloserBonusComponents] = useState<SalesCloserBonusComponent[] | null>(null);
   const [packagePageTab, setPackagePageTab] = useState<PackagePageTab>("Packages");
   const [expandedPackageSets, setExpandedPackageSets] = useState<Record<string, boolean>>(() =>
     readPref("protohub.inventory.expandedSets", {} as Record<string, boolean>, (raw) => {
@@ -40970,7 +40971,10 @@ ${waybillLineItems(w).length > 1
     if (activePage === "Sales Closers") {
       void loadSalesClosersLeaderboard();
       salesLeadsApi.bonusSettings()
-        .then((result) => setSalesCloserCostSettings({ allocatedSalaryMonthly: result.settings.allocatedSalaryMonthly, packagingCostPerUnit: result.settings.packagingCostPerUnit }))
+        .then((result) => {
+          setSalesCloserCostSettings({ allocatedSalaryMonthly: result.settings.allocatedSalaryMonthly, packagingCostPerUnit: result.settings.packagingCostPerUnit });
+          setSalesCloserBonusComponents(result.settings.components);
+        })
         .catch(() => {});
     }
   }, [activePage, loadSalesClosersLeaderboard]);
@@ -40981,6 +40985,15 @@ ${waybillLineItems(w).length > 1
       showToast("Cost settings saved.");
     } catch (error: any) {
       showToast(error?.message ?? "Could not save cost settings.");
+    }
+  };
+  const saveSalesCloserBonusComponents = async (components: SalesCloserBonusComponent[]) => {
+    try {
+      const result = await salesLeadsApi.updateBonusSettings({ components });
+      setSalesCloserBonusComponents(result.settings.components);
+      showToast("Bonus tier settings saved.");
+    } catch (error: any) {
+      showToast(error?.message ?? "Could not save bonus tier settings.");
     }
   };
   const loadSalesCloserCostProfitability = (closerId: string) => salesLeadsApi.costProfitability(closerId);
@@ -72819,6 +72832,8 @@ ${waybillLineItems(w).length > 1
               canEditCostSettings={realRole === "Owner"}
               costSettings={salesCloserCostSettings}
               onSaveCostSettings={saveSalesCloserCostSettings}
+              bonusComponents={salesCloserBonusComponents}
+              onSaveBonusComponents={saveSalesCloserBonusComponents}
               onLoadCostProfitability={loadSalesCloserCostProfitability}
             />
           ) : activePage === "Weekend Stock Summary" ? (
