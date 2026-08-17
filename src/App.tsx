@@ -43864,6 +43864,13 @@ ${waybillLineItems(w).length > 1
   // be more than one), never view-as. The Sales Rep holding the flag is
   // locked to themself.
   const headOfSalesRepUsers = users.filter((user) => user.role === "Sales Rep" && user.isHeadOfSalesRep && user.active);
+  // Someone can hold the flag while their account is switched off. The picker
+  // above deliberately skips them (a deactivated rep is offered nowhere), but
+  // the empty state must not then claim nobody was ever appointed - that reads
+  // as a broken page and sends the Owner to User Management to redo something
+  // already done. Divine held it while deactivated and this said "Nobody is
+  // Head of Sales Rep yet", which cost real debugging time.
+  const headOfSalesInactiveHolders = users.filter((user) => user.role === "Sales Rep" && user.isHeadOfSalesRep && !user.active);
   const headOfSalesIsOwnerLike = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
   const headOfSalesViewingId = headOfSalesIsOwnerLike
     ? (headOfSalesScopeId || headOfSalesRepUsers[0]?.id || "")
@@ -59161,7 +59168,11 @@ ${waybillLineItems(w).length > 1
               <h1 className="m-0 text-xl font-bold text-gray-900">Head of Sales Rep</h1>
               <p className="m-0 mt-0.5 text-sm text-gray-500">
                 {headOfSalesIsOwnerLike
-                  ? (viewingUser ? `Viewing ${viewingUser.name}'s leadership dashboard.` : "No Sales Rep currently holds Head of Sales Rep.")
+                  ? (viewingUser
+                    ? `Viewing ${viewingUser.name}'s leadership dashboard.`
+                    : headOfSalesInactiveHolders.length > 0
+                      ? "The appointed Head of Sales Rep is deactivated."
+                      : "No Sales Rep currently holds Head of Sales Rep.")
                   : "Lead the team. Improve performance. Increase revenue."}
               </p>
             </div>
@@ -59179,12 +59190,23 @@ ${waybillLineItems(w).length > 1
         </div>
 
         {headOfSalesIsOwnerLike && headOfSalesRepUsers.length === 0 ? (
-          <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
-            <h2 className="text-base font-bold text-gray-900">Nobody is Head of Sales Rep yet</h2>
-            <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
-              Promote a Sales Rep from User Management to unlock this dashboard for them - and for you to review here.
-            </p>
-          </section>
+          headOfSalesInactiveHolders.length > 0 ? (
+            <section className="rounded-xl border border-amber-200 bg-amber-50/60 px-5 py-12 text-center shadow-sm">
+              <h2 className="text-base font-bold text-gray-900">
+                {headOfSalesInactiveHolders.map((rep) => rep.name).join(", ")} {headOfSalesInactiveHolders.length > 1 ? "hold" : "holds"} Head of Sales Rep, but {headOfSalesInactiveHolders.length > 1 ? "those accounts are" : "that account is"} deactivated
+              </h2>
+              <p className="mx-auto mt-2 max-w-lg text-sm text-gray-600">
+                A deactivated rep is paused everywhere, so there is nothing to score here. Reactivate {headOfSalesInactiveHolders.length > 1 ? "them" : "the account"} in User Management, or promote an active Sales Rep to take over.
+              </p>
+            </section>
+          ) : (
+            <section className="rounded-xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
+              <h2 className="text-base font-bold text-gray-900">Nobody is Head of Sales Rep yet</h2>
+              <p className="mx-auto mt-2 max-w-lg text-sm text-gray-500">
+                Promote a Sales Rep from User Management to unlock this dashboard for them - and for you to review here.
+              </p>
+            </section>
+          )
         ) : (
           <>
             <div className="-mx-1 overflow-x-auto border-b border-gray-200">
