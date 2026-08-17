@@ -455,7 +455,7 @@ const RETENTION_TASK_TYPES: Array<{ key: RetentionTaskTypeKey; label: string; ic
 type OrderWorkspacePage = "Orders" | "Follow-up Queue" | "Closed Orders";
 type ExpenseType = "Ad Spend" | "Delivery" | "Failed Delivery" | "Salary" | "Clearing & Shipping" | "Waybill" | "Airtime & Data" | "Stock Loss" | "Other";
 type ExpenseFilter = "All Types" | ExpenseType;
-type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent";
+type UserRole = "All Roles" | "Admin" | "Manager" | "Sales Rep" | "Inventory Manager" | "Inventory Manager & Logistics Operations" | "Marketer" | "Viewer" | "Recovery Rep" | "Delivery Agent" | "Sales Closer";
 type UserStatus = "All Status" | "Active" | "Inactive";
 type RoundRobinTab = "Active Sequence" | "Temporarily Excluded" | "Dedicated Products";
 type EmbedTab = "Create Order Form" | "Extra Offers" | "Generate" | "Meta & Ads" | "Links & Tracking";
@@ -2308,7 +2308,7 @@ const financeLensToneClasses: Record<FinanceLens, string> = {
 };
 const expenseTypes: ExpenseType[] = ["Ad Spend", "Delivery", "Failed Delivery", "Salary", "Clearing & Shipping", "Waybill", "Airtime & Data", "Stock Loss", "Other"];
 const expenseFilters: ExpenseFilter[] = ["All Types", ...expenseTypes];
-const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent"];
+const userRoles: UserRole[] = ["All Roles", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent", "Sales Closer"];
 const editableUserRoles: EditableUserRole[] = ["Owner", "Admin", "Manager", "Sales Rep", "Inventory Manager & Logistics Operations", "Marketer", "Viewer", "Recovery Rep", "Delivery Agent", "Sales Closer"];
 const userStatuses: UserStatus[] = ["All Status", "Active", "Inactive"];
 const roundRobinTabs: RoundRobinTab[] = ["Active Sequence", "Temporarily Excluded", "Dedicated Products"];
