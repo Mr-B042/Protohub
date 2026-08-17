@@ -97188,7 +97188,8 @@ ${waybillLineItems(w).length > 1
                 "Delivery Agent": "An outside individual who holds stock and collects cash. Sees only their own deliveries - no customer list, no company figures. After creating the login, link it to their approved agent record from Active Agents.",
                 "Admin": "Full access except billing - can manage users, products, payroll.",
                 "Inventory Manager": "Legacy inventory role with stock and waybill access.",
-                "Inventory Manager & Logistics Operations": "Runs inventory coverage, transfers, logistics, reconciliation, alerts, and reporting."
+                "Inventory Manager & Logistics Operations": "Runs inventory coverage, transfers, logistics, reconciliation, alerts, and reporting.",
+                "Sales Closer": "Logs social-DM leads, works them through her own funnel, and converts them into orders. Different from Sales Rep, who only works orders already in the system."
               };
               return (
                 <div className="px-6 py-5 flex flex-col gap-5">
@@ -97247,8 +97248,8 @@ ${waybillLineItems(w).length > 1
                   {/* Role */}
                   <section className="space-y-3">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Role</h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {(["Sales Rep", "Admin", "Inventory Manager & Logistics Operations"] as EditableUserRole[]).map((r) => {
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {(["Sales Rep", "Sales Closer", "Admin", "Inventory Manager & Logistics Operations"] as EditableUserRole[]).map((r) => {
                         const selected = salesRepRole === r;
                         return (
                           <button
