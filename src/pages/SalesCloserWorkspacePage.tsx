@@ -1521,7 +1521,13 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
             </div>
           </section>
 
-          <section className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+          {/* No overflow-hidden on this one card, unlike its siblings: the
+              Interested Products dropdown below is absolutely positioned, and
+              clipping it here cut the list off after the first row no matter
+              how many products existed. CardHeader carries no background of
+              its own (just a bottom border), so the card's own bg-white +
+              rounded-lg still render the corners correctly without it. */}
+          <section className="rounded-lg border border-gray-200 bg-white shadow-sm">
             <CardHeader icon={Package} title="Product Interest" subtitle="What products is the customer interested in?" tone="bg-violet-50 text-violet-600" />
             <div className="space-y-4 p-5">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
