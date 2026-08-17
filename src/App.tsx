@@ -2637,19 +2637,19 @@ type AccessiblePage = ActivePage; // alias for readability
 const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
     "Dashboard", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
+    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Marketing", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Admin": [
     "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
+    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Manager": [
     "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
+    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Sales Closer Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
   ],
   // "Head of Sales Rep" is NOT listed here - a Sales Rep only gets it at
   // runtime when currentManagedUser?.isHeadOfSalesRep is true (see
