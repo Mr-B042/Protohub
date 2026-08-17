@@ -88703,7 +88703,15 @@ ${waybillLineItems(w).length > 1
                   id: product.id,
                   name: product.name,
                   active: product.active,
-                  packages: product.packages.filter((pkg) => pkg.active).map((pkg) => ({ id: pkg.id, name: pkg.name }))
+                  packages: product.packages
+                    .filter((pkg) => pkg.active)
+                    .sort((a, b) => a.displayOrder - b.displayOrder)
+                    .map((pkg) => ({
+                      id: pkg.id,
+                      name: pkg.name,
+                      quantity: pkg.quantity,
+                      priceLabel: formatProductMoney(pkg.price, pkg.currency)
+                    }))
                 }))}
                 assignees={users.filter((user) => user.role === "Sales Closer" && user.active).map((user) => ({ id: user.id, name: user.name }))}
                 currentUserId={currentManagedUser?.id ?? ""}

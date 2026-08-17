@@ -50,7 +50,12 @@ export type SalesCloserProduct = {
   id: string;
   name: string;
   active: boolean;
-  packages: Array<{ id: string; name: string }>;
+  // priceLabel is pre-formatted by the caller with the app's own
+  // formatProductMoney, so currency handling stays in one place instead of
+  // being re-implemented here. quantity is what actually tells two packages
+  // apart - names repeat across package sets ("MOST POPULAR" three times on
+  // one product), so the name alone is not a usable label.
+  packages: Array<{ id: string; name: string; quantity: number; priceLabel: string }>;
 };
 
 export type SalesCloserAssignee = { id: string; name: string };
@@ -1638,10 +1643,24 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
                 </FieldLabel>
                 <FieldLabel label="Product Package / Variant (Optional)">
                   <select className={fieldClass} value={draft.packageId} disabled={packageOptions.length === 0} onChange={(event) => setDraft((current) => ({ ...current, packageId: event.target.value }))}>
-                    <option value="">Select package or variant</option>
-                    {packageOptions.map((pkg) => <option key={pkg.id} value={pkg.id}>{pkg.productName} - {pkg.name}</option>)}
+                    <option value="">{packageOptions.length === 0 ? "No packages to choose from" : "Select package or variant"}</option>
+                    {packageOptions.map((pkg) => (
+                      <option key={pkg.id} value={pkg.id}>
+                        {pkg.productName} - {pkg.name} · {pkg.quantity}pcs · {pkg.priceLabel}
+                      </option>
+                    ))}
                   </select>
-                  <p className="mt-1.5 text-xs font-medium text-gray-400">e.g. 3pcs, 5pcs, 10pcs etc.</p>
+                  {/* Most of the catalogue is sold raw, with no packages at all,
+                      so this control is disabled far more often than not. Say
+                      which of the three states it is instead of leaving a dead
+                      dropdown that reads as broken. */}
+                  <p className="mt-1.5 text-xs font-medium text-gray-400">
+                    {selectedProducts.length === 0
+                      ? "Pick a product above first - packages are listed per product."
+                      : packageOptions.length === 0
+                        ? `${selectedProducts.map((product) => product.name).join(", ")} ${selectedProducts.length > 1 ? "have" : "has"} no packages set up, so this lead is logged as a single unit.`
+                        : "e.g. 3pcs, 5pcs, 10pcs etc."}
+                  </p>
                 </FieldLabel>
               </div>
             </div>
