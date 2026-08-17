@@ -30,6 +30,7 @@ import {
   ShoppingBag,
   ShoppingCart,
   TrendingUp,
+  Trophy,
   Truck,
   Users,
   WalletCards
@@ -67,6 +68,7 @@ export const navItems = [
   { label: "Call Rep Console", icon: Phone },
   { label: "Sales Rep Workspace", icon: Headphones },
   { label: "Sales Closer Workspace", icon: Handshake },
+  { label: "Sales Closers", icon: Trophy },
   { label: "Recovery Rep Dashboard", icon: RotateCcw },
   { label: "Head of Sales Rep", icon: Crown },
   { label: "Bonuses", icon: HandCoins },
