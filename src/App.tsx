@@ -239,7 +239,7 @@ type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" |
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | null;
-type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace";
+type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -610,7 +610,7 @@ function waybillLineItems(w: WaybillRecord): WaybillItem[] {
   return [{ productId: w.productId, productName: w.productName, quantity: w.quantity }];
 }
 type RepConsoleTab = "Dashboard" | "Bonuses" | "Upsell & Cross-sell Log" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
-type SalesRepsPageTab = "Overview" | "Bonuses" | "Sales Closers";
+type SalesRepsPageTab = "Overview" | "Bonuses";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
 type SystemNotification = { id: string; type: "low_stock" | "remittance_overdue" | "info" | "order_new" | "order_confirmed" | "order_delivered" | "order_cancelled" | "order_failed" | "order_rescheduled" | "order_assigned" | "order_follow_up" | "needs_attention"; message: string; read: boolean; createdAt: string; productId?: string; title?: string; link?: string; orderId?: string; recipientId?: string };
@@ -2637,19 +2637,19 @@ type AccessiblePage = ActivePage; // alias for readability
 const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Owner": [
     "Dashboard", "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
+    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Marketing", "User Management", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Admin": [
     "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
+    "Inventory & Logistics Operations", "Inventory", "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Call Rep Console", "Weekend Stock Summary",
     "Agents", "Personal Delivery Agents", "Waybill", "Payroll", "Customers", "Expenses", "Finance & Accounting",
     "Ad Tracking", "Marketing", "Round-Robin", "Embed Form", "Notifications", "Settings", "WhatsApp"
   ],
   "Manager": [
     "Manager Dashboard", "Orders", "Follow-up Queue", "Closed Orders", "Abandoned Carts", "Scheduled Deliveries", "Deliveries",
-    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
+    "Sales Reps", "Sales Teams", "Sales Rep Workspace", "Recovery Rep Dashboard", "Head of Sales Rep", "Sales Closers", "Upsell & Cross-sell Log", "Weekend Stock Summary", "Customers", "Personal Delivery Agents", "Round-Robin", "Notifications", "Settings", "WhatsApp"
   ],
   // "Head of Sales Rep" is NOT listed here - a Sales Rep only gets it at
   // runtime when currentManagedUser?.isHeadOfSalesRep is true (see
@@ -2724,6 +2724,7 @@ const dashboardHashByPage: Record<ActivePage, string> = {
   "Sales Rep Workspace": "#/dashboard/sales-rep",
   "Recovery Rep Dashboard": "#/dashboard/recovery-rep",
   "Head of Sales Rep": "#/dashboard/admin/head-of-sales-rep",
+  "Sales Closers": "#/dashboard/admin/sales-closers",
   "Upsell & Cross-sell Log": "#/dashboard/admin/upsell-cross-sell-log",
   Bonuses: "#/dashboard/sales-rep/bonuses",
   "Call Rep Console": "#/dashboard/admin/call-rep-console",
@@ -24971,6 +24972,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       agents: "Agents",
       "personal-delivery-agents": "Personal Delivery Agents",
       "head-of-sales-rep": "Head of Sales Rep",
+      "sales-closers": "Sales Closers",
       "my-deliveries": "My Deliveries",
       waybill: "Waybill",
       payroll: "Payroll",
@@ -32034,6 +32036,7 @@ ${waybillLineItems(w).length > 1
       Bonuses: "#/dashboard/sales-rep/bonuses",
       "Recovery Rep Dashboard": "#/dashboard/recovery-rep",
       "Head of Sales Rep": "#/dashboard/admin/head-of-sales-rep",
+      "Sales Closers": "#/dashboard/admin/sales-closers",
       Settings: "#/dashboard/admin/settings",
       WhatsApp: "#/dashboard/admin/whatsapp"
     };
@@ -32085,7 +32088,13 @@ ${waybillLineItems(w).length > 1
       return;
     }
 
-    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
+    if (label === "Sales Closer Workspace") {
+      handleSalesCloserAction("overview");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    if (label === "Manager Dashboard" || label === "Scheduled Deliveries" || label === "Deliveries" || label === "Inventory & Logistics Operations" || label === "Inventory" || label === "Sales Reps" || label === "Sales Teams" || label === "Sales Rep Bonuses" || label === "Sales Rep Workspace" || label === "Recovery Rep Dashboard" || label === "Head of Sales Rep" || label === "Sales Closers" || label === "Call Rep Console" || label === "Weekend Stock Summary" || label === "Agents" || label === "Personal Delivery Agents" || label === "My Deliveries" || label === "Waybill" || label === "Payroll" || label === "Customers" || label === "Expenses" || label === "Finance & Accounting" || label === "Ad Tracking" || label === "Marketing" || label === "User Management" || label === "Round-Robin" || label === "Embed Form" || label === "AI Agent" || label === "AI Sandbox" || label === "AI/SMS Tokens" || label === "Notifications" || label === "Settings" || label === "WhatsApp") {
       if (label === "Inventory & Logistics Operations") {
         setInventoryOperationsSection("dashboard");
       }
@@ -40134,11 +40143,7 @@ ${waybillLineItems(w).length > 1
     setSalesRepsPageTab(tab);
     setSalesRepView("list");
     setSelectedSalesRepId("");
-    syncHashRoute(
-      tab === "Bonuses" ? "#/dashboard/admin/sales-reps/bonuses"
-        : tab === "Sales Closers" ? "#/dashboard/admin/sales-reps/sales-closers"
-        : "#/dashboard/admin/sales-reps"
-    );
+    syncHashRoute(tab === "Bonuses" ? "#/dashboard/admin/sales-reps/bonuses" : "#/dashboard/admin/sales-reps");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -40962,13 +40967,13 @@ ${waybillLineItems(w).length > 1
     }
   }, []);
   useEffect(() => {
-    if (activePage === "Sales Reps" && salesRepsPageTab === "Sales Closers") {
+    if (activePage === "Sales Closers") {
       void loadSalesClosersLeaderboard();
       salesLeadsApi.bonusSettings()
         .then((result) => setSalesCloserCostSettings({ allocatedSalaryMonthly: result.settings.allocatedSalaryMonthly, packagingCostPerUnit: result.settings.packagingCostPerUnit }))
         .catch(() => {});
     }
-  }, [activePage, salesRepsPageTab, loadSalesClosersLeaderboard]);
+  }, [activePage, loadSalesClosersLeaderboard]);
   const saveSalesCloserCostSettings = async (values: { allocatedSalaryMonthly: number; packagingCostPerUnit: number }) => {
     try {
       const result = await salesLeadsApi.updateBonusSettings(values);
@@ -42946,8 +42951,8 @@ ${waybillLineItems(w).length > 1
 
   const renderSalesRepsPageTabs = () => (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      <nav className="grid grid-cols-3 gap-1 rounded-2xl border border-gray-200 bg-gray-100 p-1 dark:border-slate-700 dark:bg-slate-900 sm:inline-grid" aria-label="Sales representatives sections">
-        {(["Overview", "Sales Closers", "Bonuses"] as SalesRepsPageTab[]).map((tab) => (
+      <nav className="grid grid-cols-2 gap-1 rounded-2xl border border-gray-200 bg-gray-100 p-1 dark:border-slate-700 dark:bg-slate-900 sm:inline-grid" aria-label="Sales representatives sections">
+        {(["Overview", "Bonuses"] as SalesRepsPageTab[]).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -71548,19 +71553,6 @@ ${waybillLineItems(w).length > 1
               {renderSalesRepsPageTabs()}
               {renderSalesBonusAdminPage()}
             </div>
-          ) : activePage === "Sales Reps" && salesRepsPageTab === "Sales Closers" ? (
-            <div className="space-y-6">
-              {renderSalesRepsPageTabs()}
-              <SalesClosersOwnerPage
-                rows={salesClosersLeaderboard}
-                loading={salesClosersLeaderboardLoading}
-                error={salesClosersLeaderboardError}
-                canEditCostSettings={realRole === "Owner"}
-                costSettings={salesCloserCostSettings}
-                onSaveCostSettings={saveSalesCloserCostSettings}
-                onLoadCostProfitability={loadSalesCloserCostProfitability}
-              />
-            </div>
           ) : activePage === "Sales Reps" && salesRepView === "detail" && selectedSalesRepId && users.find((u) => u.id === selectedSalesRepId) ? (
             (() => {
               const detailUser = users.find((u) => u.id === selectedSalesRepId)!;
@@ -72819,6 +72811,16 @@ ${waybillLineItems(w).length > 1
             renderRecoveryRepConsole()
           ) : activePage === "Head of Sales Rep" ? (
             renderHeadOfSalesRepDashboard()
+          ) : activePage === "Sales Closers" ? (
+            <SalesClosersOwnerPage
+              rows={salesClosersLeaderboard}
+              loading={salesClosersLeaderboardLoading}
+              error={salesClosersLeaderboardError}
+              canEditCostSettings={realRole === "Owner"}
+              costSettings={salesCloserCostSettings}
+              onSaveCostSettings={saveSalesCloserCostSettings}
+              onLoadCostProfitability={loadSalesCloserCostProfitability}
+            />
           ) : activePage === "Weekend Stock Summary" ? (
             <div className="space-y-6">
               <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
