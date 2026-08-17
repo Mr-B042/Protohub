@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Cell, Legend, Line, LineChart, Pie, PieChart as RePieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { NIGERIA_STATES } from "../lib/nigeria";
 import { WhatsAppIcon } from "../components/WhatsAppIcon";
@@ -211,6 +211,29 @@ const normalizedWhatsAppDigits = (phone: string | null | undefined) => {
   if (clean.startsWith("0") && clean.length === 11) return `234${clean.slice(1)}`;
   if (!clean.startsWith("0") && clean.length === 10) return `234${clean}`;
   return clean.length >= 11 && clean.length <= 15 ? clean : null;
+};
+
+// The "+234" on the phone inputs is decorative markup, not part of the value,
+// so a closer following the placeholder ("801 234 5678") saved a number with
+// no leading zero. Convert to Order copies this straight onto a real order, so
+// the stored shape has to match how orders already store Nigerian numbers -
+// local 0-prefixed, normalized on the way in, NOT the 234-prefixed form
+// normalizedWhatsAppDigits returns for wa.me links (orders/customers store what
+// was typed and normalize at dispatch time; see normalizePhoneForSms). Anything
+// unparseable is left exactly as typed rather than mangled.
+// Local-time today, so the follow-up date can't be backdated. Deliberately not
+// UTC - a Lagos evening is already "tomorrow" in UTC and would wrongly block
+// today.
+const todayDateValue = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
+
+const normalizedLocalPhone = (value: string | null | undefined) => {
+  const raw = (value ?? "").trim();
+  const digits = normalizedWhatsAppDigits(raw);
+  if (!digits) return raw;
+  return digits.startsWith("234") ? `0${digits.slice(3)}` : digits;
 };
 
 const fieldClass = "w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100";
@@ -1364,6 +1387,32 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
     [selectedProducts]
   );
   const currentAssignee = assignees.find((assignee) => assignee.id === currentUserId);
+  const assigneeKey = assignees.map((assignee) => assignee.id).join(",");
+
+  // defaultDraft assigns the lead to whoever is viewing, which is right for a
+  // Sales Closer logging her own lead but wrong for Owner/Admin/Manager, who
+  // can reach this page but own no lead inbox. The backend takes a
+  // supervisor's assignedCloserId verbatim, so leaving it would file the lead
+  // under a non-closer where no closer's inbox query can ever see it. Clear
+  // any id that isn't a real closer and make the picker ask.
+  useEffect(() => {
+    if (assignees.length === 0) return;
+    setDraft((current) => assignees.some((assignee) => assignee.id === current.assignedCloserId)
+      ? current
+      : { ...current, assignedCloserId: "" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assigneeKey]);
+
+  // A multi-select has no natural "I'm done" moment, so it needs an explicit
+  // way out: Escape here, plus a Done button and a trigger that toggles.
+  useEffect(() => {
+    if (!showProductPicker) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowProductPicker(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showProductPicker]);
 
   const toggleProduct = (productId: string) => {
     setDraft((current) => {
@@ -1392,9 +1441,20 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
     if (!draft.fullName.trim()) return setFormError("Enter the customer's full name.");
     if (!draft.phone.trim()) return setFormError("Enter a phone number.");
     if (draft.interestedProductIds.length === 0) return setFormError("Choose at least one product the customer is interested in.");
+    // Marked required in the UI but never checked before, so a supervisor
+    // could save a lead nobody owns.
+    if (assignees.length === 0) return setFormError("There are no Sales Closer accounts yet, so this lead has nobody to belong to. Create one in User Management first.");
+    if (!draft.assignedCloserId) return setFormError("Choose which Sales Closer should own this lead.");
     setFormError("");
     try {
-      await onSaveLead(draft);
+      await onSaveLead({
+        ...draft,
+        fullName: draft.fullName.trim(),
+        phone: normalizedLocalPhone(draft.phone),
+        alternatePhone: normalizedLocalPhone(draft.alternatePhone),
+        whatsappNumber: normalizedLocalPhone(draft.whatsappNumber),
+        email: draft.email.trim()
+      });
       setDraft(defaultDraft(currentUserId));
     } catch (saveError: any) {
       setFormError(saveError?.message ?? "Could not save this lead.");
@@ -1533,22 +1593,43 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <FieldLabel label="Interested Products" required>
                   <div className="relative">
-                    <button type="button" className={`${fieldClass} flex items-center justify-between text-left`} onClick={() => setShowProductPicker((open) => !open)}>
-                      <span className={selectedProducts.length === 0 ? "text-gray-400" : ""}>
+                    {/* relative z-30 keeps the trigger above the click-outside
+                        layer below, so clicking it toggles the list shut
+                        instead of the layer swallowing the click. */}
+                    <button
+                      type="button"
+                      className={`${fieldClass} relative z-30 flex items-center justify-between gap-2 text-left`}
+                      aria-expanded={showProductPicker}
+                      onClick={() => setShowProductPicker((open) => !open)}
+                    >
+                      <span className={`truncate ${selectedProducts.length === 0 ? "text-gray-400" : ""}`}>
                         {selectedProducts.length === 0 ? "Select product(s)" : selectedProducts.map((product) => product.name).join(", ")}
                       </span>
-                      <ChevronDown className="h-4 w-4 shrink-0 text-gray-400" />
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {selectedProducts.length > 0 && (
+                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-black text-blue-700">{selectedProducts.length}</span>
+                        )}
+                        <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${showProductPicker ? "rotate-180" : ""}`} />
+                      </span>
                     </button>
                     {showProductPicker && (
                       <>
                         <div className="fixed inset-0 z-20" onClick={() => setShowProductPicker(false)} />
-                        <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-64 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
-                          {activeProducts.map((product) => (
-                            <label key={product.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-gray-50">
-                              <input type="checkbox" className="rounded accent-blue-600" checked={draft.interestedProductIds.includes(product.id)} onChange={() => toggleProduct(product.id)} />
-                              <span className="text-sm font-medium text-gray-700">{product.name}</span>
-                            </label>
-                          ))}
+                        <div className="absolute left-0 right-0 top-full z-30 mt-1 rounded-lg border border-gray-200 bg-white shadow-lg">
+                          <div className="max-h-56 overflow-y-auto p-2">
+                            {activeProducts.length === 0 ? (
+                              <p className="px-3 py-4 text-center text-sm font-medium text-gray-400">No active products to choose from.</p>
+                            ) : activeProducts.map((product) => (
+                              <label key={product.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-gray-50">
+                                <input type="checkbox" className="rounded accent-blue-600" checked={draft.interestedProductIds.includes(product.id)} onChange={() => toggleProduct(product.id)} />
+                                <span className="text-sm font-medium text-gray-700">{product.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                          <div className="flex items-center justify-between gap-2 border-t border-gray-100 px-3 py-2">
+                            <span className="text-xs font-bold text-gray-400">{selectedProducts.length} selected</span>
+                            <button type="button" className="!min-h-0 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-black text-white" onClick={() => setShowProductPicker(false)}>Done</button>
+                          </div>
                         </div>
                       </>
                     )}
@@ -1623,12 +1704,19 @@ export function SalesCloserWorkspacePage({ section, products, assignees, current
             <div className="space-y-4 p-5">
               <FieldLabel label="Assign Follow-up To" required>
                 <select className={fieldClass} value={draft.assignedCloserId} onChange={(event) => setDraft((current) => ({ ...current, assignedCloserId: event.target.value }))}>
+                  {/* Placeholder whenever the viewer isn't a closer themselves
+                      (Owner/Admin/Manager), so the field can't sit on a value
+                      that matches no option and render blank. */}
+                  {!currentAssignee && <option value="">Select a Sales Closer</option>}
                   {currentAssignee && <option value={currentAssignee.id}>{currentAssignee.name} (You)</option>}
                   {assignees.filter((assignee) => assignee.id !== currentUserId).map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.name}</option>)}
                 </select>
+                {assignees.length === 0 && (
+                  <p className="mt-1.5 text-xs font-bold text-amber-700">No Sales Closer accounts exist yet. Create one in User Management before saving a lead.</p>
+                )}
               </FieldLabel>
               <div className="grid grid-cols-2 gap-3">
-                <FieldLabel label="Follow-up Date"><input type="date" className={fieldClass} value={draft.followUpDate} onChange={(event) => setDraft((current) => ({ ...current, followUpDate: event.target.value }))} /></FieldLabel>
+                <FieldLabel label="Follow-up Date"><input type="date" min={todayDateValue()} className={fieldClass} value={draft.followUpDate} onChange={(event) => setDraft((current) => ({ ...current, followUpDate: event.target.value }))} /></FieldLabel>
                 <FieldLabel label="Follow-up Time"><input type="time" className={fieldClass} value={draft.followUpTime} onChange={(event) => setDraft((current) => ({ ...current, followUpTime: event.target.value }))} /></FieldLabel>
               </div>
               <p className="text-xs font-medium text-gray-400">You will be reminded to follow up on this lead</p>
