@@ -614,7 +614,23 @@ router.get("/upsell-cross-sell", async (req, res) => {
         acceptanceRatePct: offers.offered > 0
           ? Math.round((offers.accepted / offers.offered) * 1000) / 10
           : 0,
-        incrementalRevenue: Math.round(offers.revenue)
+        // Money comes from what was actually DELIVERED, never from the offer
+        // log. The team total on this same page has always been
+        // incrementalRevenueUpsell + CrossSell over delivered orders, while
+        // these rows used the log's accepted_amount - so the rows did not sum
+        // to their own total (N61,000 of rows under an N87,000 total) and the
+        // page disagreed with the Manager Dashboard, which uses the delivered
+        // figure. The log only holds what a rep remembered to log, so it
+        // undercounts real expansion; Chelsea's three delivered cross-sells
+        // showed here as N9,000 against a true N46,500.
+        upsellsDelivered: repMetrics?.upsellCount ?? 0,
+        crossSellsDelivered: repMetrics?.crossSellCount ?? 0,
+        incrementalRevenue: Math.round(
+          (repMetrics?.incrementalRevenueUpsell ?? 0) + (repMetrics?.incrementalRevenueCrossSell ?? 0)
+        ),
+        // Kept separately so the offer log stays visible as offer ACTIVITY
+        // without ever being read as money.
+        loggedOfferValue: Math.round(offers.revenue)
       };
     });
 
