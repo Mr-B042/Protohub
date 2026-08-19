@@ -1476,9 +1476,13 @@ export const upsellBonusApi = {
 };
 
 export const headOfSalesApi = {
-  overview: (repId: string, weekStart?: string) => {
+  // range is optional: when the picker resolves to something other than a
+  // full Sunday week (Today, Yesterday, a custom range) the server computes
+  // over the real dates instead of snapping onto the containing week.
+  overview: (repId: string, weekStart?: string, range?: { from: string; to: string }) => {
     const params = new URLSearchParams({ repId });
     if (weekStart) params.set("weekStart", weekStart);
+    if (range?.from && range?.to) { params.set("dateFrom", range.from); params.set("dateTo", range.to); }
     return get<any>(`/api/head-of-sales-rep/overview?${params.toString()}`);
   },
   scorecard: (repId: string, weekStart?: string) => {
@@ -1486,14 +1490,22 @@ export const headOfSalesApi = {
     if (weekStart) params.set("weekStart", weekStart);
     return get<any>(`/api/head-of-sales-rep/scorecard?${params.toString()}`);
   },
-  teamPerformance: (repId: string, weekStart?: string) => {
+  // range is optional: when the picker resolves to something other than a
+  // full Sunday week (Today, Yesterday, a custom range) the server computes
+  // over the real dates instead of snapping onto the containing week.
+  teamPerformance: (repId: string, weekStart?: string, range?: { from: string; to: string }) => {
     const params = new URLSearchParams({ repId });
     if (weekStart) params.set("weekStart", weekStart);
+    if (range?.from && range?.to) { params.set("dateFrom", range.from); params.set("dateTo", range.to); }
     return get<any>(`/api/head-of-sales-rep/team-performance?${params.toString()}`);
   },
-  upsellCrossSell: (repId: string, weekStart?: string) => {
+  // range is optional: when the picker resolves to something other than a
+  // full Sunday week (Today, Yesterday, a custom range) the server computes
+  // over the real dates instead of snapping onto the containing week.
+  upsellCrossSell: (repId: string, weekStart?: string, range?: { from: string; to: string }) => {
     const params = new URLSearchParams({ repId });
     if (weekStart) params.set("weekStart", weekStart);
+    if (range?.from && range?.to) { params.set("dateFrom", range.from); params.set("dateTo", range.to); }
     return get<any>(`/api/head-of-sales-rep/upsell-cross-sell?${params.toString()}`);
   },
   repCoaching: (repId: string, selectedRepId?: string, weekStart?: string) => {

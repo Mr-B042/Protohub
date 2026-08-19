@@ -6,6 +6,7 @@ import {
   addDaysToDateKey,
   computeRepWeekMetrics,
   computeTeamWeekMetrics,
+  computeTeamRangeMetrics,
   computeTrailingBaseline,
   lagosDateKey,
   sundayWeekStartForDateKey,
@@ -26,8 +27,25 @@ router.use(requireAuth, requireRole("Owner", "Admin", "Manager", "Sales Rep"));
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const WeekQuerySchema = z.object({
   repId: z.string().min(1),
-  weekStart: z.string().regex(DATE_KEY_PATTERN).optional()
+  weekStart: z.string().regex(DATE_KEY_PATTERN).optional(),
+  // Today / Yesterday / a custom range. Everything used to snap onto its
+  // containing Sunday week, so Today and Yesterday returned identical numbers.
+  // When these are sent the metrics are computed over the real range instead.
+  // The weekly surfaces (scorecard ladder, weekly report, bonus record) still
+  // key off weekStart, because a bonus IS a weekly record and has no daily
+  // equivalent - those pages say so rather than pretending.
+  dateFrom: z.string().regex(DATE_KEY_PATTERN).optional(),
+  dateTo: z.string().regex(DATE_KEY_PATTERN).optional()
 });
+
+// The window the "current period" metrics cover: the explicit range when the
+// picker sent one, otherwise the Sunday week. Baselines and trends stay weekly
+// either way - they are what the range is being compared against.
+function resolveRange(parsed: { weekStart?: string; dateFrom?: string; dateTo?: string }, weekStart: string) {
+  const from = parsed.dateFrom && parsed.dateTo ? parsed.dateFrom : weekStart;
+  const to = parsed.dateFrom && parsed.dateTo ? parsed.dateTo : weekEndFromStart(weekStart);
+  return { from, to, isCustomRange: Boolean(parsed.dateFrom && parsed.dateTo) };
+}
 
 // A rep is only ever compared against reps she doesn't oversee - herself
 // excluded - matching "rewarded for making the OTHER reps better," not for
@@ -175,11 +193,15 @@ router.get("/overview", async (req, res) => {
     const { rep, repIds, repNameById } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
     const weekEnd = weekEndFromStart(weekStart);
+    const range = resolveRange(parsed.data, weekStart);
 
-    // One query covers this week AND the 4 baseline weeks before it.
-    const orders = await loadOrdersSince(orgId, repIds, addDaysToDateKey(weekStart, -28), weekEnd);
+    // One query covers the selected range AND the 4 baseline weeks before it.
+    const orders = await loadOrdersSince(orgId, repIds, addDaysToDateKey(weekStart, -28), range.to > weekEnd ? range.to : weekEnd);
 
-    const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
+    // Rates (AOV, upsell, cross-sell, delivery) are averages, so they stay
+    // meaningful over a single day. Totals do not - which is why the response
+    // reports the range back and the UI labels a part-week explicitly.
+    const thisWeek = computeTeamRangeMetrics(orders, repIds, range.from, range.to);
     const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
     const { scorecard, totalWeightedScore, target } = buildScorecard(thisWeek, baseline);
 
@@ -391,6 +413,7 @@ router.get("/team-performance", async (req, res) => {
     const { repIds, repNameById } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
     const weekEnd = weekEndFromStart(weekStart);
+    const range = resolveRange(parsed.data, weekStart);
     const lastWeekStart = addDaysToDateKey(weekStart, -7);
 
     // This week, its own 4-week baseline, the trend weeks, AND last week (for
@@ -398,7 +421,7 @@ router.get("/team-performance", async (req, res) => {
     const earliestNeeded = addDaysToDateKey(weekStart, -7 * (TREND_WEEKS + 4));
     const orders = await loadOrdersSince(orgId, repIds, earliestNeeded, weekEnd);
 
-    const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
+    const thisWeek = computeTeamRangeMetrics(orders, repIds, range.from, range.to);
     const lastWeek = computeTeamWeekMetrics(orders, repIds, lastWeekStart);
     const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
     const lastWeekAovByRep = new Map(lastWeek.reps.map((rep) => [rep.repId, rep.aov]));
@@ -518,6 +541,7 @@ router.get("/upsell-cross-sell", async (req, res) => {
     const { repIds, repNameById } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
     const weekEnd = weekEndFromStart(weekStart);
+    const range = resolveRange(parsed.data, weekStart);
     const lastWeekStart = addDaysToDateKey(weekStart, -7);
 
     // Same headline Upsell Rate / Cross-sell Rate as Overview and Weekly
@@ -527,7 +551,7 @@ router.get("/upsell-cross-sell", async (req, res) => {
     // something, not just how many delivered orders ended up upsold.
     const earliestNeeded = addDaysToDateKey(weekStart, -28);
     const orders = await loadOrdersSince(orgId, repIds, earliestNeeded, weekEnd);
-    const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
+    const thisWeek = computeTeamRangeMetrics(orders, repIds, range.from, range.to);
     const lastWeek = computeTeamWeekMetrics(orders, repIds, lastWeekStart);
     const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
 
