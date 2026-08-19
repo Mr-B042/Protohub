@@ -62051,6 +62051,24 @@ ${waybillLineItems(w).length > 1
     });
   };
 
+  // One visual identity per category, defined once and reused by the summary
+  // tiles, the group headers and each customer card - so a colour always means
+  // the same thing wherever it appears on this page.
+  const RECOVERY_CATEGORY_STYLE: Record<string, {
+    icon: typeof Truck; rail: string; tile: string; chip: string; ring: string; soft: string;
+  }> = {
+    failed_delivery:     { icon: Truck,         rail: "bg-rose-500",    tile: "from-rose-50 to-white",    chip: "bg-rose-100 text-rose-700",       ring: "ring-rose-200",    soft: "text-rose-700" },
+    rescheduled:         { icon: CalendarClock, rail: "bg-amber-500",   tile: "from-amber-50 to-white",   chip: "bg-amber-100 text-amber-800",     ring: "ring-amber-200",   soft: "text-amber-800" },
+    not_picking:         { icon: PhoneOff,      rail: "bg-slate-400",   tile: "from-slate-50 to-white",   chip: "bg-slate-200 text-slate-700",     ring: "ring-slate-200",   soft: "text-slate-700" },
+    unreachable:         { icon: AlertTriangle, rail: "bg-gray-400",    tile: "from-gray-50 to-white",    chip: "bg-gray-200 text-gray-700",       ring: "ring-gray-200",    soft: "text-gray-700" },
+    cancelled:           { icon: X,             rail: "bg-orange-500",  tile: "from-orange-50 to-white",  chip: "bg-orange-100 text-orange-700",   ring: "ring-orange-200",  soft: "text-orange-700" },
+    interested_no_order: { icon: Sparkles,      rail: "bg-violet-400",  tile: "from-violet-50 to-white",  chip: "bg-violet-100 text-violet-700",   ring: "ring-violet-200",  soft: "text-violet-700" },
+    previous_success:    { icon: CheckCircle2,  rail: "bg-emerald-500", tile: "from-emerald-50 to-white", chip: "bg-emerald-100 text-emerald-700", ring: "ring-emerald-200", soft: "text-emerald-700" },
+    dormant:             { icon: Moon,          rail: "bg-sky-500",     tile: "from-sky-50 to-white",     chip: "bg-sky-100 text-sky-700",         ring: "ring-sky-200",     soft: "text-sky-700" }
+  };
+  const recoveryCategoryStyle = (key: string) =>
+    RECOVERY_CATEGORY_STYLE[key] ?? { icon: History, rail: "bg-gray-300", tile: "from-gray-50 to-white", chip: "bg-gray-100 text-gray-700", ring: "ring-gray-200", soft: "text-gray-700" };
+
   const renderRecoveryWorkQueue = () => {
     const view = recoveryWorklist;
     const tiers = [
@@ -62112,17 +62130,28 @@ ${waybillLineItems(w).length > 1
           <p className="m-0 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{recoveryWorklistError}</p>
         )}
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
           <button
             type="button"
             onClick={() => setRecoveryWorklistCategory("all")}
-            className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${recoveryWorklistCategory === "all" ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+            className={`!min-h-0 rounded-2xl border p-3 text-left transition-all ${
+              recoveryWorklistCategory === "all"
+                ? "border-[#1F8FE0] bg-gradient-to-br from-blue-50 to-white ring-2 ring-blue-200"
+                : "border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm"}`}
           >
-            All ({view?.rows.length ?? 0})
+            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#1F8FE0]/10 text-[#1F8FE0]">
+              <History className="h-4 w-4" />
+            </span>
+            <p className="mt-2 text-[11px] font-black uppercase tracking-wide text-gray-400">Everyone</p>
+            <p className="mt-0.5 text-xl font-black leading-none text-gray-900">{view?.rows.length ?? 0}</p>
+            <p className="mt-1 text-[11px] font-medium leading-4 text-gray-400">All categories, in priority order.</p>
           </button>
           {Object.entries(view?.categories ?? {}).map(([key, meta]) => {
             const count = view?.counts?.[key] ?? 0;
             const notTracked = (view?.notTracked ?? []).includes(key);
+            const style = recoveryCategoryStyle(key);
+            const Icon = style.icon;
+            const active = recoveryWorklistCategory === key;
             return (
               <button
                 key={key}
@@ -62130,12 +62159,24 @@ ${waybillLineItems(w).length > 1
                 disabled={notTracked}
                 title={notTracked ? "Not derivable from orders - lives in abandoned carts and sales leads" : meta.blurb}
                 onClick={() => setRecoveryWorklistCategory((current) => current === key ? "all" : key)}
-                className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
-                  notTracked ? "cursor-not-allowed border-dashed border-gray-200 bg-gray-50 text-gray-400"
-                    : recoveryWorklistCategory === key ? "border-[#1F8FE0] bg-[#1F8FE0] text-white"
-                    : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+                className={`!min-h-0 relative overflow-hidden rounded-2xl border p-3 text-left transition-all ${
+                  notTracked
+                    ? "cursor-not-allowed border-dashed border-gray-200 bg-gray-50/60"
+                    : active
+                      ? `border-transparent bg-gradient-to-br ${style.tile} ring-2 ${style.ring}`
+                      : "border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm"}`}
               >
-                {meta.code}. {meta.label} ({notTracked ? "n/a" : count})
+                <span className={`absolute inset-y-0 left-0 w-1 ${notTracked ? "bg-gray-200" : style.rail}`} />
+                <span className={`flex h-8 w-8 items-center justify-center rounded-xl ${notTracked ? "bg-gray-100 text-gray-400" : style.chip}`}>
+                  <Icon className="h-4 w-4" />
+                </span>
+                <p className="mt-2 text-[11px] font-black uppercase tracking-wide text-gray-400">{meta.code}. {meta.label}</p>
+                <p className={`mt-0.5 text-xl font-black leading-none ${notTracked ? "text-gray-300" : "text-gray-900"}`}>
+                  {notTracked ? "n/a" : count}
+                </p>
+                <p className="mt-1 text-[11px] font-medium leading-4 text-gray-400">
+                  {notTracked ? "Not in the orders table - needs carts/leads." : meta.blurb}
+                </p>
               </button>
             );
           })}
@@ -62160,61 +62201,85 @@ ${waybillLineItems(w).length > 1
         ) : tiers.map((tier) => {
           const tierRows = visibleRows.filter((row) => row.priority === tier.tier);
           if (tierRows.length === 0) return null;
+          // Inside a tier, keep each category in its own block so the groups
+          // stay visually separate instead of one mixed list.
+          const categoriesInTier = Array.from(new Set(tierRows.map((row) => row.category)));
           return (
-            <section key={tier.tier} className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-4 py-3">
-                <div>
+            <section key={tier.tier} className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gray-900 text-sm font-black text-white">
+                  {tier.tier === 6 ? "-" : `P${tier.tier}`}
+                </span>
+                <div className="min-w-0">
                   <h3 className="m-0 text-sm font-black text-gray-900">{tier.title}</h3>
                   <p className="m-0 mt-0.5 text-xs font-medium text-gray-500">{tier.why}</p>
                 </div>
-                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-gray-700 ring-1 ring-gray-200">{tierRows.length}</span>
+                <span className="ml-auto rounded-full bg-white px-2.5 py-1 text-xs font-black text-gray-700 ring-1 ring-gray-200">{tierRows.length}</span>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[900px] text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-100 text-[10px] font-bold uppercase tracking-wide text-gray-500">
-                      <th className="px-3 py-2 text-left">Customer</th>
-                      <th className="px-3 py-2 text-left">Category</th>
-                      <th className="px-3 py-2 text-left">Order</th>
-                      <th className="px-3 py-2 text-left">Last outcome</th>
-                      <th className="px-3 py-2 text-left">History</th>
-                      <th className="px-3 py-2 text-left">Owner</th>
-                      <th className="px-3 py-2" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {tierRows.map((row) => {
-                      const owner = row.assignedRepId ? repNameById.get(row.assignedRepId) : null;
-                      const waUrl = buildWhatsAppTargets(row.phone ?? "", `Hello ${row.customer}, this is Protohub following up on your order.`).normalUrl;
-                      return (
-                        <tr key={`${row.orderId}-${row.category}`} className="hover:bg-gray-50/70">
-                          <td className="px-3 py-2.5">
-                            <div className="font-bold text-gray-900">{row.customer || "-"}</div>
-                            <div className="text-[11px] font-medium text-gray-400">{row.phone} · {row.state || "No state"}</div>
-                          </td>
-                          <td className="px-3 py-2.5 whitespace-nowrap">
-                            <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-700">
-                              {row.categoryCode}. {row.categoryLabel}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <div className="font-semibold text-gray-800">{row.productName || "-"}</div>
-                            <div className="text-[11px] font-medium text-gray-400">
-                              #{row.orderId} · {formatProductMoney(row.amount, row.currency as any)}
-                              {row.daysSinceClosed !== null && row.daysSinceClosed !== undefined ? ` · ${row.daysSinceClosed}d ago` : ""}
+
+              {categoriesInTier.map((categoryKey) => {
+                const groupRows = tierRows.filter((row) => row.category === categoryKey);
+                const style = recoveryCategoryStyle(categoryKey);
+                const Icon = style.icon;
+                const meta = view?.categories?.[categoryKey];
+                return (
+                  <div key={categoryKey} className={`overflow-hidden rounded-2xl border border-gray-200 bg-gradient-to-br ${style.tile} shadow-sm`}>
+                    <div className="flex flex-wrap items-center gap-2 border-b border-white/70 px-4 py-2.5">
+                      <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${style.chip}`}>
+                        <Icon className="h-3.5 w-3.5" />
+                      </span>
+                      <h4 className={`m-0 text-xs font-black uppercase tracking-wide ${style.soft}`}>
+                        {meta?.code}. {meta?.label ?? categoryKey}
+                      </h4>
+                      <span className="text-[11px] font-medium text-gray-400">{meta?.blurb}</span>
+                      <span className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-black ${style.chip}`}>{groupRows.length}</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2.5 p-3 md:grid-cols-2 xl:grid-cols-3">
+                      {groupRows.map((row) => {
+                        const owner = row.assignedRepId ? repNameById.get(row.assignedRepId) : null;
+                        const waUrl = buildWhatsAppTargets(row.phone ?? "", `Hello ${row.customer}, this is Protohub following up on your order.`).normalUrl;
+                        return (
+                          <div key={`${row.orderId}-${row.category}`} className="relative overflow-hidden rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition-shadow hover:shadow-md">
+                            <span className={`absolute inset-y-0 left-0 w-1 ${style.rail}`} />
+                            <div className="flex items-start gap-2.5 pl-1.5">
+                              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-black ${customerAvatarTone(row.orderId)}`}>
+                                {customerInitial(row.customer)}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <p className="m-0 truncate text-sm font-black text-gray-900">{row.customer || "-"}</p>
+                                <p className="m-0 truncate text-[11px] font-medium text-gray-400">{row.phone} · {row.state || "No state"}</p>
+                              </div>
+                              {row.daysSinceClosed !== null && row.daysSinceClosed !== undefined && (
+                                <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black text-gray-500">{row.daysSinceClosed}d</span>
+                              )}
                             </div>
-                          </td>
-                          <td className="px-3 py-2.5 max-w-[220px]">
-                            <div className="truncate text-[11px] text-gray-600" title={row.lastOutcome ?? ""}>{row.lastOutcome || "-"}</div>
-                          </td>
-                          <td className="px-3 py-2.5 whitespace-nowrap text-[11px] font-semibold text-gray-600">
-                            {row.customerOrders} order{row.customerOrders === 1 ? "" : "s"} · {row.customerDelivered} delivered
-                          </td>
-                          <td className="px-3 py-2.5 whitespace-nowrap text-[11px] font-semibold text-gray-500">
-                            {owner ?? <span className="text-gray-300">unassigned</span>}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <div className="flex items-center justify-end gap-1.5">
+
+                            <div className="mt-2.5 rounded-lg bg-gray-50 px-2.5 py-2 pl-2.5">
+                              <p className="m-0 truncate text-xs font-bold text-gray-800">{row.productName || "-"}</p>
+                              <p className="m-0 text-[11px] font-medium text-gray-400">
+                                #{row.orderId} · {formatProductMoney(row.amount, row.currency as any)} · {row.status}
+                              </p>
+                            </div>
+
+                            {row.lastOutcome && (
+                              <p className="m-0 mt-2 line-clamp-2 text-[11px] leading-4 text-gray-600" title={row.lastOutcome}>
+                                <span className="font-bold text-gray-500">Last: </span>{row.lastOutcome}
+                              </p>
+                            )}
+
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
+                              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">
+                                {row.customerOrders} order{row.customerOrders === 1 ? "" : "s"} · {row.customerDelivered} delivered
+                              </span>
+                              {/* Shown because this category can hold live orders
+                                  somebody else is already working. */}
+                              {owner && (
+                                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 ring-1 ring-amber-100">Owned by {owner}</span>
+                              )}
+                            </div>
+
+                            <div className="mt-2.5 flex items-center gap-1.5 border-t border-gray-100 pt-2.5">
                               {waUrl && (
                                 <a className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-green-50 text-green-600 ring-1 ring-green-100 hover:bg-green-100"
                                   href={waUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${row.customer}`}>
@@ -62227,19 +62292,19 @@ ${waybillLineItems(w).length > 1
                               </a>
                               <button
                                 type="button"
-                                className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#1F8FE0] hover:bg-blue-50"
+                                className="!min-h-0 ml-auto rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#1F8FE0] hover:bg-blue-50"
                                 onClick={() => openOrderDetailPopup(row.orderId)}
                               >
-                                Open
+                                Open order
                               </button>
                             </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </section>
           );
         })}
