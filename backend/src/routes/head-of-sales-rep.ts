@@ -136,27 +136,79 @@ const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleSt
 const vsTarget = (actual: number, targetValue: number) =>
   targetValue > 0 ? Math.round((actual / targetValue) * 1000) / 10 : (actual > 0 ? 100 : 0);
 
+// Shipped defaults. An org that has never touched the settings behaves exactly
+// as before: these weights, and every target following the team's own trailing
+// 4-week average. That default stays deliberate - the Owner's own rule was
+// never to invent a weekly target before a baseline exists - but it is now a
+// starting point rather than a ceiling.
+export const DEFAULT_SCORECARD_METRICS = [
+  { key: "teamAov", label: "Team AOV", weight: 35, targetMode: "baseline" as const, targetValue: null as number | null },
+  { key: "upsellRate", label: "Upsell Rate", weight: 20, targetMode: "baseline" as const, targetValue: null as number | null },
+  { key: "crossSellRate", label: "Cross-sell Rate", weight: 15, targetMode: "baseline" as const, targetValue: null as number | null },
+  { key: "incrementalRevenue", label: "Incremental Revenue", weight: 20, targetMode: "baseline" as const, targetValue: null as number | null },
+  { key: "teamDeliveryRate", label: "Team Delivery Rate", weight: 10, targetMode: "baseline" as const, targetValue: null as number | null }
+];
+export type ScorecardMetricSetting = {
+  key: string; label: string; weight: number;
+  targetMode: "baseline" | "manual"; targetValue: number | null;
+};
+
 // The 5-metric weighted scorecard, shared by Overview and Weekly Scorecard so
 // the two pages can never show a different Total Weighted Score for the same
-// week. Targets default to the team's own 4-week baseline until Owner-
-// editable settings exist (a later stage) - never an invented number, per
-// the Owner's own rule not to set weekly targets before a baseline exists.
+// week.
+//
 // Uncapped by design: a metric run well past target should show as such
-// (e.g. 131%), not clip at 100%, matching the supplied design's own
-// 112.5/100 total.
-function buildScorecard(thisWeek: TeamWeekMetrics, baseline: TrailingBaseline) {
+// (e.g. 131%), not clip at 100%.
+function buildScorecard(
+  thisWeek: TeamWeekMetrics,
+  baseline: TrailingBaseline,
+  settings?: ScorecardMetricSetting[] | null
+) {
   const target = baseline.team;
   const thisWeekIncremental = thisWeek.team.incrementalRevenueUpsell + thisWeek.team.incrementalRevenueCrossSell;
   const targetIncremental = target.incrementalRevenueUpsell + target.incrementalRevenueCrossSell;
   const baselineIncremental = baseline.team.incrementalRevenueUpsell + baseline.team.incrementalRevenueCrossSell;
 
-  const scorecard = [
-    { key: "teamAov", label: "Team AOV", weight: 35, actual: thisWeek.team.aov, target: target.aov, baseline: baseline.team.aov },
-    { key: "upsellRate", label: "Upsell Rate", weight: 20, actual: thisWeek.team.upsellRate, target: target.upsellRate, baseline: baseline.team.upsellRate },
-    { key: "crossSellRate", label: "Cross-sell Rate", weight: 15, actual: thisWeek.team.crossSellRate, target: target.crossSellRate, baseline: baseline.team.crossSellRate },
-    { key: "incrementalRevenue", label: "Incremental Revenue", weight: 20, actual: thisWeekIncremental, target: targetIncremental, baseline: baselineIncremental },
-    { key: "teamDeliveryRate", label: "Team Delivery Rate", weight: 10, actual: thisWeek.team.deliveryRate, target: target.deliveryRate, baseline: baseline.team.deliveryRate }
-  ].map((row) => ({ ...row, vsTargetPct: vsTarget(row.actual, row.target) }));
+  const actualByKey: Record<string, number> = {
+    teamAov: thisWeek.team.aov,
+    upsellRate: thisWeek.team.upsellRate,
+    crossSellRate: thisWeek.team.crossSellRate,
+    incrementalRevenue: thisWeekIncremental,
+    teamDeliveryRate: thisWeek.team.deliveryRate
+  };
+  const baselineByKey: Record<string, number> = {
+    teamAov: baseline.team.aov,
+    upsellRate: baseline.team.upsellRate,
+    crossSellRate: baseline.team.crossSellRate,
+    incrementalRevenue: baselineIncremental,
+    teamDeliveryRate: baseline.team.deliveryRate
+  };
+
+  // Keys are fixed - an Owner can reweight and retarget the five metrics, not
+  // invent a sixth the data cannot answer. Anything unrecognised in the stored
+  // blob is ignored rather than trusted.
+  const active = (settings && settings.length > 0 ? settings : DEFAULT_SCORECARD_METRICS)
+    .filter((row) => row.key in actualByKey);
+  const metrics = active.length > 0 ? active : DEFAULT_SCORECARD_METRICS;
+
+  const scorecard = metrics.map((row) => {
+    const baselineTarget = baselineByKey[row.key] ?? 0;
+    const usingManual = row.targetMode === "manual" && typeof row.targetValue === "number" && row.targetValue > 0;
+    const rowTarget = usingManual ? (row.targetValue as number) : baselineTarget;
+    const actual = actualByKey[row.key] ?? 0;
+    return {
+      key: row.key,
+      label: row.label ?? DEFAULT_SCORECARD_METRICS.find((d) => d.key === row.key)?.label ?? row.key,
+      weight: Math.max(0, Number(row.weight) || 0),
+      actual,
+      target: rowTarget,
+      baseline: baselineTarget,
+      // Surfaced so the UI can say WHERE a target came from - an Owner-set goal
+      // and a rolling average are different promises and should not look alike.
+      targetMode: usingManual ? "manual" : "baseline",
+      vsTargetPct: vsTarget(actual, rowTarget)
+    };
+  });
 
   const totalWeightedScore = Math.round(
     scorecard.reduce((sum, row) => sum + row.weight * (row.vsTargetPct / 100), 0) * 10
@@ -171,6 +223,30 @@ function buildScorecard(thisWeek: TeamWeekMetrics, baseline: TrailingBaseline) {
 // same question must not each invent their own arithmetic" extends to
 // settings too. Falls back to the shipped defaults before an Owner has ever
 // saved a row, same bootstrapping manager-bonus.ts does.
+// Owner-set weights and targets, or null before anyone has saved. Kept
+// separate from the bonus tiers so a scorecard edit never touches pay.
+async function loadScorecardSettings(orgId: string): Promise<ScorecardMetricSetting[] | null> {
+  const { data, error } = await supabase
+    .from("head_of_sales_settings")
+    .select("scorecard")
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (error) throw error;
+  const raw = (data as any)?.scorecard;
+  const metrics = Array.isArray(raw?.metrics) ? raw.metrics : null;
+  if (!metrics || metrics.length === 0) return null;
+  // Anything malformed falls back to defaults rather than scoring on junk.
+  return metrics
+    .filter((row: any) => row && typeof row.key === "string")
+    .map((row: any) => ({
+      key: String(row.key),
+      label: typeof row.label === "string" ? row.label : String(row.key),
+      weight: Math.max(0, Number(row.weight) || 0),
+      targetMode: row.targetMode === "manual" ? "manual" : "baseline",
+      targetValue: row.targetValue === null || row.targetValue === undefined ? null : Number(row.targetValue)
+    })) as ScorecardMetricSetting[];
+}
+
 async function loadHeadOfSalesBonusSettings(orgId: string) {
   const { data, error } = await supabase
     .from("head_of_sales_settings")
@@ -200,6 +276,7 @@ router.get("/overview", async (req, res) => {
 
   try {
     const { rep, repIds, repNameById } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
     const weekEnd = weekEndFromStart(weekStart);
     const range = resolveRange(parsed.data, weekStart);
@@ -212,7 +289,7 @@ router.get("/overview", async (req, res) => {
     // reports the range back and the UI labels a part-week explicitly.
     const thisWeek = computeTeamRangeMetrics(orders, repIds, range.from, range.to);
     const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
-    const { scorecard, totalWeightedScore, target } = buildScorecard(thisWeek, baseline);
+    const { scorecard, totalWeightedScore, target } = buildScorecard(thisWeek, baseline, scorecardSettings);
 
     const repsMeetingTarget = thisWeek.reps.filter((rep2) =>
       target.aov > 0 ? rep2.aov >= target.aov : rep2.aov > 0
@@ -328,6 +405,7 @@ router.get("/scorecard", async (req, res) => {
 
   try {
     const { rep, repIds, repNameById } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
     const weekEnd = weekEndFromStart(weekStart);
 
@@ -338,7 +416,7 @@ router.get("/scorecard", async (req, res) => {
 
     const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
     const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
-    const { scorecard, totalWeightedScore, target } = buildScorecard(thisWeek, baseline);
+    const { scorecard, totalWeightedScore, target } = buildScorecard(thisWeek, baseline, scorecardSettings);
     const bonusSettings = await loadHeadOfSalesBonusSettings(orgId);
     const bonus = evaluateHeadOfSalesBonus(bonusSettings, thisWeek.team.aov, thisWeek.team.deliveryRate);
 
@@ -382,7 +460,7 @@ router.get("/scorecard", async (req, res) => {
       const ws = addDaysToDateKey(weekStart, -7 * offset);
       const weekMetrics = computeTeamWeekMetrics(orders, repIds, ws);
       const weekBaseline = computeTrailingBaseline(orders, repIds, ws, 4);
-      const weekScorecard = buildScorecard(weekMetrics, weekBaseline);
+      const weekScorecard = buildScorecard(weekMetrics, weekBaseline, scorecardSettings);
       const weekBonus = evaluateHeadOfSalesBonus(bonusSettings, weekMetrics.team.aov, weekMetrics.team.deliveryRate);
       history.push({
         weekStart: ws,
@@ -420,6 +498,7 @@ router.get("/team-performance", async (req, res) => {
 
   try {
     const { repIds, repNameById } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
     const weekEnd = weekEndFromStart(weekStart);
     const range = resolveRange(parsed.data, weekStart);
@@ -548,6 +627,7 @@ router.get("/upsell-cross-sell", async (req, res) => {
 
   try {
     const { repIds, repNameById } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
     const weekEnd = weekEndFromStart(weekStart);
     const range = resolveRange(parsed.data, weekStart);
@@ -842,6 +922,7 @@ router.get("/rep-coaching", async (req, res) => {
 
   try {
     const { repIds, repNameById } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
     const weekEnd = weekEndFromStart(weekStart);
     const lastWeekStart = addDaysToDateKey(weekStart, -7);
@@ -960,6 +1041,7 @@ router.get("/call-reviews", async (req, res) => {
   const orgId = req.user!.orgId;
   try {
     const { repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     if (!repIds.includes(parsed.data.selectedRepId)) {
       res.status(404).json({ error: "That rep is not on this team." });
       return;
@@ -1010,6 +1092,7 @@ router.post("/call-reviews", async (req, res) => {
   const orgId = req.user!.orgId;
   try {
     const { repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     if (!repIds.includes(parsed.data.selectedRepId)) {
       res.status(404).json({ error: "That rep is not on this team." });
       return;
@@ -1047,6 +1130,7 @@ router.get("/coaching-plan", async (req, res) => {
   const orgId = req.user!.orgId;
   try {
     const { repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     if (!repIds.includes(parsed.data.selectedRepId)) {
       res.status(404).json({ error: "That rep is not on this team." });
       return;
@@ -1099,6 +1183,7 @@ router.post("/coaching-plan/action-items", async (req, res) => {
   const orgId = req.user!.orgId;
   try {
     const { repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     if (!repIds.includes(parsed.data.selectedRepId)) {
       res.status(404).json({ error: "That rep is not on this team." });
       return;
@@ -1160,6 +1245,7 @@ router.patch("/coaching-plan/action-items/:itemId", async (req, res) => {
   const orgId = req.user!.orgId;
   try {
     const { repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     await loadActionItemForTeam(orgId, req.params.itemId, repIds);
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -1547,12 +1633,13 @@ router.post("/initiatives/:initiativeId/learnings", async (req, res) => {
 // time and then frozen into performance_snapshot when submitted, so a later
 // edit to an order or an initiative can never rewrite a closed week.
 async function computeWeeklyPerformanceSnapshot(orgId: string, repId: string, repIds: string[], weekStart: string) {
+  const scorecardSettings = await loadScorecardSettings(orgId);
   const weekEnd = weekEndFromStart(weekStart);
   const earliestNeeded = addDaysToDateKey(weekStart, -28);
   const orders = await loadOrdersSince(orgId, repIds, earliestNeeded, weekEnd);
   const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
   const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
-  const { scorecard, totalWeightedScore } = buildScorecard(thisWeek, baseline);
+  const { scorecard, totalWeightedScore } = buildScorecard(thisWeek, baseline, scorecardSettings);
 
   const { data: initiativeRows, error: initiativeError } = await supabase
     .from("sales_initiatives")
@@ -1597,6 +1684,7 @@ router.get("/weekly-report", async (req, res) => {
   const orgId = req.user!.orgId;
   try {
     const { rep, repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
     const weekEnd = weekEndFromStart(weekStart);
 
@@ -1698,6 +1786,7 @@ router.put("/weekly-report", async (req, res) => {
   const orgId = req.user!.orgId;
   try {
     const { rep, repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
 
     const { data: existing, error: existingError } = await supabase
       .from("head_of_sales_weekly_reports")
@@ -1758,6 +1847,7 @@ router.post("/weekly-report/submit", async (req, res) => {
   const orgId = req.user!.orgId;
   try {
     const { rep, repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     const { data: existing, error: existingError } = await supabase
       .from("head_of_sales_weekly_reports")
       .select("id, submitted_at")
@@ -1809,6 +1899,74 @@ router.get("/bonus-settings", async (req, res) => {
     res.json({ settings });
   } catch (error: any) {
     res.status(error?.status ?? 500).json({ error: error?.message ?? "Could not load bonus settings." });
+  }
+});
+
+// ── Scorecard settings ────────────────────────────────────
+router.get("/scorecard-settings", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const stored = await loadScorecardSettings(orgId);
+    res.json({
+      metrics: stored ?? DEFAULT_SCORECARD_METRICS,
+      isDefault: stored === null,
+      defaults: DEFAULT_SCORECARD_METRICS
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load scorecard settings." });
+  }
+});
+
+const ScorecardMetricSchema = z.object({
+  // Fixed set - the Owner reweights and retargets the five metrics the data can
+  // answer, rather than inventing a sixth that nothing computes.
+  key: z.enum(["teamAov", "upsellRate", "crossSellRate", "incrementalRevenue", "teamDeliveryRate"]),
+  weight: z.number().min(0).max(100),
+  targetMode: z.enum(["baseline", "manual"]),
+  targetValue: z.number().min(0).nullable().optional()
+});
+const UpdateScorecardSchema = z.object({
+  metrics: z.array(ScorecardMetricSchema).min(1)
+});
+
+router.patch("/scorecard-settings", requireRole("Owner"), async (req, res) => {
+  const parsed = UpdateScorecardSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Every metric needs a weight and a target mode." }); return; }
+  const orgId = req.user!.orgId;
+  // Weights are a share of 100, so they have to add up to it. Rejecting here
+  // rather than silently normalising - a scorecard that quietly rescales what
+  // was typed is worse than one that says the numbers do not add up.
+  const total = parsed.data.metrics.reduce((sum, row) => sum + row.weight, 0);
+  if (Math.round(total) !== 100) {
+    res.status(400).json({ error: `Weights must add up to 100. They currently add up to ${Math.round(total * 10) / 10}.` });
+    return;
+  }
+  const missingTarget = parsed.data.metrics.find(
+    (row) => row.targetMode === "manual" && !(typeof row.targetValue === "number" && row.targetValue > 0)
+  );
+  if (missingTarget) {
+    res.status(400).json({ error: "A manual target needs a number above zero. Switch it back to automatic to use the 4-week average." });
+    return;
+  }
+  try {
+    const metrics = parsed.data.metrics.map((row) => ({
+      ...row,
+      label: DEFAULT_SCORECARD_METRICS.find((d) => d.key === row.key)?.label ?? row.key,
+      targetValue: row.targetMode === "manual" ? (row.targetValue ?? null) : null
+    }));
+    const { data: existing } = await supabase
+      .from("head_of_sales_settings").select("id").eq("org_id", orgId).maybeSingle();
+    const row = { scorecard: { metrics }, updated_by: req.user!.id, updated_at: new Date().toISOString() };
+    if (existing) {
+      const { error } = await supabase.from("head_of_sales_settings").update(row).eq("id", existing.id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from("head_of_sales_settings").insert({ org_id: orgId, ...row });
+      if (error) throw error;
+    }
+    res.json({ metrics, isDefault: false, defaults: DEFAULT_SCORECARD_METRICS });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not save scorecard settings." });
   }
 });
 
@@ -1867,6 +2025,7 @@ router.get("/bonus-payouts", async (req, res) => {
   const orgId = req.user!.orgId;
   try {
     const { rep, repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
     const weekStart = parsed.data.weekStart ?? sundayWeekStartForDateKey(lagosDateKey());
     const bonusSettings = await loadHeadOfSalesBonusSettings(orgId);
 
@@ -1900,7 +2059,7 @@ router.get("/bonus-payouts", async (req, res) => {
     const orders = await loadOrdersSince(orgId, repIds, addDaysToDateKey(weekStart, -28), weekEnd);
     const thisWeek = computeTeamWeekMetrics(orders, repIds, weekStart);
     const baseline = computeTrailingBaseline(orders, repIds, weekStart, 4);
-    const { scorecard, totalWeightedScore } = buildScorecard(thisWeek, baseline);
+    const { scorecard, totalWeightedScore } = buildScorecard(thisWeek, baseline, scorecardSettings);
 
     let preview: any = null;
     if (!record) {
@@ -1974,6 +2133,7 @@ router.put("/bonus-payouts", async (req, res) => {
   try {
     requireBonusLeadership(req.user!);
     const { rep, repIds } = await loadRepAndTeam(orgId, parsed.data.repId, req.user!);
+    const scorecardSettings = await loadScorecardSettings(orgId);
 
     const { data: existing, error: existingError } = await supabase
       .from("head_of_sales_bonus_weekly_records")

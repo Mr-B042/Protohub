@@ -12036,6 +12036,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [headOfSalesBonusForm, setHeadOfSalesBonusForm] = useState({ upsellImprovement: false, initiativeSuccess: false, notes: "" });
   const [headOfSalesBonusSaving, setHeadOfSalesBonusSaving] = useState(false);
   const [headOfSalesBonusMarkingPaid, setHeadOfSalesBonusMarkingPaid] = useState(false);
+  // Owner-editable scorecard weights + targets.
+  const [headOfSalesScorecardOpen, setHeadOfSalesScorecardOpen] = useState(false);
+  const [headOfSalesScorecardDraft, setHeadOfSalesScorecardDraft] = useState<any[]>([]);
+  const [headOfSalesScorecardIsDefault, setHeadOfSalesScorecardIsDefault] = useState(true);
+  const [headOfSalesScorecardSaving, setHeadOfSalesScorecardSaving] = useState(false);
+  const [headOfSalesScorecardSettingsError, setHeadOfSalesScorecardSettingsError] = useState("");
   const [headOfSalesBonusSettingsOpen, setHeadOfSalesBonusSettingsOpen] = useState(false);
   const [headOfSalesBonusSettingsDraft, setHeadOfSalesBonusSettingsDraft] = useState<any[]>([]);
   const [headOfSalesBonusSettingsSaving, setHeadOfSalesBonusSettingsSaving] = useState(false);
@@ -44558,6 +44564,50 @@ ${waybillLineItems(w).length > 1
     }
   };
 
+  const openHeadOfSalesScorecardSettings = async () => {
+    if (!headOfSalesViewingId) return;
+    setHeadOfSalesScorecardSettingsError("");
+    try {
+      const result = await headOfSalesApi.scorecardSettings(headOfSalesViewingId);
+      setHeadOfSalesScorecardDraft(result.metrics.map((row: any) => ({ ...row })));
+      setHeadOfSalesScorecardIsDefault(result.isDefault);
+      setHeadOfSalesScorecardOpen(true);
+    } catch (error: any) {
+      setHeadOfSalesScorecardSettingsError(error?.message ?? "Could not load scorecard settings.");
+      setHeadOfSalesScorecardOpen(true);
+    }
+  };
+
+  const updateHeadOfSalesScorecardDraft = (key: string, field: string, value: any) => {
+    setHeadOfSalesScorecardDraft((draft) => draft.map((row) => row.key === key ? { ...row, [field]: value } : row));
+  };
+
+  const saveHeadOfSalesScorecardSettings = async () => {
+    setHeadOfSalesScorecardSaving(true);
+    setHeadOfSalesScorecardSettingsError("");
+    try {
+      const result = await headOfSalesApi.updateScorecardSettings(
+        headOfSalesScorecardDraft.map((row) => ({
+          key: row.key,
+          weight: Math.max(0, Number(row.weight) || 0),
+          targetMode: row.targetMode === "manual" ? "manual" : "baseline",
+          targetValue: row.targetMode === "manual" ? (Number(row.targetValue) || 0) : null
+        }))
+      );
+      setHeadOfSalesScorecardIsDefault(result.isDefault);
+      setHeadOfSalesScorecardOpen(false);
+      showToast("Scorecard settings saved.");
+      // Cached answers were scored on the old weights, so they must go.
+      headOfSalesCacheRef.current.clear();
+      void loadHeadOfSalesOverview();
+      void loadHeadOfSalesScorecard();
+    } catch (error: any) {
+      setHeadOfSalesScorecardSettingsError(error?.message ?? "Could not save scorecard settings.");
+    } finally {
+      setHeadOfSalesScorecardSaving(false);
+    }
+  };
+
   const openHeadOfSalesBonusSettings = () => {
     setHeadOfSalesBonusSettingsError("");
     setHeadOfSalesBonusSettingsDraft((headOfSalesBonusData?.settings?.tiers ?? []).map((tier: any) => ({ ...tier })));
@@ -59544,8 +59594,88 @@ ${waybillLineItems(w).length > 1
         <section className="rounded-2xl border border-gray-200 bg-white p-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="m-0 text-base font-bold text-gray-900">Weekly Leadership Scorecard <span className="font-medium text-gray-400">(5 Key Metrics)</span></h2>
-            <span className="text-xs font-semibold text-gray-400">Weight Total: 100%</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-gray-400">Weight Total: 100%</span>
+              {currentRole === "Owner" && (
+                <button type="button"
+                  className="!min-h-0 rounded-lg border border-[#1F8FE0] bg-blue-50/60 px-3 py-1.5 text-xs font-bold text-[#1F8FE0] hover:bg-blue-100"
+                  onClick={() => headOfSalesScorecardOpen ? setHeadOfSalesScorecardOpen(false) : void openHeadOfSalesScorecardSettings()}>
+                  {headOfSalesScorecardOpen ? "Cancel" : "Edit weights & targets"}
+                </button>
+              )}
+            </div>
           </div>
+
+          {headOfSalesScorecardOpen && (
+            <section className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+              <h3 className="m-0 text-sm font-bold text-gray-900">Scorecard weights &amp; targets</h3>
+              <p className="m-0 mt-0.5 text-[11px] font-medium text-gray-500">
+                Weight is how much each metric counts toward the score out of 100 - they must add up to 100.
+                A target can follow the team&apos;s own rolling 4-week average, or you can set a fixed goal.
+              </p>
+              {headOfSalesScorecardIsDefault && (
+                <p className="m-0 mt-2 rounded-lg border border-blue-100 bg-blue-50 px-2.5 py-1.5 text-[11px] font-bold text-[#1F8FE0]">
+                  Currently using the built-in defaults. Saving any change makes these yours.
+                </p>
+              )}
+              <div className="mt-3 space-y-2">
+                {headOfSalesScorecardDraft.map((row: any) => (
+                  <div key={row.key} className="rounded-xl border border-gray-200 bg-white p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <strong className="text-xs font-bold text-gray-900">{row.label}</strong>
+                      <span className="text-[10px] font-medium text-gray-400">
+                        {row.targetMode === "manual" ? "fixed goal" : "auto: rolling 4-week average"}
+                      </span>
+                    </div>
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-500">
+                        Weight (%)
+                        <input type="number" min="0" max="100"
+                          className="mt-1 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                          value={row.weight}
+                          onChange={(e) => updateHeadOfSalesScorecardDraft(row.key, "weight", Number(e.target.value))} />
+                      </label>
+                      <label className="block text-[10px] font-bold uppercase tracking-wide text-gray-500">
+                        Target
+                        <select
+                          className="mt-1 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm"
+                          value={row.targetMode}
+                          onChange={(e) => updateHeadOfSalesScorecardDraft(row.key, "targetMode", e.target.value)}>
+                          <option value="baseline">Automatic (4-week average)</option>
+                          <option value="manual">Fixed goal I set</option>
+                        </select>
+                      </label>
+                      <label className={`block text-[10px] font-bold uppercase tracking-wide ${row.targetMode === "manual" ? "text-gray-500" : "text-gray-300"}`}>
+                        Goal value
+                        <input type="number" min="0" disabled={row.targetMode !== "manual"}
+                          className="mt-1 w-full rounded-lg border border-gray-200 bg-white p-1.5 text-sm disabled:bg-gray-50 disabled:text-gray-300"
+                          value={row.targetValue ?? ""}
+                          placeholder={row.targetMode === "manual" ? "e.g. 25000" : "follows the average"}
+                          onChange={(e) => updateHeadOfSalesScorecardDraft(row.key, "targetValue", Number(e.target.value))} />
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {(() => {
+                const total = headOfSalesScorecardDraft.reduce((sum: number, row: any) => sum + (Number(row.weight) || 0), 0);
+                const ok = Math.round(total) === 100;
+                return (
+                  <p className={`m-0 mt-2 text-[11px] font-bold ${ok ? "text-emerald-600" : "text-rose-600"}`}>
+                    Weights add up to {Math.round(total * 10) / 10}{ok ? " - good." : " - they need to add up to 100 before this can save."}
+                  </p>
+                );
+              })()}
+              {headOfSalesScorecardSettingsError && (
+                <p className="m-0 mt-2 text-[11px] font-bold text-rose-600">{headOfSalesScorecardSettingsError}</p>
+              )}
+              <button type="button" disabled={headOfSalesScorecardSaving}
+                className="!min-h-0 mt-3 rounded-lg bg-[#1F8FE0] px-4 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
+                onClick={() => void saveHeadOfSalesScorecardSettings()}>
+                {headOfSalesScorecardSaving ? "Saving..." : "Save scorecard settings"}
+              </button>
+            </section>
+          )}
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
             {data.scorecard.map((row: any) => {
               const Icon = metricIcon(row.key);
