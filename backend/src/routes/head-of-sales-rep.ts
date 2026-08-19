@@ -598,10 +598,22 @@ router.get("/upsell-cross-sell", async (req, res) => {
       return {
         repId,
         name: repNameById.get(repId) ?? "Unknown",
+        // These two are counted over DELIVERED ORDERS in the week (orders
+        // table), which is what the weighted scorecard scores. They are NOT
+        // offered/upgraded divided by each other.
         upsellRate: repMetrics?.upsellRate ?? 0,
         crossSellRate: repMetrics?.crossSellRate ?? 0,
+        ordersDelivered: repMetrics?.ordersDelivered ?? 0,
+        // These come from the OFFER LOG and are counted by when the offer was
+        // logged. Mixing the two in one row with no labelling is what made a
+        // rep read "0% upsell" beside "2 upgraded" - both true, of different
+        // things. acceptanceRatePct is the rate that actually belongs to the
+        // offered/upgraded pair sitting next to it.
         customersOffered: offers.offered,
         customersUpgraded: offers.accepted,
+        acceptanceRatePct: offers.offered > 0
+          ? Math.round((offers.accepted / offers.offered) * 1000) / 10
+          : 0,
         incrementalRevenue: Math.round(offers.revenue)
       };
     });

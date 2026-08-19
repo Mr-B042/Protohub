@@ -60338,11 +60338,16 @@ ${waybillLineItems(w).length > 1
                 <table className="w-full min-w-[640px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
+                      {/* Two different measurements sit in this row and used to
+                          be unlabelled, so a rep could read "0% upsell" beside
+                          "2 upgraded" and look wrong when both were true of
+                          different things. The headers now say which is which. */}
                       <th className="py-2 pr-3 font-semibold">Rep</th>
-                      <th className="py-2 pr-3 font-semibold text-right">Upsell Rate</th>
-                      <th className="py-2 pr-3 font-semibold text-right">Cross-sell Rate</th>
-                      <th className="py-2 pr-3 font-semibold text-right">Offered</th>
-                      <th className="py-2 pr-3 font-semibold text-right">Upgraded</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Offered<span className="block text-[9px] font-medium normal-case text-gray-300">offers logged</span></th>
+                      <th className="py-2 pr-3 font-semibold text-right">Upgraded<span className="block text-[9px] font-medium normal-case text-gray-300">offers accepted</span></th>
+                      <th className="py-2 pr-3 font-semibold text-right">Accept Rate<span className="block text-[9px] font-medium normal-case text-gray-300">upgraded ÷ offered</span></th>
+                      <th className="py-2 pr-3 font-semibold text-right">Upsell Rate<span className="block text-[9px] font-medium normal-case text-gray-300">of delivered orders</span></th>
+                      <th className="py-2 pr-3 font-semibold text-right">Cross-sell Rate<span className="block text-[9px] font-medium normal-case text-gray-300">of delivered orders</span></th>
                       <th className="py-2 pr-3 font-semibold text-right">Incremental Revenue</th>
                       <th className="py-2 pr-3 font-semibold">Status</th>
                       <th className="py-2 font-semibold"></th>
@@ -60354,10 +60359,16 @@ ${waybillLineItems(w).length > 1
                       return (
                         <tr key={rep.repId} className="border-b border-gray-50">
                           <td className="py-2.5 pr-3 font-bold text-gray-900">{rep.name}</td>
-                          <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.upsellRate)}</td>
-                          <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.crossSellRate)}</td>
                           <td className="py-2.5 pr-3 text-right text-gray-700">{rep.customersOffered}</td>
                           <td className="py-2.5 pr-3 text-right text-gray-700">{rep.customersUpgraded}</td>
+                          <td className="py-2.5 pr-3 text-right font-bold text-gray-900">{pct(rep.acceptanceRatePct ?? 0)}</td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">
+                            {pct(rep.upsellRate)}
+                            {typeof rep.ordersDelivered === "number" && (
+                              <span className="ml-1 text-[10px] font-medium text-gray-300">/{rep.ordersDelivered}</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.crossSellRate)}</td>
                           <td className="py-2.5 pr-3 text-right font-bold text-gray-900">{money(rep.incrementalRevenue)}</td>
                           <td className="py-2.5 pr-3"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${status.tone}`}>{status.label}</span></td>
                           <td className="py-2.5">
@@ -60371,10 +60382,15 @@ ${waybillLineItems(w).length > 1
                     })}
                     <tr className="font-bold text-gray-900">
                       <td className="py-2.5 pr-3">Team Average</td>
-                      <td className="py-2.5 pr-3 text-right">{pct(data.team.upsellRate)}</td>
-                      <td className="py-2.5 pr-3 text-right">{pct(data.team.crossSellRate)}</td>
                       <td className="py-2.5 pr-3 text-right">{data.team.customersOffered}</td>
                       <td className="py-2.5 pr-3 text-right">{data.team.customersUpgraded}</td>
+                      <td className="py-2.5 pr-3 text-right">
+                        {pct(data.team.customersOffered > 0
+                          ? Math.round((data.team.customersUpgraded / data.team.customersOffered) * 1000) / 10
+                          : 0)}
+                      </td>
+                      <td className="py-2.5 pr-3 text-right">{pct(data.team.upsellRate)}</td>
+                      <td className="py-2.5 pr-3 text-right">{pct(data.team.crossSellRate)}</td>
                       <td className="py-2.5 pr-3 text-right">{money(data.team.additionalRevenue)}</td>
                       <td className="py-2.5 pr-3" colSpan={2}>—</td>
                     </tr>
