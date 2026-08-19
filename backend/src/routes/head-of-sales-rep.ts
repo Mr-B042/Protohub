@@ -15,6 +15,7 @@ import {
   type TrailingBaseline
 } from "../lib/head-of-sales-metrics.js";
 import { DEFAULT_HEAD_OF_SALES_BONUS_SETTINGS, evaluateHeadOfSalesBonus } from "../lib/head-of-sales-bonus.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
 // Owner/Admin/Manager can browse any Head of Sales Rep's dashboard; a Sales
@@ -564,6 +565,7 @@ router.get("/upsell-cross-sell", async (req, res) => {
       const { data: statusRows, error: statusError } = await supabase
         .from("orders")
         .select("id, status")
+        .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .in("id", orderIds);
       if (statusError) throw statusError;

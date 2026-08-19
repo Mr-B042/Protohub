@@ -15,6 +15,7 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { createHash } from "node:crypto";
+import { REPORT_ROW_CEILING } from "./query-limits.js";
 
 const RECIPIENT_ROLES = ["Owner", "Admin"] as const;
 // Older phantoms (the one-off June remediation) are already fixed, and bounding
@@ -38,6 +39,7 @@ async function scanOrgForPhantomStock(orgId: string): Promise<number> {
   const { data: delivered, error } = await supabase
     .from("orders")
     .select("id")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .eq("status", "Delivered")
     .gte("delivered_date", sinceDate)

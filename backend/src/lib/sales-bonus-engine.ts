@@ -1,6 +1,7 @@
 import { supabase } from "./supabase.js";
 import { TtlCache } from "./ttl-cache.js";
 import { salesExpansionComplianceForRepWeek, type SalesExpansionCompliance } from "./sales-expansion.js";
+import { REPORT_ROW_CEILING } from "./query-limits.js";
 
 export type SalesBonusRuleType =
   | "upgrade_count"
@@ -797,6 +798,7 @@ export const getSalesBonusProgress = async (
     supabase
       .from("orders")
       .select("id, assigned_rep_id, customer, phone, status, amount, quantity, product_id, product_name, package_id, package_name, source, embed_label, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, full_upfront_paid, full_upfront_paid_at, created_at, updated_at, delivered_date, review_hold")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .gte("created_at", `${weekStart}T00:00:00`)
       .lt("created_at", `${nextWeek}T00:00:00`)
@@ -1012,6 +1014,7 @@ export const perOrderBonusSettlementMapForDeliveredRange = async (
   const { data, error } = await supabase
     .from("orders")
     .select("id, amount, created_at")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .eq("status", "Delivered")
     .gte("delivered_date", clampedFrom)
@@ -1099,6 +1102,7 @@ export const perOrderExpansionBonusBreakdownMapForDeliveredRange = async (
   const { data, error } = await supabase
     .from("orders")
     .select("id, amount, created_at")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .eq("status", "Delivered")
     .gte("delivered_date", clampedFrom)

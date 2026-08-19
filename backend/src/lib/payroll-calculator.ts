@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { calculateSalesBonusPayroll } from "./sales-bonus-engine.js";
+import { REPORT_ROW_CEILING } from "./query-limits.js";
 
 type BonusRule = { quantity: number; amount: number };
 type UpgradeBonusRule = { fromQty: number; toQty: number; amount: number };
@@ -379,6 +380,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     supabase
       .from("orders")
       .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("status", "Delivered")
       .gte("delivered_date", bounds.periodStartDate)
@@ -386,6 +388,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     supabase
       .from("orders")
       .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("status", "Delivered")
       .is("delivered_date", null)
@@ -394,6 +397,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     supabase
       .from("orders")
       .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .neq("status", "Delivered")
       .gte("created_at", bounds.periodStartTs)
@@ -440,6 +444,7 @@ export const calculatePayrollPreview = async (orgId: string, period: string): Pr
     const { data: cohortData, error: cohortError } = await supabase
       .from("orders")
       .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, date")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .gte("created_at", `${cohortStart}T00:00:00`)
       .lt("created_at", `${cohortEnd}T00:00:00`);

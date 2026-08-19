@@ -12,6 +12,7 @@ import {
   dueStageFor, lifecycleStageFor, scheduledFollowUpFor, priorityBandFor, compareByPriority, dayKey, daysBetween, NEGATIVE_SATISFACTION_OUTCOMES,
   DEFAULT_RETENTION_TIMING, type LifecycleStage, type RetentionTouchpointRecord, type RetentionTiming
 } from "../lib/customer-retention-logic.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -1478,6 +1479,7 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
       const { data: resultOrdersFull } = await supabase
         .from("orders")
         .select("id, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines")
+        .limit(REPORT_ROW_CEILING)
         .in("id", resultingIds);
       const productIds = [...new Set((resultOrdersFull ?? []).flatMap((o) => orderInventoryLinesFromRow(o).map((l) => l.productId)))];
       const pricingMap = await loadPricingMap(productIds);

@@ -9,6 +9,7 @@ import {
 } from "./payroll-calculator.js";
 import { getSalesBonusProgress } from "./sales-bonus-engine.js";
 import { supabase } from "./supabase.js";
+import { REPORT_ROW_CEILING } from "./query-limits.js";
 
 type BonusCoachOrder = PayrollOrder & {
   customer?: string | null;
@@ -310,6 +311,7 @@ export const buildRepBonusSnapshot = async (
     supabase
       .from("orders")
       .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("status", "Delivered")
       .gte("delivered_date", weekStart)
@@ -317,6 +319,7 @@ export const buildRepBonusSnapshot = async (
     supabase
       .from("orders")
       .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("status", "Delivered")
       .is("delivered_date", null)
@@ -325,6 +328,7 @@ export const buildRepBonusSnapshot = async (
     supabase
       .from("orders")
       .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("assigned_rep_id", repId)
       .neq("status", "Delivered")
@@ -333,6 +337,7 @@ export const buildRepBonusSnapshot = async (
     supabase
       .from("orders")
       .select("id, assigned_rep_id, status, amount, product_id, quantity, source, upsell_from_qty, upsell_to_qty, manual_bonus_override, bonus_manually_adjusted, cross_sell_lines, free_gift_lines, delivered_date, created_at, updated_at, date, customer, package_name")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("assigned_rep_id", repId)
       .in("status", [...ACTIVE_ORDER_STATUSES])

@@ -1,6 +1,7 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { sendPushToUsers } from "./push.js";
+import { REPORT_ROW_CEILING } from "./query-limits.js";
 
 /**
  * Nudges for assigned abandoned carts.
@@ -121,6 +122,7 @@ export async function syncDueCartCallbacks(limit = 200) {
   const { data: carts } = await supabase
     .from("abandoned_carts")
     .select("id, org_id, customer, phone, assigned_rep_id, status, product_name, package_name, assigned_at, created_at")
+    .limit(REPORT_ROW_CEILING)
     .in("id", cartIds);
 
   let notified = 0;
@@ -157,6 +159,7 @@ export async function sendCartFollowUpDigest(staleDays = 2) {
   const { data: carts, error } = await supabase
     .from("abandoned_carts")
     .select("id, org_id, customer, assigned_rep_id, status, last_activity, assigned_at, created_at")
+    .limit(REPORT_ROW_CEILING)
     .not("assigned_rep_id", "is", null);
   if (error) { logger.warn("cart digest failed", { error: error.message }); return { notified: 0 }; }
 
@@ -166,6 +169,7 @@ export async function sendCartFollowUpDigest(staleDays = 2) {
   const { data: attempts } = await supabase
     .from("cart_contact_attempts")
     .select("cart_id, attempted_at")
+    .limit(REPORT_ROW_CEILING)
     .in("cart_id", open.map((c: any) => c.id));
 
   const lastAttemptByCart = new Map<string, string>();

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { sendConnectedWhatsApp, ensureWhatsAppReady } from "../lib/whatsapp-runtime.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -52,6 +53,7 @@ router.get("/", async (req, res) => {
       const { data: allOrderPhones } = await supabase
         .from("orders")
         .select("phone")
+        .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .not("phone", "is", null)
         .not("assigned_rep_id", "is", null);
@@ -65,6 +67,7 @@ router.get("/", async (req, res) => {
       const { data: myOrders } = await supabase
         .from("orders")
         .select("phone")
+        .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .eq("assigned_rep_id", userId)
         .not("phone", "is", null);
@@ -113,6 +116,7 @@ router.get("/", async (req, res) => {
       const { data: orders } = await supabase
         .from("orders")
         .select("id, customer, phone, assigned_rep_id")
+        .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .in("id", orderIds);
       const orderMap = new Map((orders ?? []).map((o: any) => [o.id, o]));

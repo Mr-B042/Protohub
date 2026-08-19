@@ -4,6 +4,7 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { fetchAllRows } from "../lib/paginated-query.js";
 import { requireAuth, scopeOf } from "../middleware/auth.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -167,6 +168,7 @@ router.get("/", async (req, res) => {
       const result = await supabase
         .from("orders")
         .select("id, product_id, product_name, package_name, customer, created_at, delivered_date, assigned_rep_id")
+        .limit(REPORT_ROW_CEILING)
         .eq("org_id", req.user!.orgId)
         .in("id", ids);
       if (result.error) {

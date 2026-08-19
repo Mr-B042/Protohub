@@ -1,6 +1,7 @@
 import { supabase } from "./supabase.js";
 import { logger } from "./logger.js";
 import { classifyFollowUpOutcome } from "./follow-up-outcomes.js";
+import { REPORT_ROW_CEILING } from "./query-limits.js";
 
 // Orders in these raw statuses are the daily follow-up obligation set (mirrors the
 // Follow-up Queue page). Delivered / Cancelled / Failed are terminal — no obligation.
@@ -173,6 +174,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
   let orderQuery = supabase
     .from("orders")
     .select("id, assigned_rep_id, customer, phone, status, created_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, call_outcome, buyer_health")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
     .not("assigned_rep_id", "is", null);
@@ -203,6 +205,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
   const { data: todayAttempts } = await supabase
     .from("order_contact_attempts")
     .select("order_id, channel, channels, customer_reached, outcome_group, attempted_at")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .in("order_id", orderIds)
     .gte("attempted_at", startUtc);
@@ -225,6 +228,7 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
   const { data: recentAttempts } = await supabase
     .from("order_contact_attempts")
     .select("order_id, outcome_group, attempted_at")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .in("order_id", orderIds)
     .order("attempted_at", { ascending: false });
@@ -525,6 +529,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
   let orderQuery = supabase
     .from("orders")
     .select("id, assigned_rep_id, customer, phone, status, created_at, updated_at, next_follow_up_at, scheduled_at, scheduled_date, product_name, package_name, amount, currency, location, call_outcome, buyer_health")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .in("status", IN_SCOPE_STATUSES as unknown as string[])
     .not("assigned_rep_id", "is", null);
@@ -552,6 +557,7 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
   const { data: attempts } = await supabase
     .from("order_contact_attempts")
     .select("order_id, channel, channels, customer_reached, outcome_code, attempted_at")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .in("order_id", orderIds)
     .gte("attempted_at", lagosStartOfDayUtc(weekStart))
