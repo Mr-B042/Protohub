@@ -53356,6 +53356,28 @@ ${waybillLineItems(w).length > 1
     } finally { setPdaSaving(false); }
   };
 
+  // Only reachable for an applicant with no operational trace - the server
+  // re-checks and refuses otherwise, so this cannot delete history even if the
+  // screen is stale. Name must be typed: every child table cascades, and a
+  // mis-click here is not recoverable.
+  const pdaDeleteAgent = async (agentId: string, agentName: string) => {
+    const typed = window.prompt(
+      `Permanently delete ${agentName}?\n\nThis cannot be undone. It is only allowed because they never took an order, held stock or handled cash - anyone who did must be Terminated instead, so their record survives.\n\nType their full name to confirm:`
+    );
+    if (!typed || typed.trim().toLowerCase() !== agentName.trim().toLowerCase()) {
+      if (typed !== null) showToast("Name did not match - nothing was deleted.");
+      return;
+    }
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.deleteAgent(agentId);
+      showToast(`${agentName} deleted.`);
+      await Promise.all([loadPdaActiveAgents(), loadPersonalDeliveryAgents(), loadPdaApplications()]);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not delete that agent.");
+    } finally { setPdaSaving(false); }
+  };
+
   const renderPdaPortalAccess = () => {
     // Login creation writes an auth account, so it stays Owner/Admin - the same
     // line the backend draws. Standing an agent down is Manager-level, since
@@ -53484,11 +53506,21 @@ ${waybillLineItems(w).length > 1
                     <p className="m-0 truncate text-sm font-bold text-gray-700">{row.fullName}</p>
                     <p className="m-0 text-[11px] font-medium text-gray-400">{row.agentCode} · {row.accountStatus}</p>
                   </div>
-                  <button type="button" disabled={pdaSaving}
-                    className="!min-h-0 shrink-0 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-                    onClick={() => void pdaChangeAgentStatus(row.id, row.fullName, "Active")}>
-                    Reactivate
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button type="button" disabled={pdaSaving}
+                      className="!min-h-0 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                      onClick={() => void pdaChangeAgentStatus(row.id, row.fullName, "Active")}>
+                      Reactivate
+                    </button>
+                    {currentRole === "Owner" && (
+                      <button type="button" disabled={pdaSaving}
+                        title="Only possible if they never took an order, held stock or handled cash."
+                        className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-400 hover:border-rose-200 hover:text-rose-600 disabled:opacity-50"
+                        onClick={() => void pdaDeleteAgent(row.id, row.fullName)}>
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
