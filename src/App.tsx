@@ -60383,7 +60383,7 @@ ${waybillLineItems(w).length > 1
                       <th className="py-2 pr-3 font-semibold text-right">Accept Rate<span className="block text-[9px] font-medium normal-case text-gray-300">upgraded ÷ offered</span></th>
                       <th className="py-2 pr-3 font-semibold text-right">Upsell Rate<span className="block text-[9px] font-medium normal-case text-gray-300">of delivered orders</span></th>
                       <th className="py-2 pr-3 font-semibold text-right">Cross-sell Rate<span className="block text-[9px] font-medium normal-case text-gray-300">of delivered orders</span></th>
-                      <th className="py-2 pr-3 font-semibold text-right">Incremental Revenue</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Incremental Revenue<span className="block text-[9px] font-medium normal-case text-gray-300">delivered upsell + cross-sell</span></th>
                       <th className="py-2 pr-3 font-semibold">Status</th>
                       <th className="py-2 font-semibold"></th>
                     </tr>
