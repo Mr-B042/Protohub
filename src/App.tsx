@@ -45346,8 +45346,11 @@ ${waybillLineItems(w).length > 1
     }
     // Only Delivery Agent logins can use the portal, so only those are offered.
     const candidates = users.filter((user) => user.role === "Delivery Agent" && user.active);
+    // No spare login lying around is the NORMAL case now - an approved agent
+    // gets one automatically, so this path just makes the missing one rather
+    // than sending the Owner to User Management to hand-build it.
     if (candidates.length === 0) {
-      showToast("Create a login with the Delivery Agent role in User Management first.");
+      await pdaCreatePortalLogin(agentId, agentName);
       return;
     }
     const choice = window.prompt(
@@ -45767,11 +45770,38 @@ ${waybillLineItems(w).length > 1
     } catch (err: any) { showToast(err?.message ?? "Could not issue a phrase."); }
   };
 
+  // Held in state rather than a toast: these are credentials somebody has to
+  // copy somewhere, and a toast that vanishes after 4 seconds loses them.
+  const [pdaNewLogin, setPdaNewLogin] = useState<{ email: string; password: string } | null>(null);
+  const pdaCreatePortalLogin = async (agentId: string, agentName: string) => {
+    setPdaSaving(true);
+    try {
+      const result = await personalDeliveryAgentsApi.createPortalLogin(agentId);
+      if (result.created && result.tempPassword) {
+        setPdaNewLogin({ email: result.email ?? "", password: result.tempPassword });
+        showToast(`Login created for ${agentName}.`);
+      } else {
+        showToast(result.reason ?? "Nothing to create.");
+      }
+      await Promise.all([loadPdaActiveAgents(), loadPersonalDeliveryAgents()]);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not create that login.");
+    } finally { setPdaSaving(false); }
+  };
+
   const pdaApprove = async (agentId: string) => {
     setPdaSaving(true);
     try {
-      await personalDeliveryAgentsApi.approve(agentId);
-      showToast("Approved. The agent starts on probation with reduced stock and COD limits.");
+      const result = await personalDeliveryAgentsApi.approve(agentId);
+      // Shown once, never stored - the Owner passes it on over WhatsApp.
+      if (result.login?.created && result.login.tempPassword) {
+        setPdaNewLogin({ email: result.login.email ?? "", password: result.login.tempPassword });
+        showToast("Approved, and their login is ready.");
+      } else {
+        showToast(result.login?.reason
+          ? `Approved. ${result.login.reason}`
+          : "Approved. The agent starts on probation with reduced stock and COD limits.");
+      }
       await Promise.all([openPdaApplication(agentId), loadPersonalDeliveryAgents()]);
     } catch (err: any) {
       // The server runs the same gate, so a stale screen cannot slip an
@@ -57270,6 +57300,35 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // One-time credential hand-off. Deliberately not auto-dismissing: it is the
+  // only time this password is ever visible.
+  const renderPdaNewLoginNotice = () => pdaNewLogin && (
+    <section className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="m-0 text-sm font-black text-emerald-900">Portal login created</h3>
+          <p className="m-0 mt-0.5 text-xs font-medium text-emerald-800">
+            Send these to the agent. This password is shown once and is not stored anywhere - if it is lost, reset it from User Management.
+          </p>
+        </div>
+        <button type="button" className="!min-h-0 rounded-lg border border-emerald-300 bg-white px-2.5 py-1.5 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100"
+          onClick={() => setPdaNewLogin(null)}>Done</button>
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {[["Email", pdaNewLogin.email], ["Temporary password", pdaNewLogin.password]].map(([label, value]) => (
+          <div key={label} className="flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2">
+            <div className="min-w-0">
+              <p className="m-0 text-[10px] font-black uppercase tracking-wide text-emerald-700">{label}</p>
+              <p className="m-0 truncate font-mono text-sm font-bold text-gray-900">{value}</p>
+            </div>
+            <button type="button" className="!min-h-0 shrink-0 rounded-md border border-emerald-200 px-2 py-1 text-[10px] font-bold text-emerald-800 hover:bg-emerald-50"
+              onClick={() => copyText(String(value), String(label))}>Copy</button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
   const renderPdaApplicationsAndKyc = () => {
     const detail = pdaDetail;
     const view = pdaApplications;
@@ -59293,13 +59352,19 @@ ${waybillLineItems(w).length > 1
             </div>
           </>
         ) : pdaSubPage === "Applications & KYC" ? (
-          renderPdaApplicationsAndKyc()
+          <>
+            {renderPdaNewLoginNotice()}
+            {renderPdaApplicationsAndKyc()}
+          </>
         ) : pdaSubPage === "Inventory" ? (
           renderPdaInventoryPage()
         ) : pdaSubPage === "COD & Reconciliation" ? (
           renderPdaCodPage()
         ) : pdaSubPage === "Active Agents" ? (
-          renderPdaActiveAgents()
+          <>
+            {renderPdaNewLoginNotice()}
+            {renderPdaActiveAgents()}
+          </>
         ) : pdaSubPage === "Orders & Dispatch" ? (
           renderPdaDispatchBoard()
         ) : pdaSubPage === "Incidents" ? (
