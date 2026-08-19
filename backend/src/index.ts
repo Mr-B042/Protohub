@@ -84,6 +84,7 @@ import pushRoutes          from "./routes/push.js";
 import userRoutes          from "./routes/users.js";
 import marketingLinkVariantRoutes from "./routes/marketing-link-variants.js";
 import marketingSpendRoutes from "./routes/marketing-spend.js";
+import { REPORT_ROW_CEILING } from "./lib/query-limits.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 4000;
@@ -590,6 +591,7 @@ cron.schedule("0 9 * * *", async () => {
     const { data: staleCarts, error } = await supabase
       .from("abandoned_carts")
       .select("org_id")
+      .limit(REPORT_ROW_CEILING)
       .in("status", ["Open abandoned", "Assigned"])
       .lt("last_activity", cutoff);
     if (error) { logger.error("cron: stale carts query failed", { error: error.message }); return; }
@@ -649,6 +651,7 @@ cron.schedule("5 9 * * *", async () => {
     const { data: overdueOrders, error } = await supabase
       .from("orders")
       .select("org_id, id, amount, amount_remitted, logistics_cost")
+      .limit(REPORT_ROW_CEILING)
       .eq("status", "Delivered")
       .neq("remittance_status", "Paid")
       .lte("delivered_date", cutoff);

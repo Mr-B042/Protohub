@@ -8,6 +8,7 @@ import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { sendCartAssignedSms } from "../lib/sms.js";
 import { applyCartMarketingScope } from "../lib/marketing-attribution.js";
 import { lagosDateKey, lagosStartOfDayUtc, mondayOfWeek, addDays, dowOf } from "../lib/follow-up-kpi.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -312,6 +313,7 @@ const buildConvertedCartLinkRepairReport = async (orgId: string) => {
   const { data: linkedOrders, error: linkedOrdersError } = await supabase
     .from("orders")
     .select(CART_LINK_ORDER_PREVIEW_SELECT)
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .in("source_cart_id", cartIds);
 
@@ -350,6 +352,7 @@ const buildConvertedCartLinkRepairReport = async (orgId: string) => {
     const { data: submittedOrders, error: submittedOrdersError } = await supabase
       .from("orders")
       .select(CART_LINK_ORDER_PREVIEW_SELECT)
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .in("id", submittedOrderIds);
 
@@ -694,6 +697,7 @@ router.post("/journey-bulk", async (req, res) => {
   let allowedCartQuery = supabase
     .from("abandoned_carts")
     .select("id")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", req.user!.orgId)
     .in("id", requestedIds);
 
@@ -1053,12 +1057,14 @@ router.get("/live-pulse", requireRole("Owner", "Admin"), async (req, res) => {
       let cartRes: any = await supabase
         .from("abandoned_carts")
         .select("id, source, product_name, package_name, last_activity, embed_label")
+        .limit(REPORT_ROW_CEILING)
         .eq("org_id", req.user!.orgId)
         .in("id", cartIdBatch);
       if (cartRes.error && (cartRes.error.code === "42703" || /embed_label/i.test(cartRes.error.message ?? ""))) {
         cartRes = await supabase
           .from("abandoned_carts")
           .select("id, source, product_name, package_name, last_activity")
+          .limit(REPORT_ROW_CEILING)
           .eq("org_id", req.user!.orgId)
           .in("id", cartIdBatch);
       }
@@ -1947,6 +1953,7 @@ router.get("/follow-up-overview",
       const { data: linkedOrders } = cartIds.length
         ? await supabase.from("orders")
             .select("id, source_cart_id, status, amount, currency, created_at")
+            .limit(REPORT_ROW_CEILING)
             .eq("org_id", orgId).in("source_cart_id", cartIds)
         : { data: [] as any[] };
       const orderByCart = new Map((linkedOrders ?? []).map((o: any) => [o.source_cart_id, o]));

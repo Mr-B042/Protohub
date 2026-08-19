@@ -30,6 +30,7 @@ import {
 } from "../lib/mailer.js";
 import { sendNewOrderSms } from "../lib/sms.js";
 import { sendOrderNewCustomerWhatsApp, sendOrderNewRepWhatsApp, sendOrderUpsellWhatsApp } from "../lib/whatsapp.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
 
@@ -920,6 +921,7 @@ router.post("/", submitRateLimit, async (req, res) => {
     const { data: recentOrders } = await supabase
       .from("orders")
       .select("phone, product_id")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", product.org_id)
       .gte("created_at", windowStart.toISOString());
     // Only a repeat of the SAME product is a likely duplicate. A different product

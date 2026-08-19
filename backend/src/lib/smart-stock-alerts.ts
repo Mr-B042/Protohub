@@ -17,6 +17,7 @@ import { getOrgPushBranding } from "./push-branding.js";
 import { orderInventoryLinesFromRow } from "./order-inventory.js";
 import { sendPushToUsers } from "./push.js";
 import { buildSmartStockAlertCandidates, type SmartStockCandidate } from "./smart-stock-candidates.js";
+import { REPORT_ROW_CEILING } from "./query-limits.js";
 
 const DAYS_OF_STOCK_THRESHOLD = 3;
 const MIN_RECENT_UNITS = 3;
@@ -195,6 +196,7 @@ async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
   const { data: ordersRaw, error: ordersErr } = await supabase
     .from("orders")
     .select("id, product_id, product_name, quantity, state, package_components_snapshot, cross_sell_lines, free_gift_lines")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .eq("status", "Delivered")
     .gte("delivered_date", sinceDate);

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { buildManagerPerformance } from "../lib/manager-performance.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin"));
@@ -53,6 +54,7 @@ router.get("/performance", async (req, res) => {
   let ordersQuery = supabase
     .from("orders")
     .select("id, customer, assigned_rep_id, product_id, status, call_outcome, buyer_health, created_at, date, scheduled_date, scheduled_at, next_follow_up_at, last_contact_attempt_at, last_contact_attempt_outcome, notes, timeline_notes")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", req.user!.orgId);
 
   if (parsed.data.dateFrom) {
@@ -77,6 +79,7 @@ router.get("/performance", async (req, res) => {
   const attemptsQuery = supabase
     .from("order_contact_attempts")
     .select("id, order_id, rep_id, attempted_at, outcome_code")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", req.user!.orgId);
   const managerActivitiesQuery = supabase
     .from("manager_activity_logs")

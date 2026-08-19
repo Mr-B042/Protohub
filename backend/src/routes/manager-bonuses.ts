@@ -10,6 +10,7 @@ import {
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager"));
@@ -212,6 +213,7 @@ router.get("/summary", async (req, res) => {
     let deliveredOrdersQuery = supabase
       .from("orders")
       .select("id, status, amount, quantity, currency, created_at, delivered_date, product_id, product_name, package_components_snapshot, cross_sell_lines, free_gift_lines, logistics_cost, review_hold")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", req.user!.orgId)
       .eq("status", "Delivered")
       .gte("delivered_date", weekStart)

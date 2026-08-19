@@ -3,6 +3,7 @@ import { buildPackageComponentSnapshot, orderInventoryLinesFromRow } from "./ord
 import { packageAllowsState, packageHasAgentStateStock } from "./package-availability.js";
 import { supabase } from "./supabase.js";
 import { TtlCache } from "./ttl-cache.js";
+import { REPORT_ROW_CEILING } from "./query-limits.js";
 
 export const SALES_EXPANSION_EXEMPTIONS = [
   "unreachable_customer",
@@ -812,6 +813,7 @@ export async function dailyComplianceBreakdownForWeek(
   let query = supabase
     .from("orders")
     .select("id, created_at, assigned_rep_id, call_outcome")
+    .limit(REPORT_ROW_CEILING)
     .eq("org_id", orgId)
     .gte("created_at", rangeStart)
     .lte("created_at", weekEndIso)

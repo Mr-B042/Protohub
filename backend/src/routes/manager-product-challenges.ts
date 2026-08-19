@@ -9,6 +9,7 @@ import {
 import { supabase } from "../lib/supabase.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager"));
@@ -146,6 +147,7 @@ router.get("/", async (req, res) => {
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
       .select("id, product_id, quantity, status, created_at, review_hold")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", req.user!.orgId)
       .gte("created_at", toWatUtcIso(earliest, "start"))
       .lte("created_at", toWatUtcIso(latest, "end"))

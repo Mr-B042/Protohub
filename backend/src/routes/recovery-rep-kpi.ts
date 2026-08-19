@@ -7,6 +7,7 @@ import { salesExpansionComplianceForRepWeek } from "../lib/sales-expansion.js";
 import { sundayWeekStartForDateKey, addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
 import { isWorkingDay } from "../lib/follow-up-kpi.js";
 import { scoreOrderDocumentation, type DocumentationScoreOrder } from "../lib/recovery-rep-documentation-score.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -143,6 +144,7 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
       supabase
         .from("orders")
         .select(ORDER_COLUMNS)
+        .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .eq("assigned_rep_id", repId)
         .eq("status", "Delivered")
@@ -152,6 +154,7 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
       supabase
         .from("orders")
         .select(ORDER_COLUMNS)
+        .limit(REPORT_ROW_CEILING)
         .eq("org_id", orgId)
         .eq("assigned_rep_id", repId)
         .in("status", ["Cancelled", "Failed"])
@@ -208,6 +211,7 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     const { data: weekOrders } = await supabase
       .from("orders")
       .select("id, status, currency, amount, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines, manual_bonus_override, bonus_manually_adjusted, upsell_from_qty, upsell_to_qty, source, delivered_date, review_hold")
+      .limit(REPORT_ROW_CEILING)
       .eq("org_id", orgId)
       .eq("assigned_rep_id", repId)
       .eq("status", "Delivered")

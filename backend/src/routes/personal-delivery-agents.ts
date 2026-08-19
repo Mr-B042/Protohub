@@ -33,6 +33,7 @@ import { recordStockLossExpense } from "../lib/stock-loss-expense.js";
 import {
   agreementTemplateRows, isPdaAgreementKey, PDA_AGREEMENT_VERSION, renderPdaAgreement
 } from "../lib/pda-agreements.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -2722,6 +2723,7 @@ router.get("/my/orders", requireAgentPortal, async (req, res) => {
     const { data: orders } = orderIds.length
       ? await supabase.from("orders")
           .select("id, customer, phone, address, state, product_name, package_name, amount, quantity, status")
+          .limit(REPORT_ROW_CEILING)
           .eq("org_id", orgId).in("id", orderIds)
       : { data: [] as any[] };
     const orderById = new Map((orders ?? []).map((o: any) => [o.id, o]));
@@ -3625,6 +3627,7 @@ router.get("/assignments", requireRole(...READ_ROLES), async (req, res) => {
     const { data: orders } = orderIds.length
       ? await supabase.from("orders")
           .select("id, customer, phone, state, product_name, package_name, amount, assigned_rep_id")
+          .limit(REPORT_ROW_CEILING)
           .eq("org_id", orgId).in("id", orderIds)
       : { data: [] as any[] };
     const orderById = new Map((orders ?? []).map((o: any) => [o.id, o]));
