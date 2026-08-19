@@ -261,6 +261,9 @@ type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Webs
 type FinanceTab = "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
 type ManagerDashboardTab = "Overview" | "Bonus" | "Upsell Bonus" | "Inventory" | "Needs Attention";
 type RecoveryRepDashboardTab = "Overview" | "Work Queue" | "Activity Sheet" | "Customer Retention";
+// One screen of recovery cards. Big enough to be a real batch of calls,
+// small enough that a 618-order tier does not become an endless scroll.
+const WORK_QUEUE_PAGE = 9;
 type ActivitySheetSortKey = "picked" | "rep" | "customer" | "status" | "outcome" | "touches" | "next";
 type RetentionSubPage = "Overview" | "Pipeline" | "Customers" | "Tasks" | "Calls & Outcomes" | "Reviews" | "Referrals" | "Repeat Sales" | "Win-back" | "Reports" | "Settings";
 // Rendered as a contextual sub-section in the MAIN app sidebar, directly
@@ -9117,6 +9120,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [recoveryWorklistError, setRecoveryWorklistError] = useState("");
   const [recoveryWorklistCategory, setRecoveryWorklistCategory] = useState("all");
   const [recoveryWorklistSearch, setRecoveryWorklistSearch] = useState("");
+  // How many cards each category shows before "Show more".
+  const [recoveryWorkQueueShown, setRecoveryWorkQueueShown] = useState<Record<string, number>>({});
+  // A new filter or search is a new list, so paging starts over rather than
+  // leaving a category expanded from whatever was on screen before.
+  useEffect(() => { setRecoveryWorkQueueShown({}); }, [recoveryWorklistCategory, recoveryWorklistSearch]);
   const [activitySheetRepFilter, setActivitySheetRepFilter] = useState("all");
   const [activitySheetStatusFilter, setActivitySheetStatusFilter] = useState("all");
   const [activitySheetNextFilter, setActivitySheetNextFilter] = useState<"all" | "overdue" | "today" | "unscheduled" | "no_outcome">("all");
@@ -62446,7 +62454,13 @@ ${waybillLineItems(w).length > 1
               </div>
 
               {categoriesInTier.map((categoryKey) => {
-                const groupRows = tierRows.filter((row) => row.category === categoryKey);
+                const allGroupRows = tierRows.filter((row) => row.category === categoryKey);
+                // A tier can hold hundreds of orders (618 failed deliveries in
+                // production), so showing them all turned the page into an
+                // endless scroll. Show a working batch and let the rep pull
+                // more when she has actually worked through it.
+                const shown = recoveryWorkQueueShown[categoryKey] ?? WORK_QUEUE_PAGE;
+                const groupRows = allGroupRows.slice(0, shown);
                 const style = recoveryCategoryStyle(categoryKey);
                 const Icon = style.icon;
                 const meta = view?.categories?.[categoryKey];
@@ -62460,7 +62474,9 @@ ${waybillLineItems(w).length > 1
                         {meta?.code}. {meta?.label ?? categoryKey}
                       </h4>
                       <span className="text-[11px] font-medium text-gray-400">{meta?.blurb}</span>
-                      <span className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-black ${style.chip}`}>{groupRows.length}</span>
+                      <span className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-black ${style.chip}`}>
+                        {groupRows.length < allGroupRows.length ? `${groupRows.length} of ${allGroupRows.length}` : allGroupRows.length}
+                      </span>
                     </div>
 
                     <div className="grid grid-cols-1 gap-2.5 p-3 md:grid-cols-2 xl:grid-cols-3">
@@ -62530,6 +62546,44 @@ ${waybillLineItems(w).length > 1
                         );
                       })}
                     </div>
+                    {allGroupRows.length > groupRows.length && (
+                      <div className="flex flex-wrap items-center justify-center gap-2 border-t border-white/70 px-4 py-2.5">
+                        <span className="text-[11px] font-medium text-gray-400">
+                          {allGroupRows.length - groupRows.length} more waiting
+                        </span>
+                        <button
+                          type="button"
+                          className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-bold text-[#1F8FE0] hover:bg-blue-50"
+                          onClick={() => setRecoveryWorkQueueShown((current) => ({
+                            ...current,
+                            [categoryKey]: shown + WORK_QUEUE_PAGE
+                          }))}
+                        >
+                          Show {Math.min(WORK_QUEUE_PAGE, allGroupRows.length - groupRows.length)} more
+                        </button>
+                        <button
+                          type="button"
+                          className="!min-h-0 text-[11px] font-bold text-gray-500 hover:text-gray-800"
+                          onClick={() => setRecoveryWorkQueueShown((current) => ({
+                            ...current,
+                            [categoryKey]: allGroupRows.length
+                          }))}
+                        >
+                          Show all {allGroupRows.length}
+                        </button>
+                      </div>
+                    )}
+                    {shown > WORK_QUEUE_PAGE && (
+                      <div className="border-t border-white/70 px-4 py-2 text-center">
+                        <button
+                          type="button"
+                          className="!min-h-0 text-[11px] font-bold text-gray-500 hover:text-gray-800"
+                          onClick={() => setRecoveryWorkQueueShown((current) => ({ ...current, [categoryKey]: WORK_QUEUE_PAGE }))}
+                        >
+                          Collapse
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
