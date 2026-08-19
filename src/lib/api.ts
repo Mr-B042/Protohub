@@ -1475,6 +1475,11 @@ export const upsellBonusApi = {
   updateSettings: (body: unknown) => patch<any>("/api/upsell-bonuses/settings", body)
 };
 
+export type HeadOfSalesScorecardMetric = {
+  key: string; label: string; weight: number;
+  targetMode: "baseline" | "manual"; targetValue: number | null;
+};
+
 export const headOfSalesApi = {
   // range is optional: when the picker resolves to something other than a
   // full Sunday week (Today, Yesterday, a custom range) the server computes
@@ -1508,6 +1513,12 @@ export const headOfSalesApi = {
     if (range?.from && range?.to) { params.set("dateFrom", range.from); params.set("dateTo", range.to); }
     return get<any>(`/api/head-of-sales-rep/upsell-cross-sell?${params.toString()}`);
   },
+  scorecardSettings: (repId: string) =>
+    get<{ metrics: HeadOfSalesScorecardMetric[]; isDefault: boolean; defaults: HeadOfSalesScorecardMetric[] }>(
+      `/api/head-of-sales-rep/scorecard-settings?repId=${encodeURIComponent(repId)}`),
+  updateScorecardSettings: (metrics: Array<{ key: string; weight: number; targetMode: "baseline" | "manual"; targetValue: number | null }>) =>
+    patch<{ metrics: HeadOfSalesScorecardMetric[]; isDefault: boolean }>(
+      "/api/head-of-sales-rep/scorecard-settings", { metrics }),
   repCoaching: (repId: string, selectedRepId?: string, weekStart?: string) => {
     const params = new URLSearchParams({ repId });
     if (selectedRepId) params.set("selectedRepId", selectedRepId);
