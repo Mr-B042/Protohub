@@ -2429,6 +2429,70 @@ async function createPortalLoginForAgent(
   return { created: true, email, tempPassword };
 }
 
+// Permanently delete an applicant who never became an operating agent.
+//
+// This is the ONLY destructive delete in the module, and it is deliberately
+// hard to reach. Every pda_* child table is ON DELETE CASCADE, so removing an
+// agent row silently takes their stock ledger, remittances, assignments,
+// incidents and COD discrepancies with it. For anyone who ever held stock or
+// customer cash that is unacceptable - the history is exactly what you need
+// when money is disputed. Those are Terminated instead, which keeps the record.
+//
+// So this refuses unless the agent has NO operational trace at all, and says
+// which trace blocked it rather than failing vaguely.
+router.delete("/:id", requireRole("Owner"), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const agentId = paramOf(req.params.id);
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, full_name, account_status, user_id").eq("org_id", orgId).eq("id", agentId).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+
+    const countIn = async (table: string) => {
+      const { count } = await supabase.from(table)
+        .select("id", { count: "exact", head: true }).eq("agent_id", agentId);
+      return count ?? 0;
+    };
+    const [assignments, stock, ledger, remittances, discrepancies, payouts, incidents] = await Promise.all([
+      countIn(ASSIGNMENTS), countIn(STOCK), countIn(LEDGER),
+      countIn("pda_remittances"), countIn(COD_DISCREPANCIES),
+      countIn("pda_earning_payouts"), countIn(INCIDENTS)
+    ]);
+    const blockers = [
+      assignments > 0 && `${assignments} order assignment${assignments === 1 ? "" : "s"}`,
+      stock > 0 && "stock on hand",
+      ledger > 0 && `${ledger} stock ledger entr${ledger === 1 ? "y" : "ies"}`,
+      remittances > 0 && `${remittances} remittance${remittances === 1 ? "" : "s"}`,
+      discrepancies > 0 && `${discrepancies} COD discrepanc${discrepancies === 1 ? "y" : "ies"}`,
+      payouts > 0 && `${payouts} earning payout${payouts === 1 ? "" : "s"}`,
+      incidents > 0 && `${incidents} incident${incidents === 1 ? "" : "s"}`
+    ].filter(Boolean) as string[];
+
+    if (blockers.length > 0) {
+      res.status(409).json({
+        error: `${agent.full_name} has real history and cannot be deleted: ${blockers.join(", ")}. Terminate them instead - that stops them working while keeping the record auditable.`,
+        blockers
+      });
+      return;
+    }
+
+    // No trace, so the login is an orphan too - remove it or they could still
+    // sign in to a portal with no agent behind it.
+    if (agent.user_id) {
+      await supabase.from("users").delete().eq("org_id", orgId).eq("id", agent.user_id);
+      await supabase.auth.admin.deleteUser(agent.user_id).catch(() => {});
+    }
+    const { error } = await supabase.from(AGENTS).delete().eq("org_id", orgId).eq("id", agentId);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    // KYC items, documents, guarantors and agreement acceptances cascade. They
+    // are application artefacts, not operating history, so losing them with the
+    // application is correct.
+    res.json({ ok: true, deleted: agent.full_name });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not delete that agent." });
+  }
+});
+
 // Reset a linked agent's portal password without leaving the agent page. Same
 // one-time reveal as creation - the password is returned once and never stored.
 router.post("/:id/reset-login-password", requireRole("Owner", "Admin"), async (req, res) => {
