@@ -49,18 +49,25 @@ function resolveRange(parsed: { weekStart?: string; dateFrom?: string; dateTo?: 
   return { from, to, isCustomRange: Boolean(parsed.dateFrom && parsed.dateTo) };
 }
 
-// A rep is only ever compared against reps she doesn't oversee - herself
-// excluded - matching "rewarded for making the OTHER reps better," not for
-// her own personal sales. Demo accounts never enter the team either.
-async function loadTeam(orgId: string, headOfSalesRepId: string) {
+// Every active Sales Rep, INCLUDING the head herself.
+//
+// She used to be filtered out, on the reasoning that she is "rewarded for
+// making the OTHER reps better, not for her own personal sales". That holds for
+// how the BONUS is judged, but it was applied to the team roster itself - so
+// promoting a rep deleted her from Team AOV by Rep and quietly pulled all of
+// her orders out of every team number: AOV, delivery rate, expansion revenue,
+// the lot. A team's figures have to describe the team that actually exists, and
+// a head of sales who still carries a book is still part of it.
+//
+// Demo accounts never enter the team.
+async function loadTeam(orgId: string) {
   const { data, error } = await supabase
     .from("users")
     .select("id, name")
     .eq("org_id", orgId)
     .eq("role", "Sales Rep")
     .eq("active", true)
-    .eq("is_demo", false)
-    .neq("id", headOfSalesRepId);
+    .eq("is_demo", false);
   if (error) throw error;
   return data ?? [];
 }
@@ -82,7 +89,7 @@ async function loadRepAndTeam(orgId: string, repId: string, requestingUser: { id
   if (requestingUser.role === "Sales Rep" && requestingUser.id !== repRow.id) {
     throw Object.assign(new Error("You can only view your own Head of Sales Rep dashboard."), { status: 403 });
   }
-  const teamRows = await loadTeam(orgId, repRow.id);
+  const teamRows = await loadTeam(orgId);
   return {
     rep: repRow as { id: string; name: string; role: string; is_head_of_sales_rep: boolean; head_of_sales_rep_appointed_at: string | null },
     repIds: teamRows.map((row) => row.id),
