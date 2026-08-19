@@ -284,7 +284,10 @@ const PDA_SUBNAV_ITEMS: Array<{ key: PdaSubPage; label: string; icon: typeof Lay
   // Agent logins live here rather than in the main User Management screen -
   // these are outside individuals, not staff, and mixing them into the company
   // team list is how one ends up hand-building accounts one at a time.
-  { key: "Portal Access", label: "Portal Access", icon: KeyRound, ownerOnly: true },
+  // Not ownerOnly: Admin has the same backend rights over agent logins, and
+  // Manager can already suspend or terminate an agent. The page is shared and
+  // each action is gated individually instead.
+  { key: "Portal Access", label: "Portal Access", icon: KeyRound },
   { key: "Orders & Dispatch", label: "Orders & Dispatch", icon: PackageCheck },
   { key: "Inventory", label: "Inventory", icon: Box },
   { key: "COD & Reconciliation", label: "COD & Reconciliation", icon: Banknote },
@@ -53327,8 +53330,40 @@ ${waybillLineItems(w).length > 1
   // Active Agents: everyone who can actually take work, with their live state.
   // Agent logins, kept out of the company User Management screen. Owner sees
   // who can sign in, who still cannot, and why - and fixes it here.
+  // Suspending or terminating an agent already in the field. The backend has
+  // supported this all along (Restricted / Temporarily Suspended / Terminated,
+  // each with a reason on record) but nothing outside the APPLICATION review
+  // ever called it, so there was no way to stand down an agent once active.
+  const pdaChangeAgentStatus = async (agentId: string, agentName: string, accountStatus: string) => {
+    const verb = accountStatus === "Terminated" ? "Terminate" : accountStatus === "Active" ? "Reactivate" : "Suspend";
+    if (verb !== "Reactivate") {
+      const warning = accountStatus === "Terminated"
+        ? `Terminate ${agentName}? This is the end of the relationship - their record and history stay for audit, but they stop being assignable.`
+        : `Suspend ${agentName}? They go offline immediately and cannot be assigned new deliveries.`;
+      if (!window.confirm(warning)) return;
+    }
+    const reason = verb === "Reactivate"
+      ? "Reactivated"
+      : window.prompt(`Why is ${agentName} being ${accountStatus === "Terminated" ? "terminated" : "suspended"}? This goes on the record.`);
+    if (!reason || !reason.trim()) return;
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.setStatus(agentId, { accountStatus, reason: reason.trim() });
+      showToast(`${agentName} is now ${accountStatus}.`);
+      await Promise.all([loadPdaActiveAgents(), loadPersonalDeliveryAgents()]);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not change that status.");
+    } finally { setPdaSaving(false); }
+  };
+
   const renderPdaPortalAccess = () => {
-    const rows = (pdaActiveAgents?.rows ?? []).filter((row) => PDA_OPERATIONAL_STATUSES.includes(row.accountStatus));
+    // Login creation writes an auth account, so it stays Owner/Admin - the same
+    // line the backend draws. Standing an agent down is Manager-level, since
+    // they already carry that authority over applications.
+    const canManageLogins = currentRole === "Owner" || currentRole === "Admin";
+    const allRows = pdaActiveAgents?.rows ?? [];
+    const rows = allRows.filter((row) => PDA_OPERATIONAL_STATUSES.includes(row.accountStatus));
+    const standDown = allRows.filter((row) => !PDA_OPERATIONAL_STATUSES.includes(row.accountStatus));
     const withLogin = rows.filter((row) => row.hasPortalLogin);
     const without = rows.filter((row) => !row.hasPortalLogin);
     return (
@@ -53336,7 +53371,7 @@ ${waybillLineItems(w).length > 1
         <div>
           <h2 className="m-0 text-lg font-black text-gray-900">Portal Access</h2>
           <p className="m-0 mt-0.5 text-sm text-gray-500">
-            Who can sign in to the agent app. These accounts are separate from your company team - you do not need User Management for them.
+            Who can sign in to the agent app, and who is stood down. These accounts are separate from your company team - you do not need User Management for them.
           </p>
         </div>
 
@@ -53395,7 +53430,7 @@ ${waybillLineItems(w).length > 1
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex flex-wrap items-center justify-end gap-1.5">
-                        {row.hasPortalLogin ? (
+                        {canManageLogins && (row.hasPortalLogin ? (
                           <>
                             <button type="button" disabled={pdaSaving}
                               className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#1F8FE0] hover:bg-blue-50 disabled:opacity-50"
@@ -53403,9 +53438,9 @@ ${waybillLineItems(w).length > 1
                               Reset password
                             </button>
                             <button type="button" disabled={pdaSaving}
-                              className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                              className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                               onClick={() => void pdaLinkPortalLogin(row.id, row.fullName, true)}>
-                              Revoke
+                              Revoke access
                             </button>
                           </>
                         ) : (
@@ -53414,7 +53449,17 @@ ${waybillLineItems(w).length > 1
                             onClick={() => void pdaCreatePortalLogin(row.id, row.fullName)}>
                             Create login
                           </button>
-                        )}
+                        ))}
+                        <button type="button" disabled={pdaSaving}
+                          className="!min-h-0 rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                          onClick={() => void pdaChangeAgentStatus(row.id, row.fullName, "Temporarily Suspended")}>
+                          Suspend
+                        </button>
+                        <button type="button" disabled={pdaSaving}
+                          className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                          onClick={() => void pdaChangeAgentStatus(row.id, row.fullName, "Terminated")}>
+                          Terminate
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -53423,6 +53468,32 @@ ${waybillLineItems(w).length > 1
             </table>
           </div>
         </div>
+
+        {standDown.length > 0 && (
+          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+            <div className="border-b border-gray-100 bg-gray-50 px-4 py-2.5">
+              <h3 className="m-0 text-xs font-black uppercase tracking-wide text-gray-500">Stood down ({standDown.length})</h3>
+              <p className="m-0 mt-0.5 text-[11px] font-medium text-gray-400">
+                Suspended, terminated or rejected. Kept on the record rather than deleted, so their delivery and cash history stays auditable.
+              </p>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {standDown.map((row) => (
+                <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                  <div className="min-w-0">
+                    <p className="m-0 truncate text-sm font-bold text-gray-700">{row.fullName}</p>
+                    <p className="m-0 text-[11px] font-medium text-gray-400">{row.agentCode} · {row.accountStatus}</p>
+                  </div>
+                  <button type="button" disabled={pdaSaving}
+                    className="!min-h-0 shrink-0 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                    onClick={() => void pdaChangeAgentStatus(row.id, row.fullName, "Active")}>
+                    Reactivate
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <p className="m-0 text-[11px] font-medium leading-4 text-gray-400">
           Agents sign in at the same address you do and land on My Deliveries - they see only their own deliveries, stock and COD.
