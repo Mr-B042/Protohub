@@ -59343,9 +59343,7 @@ ${waybillLineItems(w).length > 1
       <div className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-              <Crown className="h-5 w-5" />
-            </span>
+            {headOfSalesBadge("lg")}
             <div>
               <h1 className="m-0 text-xl font-bold text-gray-900">Head of Sales Rep</h1>
               <p className="m-0 mt-0.5 text-sm text-gray-500">
@@ -59504,6 +59502,32 @@ ${waybillLineItems(w).length > 1
   // gets in the way of someone who already knows. Every figure on this
   // dashboard is arithmetic on delivered orders, and anyone reading it should
   // be able to check it themselves rather than trust it.
+  // The Head of Sales Rep mark. Deliberately not another grey role chip - this
+  // is the one promotion a Sales Rep can earn here, and it should read as an
+  // honour on sight. Rose into gold, a crown that lifts, and a slow sheen.
+  const headOfSalesBadge = (size: "sm" | "lg" = "sm", label = "Head of Sales Rep") => size === "lg" ? (
+    <span
+      className="relative inline-flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-rose-400 via-fuchsia-400 to-amber-300 text-white ring-2 ring-rose-200/70"
+      style={{ animation: "headBadgeGlow 3s ease-in-out infinite" }}
+      title={label}
+    >
+      <span className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
+        style={{ animation: "headBadgeSheen 3.6s ease-in-out infinite" }} />
+      <Crown className="relative h-5 w-5 drop-shadow-sm" style={{ animation: "goldCrownBounce 2.4s ease-in-out infinite" }} />
+    </span>
+  ) : (
+    <span
+      className="relative inline-flex items-center gap-1 overflow-hidden rounded-full bg-gradient-to-r from-rose-500 via-fuchsia-500 to-amber-400 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-white ring-1 ring-rose-200"
+      title="Oversees all sales reps - has the Head of Sales Rep dashboard."
+    >
+      <span className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-white/60 to-transparent"
+        style={{ animation: "headBadgeSheen 4s ease-in-out infinite" }} />
+      <Crown className="relative h-2.5 w-2.5" />
+      <span className="relative">{label}</span>
+      <Sparkles className="relative h-2.5 w-2.5 opacity-80" />
+    </span>
+  );
+
   const headOfSalesExplainer = (title: string, lines: Array<{ term: string; plain: string; sum?: string }>, footer?: string) => (
     <details className="group mt-3 rounded-lg border border-gray-200 bg-gray-50/70">
       <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-[11px] font-bold text-gray-600 hover:text-gray-900">
@@ -67477,8 +67501,20 @@ ${waybillLineItems(w).length > 1
         />
       )}
 
-      {repGoldHonorActive && (
+      {/* Always rendered: the Head of Sales Rep badge uses these too, and it
+          must not depend on a Sales Rep's gold-honour week being active.
+          Unused keyframes cost nothing. */}
+      {(
         <style>{`
+          @keyframes headBadgeSheen {
+            0% { transform: translateX(-140%); opacity: 0; }
+            35% { opacity: 0.85; }
+            100% { transform: translateX(240%); opacity: 0; }
+          }
+          @keyframes headBadgeGlow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(244,114,182,0.0), 0 2px 8px rgba(190,24,93,0.18); }
+            50% { box-shadow: 0 0 0 4px rgba(244,114,182,0.13), 0 4px 14px rgba(190,24,93,0.28); }
+          }
           @keyframes goldGlowPulse {
             0%, 100% { box-shadow: 0 0 14px rgba(251,191,36,0.45), 0 0 0 0 rgba(251,191,36,0.35); }
             50% { box-shadow: 0 0 24px rgba(251,191,36,0.85), 0 0 0 7px rgba(251,191,36,0.14); }
@@ -84304,10 +84340,7 @@ ${waybillLineItems(w).length > 1
                                 </span>
                               )}
                               {user.isHeadOfSalesRep && (
-                                <span className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-700"
-                                  title="Oversees all sales reps - has the Head of Sales Rep dashboard.">
-                                  <Crown className="h-2.5 w-2.5" /> Head of Sales Rep
-                                </span>
+                                <span className="mt-1 inline-flex">{headOfSalesBadge("sm")}</span>
                               )}
                             </div>
                             {/* Owner only. Flipping a real person to demo would
@@ -84330,7 +84363,7 @@ ${waybillLineItems(w).length > 1
                             {realRole === "Owner" && user.role === "Sales Rep" && (
                               <button
                                 type="button"
-                                className={`!min-h-0 shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-colors ${user.isHeadOfSalesRep ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" : "border-gray-200 bg-white text-gray-500 hover:bg-gray-50"}`}
+                                className={`!min-h-0 shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-colors ${user.isHeadOfSalesRep ? "border-rose-300 bg-gradient-to-r from-rose-50 to-amber-50 text-rose-700 hover:from-rose-100 hover:to-amber-100" : "border-gray-200 bg-white text-gray-500 hover:bg-gray-50"}`}
                                 onClick={() => toggleManagedUserHeadOfSalesRep(user)}
                                 title={user.isHeadOfSalesRep
                                   ? "Remove Head of Sales Rep - they lose the leadership dashboard."
@@ -84412,12 +84445,7 @@ ${waybillLineItems(w).length > 1
                                             Demo · not counted
                                           </span>
                                         )}
-                                        {user.isHeadOfSalesRep && (
-                                          <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-700"
-                                            title="Oversees all sales reps - has the Head of Sales Rep dashboard.">
-                                            <Crown className="h-2.5 w-2.5" /> Head of Sales Rep
-                                          </span>
-                                        )}
+                                        {user.isHeadOfSalesRep && headOfSalesBadge("sm")}
                                       </div>
                                       <div className="text-xs text-gray-400">{user.email}</div>
                                     </div>
