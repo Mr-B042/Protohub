@@ -59355,9 +59355,16 @@ ${waybillLineItems(w).length > 1
                 Sunday-anchored week underneath, since every route here
                 still only understands a week (weekly scorecard, weekly
                 bonus). Shared across all 8 sub-pages, not per-page. */}
+            {/* Only the periods this page can actually honour. Every route
+                here resolves to a Sunday-anchored week, so Today and Yesterday
+                landed on the same week and showed identical numbers, and This
+                Month showed the week containing the 1st rather than the month.
+                Offering a filter that silently does nothing is worse than not
+                offering it - the week arrows below still reach any week, and
+                Pick a date range snaps to the week it lands in. */}
             <div className="flex flex-wrap items-center gap-2">
-              <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                {periods.map((item) => (
+              <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                {periods.filter((item) => item === "This Week" || item === "Last Week").map((item) => (
                   <button
                     key={item}
                     type="button"
@@ -59366,6 +59373,9 @@ ${waybillLineItems(w).length > 1
                   >{item}</button>
                 ))}
               </div>
+              <span className="text-[11px] font-medium text-gray-400">
+                Weekly dashboard - the scorecard and bonus are both weekly, so any date you pick reports as its full week.
+              </span>
               <div className="relative">
                 <button
                   type="button"
