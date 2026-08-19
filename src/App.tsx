@@ -59450,6 +59450,33 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // Plain-English "how this number is made", collapsed by default so it never
+  // gets in the way of someone who already knows. Every figure on this
+  // dashboard is arithmetic on delivered orders, and anyone reading it should
+  // be able to check it themselves rather than trust it.
+  const headOfSalesExplainer = (title: string, lines: Array<{ term: string; plain: string; sum?: string }>, footer?: string) => (
+    <details className="group mt-3 rounded-lg border border-gray-200 bg-gray-50/70">
+      <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-[11px] font-bold text-gray-600 hover:text-gray-900">
+        <HelpCircle className="h-3.5 w-3.5 text-[#1F8FE0]" />
+        How {title} is worked out
+        <span className="ml-auto text-[10px] font-medium text-gray-400 group-open:hidden">show</span>
+        <span className="ml-auto hidden text-[10px] font-medium text-gray-400 group-open:inline">hide</span>
+      </summary>
+      <div className="space-y-2 border-t border-gray-200 px-3 py-2.5">
+        {lines.map((line) => (
+          <div key={line.term}>
+            <p className="m-0 text-[11px] font-black text-gray-800">{line.term}</p>
+            <p className="m-0 text-[11px] font-medium leading-4 text-gray-600">{line.plain}</p>
+            {line.sum && (
+              <p className="m-0 mt-0.5 rounded bg-white px-2 py-1 font-mono text-[10px] text-gray-500 ring-1 ring-gray-200">{line.sum}</p>
+            )}
+          </div>
+        ))}
+        {footer && <p className="m-0 border-t border-gray-200 pt-2 text-[10px] font-medium italic leading-4 text-gray-500">{footer}</p>}
+      </div>
+    </details>
+  );
+
   const renderHeadOfSalesOverview = () => {
     const data = headOfSalesOverview;
     if (headOfSalesOverviewLoading && !data) {
@@ -59882,6 +59909,17 @@ ${waybillLineItems(w).length > 1
                   </tbody>
                 </table>
               </div>
+              {headOfSalesExplainer("this score", [
+                { term: "1. Each metric is compared to its target",
+                  plain: "Vs Target just asks: what percent of the target did the team reach? Hitting exactly the target is 100%. Beating it goes above 100% - it is not capped, so a great week shows as a great week.",
+                  sum: "Vs Target  =  actual ÷ target × 100" },
+                { term: "2. Each metric is worth a different amount",
+                  plain: "The five metrics do not matter equally. Team AOV carries the most weight because it moves revenue the most. The weights always add up to 100.",
+                  sum: "Team AOV 35  ·  Upsell 20  ·  Cross-sell 15  ·  Incremental revenue 20  ·  Delivery rate 10" },
+                { term: "3. The two are multiplied, then added up",
+                  plain: "Each metric earns its weight in proportion to how close it got to target. Add the five together and that is the score out of 100.",
+                  sum: "Weighted score  =  weight × (Vs Target ÷ 100)" }
+              ], "Targets are not invented. Each one is this team's own average over the 4 weeks before this one, so the team is measured against how it has actually been performing, not a number somebody guessed.")}
             </section>
 
             {performanceLevelChecklist()}
@@ -59928,6 +59966,20 @@ ${waybillLineItems(w).length > 1
                   </table>
                 </div>
               )}
+              {headOfSalesExplainer("these numbers are", [
+                { term: "AOV (Average Order Value)",
+                  plain: "Of the orders this rep actually DELIVERED this week, the average value of one order. Orders that were placed but not delivered are not in here - a sale only counts once the customer has it.",
+                  sum: "AOV  =  delivered revenue ÷ number of delivered orders" },
+                { term: "Target",
+                  plain: "This same team's own average over the 4 weeks before this one. It is not a number anyone picked - it is what the team has genuinely been doing, so beating it means genuinely improving.",
+                  sum: "Target  =  team average AOV of the previous 4 weeks" },
+                { term: "Vs Target",
+                  plain: "How close the rep got to that target. 100% means she matched it. Above 100% means she beat it.",
+                  sum: "Vs Target  =  her AOV ÷ target × 100" },
+                { term: "Trend",
+                  plain: "Simply whether her AOV this week is higher or lower than her own AOV last week. It compares her to herself, not to the team." }
+              ], "A rep with 0 has not delivered anything yet in this period - it does not mean she has done no work, only that nothing has completed.")}
+
             </section>
 
             <div className="space-y-4">
@@ -60569,11 +60621,27 @@ ${waybillLineItems(w).length > 1
                 </table>
               </div>
             )}
-            <p className="m-0 flex flex-wrap gap-x-5 gap-y-1 border-t border-gray-100 bg-gray-50 px-5 py-2.5 text-[10px] font-medium text-gray-500">
-              <span><strong className="text-gray-700">Attempt rate</strong> = attempts ÷ delivered orders</span>
-              <span><strong className="text-gray-700">Acceptance rate</strong> = accepted expansions ÷ total attempts</span>
-              <span><strong className="text-gray-700">Expansion rate</strong> = expansion orders ÷ delivered orders</span>
-            </p>
+            <div className="border-t border-gray-100 bg-gray-50 px-5 py-2.5">
+              <p className="m-0 flex flex-wrap gap-x-5 gap-y-1 text-[10px] font-medium text-gray-500">
+                <span><strong className="text-gray-700">Attempt rate</strong> = attempts ÷ delivered orders</span>
+                <span><strong className="text-gray-700">Acceptance rate</strong> = accepted expansions ÷ total attempts</span>
+                <span><strong className="text-gray-700">Expansion rate</strong> = expansion orders ÷ delivered orders</span>
+              </p>
+              {headOfSalesExplainer("these columns are", [
+                { term: "Attempts (what the rep controls)",
+                  plain: "How many times she offered a bigger pack or an extra product. This is her effort - it counts whether or not the customer said yes.",
+                  sum: "Attempt rate  =  attempts ÷ orders she delivered" },
+                { term: "Accepted (what the customer decided)",
+                  plain: "Of everything she offered, how many the customer agreed to. A low number here means the offers are being made but not landing.",
+                  sum: "Acceptance rate  =  accepted ÷ attempts" },
+                { term: "Delivered (what actually happened)",
+                  plain: "An order only counts once it is delivered. Someone can agree to an upsell and then the delivery fails - that is not money, so it is not counted here.",
+                  sum: "Expansion rate  =  expansion orders ÷ delivered orders" },
+                { term: "Expansion revenue (the money)",
+                  plain: "Only the EXTRA value, never the whole order. If a customer upgrades from a ₦16,500 pack to a ₦25,500 pack, this counts ₦9,000 - not ₦25,500.",
+                  sum: "Expansion revenue  =  new value − original value" }
+              ], "Expansion orders counts each ORDER once, even if it carried both an upsell and a cross-sell. That is why upsells + cross-sells will sometimes be more than expansion orders - the same order is not counted twice.")}
+            </div>
           </section>
 
           {/* Where the money leaks between offering and delivering. Both gaps
@@ -61951,6 +62019,16 @@ ${waybillLineItems(w).length > 1
             <button type="button" className="!min-h-0 mt-3 text-xs font-bold text-[#1F8FE0] hover:underline" onClick={() => scrollToSection("bonus-breakdown-section")}>
               See breakdown →
             </button>
+            {headOfSalesExplainer("this bonus", [
+              { term: "Two things decide it, together",
+                plain: "The team's average order value AND the team's delivery rate for the week. Both have to clear a tier - selling big but not delivering does not pay, and neither does delivering lots of small orders." },
+              { term: "It is the whole team, not one person",
+                plain: "This is a leadership bonus, so it is measured on the team's combined numbers. Lifting one rep is not enough if the team average has not moved." },
+              { term: "It is paid per week",
+                plain: "Each week stands on its own and is confirmed separately. A confirmed week is a fixed historical fact - it does not change afterwards even if orders or settings are edited later." },
+              { term: "Until it is confirmed, it is only a preview",
+                plain: "A week shows a live estimate from the numbers so far. It becomes real money only when leadership confirms it, and it is never self-approved." }
+            ], "Tiers are Owner-set. Open Edit Tiers above to see the exact AOV and delivery-rate thresholds each level requires.")}
           </section>
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5">
