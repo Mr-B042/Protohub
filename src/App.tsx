@@ -43961,6 +43961,17 @@ ${waybillLineItems(w).length > 1
   // Whatever the shared period picker resolves to, snapped onto its
   // containing Sunday-anchored week - the one value every Head of Sales
   // Rep route and page reads.
+  // The literal dates the picker resolves to, before any week snapping. Pages
+  // that can answer a partial week send these; the weekly ones ignore them.
+  const headOfSalesExplicitRange = useMemo(() => {
+    const { start, end } = explicitPeriodRange(headOfSalesPeriod, headOfSalesDateRange);
+    return start && end ? { from: start, to: end } : null;
+  }, [headOfSalesPeriod, headOfSalesDateRange]);
+  const headOfSalesIsPartWeek = useMemo(() => {
+    if (!headOfSalesExplicitRange) return false;
+    const { from, to } = headOfSalesExplicitRange;
+    return from !== sundayWeekStartClient(from) || to !== shiftDateKey(sundayWeekStartClient(from), 6);
+  }, [headOfSalesExplicitRange]);
   const headOfSalesResolvedWeekStart = useMemo(() => {
     const { start } = explicitPeriodRange(headOfSalesPeriod, headOfSalesDateRange);
     return start ? sundayWeekStartClient(start) : sundayWeekStartClient(formatDateKey(new Date()));
@@ -44018,14 +44029,16 @@ ${waybillLineItems(w).length > 1
       opts.setLoading(false);
     }
   };
+  // The range is part of the key: Today and Yesterday resolve to the same
+  // week, so keying on the week alone would serve one from the other cache.
   const headOfSalesCacheKey = (page: string) =>
-    `${page}|${headOfSalesViewingId}|${headOfSalesResolvedWeekStart}`;
+    `${page}|${headOfSalesViewingId}|${headOfSalesResolvedWeekStart}|${headOfSalesExplicitRange?.from ?? ""}|${headOfSalesExplicitRange?.to ?? ""}`;
 
   const loadHeadOfSalesOverview = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Overview" || !headOfSalesViewingId) return;
     await runHeadOfSalesLoad({
       key: headOfSalesCacheKey("overview"),
-      fetch: () => headOfSalesApi.overview(headOfSalesViewingId, headOfSalesResolvedWeekStart),
+      fetch: () => headOfSalesApi.overview(headOfSalesViewingId, headOfSalesResolvedWeekStart, headOfSalesExplicitRange ?? undefined),
       apply: setHeadOfSalesOverview,
       setLoading: setHeadOfSalesOverviewLoading,
       setError: setHeadOfSalesOverviewError,
@@ -44034,8 +44047,10 @@ ${waybillLineItems(w).length > 1
   };
   useEffect(() => {
     void loadHeadOfSalesOverview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart]);
+  // Range is in the deps because Today and Yesterday resolve to the SAME
+  // week - without it the effect would not refire and the page would keep
+  // showing yesterday's numbers after switching to today.
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart, headOfSalesExplicitRange?.from, headOfSalesExplicitRange?.to]);
 
   const loadHeadOfSalesScorecard = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Weekly Scorecard" || !headOfSalesViewingId) return;
@@ -44057,7 +44072,7 @@ ${waybillLineItems(w).length > 1
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Team Performance" || !headOfSalesViewingId) return;
     await runHeadOfSalesLoad({
       key: headOfSalesCacheKey("team-performance"),
-      fetch: () => headOfSalesApi.teamPerformance(headOfSalesViewingId, headOfSalesResolvedWeekStart),
+      fetch: () => headOfSalesApi.teamPerformance(headOfSalesViewingId, headOfSalesResolvedWeekStart, headOfSalesExplicitRange ?? undefined),
       apply: setHeadOfSalesTeamPerformance,
       setLoading: setHeadOfSalesTeamPerformanceLoading,
       setError: setHeadOfSalesTeamPerformanceError,
@@ -44066,14 +44081,16 @@ ${waybillLineItems(w).length > 1
   };
   useEffect(() => {
     void loadHeadOfSalesTeamPerformance();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart]);
+  // Range is in the deps because Today and Yesterday resolve to the SAME
+  // week - without it the effect would not refire and the page would keep
+  // showing yesterday's numbers after switching to today.
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart, headOfSalesExplicitRange?.from, headOfSalesExplicitRange?.to]);
 
   const loadHeadOfSalesUpsellCrossSell = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Upsell & Cross-sell" || !headOfSalesViewingId) return;
     await runHeadOfSalesLoad({
       key: headOfSalesCacheKey("upsell"),
-      fetch: () => headOfSalesApi.upsellCrossSell(headOfSalesViewingId, headOfSalesResolvedWeekStart),
+      fetch: () => headOfSalesApi.upsellCrossSell(headOfSalesViewingId, headOfSalesResolvedWeekStart, headOfSalesExplicitRange ?? undefined),
       apply: setHeadOfSalesUpsellCrossSell,
       setLoading: setHeadOfSalesUpsellCrossSellLoading,
       setError: setHeadOfSalesUpsellCrossSellError,
@@ -44082,8 +44099,10 @@ ${waybillLineItems(w).length > 1
   };
   useEffect(() => {
     void loadHeadOfSalesUpsellCrossSell();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart]);
+  // Range is in the deps because Today and Yesterday resolve to the SAME
+  // week - without it the effect would not refire and the page would keep
+  // showing yesterday's numbers after switching to today.
+  }, [activePage, headOfSalesSubPage, headOfSalesViewingId, headOfSalesResolvedWeekStart, headOfSalesExplicitRange?.from, headOfSalesExplicitRange?.to]);
 
   const loadHeadOfSalesCoaching = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Rep Coaching" || !headOfSalesViewingId) return;
@@ -59355,16 +59374,15 @@ ${waybillLineItems(w).length > 1
                 Sunday-anchored week underneath, since every route here
                 still only understands a week (weekly scorecard, weekly
                 bonus). Shared across all 8 sub-pages, not per-page. */}
-            {/* Only the periods this page can actually honour. Every route
-                here resolves to a Sunday-anchored week, so Today and Yesterday
-                landed on the same week and showed identical numbers, and This
-                Month showed the week containing the 1st rather than the month.
-                Offering a filter that silently does nothing is worse than not
-                offering it - the week arrows below still reach any week, and
-                Pick a date range snaps to the week it lands in. */}
+            {/* Full picker restored. Overview, Team Performance and Upsell &
+                Cross-sell now compute over the real dates, so Today and
+                Yesterday genuinely differ. The scorecard ladder, Weekly Report
+                and Bonus & Payouts remain weekly because a bonus IS a weekly
+                record - those pages show the notice below instead of quietly
+                reporting a week while the picker says Today. */}
             <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex items-center bg-gray-100 p-1 rounded-lg">
-                {periods.filter((item) => item === "This Week" || item === "Last Week").map((item) => (
+              <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+                {periods.map((item) => (
                   <button
                     key={item}
                     type="button"
@@ -59373,9 +59391,13 @@ ${waybillLineItems(w).length > 1
                   >{item}</button>
                 ))}
               </div>
-              <span className="text-[11px] font-medium text-gray-400">
-                Weekly dashboard - the scorecard and bonus are both weekly, so any date you pick reports as its full week.
-              </span>
+              {headOfSalesIsPartWeek && (
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-bold text-amber-800">
+                  {["Weekly Scorecard", "Weekly Report", "Bonus & Payouts"].includes(headOfSalesSubPage)
+                    ? `This page is weekly - showing the full week of ${formatDateOnly(headOfSalesResolvedWeekStart)}`
+                    : `Showing ${headOfSalesPeriod.toLowerCase()} only - totals are for this range, targets are weekly`}
+                </span>
+              )}
               <div className="relative">
                 <button
                   type="button"

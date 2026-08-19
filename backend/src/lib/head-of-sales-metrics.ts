@@ -94,8 +94,43 @@ export type RepWeekMetrics = {
  * kept in sync so this scorecard and the Manager Dashboard's own bonus gate
  * never disagree about the same rep in the same week.
  */
+/**
+ * Same maths over an arbitrary date range rather than a Sunday week, so the
+ * dashboard can answer Today / Yesterday / a custom range instead of snapping
+ * everything onto its containing week.
+ *
+ * Rate metrics (AOV, upsell rate, cross-sell rate, delivery rate) stay
+ * comparable across period lengths because they are averages. TOTALS
+ * (revenue, incremental revenue, order counts) are not comparable to a weekly
+ * baseline - a single day will always look small against a week - so callers
+ * must not put a short range next to a weekly target without saying so.
+ */
+export function computeRepRangeMetrics(
+  orders: HeadOfSalesOrder[],
+  repId: string,
+  rangeStart: string,
+  rangeEnd: string
+): RepWeekMetrics {
+  return computeRepMetricsBetween(orders, repId, rangeStart, rangeEnd);
+}
+
+export function computeTeamRangeMetrics(
+  orders: HeadOfSalesOrder[],
+  repIds: string[],
+  rangeStart: string,
+  rangeEnd: string
+): TeamWeekMetrics {
+  return buildTeamMetrics(
+    repIds.map((repId) => computeRepMetricsBetween(orders, repId, rangeStart, rangeEnd)),
+    rangeStart
+  );
+}
+
 export function computeRepWeekMetrics(orders: HeadOfSalesOrder[], repId: string, weekStart: string): RepWeekMetrics {
-  const weekEnd = weekEndFromStart(weekStart);
+  return computeRepMetricsBetween(orders, repId, weekStart, weekEndFromStart(weekStart));
+}
+
+function computeRepMetricsBetween(orders: HeadOfSalesOrder[], repId: string, weekStart: string, weekEnd: string): RepWeekMetrics {
   const cohort = orders.filter((order) => {
     if (order.assigned_rep_id !== repId || order.review_hold === true) return false;
     const key = createdDateKey(order);
@@ -153,7 +188,10 @@ export type TeamWeekMetrics = {
  * as one with 60 delivered at 55%.
  */
 export function computeTeamWeekMetrics(orders: HeadOfSalesOrder[], repIds: string[], weekStart: string): TeamWeekMetrics {
-  const reps = repIds.map((repId) => computeRepWeekMetrics(orders, repId, weekStart));
+  return buildTeamMetrics(repIds.map((repId) => computeRepWeekMetrics(orders, repId, weekStart)), weekStart);
+}
+
+function buildTeamMetrics(reps: RepWeekMetrics[], weekStart: string): TeamWeekMetrics {
   const totals = reps.reduce((acc, rep) => ({
     ordersAssigned: acc.ordersAssigned + rep.ordersAssigned,
     ordersDelivered: acc.ordersDelivered + rep.ordersDelivered,
