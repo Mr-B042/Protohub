@@ -43988,18 +43988,49 @@ ${waybillLineItems(w).length > 1
     setHeadOfSalesShowDateRange(false);
   };
 
+  // Every one of these pages refetched from scratch on each filter change,
+  // blanking to a skeleton while a route that scans several weeks of orders
+  // came back - so stepping between periods, or back to one just viewed, meant
+  // waiting again for a result already fetched. Keep each (page, rep, week)
+  // answer and show it instantly, then revalidate in the background. The
+  // skeleton is now only for a genuinely cold load, and a failed refresh keeps
+  // the last good numbers on screen instead of wiping them.
+  const headOfSalesCacheRef = useRef(new Map<string, unknown>());
+  const runHeadOfSalesLoad = async <T,>(opts: {
+    key: string;
+    fetch: () => Promise<T>;
+    apply: (value: T) => void;
+    setLoading: (value: boolean) => void;
+    setError: (value: string) => void;
+    fallback: string;
+  }) => {
+    const cached = headOfSalesCacheRef.current.get(opts.key) as T | undefined;
+    if (cached !== undefined) opts.apply(cached);
+    opts.setLoading(cached === undefined);
+    opts.setError("");
+    try {
+      const result = await opts.fetch();
+      headOfSalesCacheRef.current.set(opts.key, result);
+      opts.apply(result);
+    } catch (error: any) {
+      if (cached === undefined) opts.setError(error?.message ?? opts.fallback);
+    } finally {
+      opts.setLoading(false);
+    }
+  };
+  const headOfSalesCacheKey = (page: string) =>
+    `${page}|${headOfSalesViewingId}|${headOfSalesResolvedWeekStart}`;
+
   const loadHeadOfSalesOverview = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Overview" || !headOfSalesViewingId) return;
-    setHeadOfSalesOverviewLoading(true);
-    setHeadOfSalesOverviewError("");
-    try {
-      const result = await headOfSalesApi.overview(headOfSalesViewingId, headOfSalesResolvedWeekStart);
-      setHeadOfSalesOverview(result);
-    } catch (error: any) {
-      setHeadOfSalesOverviewError(error?.message ?? "Could not load this dashboard.");
-    } finally {
-      setHeadOfSalesOverviewLoading(false);
-    }
+    await runHeadOfSalesLoad({
+      key: headOfSalesCacheKey("overview"),
+      fetch: () => headOfSalesApi.overview(headOfSalesViewingId, headOfSalesResolvedWeekStart),
+      apply: setHeadOfSalesOverview,
+      setLoading: setHeadOfSalesOverviewLoading,
+      setError: setHeadOfSalesOverviewError,
+      fallback: "Could not load this dashboard."
+    });
   };
   useEffect(() => {
     void loadHeadOfSalesOverview();
@@ -44008,16 +44039,14 @@ ${waybillLineItems(w).length > 1
 
   const loadHeadOfSalesScorecard = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Weekly Scorecard" || !headOfSalesViewingId) return;
-    setHeadOfSalesScorecardLoading(true);
-    setHeadOfSalesScorecardError("");
-    try {
-      const result = await headOfSalesApi.scorecard(headOfSalesViewingId, headOfSalesResolvedWeekStart);
-      setHeadOfSalesScorecard(result);
-    } catch (error: any) {
-      setHeadOfSalesScorecardError(error?.message ?? "Could not load the scorecard.");
-    } finally {
-      setHeadOfSalesScorecardLoading(false);
-    }
+    await runHeadOfSalesLoad({
+      key: headOfSalesCacheKey("scorecard"),
+      fetch: () => headOfSalesApi.scorecard(headOfSalesViewingId, headOfSalesResolvedWeekStart),
+      apply: setHeadOfSalesScorecard,
+      setLoading: setHeadOfSalesScorecardLoading,
+      setError: setHeadOfSalesScorecardError,
+      fallback: "Could not load the scorecard."
+    });
   };
   useEffect(() => {
     void loadHeadOfSalesScorecard();
@@ -44026,16 +44055,14 @@ ${waybillLineItems(w).length > 1
 
   const loadHeadOfSalesTeamPerformance = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Team Performance" || !headOfSalesViewingId) return;
-    setHeadOfSalesTeamPerformanceLoading(true);
-    setHeadOfSalesTeamPerformanceError("");
-    try {
-      const result = await headOfSalesApi.teamPerformance(headOfSalesViewingId, headOfSalesResolvedWeekStart);
-      setHeadOfSalesTeamPerformance(result);
-    } catch (error: any) {
-      setHeadOfSalesTeamPerformanceError(error?.message ?? "Could not load Team Performance.");
-    } finally {
-      setHeadOfSalesTeamPerformanceLoading(false);
-    }
+    await runHeadOfSalesLoad({
+      key: headOfSalesCacheKey("team-performance"),
+      fetch: () => headOfSalesApi.teamPerformance(headOfSalesViewingId, headOfSalesResolvedWeekStart),
+      apply: setHeadOfSalesTeamPerformance,
+      setLoading: setHeadOfSalesTeamPerformanceLoading,
+      setError: setHeadOfSalesTeamPerformanceError,
+      fallback: "Could not load Team Performance."
+    });
   };
   useEffect(() => {
     void loadHeadOfSalesTeamPerformance();
@@ -44044,16 +44071,14 @@ ${waybillLineItems(w).length > 1
 
   const loadHeadOfSalesUpsellCrossSell = async () => {
     if (activePage !== "Head of Sales Rep" || headOfSalesSubPage !== "Upsell & Cross-sell" || !headOfSalesViewingId) return;
-    setHeadOfSalesUpsellCrossSellLoading(true);
-    setHeadOfSalesUpsellCrossSellError("");
-    try {
-      const result = await headOfSalesApi.upsellCrossSell(headOfSalesViewingId, headOfSalesResolvedWeekStart);
-      setHeadOfSalesUpsellCrossSell(result);
-    } catch (error: any) {
-      setHeadOfSalesUpsellCrossSellError(error?.message ?? "Could not load Upsell & Cross-sell.");
-    } finally {
-      setHeadOfSalesUpsellCrossSellLoading(false);
-    }
+    await runHeadOfSalesLoad({
+      key: headOfSalesCacheKey("upsell"),
+      fetch: () => headOfSalesApi.upsellCrossSell(headOfSalesViewingId, headOfSalesResolvedWeekStart),
+      apply: setHeadOfSalesUpsellCrossSell,
+      setLoading: setHeadOfSalesUpsellCrossSellLoading,
+      setError: setHeadOfSalesUpsellCrossSellError,
+      fallback: "Could not load Upsell & Cross-sell."
+    });
   };
   useEffect(() => {
     void loadHeadOfSalesUpsellCrossSell();
