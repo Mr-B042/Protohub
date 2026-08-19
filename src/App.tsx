@@ -62377,7 +62377,6 @@ ${waybillLineItems(w).length > 1
     unreachable:         { icon: AlertTriangle, rail: "bg-gray-400",    tile: "from-gray-50 to-white",    chip: "bg-gray-200 text-gray-700",       ring: "ring-gray-200",    soft: "text-gray-700" },
     cancelled:           { icon: X,             rail: "bg-orange-500",  tile: "from-orange-50 to-white",  chip: "bg-orange-100 text-orange-700",   ring: "ring-orange-200",  soft: "text-orange-700" },
     interested_no_order: { icon: Sparkles,      rail: "bg-violet-400",  tile: "from-violet-50 to-white",  chip: "bg-violet-100 text-violet-700",   ring: "ring-violet-200",  soft: "text-violet-700" },
-    previous_success:    { icon: CheckCircle2,  rail: "bg-emerald-500", tile: "from-emerald-50 to-white", chip: "bg-emerald-100 text-emerald-700", ring: "ring-emerald-200", soft: "text-emerald-700" },
     dormant:             { icon: Moon,          rail: "bg-sky-500",     tile: "from-sky-50 to-white",     chip: "bg-sky-100 text-sky-700",         ring: "ring-sky-200",     soft: "text-sky-700" }
   };
   const recoveryCategoryStyle = (key: string) =>
@@ -62386,12 +62385,11 @@ ${waybillLineItems(w).length > 1
   const renderRecoveryWorkQueue = () => {
     const view = recoveryWorklist;
     const tiers = [
-      { tier: 1, title: "Priority 1 - Rescheduled deliveries", why: "They already agreed to receive. Reconfirm before the date they gave." },
+      { tier: 1, title: "Priority 1 - Rescheduled deliveries", why: "They agreed a date and it passed with nobody following up. Reconfirm before the trail goes cold." },
       { tier: 2, title: "Priority 2 - Recent failed deliveries", why: "They ordered and the delivery missed. Ask if it can be re-attempted." },
-      { tier: 3, title: "Priority 3 - Previous successful customers", why: "They know the company already. Easier to sell than a stranger." },
-      { tier: 4, title: "Priority 4 - Recent cancellations", why: "Find out why. Sometimes the reason can still be solved." },
-      { tier: 5, title: "Priority 5 - Dormant customers", why: `No purchase in ${view?.dormantDays ?? 60}+ days. Work these after the urgent ones.` },
-      { tier: 6, title: "Unranked - reachability problems", why: "Not in Bright's five tiers, kept visible so they are not lost." }
+      { tier: 3, title: "Priority 3 - Recent cancellations", why: "Find out why. Sometimes the reason can still be solved." },
+      { tier: 4, title: "Priority 4 - Dormant customers", why: `Bought before, then went quiet for ${view?.dormantDays ?? 60}+ days. Work these after the urgent ones.` },
+      { tier: 5, title: "Unranked - reachability problems", why: "Died because the customer could not be reached at all. Worth a retry on a different number or time." }
     ];
     const query = recoveryWorklistSearch.trim().toLowerCase();
     const visibleRows = (view?.rows ?? []).filter((row) => {
@@ -62522,7 +62520,7 @@ ${waybillLineItems(w).length > 1
             <section key={tier.tier} className="space-y-3">
               <div className="flex flex-wrap items-center gap-2.5">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gray-900 text-sm font-black text-white">
-                  {tier.tier === 6 ? "-" : `P${tier.tier}`}
+                  {tier.tier === 5 ? "-" : `P${tier.tier}`}
                 </span>
                 <div className="min-w-0">
                   <h3 className="m-0 text-sm font-black text-gray-900">{tier.title}</h3>
@@ -62670,10 +62668,13 @@ ${waybillLineItems(w).length > 1
         })}
 
         <p className="m-0 text-[11px] font-medium leading-4 text-gray-400">
-          Categories are read from order status and the outcome the last rep wrote, so a customer only lands in
-          "Not picking" or "Not reachable" if that was actually logged. "Interested, never ordered" is greyed out on
-          purpose - somebody who never became an order is not in the orders table at all; that one lives in abandoned
-          carts and sales leads and needs its own wiring.
+          This queue holds orders that DIED - failed, cancelled, or a rescheduled delivery nobody came back to. Live
+          orders are excluded on purpose: they still belong to the rep working them. Customers who bought successfully
+          are not here either - every past customer would qualify, which is a customer list rather than a queue of
+          things to fix; they live in Customer Retention, which already ranks them. The one exception is a customer who
+          has gone quiet long enough to be a win-back, which is why Dormant stays. "Interested, never ordered" is greyed
+          out because somebody who never became an order is not in the orders table at all - that lives in abandoned
+          carts and sales leads.
         </p>
       </div>
     );
