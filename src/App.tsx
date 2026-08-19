@@ -60312,6 +60312,11 @@ ${waybillLineItems(w).length > 1
     const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
     const pct = (value: number) => `${value}%`;
     const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Same shape as the server's own pctDelta so a card and its table row can
+    // never disagree about whether a week went up or down.
+    const pctDeltaOf = (current: number, previous: number) =>
+      previous > 0 ? Math.round(((current - previous) / previous) * 1000) / 10 : (current > 0 ? 100 : 0);
+    const teamRate = (part: number, whole: number) => whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0;
 
     const kpi = (label: string, value: string, deltaPct: number | null, foot?: string) => (
       <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
@@ -60369,92 +60374,242 @@ ${waybillLineItems(w).length > 1
       <div className="space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="m-0 text-xl font-bold text-gray-900">Upsell &amp; Cross-sell Performance</h2>
-            <p className="m-0 mt-0.5 text-sm text-gray-500">Track, analyze and improve how the team increases average order value.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="m-0 text-xl font-bold text-gray-900">Upsell &amp; Cross-sell Performance</h2>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-black text-[#1F8FE0]">
+                <Users className="h-3.5 w-3.5" /> Head Sales Rep Dashboard
+              </span>
+            </div>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">We measure only the extra value added through upsells and cross-sells that actually delivered.</p>
           </div>
           <button type="button" className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white hover:bg-[#1a7ec4]" onClick={exportReport}>
             <Download className="h-3.5 w-3.5" /> Export Report
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-          {kpi("Upsell Rate (Team Avg.)", pct(data.team.upsellRate), data.team.upsellRateDeltaVsLastWeek, `Target: ${pct(data.team.upsellRateTarget)}`)}
-          {kpi("Cross-sell Rate (Team Avg.)", pct(data.team.crossSellRate), data.team.crossSellRateDeltaVsLastWeek, `Target: ${pct(data.team.crossSellRateTarget)}`)}
-          {kpi("Customers Offered", data.team.customersOffered.toLocaleString(), data.team.customersOfferedDeltaPct, `vs last week: ${data.team.customersOfferedLastWeek}`)}
-          {kpi("Customers Upgraded", data.team.customersUpgraded.toLocaleString(), data.team.customersUpgradedDeltaPct, `vs last week: ${data.team.customersUpgradedLastWeek}`)}
-          {kpi("Additional Revenue", money(data.team.additionalRevenue), data.team.additionalRevenueDeltaPct)}
-        </div>
+        {/* BUSINESS RESULTS - every figure here is counted off DELIVERED
+            orders, which is why it reconciles with the Manager Dashboard.
+            Nothing on this strip comes from the offer log. */}
+        {(() => {
+          const br = data.businessResults;
+          if (!br) return null;
+          const card = (
+            tone: string,
+            icon: typeof Wallet,
+            label: string,
+            value: string,
+            sub: string,
+            deltaPct: number | null,
+            vs: string
+          ) => {
+            const Icon = icon;
+            return (
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
+                <div className="flex items-start gap-2.5">
+                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${tone}`}><Icon className="h-4 w-4" /></span>
+                  <div className="min-w-0">
+                    <span className="block text-[10px] font-black uppercase tracking-wide text-gray-400">{label}</span>
+                    <strong className="mt-0.5 block text-xl font-black leading-none text-gray-900">{value}</strong>
+                    <span className="mt-1 block text-[11px] font-medium leading-4 text-gray-400">{sub}</span>
+                    {deltaPct !== null && (
+                      <span className="mt-1 flex flex-wrap items-center gap-1 text-[11px] font-bold">
+                        <span className={deltaPct >= 0 ? "text-emerald-600" : "text-rose-600"}>
+                          {deltaPct >= 0 ? "↑" : "↓"} {Math.abs(deltaPct)}%
+                        </span>
+                        <span className="font-medium text-gray-400">{vs}</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          };
+          return (
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(150px,0.7fr),repeat(3,1fr)] xl:grid-cols-[minmax(140px,0.6fr),repeat(6,1fr)]">
+              <div className="rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3.5">
+                <p className="m-0 text-sm font-black leading-tight text-[#1F8FE0]">Business Results</p>
+                <p className="m-0 text-[11px] font-bold text-[#1F8FE0]/70">(From Delivered Orders)</p>
+                <p className="m-0 mt-2 text-[11px] font-medium leading-4 text-gray-500">Source of truth, matching the Manager Dashboard.</p>
+              </div>
+              {card("bg-blue-50 text-[#1F8FE0]", Wallet, "Expansion Revenue", money(br.expansionRevenue),
+                "Extra value added this week", pctDeltaOf(br.expansionRevenue, br.expansionRevenueLastWeek), `vs last week (${money(br.expansionRevenueLastWeek)})`)}
+              {card("bg-emerald-50 text-emerald-600", ShoppingCart, "Expansion Orders", `${br.expansionOrders} / ${br.deliveredOrders}`,
+                "Orders with upsell and/or cross-sell delivered", pctDeltaOf(br.expansionOrders, br.expansionOrdersLastWeek), `vs last week (${br.expansionOrdersLastWeek} / ${br.deliveredOrdersLastWeek})`)}
+              {card("bg-violet-50 text-violet-600", TrendingUp, "Expansion Rate", pct(br.expansionRatePct),
+                "Of delivered orders", pctDeltaOf(br.expansionRatePct, br.expansionRateLastWeekPct), `vs last week (${pct(br.expansionRateLastWeekPct)})`)}
+              {card("bg-sky-50 text-sky-600", TrendingUp, "Delivered Upsells", String(br.deliveredUpsells),
+                "Upgraded orders delivered", pctDeltaOf(br.deliveredUpsells, br.deliveredUpsellsLastWeek), `vs last week (${br.deliveredUpsellsLastWeek})`)}
+              {card("bg-amber-50 text-amber-600", Gift, "Delivered Cross-sells", String(br.deliveredCrossSells),
+                "Additional products sold", pctDeltaOf(br.deliveredCrossSells, br.deliveredCrossSellsLastWeek), `vs last week (${br.deliveredCrossSellsLastWeek})`)}
+              {card("bg-teal-50 text-teal-600", Wallet, "Revenue per Delivery", money(br.revenuePerDelivery),
+                "Expansion revenue per delivered order", pctDeltaOf(br.revenuePerDelivery, br.revenuePerDeliveryLastWeek), `vs last week (${money(br.revenuePerDeliveryLastWeek)})`)}
+            </div>
+          );
+        })()}
+
+        <p className="m-0 flex items-start gap-2 rounded-lg border border-blue-100 bg-blue-50/50 px-3 py-2 text-[11px] font-medium leading-4 text-gray-600">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#1F8FE0]" />
+          Expansion Orders = orders with at least one upsell or cross-sell delivered (unique orders). A single order may contain both, so upsells + cross-sells will not always add up to it.
+        </p>
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.4fr,1fr]">
-          <section id="upsell-by-rep-section" className="rounded-2xl border border-gray-200 bg-white p-5">
-            <h2 className="m-0 text-base font-bold text-gray-900">Upsell &amp; Cross-sell by Rep</h2>
+          <section id="upsell-by-rep-section" className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+            {/* Reads left to right the way the work actually happens: what the
+                rep controls, how the customer responded, what finally
+                delivered, and the money that came out of it. */}
+            <div className="flex items-start gap-3 bg-[#0f2444] px-5 py-4">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10 text-white"><Users className="h-4 w-4" /></span>
+              <div>
+                <h2 className="m-0 text-base font-bold text-white">Rep Performance Breakdown</h2>
+                <p className="m-0 mt-0.5 text-[11px] font-medium text-white/60">From sales effort → customer acceptance → delivered results → extra revenue</p>
+              </div>
+            </div>
             {data.byRep.length === 0 ? (
-              <p className="m-0 mt-3 text-sm italic text-gray-400">No active sales reps yet.</p>
+              <p className="m-0 p-5 text-sm italic text-gray-400">No active sales reps yet.</p>
             ) : (
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[640px] text-left text-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1180px] text-left text-sm">
                   <thead>
-                    <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-gray-400">
-                      {/* Two different measurements sit in this row and used to
-                          be unlabelled, so a rep could read "0% upsell" beside
-                          "2 upgraded" and look wrong when both were true of
-                          different things. The headers now say which is which. */}
-                      <th className="py-2 pr-3 font-semibold">Rep</th>
-                      <th className="py-2 pr-3 font-semibold text-right">Offered<span className="block text-[9px] font-medium normal-case text-gray-300">offers logged</span></th>
-                      <th className="py-2 pr-3 font-semibold text-right">Upgraded<span className="block text-[9px] font-medium normal-case text-gray-300">offers accepted</span></th>
-                      <th className="py-2 pr-3 font-semibold text-right">Accept Rate<span className="block text-[9px] font-medium normal-case text-gray-300">upgraded ÷ offered</span></th>
-                      <th className="py-2 pr-3 font-semibold text-right">Upsell Rate<span className="block text-[9px] font-medium normal-case text-gray-300">of delivered orders</span></th>
-                      <th className="py-2 pr-3 font-semibold text-right">Cross-sell Rate<span className="block text-[9px] font-medium normal-case text-gray-300">of delivered orders</span></th>
-                      <th className="py-2 pr-3 font-semibold text-right">Incremental Revenue<span className="block text-[9px] font-medium normal-case text-gray-300">delivered upsell + cross-sell</span></th>
-                      <th className="py-2 pr-3 font-semibold">Status</th>
-                      <th className="py-2 font-semibold"></th>
+                    <tr className="text-[10px] font-black uppercase tracking-wide">
+                      <th className="border-b border-gray-100 px-3 py-2 text-gray-400"></th>
+                      <th colSpan={5} className="border-b border-gray-100 bg-blue-50/60 px-3 py-2 text-center text-blue-700">Sales Execution <span className="font-medium normal-case text-blue-500">(what reps control)</span></th>
+                      <th colSpan={2} className="border-b border-gray-100 bg-amber-50/60 px-3 py-2 text-center text-amber-700">Customer Response <span className="font-medium normal-case text-amber-600">(during calls)</span></th>
+                      <th colSpan={6} className="border-b border-gray-100 bg-emerald-50/60 px-3 py-2 text-center text-emerald-700">Delivered Results <span className="font-medium normal-case text-emerald-600">(actual business impact)</span></th>
+                      <th className="border-b border-gray-100 px-3 py-2 text-gray-400"></th>
+                    </tr>
+                    <tr className="border-b border-gray-100 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+                      <th className="px-3 py-2">Rep</th>
+                      <th className="px-3 py-2 text-right">Delivered<span className="block font-medium normal-case text-gray-300">orders</span></th>
+                      <th className="px-3 py-2 text-right">Upsell<span className="block font-medium normal-case text-gray-300">attempts</span></th>
+                      <th className="px-3 py-2 text-right">Upsell<span className="block font-medium normal-case text-gray-300">attempt rate</span></th>
+                      <th className="px-3 py-2 text-right">Cross-sell<span className="block font-medium normal-case text-gray-300">attempts</span></th>
+                      <th className="px-3 py-2 text-right">Cross-sell<span className="block font-medium normal-case text-gray-300">attempt rate</span></th>
+                      <th className="px-3 py-2 text-right">Accepted<span className="block font-medium normal-case text-gray-300">expansions</span></th>
+                      <th className="px-3 py-2 text-right">Acceptance<span className="block font-medium normal-case text-gray-300">of attempts</span></th>
+                      <th className="px-3 py-2 text-right">Delivered<span className="block font-medium normal-case text-gray-300">upsells</span></th>
+                      <th className="px-3 py-2 text-right">Delivered<span className="block font-medium normal-case text-gray-300">cross-sells</span></th>
+                      <th className="px-3 py-2 text-right">Expansion<span className="block font-medium normal-case text-gray-300">orders</span></th>
+                      <th className="px-3 py-2 text-right">Expansion<span className="block font-medium normal-case text-gray-300">of delivered</span></th>
+                      <th className="px-3 py-2 text-right">Expansion<span className="block font-medium normal-case text-gray-300">revenue</span></th>
+                      <th className="px-3 py-2 text-right">₦ per<span className="block font-medium normal-case text-gray-300">delivery</span></th>
+                      <th className="px-3 py-2">Coaching</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {data.byRep.map((rep: any) => {
-                      const status = repStatus(rep);
-                      return (
-                        <tr key={rep.repId} className="border-b border-gray-50">
-                          <td className="py-2.5 pr-3 font-bold text-gray-900">{rep.name}</td>
-                          <td className="py-2.5 pr-3 text-right text-gray-700">{rep.customersOffered}</td>
-                          <td className="py-2.5 pr-3 text-right text-gray-700">{rep.customersUpgraded}</td>
-                          <td className="py-2.5 pr-3 text-right font-bold text-gray-900">{pct(rep.acceptanceRatePct ?? 0)}</td>
-                          <td className="py-2.5 pr-3 text-right text-gray-700">
-                            {pct(rep.upsellRate)}
-                            {typeof rep.ordersDelivered === "number" && (
-                              <span className="ml-1 text-[10px] font-medium text-gray-300">/{rep.ordersDelivered}</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 pr-3 text-right text-gray-700">{pct(rep.crossSellRate)}</td>
-                          <td className="py-2.5 pr-3 text-right font-bold text-gray-900">{money(rep.incrementalRevenue)}</td>
-                          <td className="py-2.5 pr-3"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${status.tone}`}>{status.label}</span></td>
-                          <td className="py-2.5">
-                            <button type="button" className="!min-h-0 text-xs font-bold text-[#1F8FE0] hover:underline"
-                              onClick={() => { setHeadOfSalesCoachingSelectedRepId(rep.repId); setHeadOfSalesSubPage("Rep Coaching"); }}>
-                              View Details
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    <tr className="font-bold text-gray-900">
-                      <td className="py-2.5 pr-3">Team Average</td>
-                      <td className="py-2.5 pr-3 text-right">{data.team.customersOffered}</td>
-                      <td className="py-2.5 pr-3 text-right">{data.team.customersUpgraded}</td>
-                      <td className="py-2.5 pr-3 text-right">
-                        {pct(data.team.customersOffered > 0
-                          ? Math.round((data.team.customersUpgraded / data.team.customersOffered) * 1000) / 10
-                          : 0)}
-                      </td>
-                      <td className="py-2.5 pr-3 text-right">{pct(data.team.upsellRate)}</td>
-                      <td className="py-2.5 pr-3 text-right">{pct(data.team.crossSellRate)}</td>
-                      <td className="py-2.5 pr-3 text-right">{money(data.team.additionalRevenue)}</td>
-                      <td className="py-2.5 pr-3" colSpan={2}>—</td>
+                  <tbody className="divide-y divide-gray-50">
+                    {[...data.byRep]
+                      .sort((a: any, b: any) => (b.incrementalRevenue ?? 0) - (a.incrementalRevenue ?? 0))
+                      .map((rep: any, index: number) => {
+                        // Coaching follows the numbers rather than a hunch:
+                        // not offering is a different problem from offering
+                        // and being turned down.
+                        const attemptRate = rep.upsellAttemptRatePct ?? 0;
+                        const accept = rep.acceptanceRatePct ?? 0;
+                        const coach = (rep.expansionRatePct ?? 0) >= (data.businessResults?.expansionRatePct ?? 0)
+                          ? { tone: "bg-emerald-50 text-emerald-700", label: "Strength", note: "Keep it up" }
+                          : attemptRate < 70
+                            ? { tone: "bg-rose-50 text-rose-700", label: "Coach", note: "Increase offers" }
+                            : accept < 8
+                              ? { tone: "bg-rose-50 text-rose-700", label: "Coach", note: "Improve conversion" }
+                              : { tone: "bg-amber-50 text-amber-700", label: "Focus", note: "Add cross-sell" };
+                        const rankTone = ["bg-amber-400 text-white", "bg-gray-300 text-gray-700", "bg-orange-300 text-white"][index] ?? "bg-gray-100 text-gray-500";
+                        return (
+                          <tr key={rep.repId} className="hover:bg-gray-50/60">
+                            <td className="px-3 py-2.5">
+                              <div className="flex items-center gap-2">
+                                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${rankTone}`}>{index + 1}</span>
+                                <span className="font-bold text-gray-900">{rep.name}</span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2.5 text-right text-gray-700">{rep.ordersDelivered ?? 0}</td>
+                            <td className="px-3 py-2.5 text-right text-gray-700">{rep.upsellAttempts ?? 0}</td>
+                            <td className={`px-3 py-2.5 text-right font-bold ${attemptRate >= 70 ? "text-emerald-600" : "text-rose-600"}`}>{pct(attemptRate)}</td>
+                            <td className="px-3 py-2.5 text-right text-gray-700">{rep.crossSellAttempts ?? 0}</td>
+                            <td className={`px-3 py-2.5 text-right font-bold ${(rep.crossSellAttemptRatePct ?? 0) >= 70 ? "text-emerald-600" : "text-rose-600"}`}>{pct(rep.crossSellAttemptRatePct ?? 0)}</td>
+                            <td className="px-3 py-2.5 text-right text-gray-700">{rep.acceptedExpansions ?? 0}</td>
+                            <td className={`px-3 py-2.5 text-right font-bold ${accept >= 8 ? "text-emerald-600" : "text-amber-600"}`}>{pct(accept)}</td>
+                            <td className="px-3 py-2.5 text-right text-gray-700">{rep.upsellsDelivered ?? 0}</td>
+                            <td className="px-3 py-2.5 text-right text-gray-700">{rep.crossSellsDelivered ?? 0}</td>
+                            <td className="px-3 py-2.5 text-right text-gray-700">{rep.expansionOrders ?? 0}</td>
+                            <td className={`px-3 py-2.5 text-right font-bold ${(rep.expansionRatePct ?? 0) >= (data.businessResults?.expansionRatePct ?? 0) ? "text-emerald-600" : "text-amber-600"}`}>{pct(rep.expansionRatePct ?? 0)}</td>
+                            <td className="px-3 py-2.5 text-right font-black text-gray-900">{money(rep.incrementalRevenue ?? 0)}</td>
+                            <td className="px-3 py-2.5 text-right text-gray-700">{money(rep.revenuePerDelivery ?? 0)}</td>
+                            <td className="px-3 py-2.5">
+                              <span className={`inline-block rounded-md px-2 py-0.5 text-[10px] font-black ${coach.tone}`}>{coach.label}</span>
+                              <span className="mt-0.5 block text-[10px] font-medium text-gray-400">{coach.note}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    <tr className="bg-blue-50/40 font-black text-[#1F8FE0]">
+                      <td className="px-3 py-2.5">Team total / average</td>
+                      <td className="px-3 py-2.5 text-right">{data.businessResults?.deliveredOrders ?? 0}</td>
+                      <td className="px-3 py-2.5 text-right">{data.byRep.reduce((s: number, r: any) => s + (r.upsellAttempts ?? 0), 0)}</td>
+                      <td className="px-3 py-2.5 text-right">{pct(teamRate(data.byRep.reduce((s: number, r: any) => s + (r.upsellAttempts ?? 0), 0), data.businessResults?.deliveredOrders ?? 0))}</td>
+                      <td className="px-3 py-2.5 text-right">{data.byRep.reduce((s: number, r: any) => s + (r.crossSellAttempts ?? 0), 0)}</td>
+                      <td className="px-3 py-2.5 text-right">{pct(teamRate(data.byRep.reduce((s: number, r: any) => s + (r.crossSellAttempts ?? 0), 0), data.businessResults?.deliveredOrders ?? 0))}</td>
+                      <td className="px-3 py-2.5 text-right">{data.byRep.reduce((s: number, r: any) => s + (r.acceptedExpansions ?? 0), 0)}</td>
+                      <td className="px-3 py-2.5 text-right">{pct(teamRate(data.byRep.reduce((s: number, r: any) => s + (r.acceptedExpansions ?? 0), 0), data.team.customersOffered))}</td>
+                      <td className="px-3 py-2.5 text-right">{data.businessResults?.deliveredUpsells ?? 0}</td>
+                      <td className="px-3 py-2.5 text-right">{data.businessResults?.deliveredCrossSells ?? 0}</td>
+                      <td className="px-3 py-2.5 text-right">{data.businessResults?.expansionOrders ?? 0}</td>
+                      <td className="px-3 py-2.5 text-right">{pct(data.businessResults?.expansionRatePct ?? 0)}</td>
+                      <td className="px-3 py-2.5 text-right">{money(data.businessResults?.expansionRevenue ?? 0)}</td>
+                      <td className="px-3 py-2.5 text-right">{money(data.businessResults?.revenuePerDelivery ?? 0)}</td>
+                      <td className="px-3 py-2.5">—</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
             )}
+            <p className="m-0 flex flex-wrap gap-x-5 gap-y-1 border-t border-gray-100 bg-gray-50 px-5 py-2.5 text-[10px] font-medium text-gray-500">
+              <span><strong className="text-gray-700">Attempt rate</strong> = attempts ÷ delivered orders</span>
+              <span><strong className="text-gray-700">Acceptance rate</strong> = accepted expansions ÷ total attempts</span>
+              <span><strong className="text-gray-700">Expansion rate</strong> = expansion orders ÷ delivered orders</span>
+            </p>
+          </section>
+
+          {/* Where the money leaks between offering and delivering. Both gaps
+              are stated as the LOSS rather than the pass rate, because the
+              point of the panel is to show what to go and fix. */}
+          <section className="rounded-2xl border border-gray-200 bg-white p-5">
+            <h2 className="m-0 text-base font-bold text-gray-900">Sales Execution Funnel <span className="font-medium text-gray-400">(Team)</span></h2>
+            <div className="mt-4 grid grid-cols-4 gap-1.5 text-center">
+              {[
+                { icon: Users, label: "Offers made", value: "100%", sub: `${data.team.customersOffered} attempts`, tone: "bg-blue-50 text-[#1F8FE0]" },
+                { icon: Phone, label: "Accepted", value: pct(teamRate(data.byRep.reduce((s: number, r: any) => s + (r.acceptedExpansions ?? 0), 0), data.team.customersOffered)), sub: `${data.byRep.reduce((s: number, r: any) => s + (r.acceptedExpansions ?? 0), 0)} accepted`, tone: "bg-amber-50 text-amber-600" },
+                { icon: Truck, label: "Delivered", value: pct(teamRate(data.businessResults?.expansionOrders ?? 0, data.byRep.reduce((s: number, r: any) => s + (r.acceptedExpansions ?? 0), 0))), sub: `${data.businessResults?.expansionOrders ?? 0} delivered`, tone: "bg-emerald-50 text-emerald-600" },
+                { icon: Wallet, label: "Revenue", value: money(data.businessResults?.expansionRevenue ?? 0), sub: "extra value", tone: "bg-violet-50 text-violet-600" }
+              ].map((stage) => {
+                const Icon = stage.icon;
+                return (
+                  <div key={stage.label}>
+                    <span className={`mx-auto flex h-9 w-9 items-center justify-center rounded-full ${stage.tone}`}><Icon className="h-4 w-4" /></span>
+                    <p className="m-0 mt-1.5 text-[10px] font-black uppercase tracking-wide text-gray-400">{stage.label}</p>
+                    <p className="m-0 text-sm font-black leading-tight text-gray-900">{stage.value}</p>
+                    <p className="m-0 text-[10px] font-medium text-gray-400">{stage.sub}</p>
+                  </div>
+                );
+              })}
+            </div>
+            {(() => {
+              const accepted = data.byRep.reduce((s: number, r: any) => s + (r.acceptedExpansions ?? 0), 0);
+              const delivered = data.businessResults?.expansionOrders ?? 0;
+              const acceptGap = 100 - teamRate(accepted, data.team.customersOffered);
+              const deliveryGap = 100 - teamRate(delivered, accepted);
+              return (
+                <div className="mt-4 space-y-1.5 border-t border-gray-100 pt-3">
+                  <strong className="block text-[10px] font-black uppercase tracking-wide text-gray-400">Where we lose expansions</strong>
+                  <p className="m-0 flex items-start gap-2 text-[11px] font-medium text-gray-600">
+                    <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-amber-400" />
+                    <span><strong className="text-gray-800">Acceptance gap:</strong> {pct(Math.max(0, Math.round(acceptGap * 10) / 10))} of attempts are not accepted</span>
+                  </p>
+                  <p className="m-0 flex items-start gap-2 text-[11px] font-medium text-gray-600">
+                    <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-rose-400" />
+                    <span><strong className="text-gray-800">Delivery gap:</strong> {pct(Math.max(0, Math.round(deliveryGap * 10) / 10))} of accepted expansions are not delivered</span>
+                  </p>
+                </div>
+              );
+            })()}
           </section>
 
           <section className="rounded-2xl border border-gray-200 bg-white p-5">
