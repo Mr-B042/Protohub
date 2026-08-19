@@ -260,7 +260,8 @@ type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type FinanceTab = "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
 type ManagerDashboardTab = "Overview" | "Bonus" | "Upsell Bonus" | "Inventory" | "Needs Attention";
-type RecoveryRepDashboardTab = "Overview" | "Customer Retention";
+type RecoveryRepDashboardTab = "Overview" | "Activity Sheet" | "Customer Retention";
+type ActivitySheetSortKey = "picked" | "rep" | "customer" | "status" | "outcome" | "touches" | "next";
 type RetentionSubPage = "Overview" | "Pipeline" | "Customers" | "Tasks" | "Calls & Outcomes" | "Reviews" | "Referrals" | "Repeat Sales" | "Win-back" | "Reports" | "Settings";
 // Rendered as a contextual sub-section in the MAIN app sidebar, directly
 // under "Recovery Rep Dashboard" - not a second/nested sidebar. Static
@@ -9108,6 +9109,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
   const [recoveryRepDashboardTab, setRecoveryRepDashboardTab] = useState<RecoveryRepDashboardTab>("Overview");
+  // Activity Sheet: one flat monitoring table across every recovery rep, so a
+  // day's work reads as picked -> what happened -> what is next in one row
+  // instead of being spread across separate grouped card sections.
+  const [activitySheetRepFilter, setActivitySheetRepFilter] = useState("all");
+  const [activitySheetStatusFilter, setActivitySheetStatusFilter] = useState("all");
+  const [activitySheetNextFilter, setActivitySheetNextFilter] = useState<"all" | "overdue" | "today" | "unscheduled" | "no_outcome">("all");
+  const [activitySheetSearch, setActivitySheetSearch] = useState("");
+  const [activitySheetSortKey, setActivitySheetSortKey] = useState<ActivitySheetSortKey>("picked");
+  const [activitySheetSortDir, setActivitySheetSortDir] = useState<"asc" | "desc">("desc");
   const [recoveryCandidateSearch, setRecoveryCandidateSearch] = useState("");
   // Served by its own endpoint, not derived from trackedOrders: GET /api/orders
   // scopes a Recovery Rep to their OWN orders, so a rep with none saw no
@@ -61887,6 +61897,317 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // One row per picked order: when it was picked, who picked it, what happened
+  // on the last touch, and what is owed next. Everything here comes from data
+  // the console already loads - assigned_at (migration 186), the follow-up
+  // outcome vocabulary, and next_follow_up_at - so this is a different lens on
+  // existing work, not a new tracking system reps must feed.
+  //
+  // Built inside the render function, not at component level, so a table over
+  // every tracked order is not recomputed on every render of every other page.
+  const buildRecoveryActivityRows = (sheetReps: ManagedUser[]) => {
+    const repIds = new Set(sheetReps.map((user) => user.id));
+    const repNameById = new Map(sheetReps.map((user) => [user.id, user.name]));
+    const inactiveRepIds = new Set(sheetReps.filter((user) => !user.active).map((user) => user.id));
+    const bounds = periodBoundsForQuery(recoveryRepPeriod, recoveryRepDateRange);
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const dayIndex = (iso: string) =>
+      Math.floor((new Date(iso).setHours(0, 0, 0, 0) - startOfToday.getTime()) / 86400000);
+
+    return trackedOrders
+      .filter((order) => order.assignedRepId && repIds.has(order.assignedRepId))
+      .map((order) => {
+        const pickedKey = order.assignedAt ? String(order.assignedAt).slice(0, 10) : null;
+        // Each logged outcome appends a line, so the line count is the number
+        // of real touches - no extra query needed for it.
+        const outcomeLines = (order.callOutcome ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        const lastOutcome = outcomeLines.length > 0 ? outcomeLines[outcomeLines.length - 1] : "";
+        // The bulk order row only carries free-text callOutcome; the structured
+        // bucket lives on order_contact_attempts, which is a per-order fetch and
+        // not viable for a whole table. So: exact match first, then a prefix
+        // match so "No answer - retry tomorrow" still classifies. Anything that
+        // matches neither keeps its raw text and a neutral tone rather than
+        // being force-fitted into a bucket it may not belong to.
+        const normalizedOutcome = lastOutcome.toLowerCase();
+        const definition = lastOutcome
+          ? (classifyFrontendFollowUpOutcome({ outcomeCode: lastOutcome })
+            ?? FOLLOW_UP_OUTCOME_DEFINITIONS.find((item) => normalizedOutcome.startsWith(item.label.toLowerCase()))
+            ?? null)
+          : null;
+        const nextAt = order.nextFollowUpAt ?? null;
+        const nextDay = nextAt ? dayIndex(nextAt) : null;
+        return {
+          order,
+          orderId: order.id,
+          repId: order.assignedRepId ?? "",
+          repName: `${repNameById.get(order.assignedRepId ?? "") ?? "Unassigned"}${inactiveRepIds.has(order.assignedRepId ?? "") ? " (deactivated)" : ""}`,
+          pickedKey,
+          pickedLabel: pickedKey ? formatDateOnly(pickedKey) : "Before pick tracking",
+          daysHeld: pickedKey ? Math.max(0, -dayIndex(pickedKey)) : null,
+          customer: order.customer ?? "",
+          phone: order.phone ?? "",
+          product: order.productName ?? "",
+          amount: order.amount ?? 0,
+          currency: order.currency,
+          status: (order.status ?? "New") as string,
+          lastOutcome,
+          outcomeLabel: definition?.label ?? (lastOutcome || "No outcome logged"),
+          outcomeGroup: definition?.group ?? (lastOutcome ? "other" : null),
+          touches: outcomeLines.length,
+          nextAt,
+          nextDay,
+          isOverdue: nextDay !== null && nextDay < 0,
+          isToday: nextDay === 0,
+          isUnscheduled: !nextAt && !["Delivered", "Cancelled", "Failed"].includes(order.status ?? "")
+        };
+      })
+      // Pre-tracking picks have no date and must never be hidden by a date
+      // filter - the same rule the Overview groups already follow.
+      .filter((row) => !row.pickedKey || !bounds || (row.pickedKey >= bounds.dateFrom && row.pickedKey <= bounds.dateTo));
+  };
+
+  const filterAndSortRecoveryActivity = (recoveryActivityRows: ReturnType<typeof buildRecoveryActivityRows>) => {
+    const query = activitySheetSearch.trim().toLowerCase();
+    const rows = recoveryActivityRows.filter((row) => {
+      if (activitySheetRepFilter !== "all" && row.repId !== activitySheetRepFilter) return false;
+      if (activitySheetStatusFilter !== "all" && row.status !== activitySheetStatusFilter) return false;
+      if (activitySheetNextFilter === "overdue" && !row.isOverdue) return false;
+      if (activitySheetNextFilter === "today" && !row.isToday) return false;
+      if (activitySheetNextFilter === "unscheduled" && !row.isUnscheduled) return false;
+      if (activitySheetNextFilter === "no_outcome" && row.touches > 0) return false;
+      if (!query) return true;
+      return [row.customer, row.phone, row.orderId, row.product, row.repName, row.lastOutcome]
+        .some((value) => String(value ?? "").toLowerCase().includes(query));
+    });
+    const dir = activitySheetSortDir === "asc" ? 1 : -1;
+    const value = (row: typeof rows[number]) => {
+      switch (activitySheetSortKey) {
+        case "rep": return row.repName.toLowerCase();
+        case "customer": return row.customer.toLowerCase();
+        case "status": return row.status.toLowerCase();
+        case "outcome": return row.outcomeLabel.toLowerCase();
+        case "touches": return row.touches;
+        // Unscheduled sorts last rather than pretending to be the far future.
+        case "next": return row.nextAt ? new Date(row.nextAt).getTime() : Number.MAX_SAFE_INTEGER;
+        default: return row.pickedKey ?? "";
+      }
+    };
+    return [...rows].sort((a, b) => {
+      const left = value(a);
+      const right = value(b);
+      if (left === right) return a.orderId.localeCompare(b.orderId);
+      return (left > right ? 1 : -1) * dir;
+    });
+  };
+
+  const renderRecoveryActivitySheet = () => {
+    // Every recovery rep, active or not. A deactivated rep's picked orders are
+    // still real work sitting in the pipeline, and dropping them would hide it
+    // exactly the way the deactivated Head of Sales Rep hid a whole dashboard.
+    const sheetReps = users.filter((user) => user.role === "Recovery Rep");
+    const recoveryActivityRows = buildRecoveryActivityRows(sheetReps);
+    const rows = filterAndSortRecoveryActivity(recoveryActivityRows);
+    const statusOptions = Array.from(new Set(recoveryActivityRows.map((row) => row.status))).sort();
+    const overdueCount = recoveryActivityRows.filter((row) => row.isOverdue).length;
+    const todayCount = recoveryActivityRows.filter((row) => row.isToday).length;
+    const unscheduledCount = recoveryActivityRows.filter((row) => row.isUnscheduled).length;
+    const untouchedCount = recoveryActivityRows.filter((row) => row.touches === 0).length;
+    const sortBy = (key: ActivitySheetSortKey) => {
+      if (activitySheetSortKey === key) {
+        setActivitySheetSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
+      } else {
+        setActivitySheetSortKey(key);
+        setActivitySheetSortDir(key === "picked" || key === "touches" ? "desc" : "asc");
+      }
+    };
+    const headCell = (key: ActivitySheetSortKey, label: string, className = "") => (
+      <th className={`px-3 py-2.5 text-left font-bold uppercase tracking-wide text-[10px] text-gray-500 ${className}`}>
+        <button type="button" className="!min-h-0 inline-flex items-center gap-1 hover:text-gray-900" onClick={() => sortBy(key)}>
+          {label}{activitySheetSortKey === key && <span className="text-[9px]">{activitySheetSortDir === "asc" ? "▲" : "▼"}</span>}
+        </button>
+      </th>
+    );
+    const chip = (active: boolean, tone: string, label: string, count: number, onClick: () => void) => (
+      <button
+        type="button"
+        onClick={onClick}
+        className={`!min-h-0 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${active ? tone : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+      >
+        {label}<span className={`rounded-full px-1.5 text-[10px] ${active ? "bg-white/25" : "bg-gray-100 text-gray-600"}`}>{count}</span>
+      </button>
+    );
+
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-lg font-black text-gray-900">Activity Sheet</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">
+              Every picked order on one line - when it was picked, what happened last, and what is owed next.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"
+            onClick={() => triggerCsvDownload(
+              "recovery-activity-sheet",
+              [
+                ["Picked", "Days held", "Rep", "Order", "Customer", "Phone", "Product", "Amount", "Status", "Touches", "Last outcome", "Next action"],
+                ...rows.map((row) => [
+                  row.pickedKey ?? "unknown",
+                  row.daysHeld ?? "",
+                  row.repName,
+                  row.orderId,
+                  row.customer,
+                  row.phone,
+                  row.product,
+                  row.amount,
+                  row.status,
+                  row.touches,
+                  row.outcomeLabel,
+                  row.nextAt ? formatDateOnly(row.nextAt) : "not scheduled"
+                ])
+              ],
+              "Activity sheet exported"
+            )}
+          >
+            <Download className="h-3.5 w-3.5" /> Export CSV
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {chip(activitySheetNextFilter === "overdue", "border-rose-500 bg-rose-600 text-white", "Overdue", overdueCount,
+            () => setActivitySheetNextFilter((current) => current === "overdue" ? "all" : "overdue"))}
+          {chip(activitySheetNextFilter === "today", "border-amber-500 bg-amber-500 text-white", "Due today", todayCount,
+            () => setActivitySheetNextFilter((current) => current === "today" ? "all" : "today"))}
+          {chip(activitySheetNextFilter === "unscheduled", "border-violet-500 bg-violet-600 text-white", "No next action", unscheduledCount,
+            () => setActivitySheetNextFilter((current) => current === "unscheduled" ? "all" : "unscheduled"))}
+          {chip(activitySheetNextFilter === "no_outcome", "border-slate-600 bg-slate-700 text-white", "Never touched", untouchedCount,
+            () => setActivitySheetNextFilter((current) => current === "no_outcome" ? "all" : "no_outcome"))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className="!min-h-0 w-full sm:w-64 rounded-lg border border-gray-200 px-3 py-2 text-sm"
+            placeholder="Search customer, phone, order, product..."
+            value={activitySheetSearch}
+            onChange={(event) => setActivitySheetSearch(event.target.value)}
+          />
+          {recoveryRepIsOwnerLike && (
+            <select
+              className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700"
+              value={activitySheetRepFilter}
+              onChange={(event) => setActivitySheetRepFilter(event.target.value)}
+              aria-label="Filter by recovery rep"
+            >
+              <option value="all">All reps ({sheetReps.length})</option>
+              {sheetReps.map((rep) => (
+                <option key={rep.id} value={rep.id}>{rep.name}{rep.active ? "" : " (deactivated)"}</option>
+              ))}
+            </select>
+          )}
+          <select
+            className="!min-h-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700"
+            value={activitySheetStatusFilter}
+            onChange={(event) => setActivitySheetStatusFilter(event.target.value)}
+            aria-label="Filter by order status"
+          >
+            <option value="all">All statuses</option>
+            {statusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
+          </select>
+          <span className="text-xs font-bold text-gray-500">{rows.length} of {recoveryActivityRows.length} rows</span>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-sm">
+          <table className="w-full min-w-[1040px] text-sm">
+            <thead className="border-b border-gray-100 bg-gray-50">
+              <tr>
+                {headCell("picked", "Picked")}
+                {recoveryRepIsOwnerLike && headCell("rep", "Rep")}
+                {headCell("customer", "Order / Customer")}
+                {headCell("status", "Status")}
+                {headCell("outcome", "Last outcome")}
+                {headCell("touches", "Touches")}
+                {headCell("next", "Next action")}
+                <th className="px-3 py-2.5" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={recoveryRepIsOwnerLike ? 8 : 7} className="px-3 py-12 text-center text-sm text-gray-400">
+                    {recoveryActivityRows.length === 0
+                      ? "No picked orders in this period yet."
+                      : "No rows match these filters."}
+                  </td>
+                </tr>
+              ) : rows.map((row) => (
+                <tr key={row.orderId} className="hover:bg-gray-50/70">
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <div className="font-bold text-gray-900">{row.pickedLabel}</div>
+                    {row.daysHeld !== null && (
+                      <div className="text-[11px] font-medium text-gray-400">{row.daysHeld === 0 ? "today" : `${row.daysHeld}d held`}</div>
+                    )}
+                  </td>
+                  {recoveryRepIsOwnerLike && (
+                    <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-gray-700">{row.repName}</td>
+                  )}
+                  <td className="px-3 py-2.5">
+                    <div className="font-bold text-gray-900">{row.customer || "-"}</div>
+                    <div className="text-[11px] font-medium text-gray-400">
+                      #{row.orderId} · {row.product || "-"} · {formatProductMoney(row.amount, row.currency)}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-700">{row.status}</span>
+                  </td>
+                  <td className="px-3 py-2.5 max-w-[260px]">
+                    {row.touches === 0 ? (
+                      <span className="text-[11px] font-bold text-slate-500">Never touched</span>
+                    ) : (
+                      <>
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${followUpOutcomeToneClass(row.outcomeGroup)}`}>
+                          {row.outcomeLabel}
+                        </span>
+                        {row.lastOutcome && row.lastOutcome !== row.outcomeLabel && (
+                          <div className="mt-0.5 truncate text-[11px] text-gray-400" title={row.lastOutcome}>{row.lastOutcome}</div>
+                        )}
+                      </>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap font-bold text-gray-700">{row.touches}</td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    {row.nextAt ? (
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                        row.isOverdue ? "bg-rose-600 text-white"
+                          : row.isToday ? "bg-amber-500 text-white"
+                          : "bg-gray-100 text-gray-700"}`}>
+                        {row.isOverdue ? `Overdue ${Math.abs(row.nextDay!)}d` : row.isToday ? "Today" : formatDateOnly(row.nextAt)}
+                      </span>
+                    ) : row.isUnscheduled ? (
+                      <span className="inline-flex rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-bold text-violet-700">Not scheduled</span>
+                    ) : (
+                      <span className="text-[11px] text-gray-400">-</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5 text-right">
+                    <button
+                      type="button"
+                      className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#1F8FE0] hover:bg-blue-50"
+                      onClick={() => { setSelectedOrderId(row.orderId); setModal("orderDetails"); }}
+                    >
+                      Open
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
   const renderRecoveryRepConsole = () => {
     const summary = recoveryRepKpiSummary;
     const viewingUser = recoveryRepUsers.find((user) => user.id === recoveryRepViewingId) ?? currentManagedUser;
@@ -62285,7 +62606,7 @@ ${waybillLineItems(w).length > 1
         {renderWeekNav(recoveryRepNavStart, setRecoveryRepNavStart, recoveryRepNavSpan, setRecoveryRepNavSpan, setRecoveryRepPeriod, setRecoveryRepDateRange, recoveryRepPeriod, recoveryRepDateRange)}
 
         <div className="inline-flex w-full sm:w-auto items-center rounded-2xl bg-gray-100 p-1">
-          {(["Overview", "Customer Retention"] as RecoveryRepDashboardTab[]).map((tab) => (
+          {(["Overview", "Activity Sheet", "Customer Retention"] as RecoveryRepDashboardTab[]).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -62297,7 +62618,8 @@ ${waybillLineItems(w).length > 1
           ))}
         </div>
 
-        {recoveryRepDashboardTab === "Customer Retention" ? renderCustomerRetentionTab() : (
+        {recoveryRepDashboardTab === "Customer Retention" ? renderCustomerRetentionTab()
+          : recoveryRepDashboardTab === "Activity Sheet" ? renderRecoveryActivitySheet() : (
         <>
         {currentRole === "Owner" && recoveryRepSettingsOpen && recoveryRepSettingsDraft && (
           <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
