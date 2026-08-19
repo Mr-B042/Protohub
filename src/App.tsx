@@ -238,7 +238,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -273,7 +273,7 @@ type RetentionSubPage = "Overview" | "Pipeline" | "Customers" | "Tasks" | "Calls
 // the retention sub-nav: the sub-items live in the REAL sidebar under their
 // parent, never a second sidebar, and never ten more top-level nav entries.
 type PdaSubPage =
-  | "Overview" | "Applications & KYC" | "Active Agents" | "Orders & Dispatch"
+  | "Overview" | "Applications & KYC" | "Active Agents" | "Portal Access" | "Orders & Dispatch"
   | "Inventory" | "COD & Reconciliation" | "Incidents"
   | "Reports" | "Settings";
 
@@ -281,6 +281,10 @@ const PDA_SUBNAV_ITEMS: Array<{ key: PdaSubPage; label: string; icon: typeof Lay
   { key: "Overview", label: "Overview", icon: LayoutPanelTop },
   { key: "Applications & KYC", label: "Applications & KYC", icon: ClipboardCheck },
   { key: "Active Agents", label: "Active Agents", icon: Users },
+  // Agent logins live here rather than in the main User Management screen -
+  // these are outside individuals, not staff, and mixing them into the company
+  // team list is how one ends up hand-building accounts one at a time.
+  { key: "Portal Access", label: "Portal Access", icon: KeyRound, ownerOnly: true },
   { key: "Orders & Dispatch", label: "Orders & Dispatch", icon: PackageCheck },
   { key: "Inventory", label: "Inventory", icon: Box },
   { key: "COD & Reconciliation", label: "COD & Reconciliation", icon: Banknote },
@@ -45773,12 +45777,31 @@ ${waybillLineItems(w).length > 1
   // Held in state rather than a toast: these are credentials somebody has to
   // copy somewhere, and a toast that vanishes after 4 seconds loses them.
   const [pdaNewLogin, setPdaNewLogin] = useState<{ email: string; password: string } | null>(null);
+  const pdaResetPortalPassword = async (agentId: string, agentName: string) => {
+    if (!window.confirm(`Reset ${agentName}'s portal password? Their current one stops working immediately.`)) return;
+    setPdaSaving(true);
+    try {
+      const result = await personalDeliveryAgentsApi.resetPortalPassword(agentId);
+      if (result.tempPassword) {
+        setPdaNewLogin({ email: result.email ?? "", password: result.tempPassword });
+        setModal("pdaPortalCredentials");
+      }
+      showToast(`New password ready for ${agentName}.`);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not reset that password.");
+    } finally { setPdaSaving(false); }
+  };
+
   const pdaCreatePortalLogin = async (agentId: string, agentName: string) => {
     setPdaSaving(true);
     try {
       const result = await personalDeliveryAgentsApi.createPortalLogin(agentId);
       if (result.created && result.tempPassword) {
         setPdaNewLogin({ email: result.email ?? "", password: result.tempPassword });
+        // A modal, not an inline panel - the button that triggers this sits far
+        // down a table, so a banner at the top of the page is never seen. The
+        // password is shown exactly once and cannot be recovered afterwards.
+        setModal("pdaPortalCredentials");
         showToast(`Login created for ${agentName}.`);
       } else {
         showToast(result.reason ?? "Nothing to create.");
@@ -45796,6 +45819,7 @@ ${waybillLineItems(w).length > 1
       // Shown once, never stored - the Owner passes it on over WhatsApp.
       if (result.login?.created && result.login.tempPassword) {
         setPdaNewLogin({ email: result.login.email ?? "", password: result.login.tempPassword });
+        setModal("pdaPortalCredentials");
         showToast("Approved, and their login is ready.");
       } else {
         showToast(result.login?.reason
@@ -53301,6 +53325,113 @@ ${waybillLineItems(w).length > 1
   );
 
   // Active Agents: everyone who can actually take work, with their live state.
+  // Agent logins, kept out of the company User Management screen. Owner sees
+  // who can sign in, who still cannot, and why - and fixes it here.
+  const renderPdaPortalAccess = () => {
+    const rows = (pdaActiveAgents?.rows ?? []).filter((row) => PDA_OPERATIONAL_STATUSES.includes(row.accountStatus));
+    const withLogin = rows.filter((row) => row.hasPortalLogin);
+    const without = rows.filter((row) => !row.hasPortalLogin);
+    return (
+      <div className="space-y-4">
+        <div>
+          <h2 className="m-0 text-lg font-black text-gray-900">Portal Access</h2>
+          <p className="m-0 mt-0.5 text-sm text-gray-500">
+            Who can sign in to the agent app. These accounts are separate from your company team - you do not need User Management for them.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {[
+            { label: "Can sign in", value: withLogin.length, tone: "text-emerald-700" },
+            { label: "No login yet", value: without.length, tone: without.length > 0 ? "text-amber-700" : "text-gray-400" },
+            { label: "Approved agents", value: rows.length, tone: "text-gray-900" }
+          ].map((card) => (
+            <div key={card.label} className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <p className="m-0 text-[10px] font-black uppercase tracking-wide text-gray-400">{card.label}</p>
+              <p className={`m-0 mt-0.5 text-2xl font-black ${card.tone}`}>{card.value}</p>
+            </div>
+          ))}
+        </div>
+
+        {without.length > 0 && (
+          <p className="m-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800">
+            {without.length} approved {without.length === 1 ? "agent has" : "agents have"} no login yet. They were approved before logins were created automatically - use Create login below.
+          </p>
+        )}
+
+        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead className="border-b border-gray-100 bg-gray-50">
+                <tr className="text-[10px] font-black uppercase tracking-wide text-gray-500">
+                  <th className="px-3 py-2.5">Agent</th>
+                  <th className="px-3 py-2.5">Status</th>
+                  <th className="px-3 py-2.5">Can sign in</th>
+                  <th className="px-3 py-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {rows.length === 0 ? (
+                  <tr><td colSpan={4} className="px-3 py-10 text-center text-sm text-gray-400">No approved agents yet.</td></tr>
+                ) : rows.map((row) => (
+                  <tr key={row.id} className="hover:bg-gray-50/60">
+                    <td className="px-3 py-2.5">
+                      <p className="m-0 font-bold text-gray-900">{row.fullName}</p>
+                      <p className="m-0 text-[11px] font-medium text-gray-400">{row.agentCode} · {row.phone}</p>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-700">{row.accountStatus}</span>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {row.hasPortalLogin ? (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-black text-emerald-700">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Yes
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-black text-amber-700">
+                          <AlertTriangle className="h-3.5 w-3.5" /> Not yet
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        {row.hasPortalLogin ? (
+                          <>
+                            <button type="button" disabled={pdaSaving}
+                              className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#1F8FE0] hover:bg-blue-50 disabled:opacity-50"
+                              onClick={() => void pdaResetPortalPassword(row.id, row.fullName)}>
+                              Reset password
+                            </button>
+                            <button type="button" disabled={pdaSaving}
+                              className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                              onClick={() => void pdaLinkPortalLogin(row.id, row.fullName, true)}>
+                              Revoke
+                            </button>
+                          </>
+                        ) : (
+                          <button type="button" disabled={pdaSaving}
+                            className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-1.5 text-[11px] font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
+                            onClick={() => void pdaCreatePortalLogin(row.id, row.fullName)}>
+                            Create login
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <p className="m-0 text-[11px] font-medium leading-4 text-gray-400">
+          Agents sign in at the same address you do and land on My Deliveries - they see only their own deliveries, stock and COD.
+          A password is shown once when created or reset; if it is lost, reset it here rather than looking for it.
+        </p>
+      </div>
+    );
+  };
+
   const renderPdaActiveAgents = () => {
     // Previewing takes over the page, because the point is to see the agent's
     // screen as they see it, not a thumbnail of it.
@@ -59365,6 +59496,8 @@ ${waybillLineItems(w).length > 1
             {renderPdaNewLoginNotice()}
             {renderPdaActiveAgents()}
           </>
+        ) : pdaSubPage === "Portal Access" ? (
+          renderPdaPortalAccess()
         ) : pdaSubPage === "Orders & Dispatch" ? (
           renderPdaDispatchBoard()
         ) : pdaSubPage === "Incidents" ? (
@@ -92941,6 +93074,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "pdaCodDiscrepancy" && "Log a cash discrepancy"}
                 {modal === "pdaReport" && "Create a report"}
 	                {modal === "pdaReject" && "Reject this application"}
+	                {modal === "pdaPortalCredentials" && "Portal login ready"}
 	                {modal === "pdaStatusLink" && "Their application link"}
 	                {modal === "pdaMediaViewer" && pdaMediaTarget && (
 	                  <span className="flex min-w-0 items-center gap-3">
@@ -99374,6 +99508,34 @@ ${waybillLineItems(w).length > 1
 	              );
 	            })()}
 
+	            {modal === "pdaPortalCredentials" && pdaNewLogin && (
+	              <div className="px-6 py-5 space-y-4">
+	                <p className="m-0 text-[13px] text-gray-600">
+	                  Send these to the agent so they can sign in at <strong>protohub-zeta.vercel.app</strong>.
+	                  This password is shown <strong>once</strong> and is not stored anywhere - if it is lost, reset it
+	                  from this same page rather than hunting for it.
+	                </p>
+	                {[["Email", pdaNewLogin.email], ["Temporary password", pdaNewLogin.password]].map(([label, value]) => (
+	                  <div key={label} className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5">
+	                    <div className="min-w-0">
+	                      <p className="m-0 text-[10px] font-black uppercase tracking-wide text-gray-400">{label}</p>
+	                      <p className="m-0 truncate font-mono text-sm font-bold text-gray-900">{value}</p>
+	                    </div>
+	                    <button type="button"
+	                      className="!min-h-0 shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-[#1F8FE0] hover:bg-blue-50"
+	                      onClick={() => copyText(String(value), String(label))}>Copy</button>
+	                  </div>
+	                ))}
+	                <button type="button"
+	                  className="!min-h-0 w-full rounded-xl bg-[#1F8FE0] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#1a7ec4]"
+	                  onClick={() => copyText(`Login: ${pdaNewLogin.email}\nPassword: ${pdaNewLogin.password}\nSign in at https://protohub-zeta.vercel.app`, "Login details")}>
+	                  Copy both for WhatsApp
+	                </button>
+	                <p className="m-0 text-[11px] font-medium text-gray-400">
+	                  Ask them to change it after their first sign-in.
+	                </p>
+	              </div>
+	            )}
 	            {modal === "pdaReject" && pdaRejectDraft && (
 	              <div className="px-6 py-5 space-y-4">
 	                <p className="m-0 text-[13px] text-gray-600">

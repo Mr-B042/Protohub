@@ -1166,6 +1166,8 @@ export const personalDeliveryAgentsApi = {
     post<{ row: PersonalDeliveryAgentRow; login?: PdaLoginResult }>(`/api/personal-delivery-agents/${id}/approve`, {}),
   createPortalLogin: (id: string) =>
     post<PdaLoginResult>(`/api/personal-delivery-agents/${id}/create-login`, {}),
+  resetPortalPassword: (id: string) =>
+    post<PdaLoginResult>(`/api/personal-delivery-agents/${id}/reset-login-password`, {}),
   applicantStatusLink: (id: string, body: { origin: string; send?: "whatsapp" }) =>
     post<{ token: string; url: string; phone: string | null; sent: { ok: boolean; error?: string } | null }>(
       `/api/personal-delivery-agents/${id}/status-link`, body),
