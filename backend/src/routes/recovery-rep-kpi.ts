@@ -647,10 +647,10 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
 // nothing a rep has to remember to fill in. Where a category cannot be proven
 // from the data it says so rather than guessing (see NOT_TRACKED below).
 const WORKLIST_CATEGORIES = {
-  failed_delivery: { code: "A", label: "Failed Delivery", blurb: "Ordered, but delivery did not succeed." },
-  rescheduled: { code: "B", label: "Rescheduled", blurb: "Customer asked for another delivery date." },
-  not_picking: { code: "C", label: "Not Picking Calls", blurb: "Rang out - customer could not be reached." },
-  unreachable: { code: "D", label: "Number Not Reachable", blurb: "Switched off, unavailable or wrong number." },
+  failed_delivery: { code: "A", label: "Failed Delivery", blurb: "Delivery was attempted and failed." },
+  rescheduled: { code: "B", label: "Rescheduled", blurb: "Postponed - customer asked for another delivery date." },
+  not_picking: { code: "C", label: "Not Picking Calls", blurb: "Died unreached - rang out and was never picked up." },
+  unreachable: { code: "D", label: "Number Not Reachable", blurb: "Died unreached - switched off, unavailable or wrong number." },
   cancelled: { code: "E", label: "Cancelled", blurb: "Customer cancelled the order." },
   interested_no_order: { code: "F", label: "Interested, Never Ordered", blurb: "Showed interest but never completed an order." },
   previous_success: { code: "G", label: "Previous Successful Customer", blurb: "Bought and received before." },
@@ -673,7 +673,6 @@ const CATEGORY_PRIORITY: Record<WorklistCategory, number> = {
 
 const NOT_PICKING_PATTERN = /no answer|not picking|didn'?t pick|did not pick|no response|unanswered|rang out/i;
 const UNREACHABLE_PATTERN = /switched off|switch off|unreachable|not reachable|out of coverage|number busy|line busy|wrong number|does not exist/i;
-const RESCHEDULE_PATTERN = /reschedul|postpon|another date|call back|callback|come back|next week|tomorrow/i;
 
 router.get("/worklist", requireRole("Owner", "Admin", "Manager", "Recovery Rep"), async (req, res) => {
   try {
@@ -709,27 +708,44 @@ router.get("/worklist", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
       byPhone.set(key, entry);
     }
 
+    // Recovery works orders that ACTUALLY DIED. A live order still belongs to
+    // the sales rep working it, and putting it here puts two people on the same
+    // customer - the exact problem that kept open orders out of Recovery in the
+    // first place.
+    //
+    // The first cut of this leaked badly: 22 live orders sat in Rescheduled,
+    // and Not Picking / Not Reachable matched on call_outcome with no status
+    // guard at all, so they pulled in 24 live orders AND 35 already-DELIVERED
+    // ones. A delivered order in a "not picking calls" queue is nonsense.
+    const OPEN_STATUSES = new Set(["New", "Confirmed", "In Process", "Dispatched"]);
+
     const categorize = (order: any): WorklistCategory | null => {
       const status = order.status ?? "New";
       const outcome = String(order.call_outcome ?? "");
       const phoneKey = String(order.phone ?? "").replace(/\D/g, "").slice(-10);
       const history = byPhone.get(phoneKey);
 
-      // Order-level categories first - a specific dead order is more actionable
-      // than a general statement about the customer.
-      if (status === "Failed") return "failed_delivery";
-      if (status === "Cancelled") return "cancelled";
-      // Postponed, or an open order the rep explicitly logged a callback on.
-      if (status === "Postponed") return "rescheduled";
-      if (!["Delivered", "Failed", "Cancelled"].includes(status) && RESCHEDULE_PATTERN.test(outcome)) return "rescheduled";
-      if (UNREACHABLE_PATTERN.test(outcome)) return "unreachable";
-      if (NOT_PICKING_PATTERN.test(outcome)) return "not_picking";
+      // Live orders are never recovery work, whatever the last note says.
+      if (OPEN_STATUSES.has(status)) return null;
 
-      if (status === "Delivered" && history) {
+      if (status === "Delivered") {
+        if (!history) return null;
         const idleDays = daysSince(history.lastDeliveredAt);
         if (idleDays !== null && idleDays >= dormantDays) return "dormant";
         return "previous_success";
       }
+
+      // "Customer asked for another date" is exactly what Postponed means, so
+      // the status carries it - no pattern matching on live orders needed.
+      if (status === "Postponed") return "rescheduled";
+
+      // Everything below here is Failed or Cancelled. The outcome decides WHY
+      // it died, which is what the rep needs before dialling - so unreachable
+      // and not-picking are sub-classes of dead, not their own status bucket.
+      if (UNREACHABLE_PATTERN.test(outcome)) return "unreachable";
+      if (NOT_PICKING_PATTERN.test(outcome)) return "not_picking";
+      if (status === "Cancelled") return "cancelled";
+      if (status === "Failed") return "failed_delivery";
       return null;
     };
 
