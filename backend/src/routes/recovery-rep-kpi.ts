@@ -653,7 +653,6 @@ const WORKLIST_CATEGORIES = {
   unreachable: { code: "D", label: "Number Not Reachable", blurb: "Died unreached - switched off, unavailable or wrong number." },
   cancelled: { code: "E", label: "Cancelled", blurb: "Customer cancelled the order." },
   interested_no_order: { code: "F", label: "Interested, Never Ordered", blurb: "Showed interest but never completed an order." },
-  previous_success: { code: "G", label: "Previous Successful Customer", blurb: "Bought and received before." },
   dormant: { code: "H", label: "Dormant Customer", blurb: "Has not bought in a long time." }
 } as const;
 type WorklistCategory = keyof typeof WORKLIST_CATEGORIES;
@@ -663,12 +662,11 @@ type WorklistCategory = keyof typeof WORKLIST_CATEGORIES;
 const CATEGORY_PRIORITY: Record<WorklistCategory, number> = {
   rescheduled: 1,
   failed_delivery: 2,
-  previous_success: 3,
-  cancelled: 4,
-  dormant: 5,
-  not_picking: 6,
-  unreachable: 6,
-  interested_no_order: 6
+  cancelled: 3,
+  dormant: 4,
+  not_picking: 5,
+  unreachable: 5,
+  interested_no_order: 5
 };
 
 const NOT_PICKING_PATTERN = /no answer|not picking|didn'?t pick|did not pick|no response|unanswered|rang out/i;
@@ -749,11 +747,15 @@ router.get("/worklist", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
       // Live orders are never recovery work, whatever the last note says.
       if (OPEN_STATUSES.has(status)) return null;
 
+      // A delivered order that went fine is NOT recovery work. Every past
+      // customer would qualify - 638 of them - which is a customer list, not a
+      // queue of things to fix. Those belong to Customer Retention, which
+      // already ranks them by lifecycle. The only delivered customer worth
+      // surfacing here is one who has gone quiet long enough to be a win-back.
       if (status === "Delivered") {
         if (!history) return null;
         const idleDays = daysSince(history.lastDeliveredAt);
-        if (idleDays !== null && idleDays >= dormantDays) return "dormant";
-        return "previous_success";
+        return idleDays !== null && idleDays >= dormantDays ? "dormant" : null;
       }
 
       if (status === "Postponed") return isLapsedPostponement(order) ? "rescheduled" : null;
