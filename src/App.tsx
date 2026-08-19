@@ -149,7 +149,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -260,7 +260,7 @@ type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
 type FinanceTab = "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
 type ManagerDashboardTab = "Overview" | "Bonus" | "Upsell Bonus" | "Inventory" | "Needs Attention";
-type RecoveryRepDashboardTab = "Overview" | "Activity Sheet" | "Customer Retention";
+type RecoveryRepDashboardTab = "Overview" | "Work Queue" | "Activity Sheet" | "Customer Retention";
 type ActivitySheetSortKey = "picked" | "rep" | "customer" | "status" | "outcome" | "touches" | "next";
 type RetentionSubPage = "Overview" | "Pipeline" | "Customers" | "Tasks" | "Calls & Outcomes" | "Reviews" | "Referrals" | "Repeat Sales" | "Win-back" | "Reports" | "Settings";
 // Rendered as a contextual sub-section in the MAIN app sidebar, directly
@@ -9112,6 +9112,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // Activity Sheet: one flat monitoring table across every recovery rep, so a
   // day's work reads as picked -> what happened -> what is next in one row
   // instead of being spread across separate grouped card sections.
+  const [recoveryWorklist, setRecoveryWorklist] = useState<RecoveryWorklistView | null>(null);
+  const [recoveryWorklistLoading, setRecoveryWorklistLoading] = useState(false);
+  const [recoveryWorklistError, setRecoveryWorklistError] = useState("");
+  const [recoveryWorklistCategory, setRecoveryWorklistCategory] = useState("all");
+  const [recoveryWorklistSearch, setRecoveryWorklistSearch] = useState("");
   const [activitySheetRepFilter, setActivitySheetRepFilter] = useState("all");
   const [activitySheetStatusFilter, setActivitySheetStatusFilter] = useState("all");
   const [activitySheetNextFilter, setActivitySheetNextFilter] = useState<"all" | "overdue" | "today" | "unscheduled" | "no_outcome">("all");
@@ -40383,6 +40388,23 @@ ${waybillLineItems(w).length > 1
   // Open the order details popup IN PLACE (no page navigation). Use this from
   // secondary views - rep/agent profiles, Scheduled Deliveries, cart detail -
   // so clicking an order doesn't bounce you to the Order Management page.
+  const loadRecoveryWorklist = useCallback(async () => {
+    setRecoveryWorklistLoading(true);
+    setRecoveryWorklistError("");
+    try {
+      setRecoveryWorklist(await recoveryRepKpiApi.worklist());
+    } catch (error: any) {
+      setRecoveryWorklistError(error?.message ?? "Could not load the work queue.");
+    } finally {
+      setRecoveryWorklistLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (activePage === "Recovery Rep Dashboard" && recoveryRepDashboardTab === "Work Queue") {
+      void loadRecoveryWorklist();
+    }
+  }, [activePage, recoveryRepDashboardTab, loadRecoveryWorklist]);
+
   const openOrderDetailPopup = (orderId: string) => {
     setSelectedOrderId(orderId);
     setModal("orderDetails");
@@ -62029,6 +62051,209 @@ ${waybillLineItems(w).length > 1
     });
   };
 
+  const renderRecoveryWorkQueue = () => {
+    const view = recoveryWorklist;
+    const tiers = [
+      { tier: 1, title: "Priority 1 - Rescheduled deliveries", why: "They already agreed to receive. Reconfirm before the date they gave." },
+      { tier: 2, title: "Priority 2 - Recent failed deliveries", why: "They ordered and the delivery missed. Ask if it can be re-attempted." },
+      { tier: 3, title: "Priority 3 - Previous successful customers", why: "They know the company already. Easier to sell than a stranger." },
+      { tier: 4, title: "Priority 4 - Recent cancellations", why: "Find out why. Sometimes the reason can still be solved." },
+      { tier: 5, title: "Priority 5 - Dormant customers", why: `No purchase in ${view?.dormantDays ?? 60}+ days. Work these after the urgent ones.` },
+      { tier: 6, title: "Unranked - reachability problems", why: "Not in Bright's five tiers, kept visible so they are not lost." }
+    ];
+    const query = recoveryWorklistSearch.trim().toLowerCase();
+    const visibleRows = (view?.rows ?? []).filter((row) => {
+      if (recoveryWorklistCategory !== "all" && row.category !== recoveryWorklistCategory) return false;
+      if (!query) return true;
+      return [row.customer, row.phone, row.orderId, row.productName, row.state]
+        .some((value) => String(value ?? "").toLowerCase().includes(query));
+    });
+    const repNameById = new Map(users.map((user) => [user.id, user.name]));
+
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="m-0 text-lg font-black text-gray-900">Work Queue</h2>
+            <p className="m-0 mt-0.5 text-sm text-gray-500">
+              Who to call, in the order most likely to produce money. Do not work top to bottom of a random list.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"
+              onClick={() => void loadRecoveryWorklist()}
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+            </button>
+            <button
+              type="button"
+              className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50"
+              onClick={() => triggerCsvDownload(
+                "recovery-work-queue",
+                [
+                  ["Priority", "Category", "Customer", "Phone", "State", "Order", "Product", "Amount", "Status", "Last outcome", "Days since", "Customer orders", "Delivered"],
+                  ...visibleRows.map((row) => [
+                    row.priority, row.categoryLabel, row.customer, row.phone, row.state ?? "",
+                    row.orderId, row.productName ?? "", row.amount, row.status,
+                    row.lastOutcome ?? "", row.daysSinceClosed ?? "", row.customerOrders, row.customerDelivered
+                  ])
+                ],
+                "Work queue exported"
+              )}
+            >
+              <Download className="h-3.5 w-3.5" /> Export CSV
+            </button>
+          </div>
+        </div>
+
+        {recoveryWorklistError && (
+          <p className="m-0 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{recoveryWorklistError}</p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setRecoveryWorklistCategory("all")}
+            className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold ${recoveryWorklistCategory === "all" ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+          >
+            All ({view?.rows.length ?? 0})
+          </button>
+          {Object.entries(view?.categories ?? {}).map(([key, meta]) => {
+            const count = view?.counts?.[key] ?? 0;
+            const notTracked = (view?.notTracked ?? []).includes(key);
+            return (
+              <button
+                key={key}
+                type="button"
+                disabled={notTracked}
+                title={notTracked ? "Not derivable from orders - lives in abandoned carts and sales leads" : meta.blurb}
+                onClick={() => setRecoveryWorklistCategory((current) => current === key ? "all" : key)}
+                className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                  notTracked ? "cursor-not-allowed border-dashed border-gray-200 bg-gray-50 text-gray-400"
+                    : recoveryWorklistCategory === key ? "border-[#1F8FE0] bg-[#1F8FE0] text-white"
+                    : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+              >
+                {meta.code}. {meta.label} ({notTracked ? "n/a" : count})
+              </button>
+            );
+          })}
+        </div>
+
+        <input
+          className="!min-h-0 w-full sm:w-72 rounded-lg border border-gray-200 px-3 py-2 text-sm"
+          placeholder="Search customer, phone, order, product..."
+          value={recoveryWorklistSearch}
+          onChange={(event) => setRecoveryWorklistSearch(event.target.value)}
+        />
+
+        {recoveryWorklistLoading && !view ? (
+          <div className="h-40 animate-pulse rounded-2xl bg-gray-50" />
+        ) : visibleRows.length === 0 ? (
+          <section className="rounded-2xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
+            <p className="m-0 text-sm font-bold text-gray-700">Nothing in this queue right now.</p>
+            <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
+              {view ? "No customer matches this category or search." : "Load the queue to see who to call first."}
+            </p>
+          </section>
+        ) : tiers.map((tier) => {
+          const tierRows = visibleRows.filter((row) => row.priority === tier.tier);
+          if (tierRows.length === 0) return null;
+          return (
+            <section key={tier.tier} className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-4 py-3">
+                <div>
+                  <h3 className="m-0 text-sm font-black text-gray-900">{tier.title}</h3>
+                  <p className="m-0 mt-0.5 text-xs font-medium text-gray-500">{tier.why}</p>
+                </div>
+                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-gray-700 ring-1 ring-gray-200">{tierRows.length}</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[900px] text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+                      <th className="px-3 py-2 text-left">Customer</th>
+                      <th className="px-3 py-2 text-left">Category</th>
+                      <th className="px-3 py-2 text-left">Order</th>
+                      <th className="px-3 py-2 text-left">Last outcome</th>
+                      <th className="px-3 py-2 text-left">History</th>
+                      <th className="px-3 py-2 text-left">Owner</th>
+                      <th className="px-3 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {tierRows.map((row) => {
+                      const owner = row.assignedRepId ? repNameById.get(row.assignedRepId) : null;
+                      const waUrl = buildWhatsAppTargets(row.phone ?? "", `Hello ${row.customer}, this is Protohub following up on your order.`).normalUrl;
+                      return (
+                        <tr key={`${row.orderId}-${row.category}`} className="hover:bg-gray-50/70">
+                          <td className="px-3 py-2.5">
+                            <div className="font-bold text-gray-900">{row.customer || "-"}</div>
+                            <div className="text-[11px] font-medium text-gray-400">{row.phone} · {row.state || "No state"}</div>
+                          </td>
+                          <td className="px-3 py-2.5 whitespace-nowrap">
+                            <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-700">
+                              {row.categoryCode}. {row.categoryLabel}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <div className="font-semibold text-gray-800">{row.productName || "-"}</div>
+                            <div className="text-[11px] font-medium text-gray-400">
+                              #{row.orderId} · {formatProductMoney(row.amount, row.currency as any)}
+                              {row.daysSinceClosed !== null && row.daysSinceClosed !== undefined ? ` · ${row.daysSinceClosed}d ago` : ""}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 max-w-[220px]">
+                            <div className="truncate text-[11px] text-gray-600" title={row.lastOutcome ?? ""}>{row.lastOutcome || "-"}</div>
+                          </td>
+                          <td className="px-3 py-2.5 whitespace-nowrap text-[11px] font-semibold text-gray-600">
+                            {row.customerOrders} order{row.customerOrders === 1 ? "" : "s"} · {row.customerDelivered} delivered
+                          </td>
+                          <td className="px-3 py-2.5 whitespace-nowrap text-[11px] font-semibold text-gray-500">
+                            {owner ?? <span className="text-gray-300">unassigned</span>}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {waUrl && (
+                                <a className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-green-50 text-green-600 ring-1 ring-green-100 hover:bg-green-100"
+                                  href={waUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${row.customer}`}>
+                                  <WhatsAppIcon className="h-3.5 w-3.5" />
+                                </a>
+                              )}
+                              <a className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-50 text-blue-600 ring-1 ring-blue-100 hover:bg-blue-100"
+                                href={`tel:${row.phone}`} title={`Call ${row.customer}`}>
+                                <Phone className="h-3.5 w-3.5" />
+                              </a>
+                              <button
+                                type="button"
+                                className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#1F8FE0] hover:bg-blue-50"
+                                onClick={() => openOrderDetailPopup(row.orderId)}
+                              >
+                                Open
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          );
+        })}
+
+        <p className="m-0 text-[11px] font-medium leading-4 text-gray-400">
+          Categories are read from order status and the outcome the last rep wrote, so a customer only lands in
+          "Not picking" or "Not reachable" if that was actually logged. "Interested, never ordered" is greyed out on
+          purpose - somebody who never became an order is not in the orders table at all; that one lives in abandoned
+          carts and sales leads and needs its own wiring.
+        </p>
+      </div>
+    );
+  };
+
   const renderRecoveryActivitySheet = () => {
     // Every recovery rep, active or not. A deactivated rep's picked orders are
     // still real work sitting in the pipeline, and dropping them would hide it
@@ -62638,7 +62863,7 @@ ${waybillLineItems(w).length > 1
         {renderWeekNav(recoveryRepNavStart, setRecoveryRepNavStart, recoveryRepNavSpan, setRecoveryRepNavSpan, setRecoveryRepPeriod, setRecoveryRepDateRange, recoveryRepPeriod, recoveryRepDateRange)}
 
         <div className="inline-flex w-full sm:w-auto items-center rounded-2xl bg-gray-100 p-1">
-          {(["Overview", "Activity Sheet", "Customer Retention"] as RecoveryRepDashboardTab[]).map((tab) => (
+          {(["Overview", "Work Queue", "Activity Sheet", "Customer Retention"] as RecoveryRepDashboardTab[]).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -62651,6 +62876,7 @@ ${waybillLineItems(w).length > 1
         </div>
 
         {recoveryRepDashboardTab === "Customer Retention" ? renderCustomerRetentionTab()
+          : recoveryRepDashboardTab === "Work Queue" ? renderRecoveryWorkQueue()
           : recoveryRepDashboardTab === "Activity Sheet" ? renderRecoveryActivitySheet() : (
         <>
         {currentRole === "Owner" && recoveryRepSettingsOpen && recoveryRepSettingsDraft && (
