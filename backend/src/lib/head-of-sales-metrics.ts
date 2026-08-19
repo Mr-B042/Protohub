@@ -102,7 +102,13 @@ export function computeRepWeekMetrics(orders: HeadOfSalesOrder[], repId: string,
     return key >= weekStart && key <= weekEnd;
   });
   const delivered = orders.filter((order) => {
-    if (order.assigned_rep_id !== repId || order.status !== "Delivered") return false;
+    // review_hold is excluded here as well as in the cohort above. It was only
+    // filtered on one side, so a held order that got delivered inflated
+    // revenue, AOV and the upsell/cross-sell counts while being absent from the
+    // denominator - which could push delivery rate past 100%. Held orders are
+    // excluded from every conversion report in this codebase; this was the one
+    // place it was half-applied.
+    if (order.assigned_rep_id !== repId || order.status !== "Delivered" || order.review_hold === true) return false;
     const key = deliveredDateKey(order);
     return key >= weekStart && key <= weekEnd;
   });

@@ -69,17 +69,38 @@ async function loadRepAndTeam(orgId: string, repId: string, requestingUser: { id
   };
 }
 
+// PostgREST caps an unbounded select at 1000 rows and returns no error when it
+// truncates. Team Performance asks for ~9 weeks across the team - 1,712 rows in
+// production - so 712 orders were being dropped silently, and with no ORDER BY
+// it was arbitrary which ones survived. That is why one rep could read AOV 0
+// for a week she had really delivered in while her team-mates looked right.
+//
+// Page explicitly until a short page comes back, and order by id so the paging
+// window is stable between requests.
+const ORDER_PAGE_SIZE = 1000;
+
 async function loadOrdersSince(orgId: string, repIds: string[], sinceDateKey: string, throughDateKey: string): Promise<HeadOfSalesOrder[]> {
   if (repIds.length === 0) return [];
-  const { data, error } = await supabase
-    .from("orders")
-    .select("id, assigned_rep_id, status, amount, quantity, created_at, delivered_date, review_hold, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
-    .eq("org_id", orgId)
-    .in("assigned_rep_id", repIds)
-    .gte("created_at", `${sinceDateKey}T00:00:00Z`)
-    .lte("created_at", `${throughDateKey}T23:59:59Z`);
-  if (error) throw error;
-  return (data ?? []) as HeadOfSalesOrder[];
+  const all: HeadOfSalesOrder[] = [];
+  for (let page = 0; ; page += 1) {
+    const from = page * ORDER_PAGE_SIZE;
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, assigned_rep_id, status, amount, quantity, created_at, delivered_date, review_hold, upsell_from_qty, upsell_to_qty, original_amount, original_quantity, cross_sell_lines")
+      .eq("org_id", orgId)
+      .in("assigned_rep_id", repIds)
+      .gte("created_at", `${sinceDateKey}T00:00:00Z`)
+      .lte("created_at", `${throughDateKey}T23:59:59Z`)
+      .order("id", { ascending: true })
+      .range(from, from + ORDER_PAGE_SIZE - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as HeadOfSalesOrder[];
+    all.push(...rows);
+    if (rows.length < ORDER_PAGE_SIZE) break;
+    // Hard stop so a runaway range can never spin forever.
+    if (page > 50) break;
+  }
+  return all;
 }
 
 const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
