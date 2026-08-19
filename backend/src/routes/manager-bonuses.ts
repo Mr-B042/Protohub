@@ -204,7 +204,11 @@ router.get("/summary", async (req, res) => {
       .eq("org_id", req.user!.orgId)
       .gte("created_at", createdFrom)
       .lte("created_at", createdTo)
-      .or("review_hold.is.null,review_hold.eq.false");
+      .or("review_hold.is.null,review_hold.eq.false")
+      // Explicit ceiling - without it PostgREST silently caps at 1000 rows and
+      // the cohort quietly loses orders on any range past about a month (the
+      // org is already at 861 orders in 30 days). Same guard carts.ts uses.
+      .limit(20000);
     let deliveredOrdersQuery = supabase
       .from("orders")
       .select("id, status, amount, quantity, currency, created_at, delivered_date, product_id, product_name, package_components_snapshot, cross_sell_lines, free_gift_lines, logistics_cost, review_hold")
