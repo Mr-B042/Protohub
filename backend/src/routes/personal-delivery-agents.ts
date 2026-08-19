@@ -2429,6 +2429,27 @@ async function createPortalLoginForAgent(
   return { created: true, email, tempPassword };
 }
 
+// Reset a linked agent's portal password without leaving the agent page. Same
+// one-time reveal as creation - the password is returned once and never stored.
+router.post("/:id/reset-login-password", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, full_name, user_id").eq("org_id", orgId).eq("id", paramOf(req.params.id)).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+    if (!agent.user_id) { res.status(409).json({ error: `${agent.full_name} has no portal login yet.` }); return; }
+    const { data: user } = await supabase.from("users")
+      .select("id, email").eq("org_id", orgId).eq("id", agent.user_id).maybeSingle();
+    if (!user) { res.status(404).json({ error: "That login no longer exists." }); return; }
+    const tempPassword = `Pda-${Math.random().toString(36).slice(2, 8)}${Math.floor(10 + Math.random() * 89)}`;
+    const { error } = await supabase.auth.admin.updateUserById(agent.user_id, { password: tempPassword });
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ created: true, email: user.email, tempPassword });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not reset that password." });
+  }
+});
+
 // Standalone version for agents approved before this existed, or where an email
 // was added after the fact.
 router.post("/:id/create-login", requireRole("Owner", "Admin"), async (req, res) => {
