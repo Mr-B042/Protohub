@@ -477,7 +477,14 @@ router.get("/candidates", requireRole("Owner", "Admin", "Manager", "Recovery Rep
     const [{ data, error }, held] = await Promise.all([
       supabase
         .from("orders")
-        .select("id, customer, phone, status, amount, currency, product_name, package_name, quantity, cross_sell_lines, free_gift_lines, upsell_from_qty, upsell_to_qty, location, call_outcome, response, created_at, updated_at, delivered_date, assigned_rep_id, review_hold")
+        // state/city/address are here because the candidate card renders them
+        // BEFORE a claim. A Recovery Rep's GET /api/orders is scoped to orders
+        // already assigned to her, so an unclaimed candidate is absent from
+        // that list entirely and every field the card could not get from this
+        // endpoint rendered blank ("No state") until she claimed it. This
+        // endpoint is her authorised window onto candidates, so it has to carry
+        // what the card shows.
+        .select("id, customer, phone, status, amount, currency, product_name, package_name, quantity, cross_sell_lines, free_gift_lines, upsell_from_qty, upsell_to_qty, location, state, city, address, call_outcome, response, created_at, updated_at, delivered_date, assigned_rep_id, review_hold")
         .eq("org_id", orgId)
         .or(`status.in.(${CANDIDATE_STATUSES.join(",")}),call_outcome.eq.Product Unavailable`)
         .neq("review_hold", true)
@@ -515,6 +522,9 @@ router.get("/candidates", requireRole("Owner", "Admin", "Manager", "Recovery Rep
         upgradedFrom: order.upsell_from_qty ? Number(order.upsell_from_qty) : null,
         upgradedTo: order.upsell_to_qty ? Number(order.upsell_to_qty) : null,
         location: order.location ?? null,
+        state: order.state ?? null,
+        city: order.city ?? null,
+        address: order.address ?? null,
         callOutcome: order.call_outcome ?? null,
         response: order.response ?? null,
         closedAt: order.delivered_date ?? order.updated_at ?? order.created_at,
