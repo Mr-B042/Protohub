@@ -670,6 +670,18 @@ router.get("/", async (req, res) => {
   const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
   const scopeId   = req.user!.effectiveUserId   ?? req.user!.id;
 
+  // A personal delivery agent is an outside individual, not staff. This route
+  // has no role gate and the backend runs as the service role, so RLS does not
+  // cover it - without this branch a Delivery Agent calling /api/orders
+  // directly would receive EVERY order in the org, since they are not a
+  // frontline rep and fall through to the unscoped path. Their portal reads
+  // my-orders instead, which is scoped to their own assignments, so returning
+  // nothing here costs them nothing.
+  if (scopeRole === "Delivery Agent") {
+    res.json({ rows: [], total: 0, page: 1, pageSize: 0 });
+    return;
+  }
+
   // Fresh filtered query per sub-batch (Supabase caps one response at 1000 rows,
   // so a large pageSize must be fetched in 1000-row chunks or the oldest drop).
   const buildQuery = (rFrom: number, rTo: number) => {
