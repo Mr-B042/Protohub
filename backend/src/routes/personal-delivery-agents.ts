@@ -2377,11 +2377,85 @@ router.patch("/documents/:documentId", requireRole(...MANAGEMENT_ROLES), async (
 // Owner/Admin only, and refuses unless every blocker is clear. The gate lives
 // HERE, not only in the UI - a disabled button is a hint, a server check is a
 // rule. Approval lands the agent on Probation, never straight to full trust.
+// Approving an application used to leave the Owner to go and hand-build a
+// Delivery Agent login in User Management, then come back and match it to the
+// agent from a list - for every single applicant. The applicant already gave us
+// her name, phone and email on the form, so the account can just be made.
+//
+// Returns the temporary password ONCE, in the approval response, and never
+// stores or re-shows it. Nothing is emailed: agents here are onboarded over
+// WhatsApp, so the Owner copies the credentials across herself.
+async function createPortalLoginForAgent(
+  orgId: string,
+  agent: { id: string; full_name: string; email?: string | null; phone?: string | null },
+  actorId: string
+): Promise<{ created: boolean; email?: string; tempPassword?: string; reason?: string }> {
+  const email = String(agent.email ?? "").trim().toLowerCase();
+  if (!email) {
+    return { created: false, reason: "No email on the application, so there is nothing to sign in with. Add one, then create the login from the agent's page." };
+  }
+  // Reuse an existing login for this email rather than colliding with it.
+  const { data: existing } = await supabase.from("users")
+    .select("id, role").eq("org_id", orgId).eq("email", email).maybeSingle();
+  if (existing) {
+    await supabase.from(AGENTS).update({ user_id: existing.id, updated_at: new Date().toISOString() }).eq("id", agent.id);
+    return { created: false, email, reason: "That email already has a login here, so it was linked instead of creating a second one." };
+  }
+
+  // Readable but not guessable - it is read aloud or pasted into WhatsApp.
+  const tempPassword = `Pda-${Math.random().toString(36).slice(2, 8)}${Math.floor(10 + Math.random() * 89)}`;
+  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+    email, password: tempPassword, email_confirm: true
+  });
+  if (authError || !authData.user) {
+    return { created: false, email, reason: authError?.message ?? "Could not create the login." };
+  }
+  const { error: profileError } = await supabase.from("users").insert({
+    id: authData.user.id,
+    org_id: orgId,
+    name: agent.full_name,
+    email,
+    phone: agent.phone ?? null,
+    role: "Delivery Agent"
+  });
+  if (profileError) {
+    // Roll the auth user back so the email is free to retry with.
+    await supabase.auth.admin.deleteUser(authData.user.id).catch(() => {});
+    return { created: false, email, reason: profileError.message };
+  }
+  await supabase.from(AGENTS)
+    .update({ user_id: authData.user.id, updated_at: new Date().toISOString() })
+    .eq("id", agent.id);
+  return { created: true, email, tempPassword };
+}
+
+// Standalone version for agents approved before this existed, or where an email
+// was added after the fact.
+router.post("/:id/create-login", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, full_name, email, phone, account_status, user_id")
+      .eq("org_id", orgId).eq("id", paramOf(req.params.id)).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+    if (agent.user_id) { res.status(409).json({ error: `${agent.full_name} already has portal access.` }); return; }
+    if (!OPERATIONAL_STATUSES.includes(String(agent.account_status))) {
+      res.status(409).json({ error: `${agent.full_name} is ${agent.account_status}. Approve the application first.` });
+      return;
+    }
+    const result = await createPortalLoginForAgent(orgId, agent as any, req.user!.id);
+    if (!result.created && !result.email) { res.status(409).json({ error: result.reason }); return; }
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not create the login." });
+  }
+});
+
 router.post("/:id/approve", requireRole("Owner", "Admin"), async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const { data: agent } = await supabase.from(AGENTS)
-      .select("id, account_status").eq("org_id", orgId).eq("id", req.params.id).single();
+      .select("id, account_status, full_name, email, phone, user_id").eq("org_id", orgId).eq("id", req.params.id).single();
     if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
 
     const [kycRes, guarantorRes, docRes] = await Promise.all([
@@ -2409,7 +2483,16 @@ router.post("/:id/approve", requireRole("Owner", "Admin"), async (req, res) => {
       updated_at: new Date().toISOString()
     }).eq("org_id", orgId).eq("id", req.params.id).select(SELECT).single();
     if (error) { res.status(500).json({ error: error.message }); return; }
-    res.json({ row: mapAgent(data) });
+
+    // Approval now produces a usable agent, not a half-onboarded record. A
+    // failure here must NOT fail the approval - the agent is approved either
+    // way, and the login can be created from her page afterwards.
+    const login = agent.user_id
+      ? { created: false, reason: "Already had portal access." }
+      : await createPortalLoginForAgent(orgId, agent as any, req.user!.id).catch((err: any) => ({
+        created: false, reason: err?.message ?? "Could not create the login."
+      }));
+    res.json({ row: mapAgent(data), login });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not approve the application." });
   }

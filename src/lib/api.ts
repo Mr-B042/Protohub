@@ -583,6 +583,9 @@ export const productsApi = {
 };
 
 // ── Orders ────────────────────────────────────────────────
+// Returned once on approval. tempPassword is never stored and never re-shown.
+export type PdaLoginResult = { created: boolean; email?: string; tempPassword?: string; reason?: string };
+
 export type PersonalDeliveryAgentRow = {
   id: string;
   agentCode: string;
@@ -1160,7 +1163,9 @@ export const personalDeliveryAgentsApi = {
   reviewDocument: (documentId: string, body: unknown) =>
     patch<{ row: PdaDocument }>(`/api/personal-delivery-agents/documents/${documentId}`, body),
   approve: (id: string) =>
-    post<{ row: PersonalDeliveryAgentRow }>(`/api/personal-delivery-agents/${id}/approve`, {}),
+    post<{ row: PersonalDeliveryAgentRow; login?: PdaLoginResult }>(`/api/personal-delivery-agents/${id}/approve`, {}),
+  createPortalLogin: (id: string) =>
+    post<PdaLoginResult>(`/api/personal-delivery-agents/${id}/create-login`, {}),
   applicantStatusLink: (id: string, body: { origin: string; send?: "whatsapp" }) =>
     post<{ token: string; url: string; phone: string | null; sent: { ok: boolean; error?: string } | null }>(
       `/api/personal-delivery-agents/${id}/status-link`, body),
