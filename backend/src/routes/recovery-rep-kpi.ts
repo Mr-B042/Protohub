@@ -648,7 +648,7 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
 // from the data it says so rather than guessing (see NOT_TRACKED below).
 const WORKLIST_CATEGORIES = {
   failed_delivery: { code: "A", label: "Failed Delivery", blurb: "Delivery was attempted and failed." },
-  rescheduled: { code: "B", label: "Rescheduled", blurb: "Postponed - customer asked for another delivery date." },
+  rescheduled: { code: "B", label: "Rescheduled (lapsed)", blurb: "Agreed a new date, then it passed with no follow-up." },
   not_picking: { code: "C", label: "Not Picking Calls", blurb: "Died unreached - rang out and was never picked up." },
   unreachable: { code: "D", label: "Number Not Reachable", blurb: "Died unreached - switched off, unavailable or wrong number." },
   cancelled: { code: "E", label: "Cancelled", blurb: "Customer cancelled the order." },
@@ -684,7 +684,7 @@ router.get("/worklist", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
 
     const { data, error } = await supabase
       .from("orders")
-      .select("id, customer, phone, status, amount, currency, product_name, state, city, call_outcome, response, scheduled_date, created_at, updated_at, delivered_date, assigned_rep_id, review_hold")
+      .select("id, customer, phone, status, amount, currency, product_name, state, city, call_outcome, response, scheduled_date, next_follow_up_at, created_at, updated_at, delivered_date, assigned_rep_id, review_hold")
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
       .limit(4000);
@@ -719,6 +719,27 @@ router.get("/worklist", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
     // ones. A delivered order in a "not picking calls" queue is nonsense.
     const OPEN_STATUSES = new Set(["New", "Confirmed", "In Process", "Dispatched"]);
 
+    // Postponed is NOT a dead status - it is a live order with a promise
+    // attached, and treating it as recoverable was the remaining leak. All 76
+    // Postponed orders in production are actively worked: every one has either
+    // a future delivery date, a future follow-up, or a touch in the last week.
+    // Handing those to Recovery puts a second rep on a customer the sales rep
+    // has already agreed a date with.
+    //
+    // It only becomes recovery work once the promise LAPSES - the agreed date
+    // has passed, no follow-up is booked, and nobody has touched it. Until
+    // then it belongs to whoever made the promise.
+    const STALE_AFTER_DAYS = 7;
+    const isLapsedPostponement = (order: any) => {
+      const today = lagosDateKey();
+      const scheduled = typeof order.scheduled_date === "string" ? order.scheduled_date.slice(0, 10) : null;
+      const nextFollowUp = typeof order.next_follow_up_at === "string" ? order.next_follow_up_at.slice(0, 10) : null;
+      const touchedDaysAgo = daysSince(order.updated_at);
+      if (scheduled && scheduled >= today) return false;      // still due
+      if (nextFollowUp && nextFollowUp >= today) return false; // still booked
+      return touchedDaysAgo !== null && touchedDaysAgo > STALE_AFTER_DAYS;
+    };
+
     const categorize = (order: any): WorklistCategory | null => {
       const status = order.status ?? "New";
       const outcome = String(order.call_outcome ?? "");
@@ -735,9 +756,7 @@ router.get("/worklist", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
         return "previous_success";
       }
 
-      // "Customer asked for another date" is exactly what Postponed means, so
-      // the status carries it - no pattern matching on live orders needed.
-      if (status === "Postponed") return "rescheduled";
+      if (status === "Postponed") return isLapsedPostponement(order) ? "rescheduled" : null;
 
       // Everything below here is Failed or Cancelled. The outcome decides WHY
       // it died, which is what the rep needs before dialling - so unreachable
