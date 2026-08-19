@@ -8,6 +8,8 @@ import {
   computeTeamWeekMetrics,
   computeTeamRangeMetrics,
   computeTrailingBaseline,
+  orderHasVerifiedUpsell,
+  orderHasCrossSell,
   lagosDateKey,
   sundayWeekStartForDateKey,
   weekEndFromStart,
@@ -606,6 +608,32 @@ router.get("/upsell-cross-sell", async (req, res) => {
     const customersOfferedCrossSell = realOffers.filter(isCrossSell).length;
     const customersCrossSold = realOffers.filter((line) => isCrossSell(line) && isAccepted(line)).length;
 
+    // An order can carry BOTH an upsell and a cross-sell, so expansion orders
+    // is a distinct count of delivered orders that carried either - never
+    // upsells + cross-sells added together, which would double-count them.
+    const deliveredInRange = (repId: string) => orders.filter((order) => {
+      if (order.assigned_rep_id !== repId || order.status !== "Delivered" || order.review_hold === true) return false;
+      const key = typeof order.delivered_date === "string" ? order.delivered_date.slice(0, 10) : "";
+      return key >= range.from && key <= range.to;
+    });
+    const expansionOrdersFor = (repId: string) =>
+      deliveredInRange(repId).filter((order) => orderHasVerifiedUpsell(order) || orderHasCrossSell(order)).length;
+    const teamExpansionOrders = repIds.reduce((sum, repId) => sum + expansionOrdersFor(repId), 0);
+
+    // Attempts split by what was actually offered, so the table can show the
+    // upsell habit separately from the cross-sell habit - a rep can be strong
+    // at one and never do the other, which one blended number hides.
+    const attemptsByRep = new Map<string, { upsellAttempts: number; crossSellAttempts: number; acceptedExpansions: number }>();
+    for (const line of realOffers) {
+      const repId = attemptRepById.get(line.attempt_id);
+      if (!repId) continue;
+      const bucket = attemptsByRep.get(repId) ?? { upsellAttempts: 0, crossSellAttempts: 0, acceptedExpansions: 0 };
+      if (isUpsell(line)) bucket.upsellAttempts += 1;
+      if (isCrossSell(line)) bucket.crossSellAttempts += 1;
+      if (isAccepted(line)) bucket.acceptedExpansions += 1;
+      attemptsByRep.set(repId, bucket);
+    }
+
     // Per-rep breakdown, joined back through the attempt's rep_id.
     const byRep = new Map<string, { offered: number; accepted: number; revenue: number }>();
     for (const line of realOffers) {
@@ -619,6 +647,9 @@ router.get("/upsell-cross-sell", async (req, res) => {
     const byRepDetail = repIds.map((repId) => {
       const repMetrics = thisWeek.reps.find((rep) => rep.repId === repId);
       const offers = byRep.get(repId) ?? { offered: 0, accepted: 0, revenue: 0 };
+      const attempts = attemptsByRep.get(repId) ?? { upsellAttempts: 0, crossSellAttempts: 0, acceptedExpansions: 0 };
+      const deliveredCount = repMetrics?.ordersDelivered ?? 0;
+      const repExpansionOrders = expansionOrdersFor(repId);
       return {
         repId,
         name: repNameById.get(repId) ?? "Unknown",
@@ -654,7 +685,24 @@ router.get("/upsell-cross-sell", async (req, res) => {
         ),
         // Kept separately so the offer log stays visible as offer ACTIVITY
         // without ever being read as money.
-        loggedOfferValue: Math.round(offers.revenue)
+        loggedOfferValue: Math.round(offers.revenue),
+        // Sales execution (what the rep controls) - attempts, split by type,
+        // measured against how many orders she actually delivered.
+        upsellAttempts: attempts.upsellAttempts,
+        crossSellAttempts: attempts.crossSellAttempts,
+        upsellAttemptRatePct: deliveredCount > 0
+          ? Math.round((attempts.upsellAttempts / deliveredCount) * 1000) / 10 : 0,
+        crossSellAttemptRatePct: deliveredCount > 0
+          ? Math.round((attempts.crossSellAttempts / deliveredCount) * 1000) / 10 : 0,
+        // Customer response - of everything offered, what got a yes.
+        acceptedExpansions: attempts.acceptedExpansions,
+        // Delivered results - the business impact, all from delivered orders.
+        expansionOrders: repExpansionOrders,
+        expansionRatePct: deliveredCount > 0
+          ? Math.round((repExpansionOrders / deliveredCount) * 1000) / 10 : 0,
+        revenuePerDelivery: deliveredCount > 0
+          ? Math.round(((repMetrics?.incrementalRevenueUpsell ?? 0) + (repMetrics?.incrementalRevenueCrossSell ?? 0)) / deliveredCount)
+          : 0
       };
     });
 
@@ -713,7 +761,38 @@ router.get("/upsell-cross-sell", async (req, res) => {
     const pctDelta = (current: number, previous: number) =>
       previous > 0 ? Math.round(((current - previous) / previous) * 1000) / 10 : (current > 0 ? 100 : 0);
 
+    // The six Business Results cards, all from DELIVERED orders so they agree
+    // with the Manager Dashboard rather than the offer log.
+    const lastWeekExpansionOrders = repIds.reduce((sum, repId) => sum + orders.filter((order) => {
+      if (order.assigned_rep_id !== repId || order.status !== "Delivered" || order.review_hold === true) return false;
+      const key = typeof order.delivered_date === "string" ? order.delivered_date.slice(0, 10) : "";
+      return key >= lastWeekStart && key <= lastWeekEnd
+        && (orderHasVerifiedUpsell(order) || orderHasCrossSell(order));
+    }).length, 0);
+    const businessResults = {
+      expansionRevenue: Math.round(thisWeekAdditionalRevenue),
+      expansionRevenueLastWeek: Math.round(lastWeekAdditionalRevenue),
+      expansionOrders: teamExpansionOrders,
+      expansionOrdersLastWeek: lastWeekExpansionOrders,
+      deliveredOrders: thisWeek.team.ordersDelivered,
+      deliveredOrdersLastWeek: lastWeek.team.ordersDelivered,
+      // Share of delivered orders that carried any expansion.
+      expansionRatePct: thisWeek.team.ordersDelivered > 0
+        ? Math.round((teamExpansionOrders / thisWeek.team.ordersDelivered) * 1000) / 10 : 0,
+      expansionRateLastWeekPct: lastWeek.team.ordersDelivered > 0
+        ? Math.round((lastWeekExpansionOrders / lastWeek.team.ordersDelivered) * 1000) / 10 : 0,
+      deliveredUpsells: thisWeek.team.upsellCount,
+      deliveredUpsellsLastWeek: lastWeek.team.upsellCount,
+      deliveredCrossSells: thisWeek.team.crossSellCount,
+      deliveredCrossSellsLastWeek: lastWeek.team.crossSellCount,
+      revenuePerDelivery: thisWeek.team.ordersDelivered > 0
+        ? Math.round(thisWeekAdditionalRevenue / thisWeek.team.ordersDelivered) : 0,
+      revenuePerDeliveryLastWeek: lastWeek.team.ordersDelivered > 0
+        ? Math.round(lastWeekAdditionalRevenue / lastWeek.team.ordersDelivered) : 0
+    };
+
     res.json({
+      businessResults,
       weekStart,
       weekEnd,
       team: {
