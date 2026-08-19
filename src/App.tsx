@@ -12735,7 +12735,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   }, [packageCompanionSyncToPackages, canSyncPackageCompanionsToPackages]);
   const selectedPricing = selectedProduct?.pricings.find((item) => item.currency === selectedPricingCurrency);
-  const selectedOrder = trackedOrders.find((order) => order.id === selectedOrderId);
+  // A Recovery Rep's GET /api/orders is scoped to orders already assigned to
+  // her, so an UNCLAIMED recovery candidate is not in trackedOrders at all.
+  // "View Order" on a candidate therefore resolved to undefined and opened an
+  // empty modal. The candidates endpoint is her authorised view of those
+  // orders, so fall back to it rather than leaving the popup blank.
+  const selectedOrder = trackedOrders.find((order) => order.id === selectedOrderId)
+    ?? (selectedOrderId
+      ? (() => {
+        const candidate = recoveryCandidatesView?.rows.find((row) => row.id === selectedOrderId);
+        if (!candidate) return undefined;
+        return {
+          id: candidate.id,
+          customer: candidate.customer,
+          phone: candidate.phone,
+          status: candidate.status as TrackedOrder["status"],
+          amount: candidate.amount,
+          currency: candidate.currency as TrackedOrder["currency"],
+          productName: candidate.productName ?? "",
+          packageName: candidate.packageName ?? undefined,
+          quantity: candidate.quantity ?? undefined,
+          location: candidate.location ?? "",
+          state: candidate.state ?? "",
+          city: candidate.city ?? "",
+          address: candidate.address ?? "",
+          callOutcome: candidate.callOutcome ?? undefined,
+          response: candidate.response ?? undefined,
+          createdAt: candidate.createdAt
+        } as TrackedOrder;
+      })()
+      : undefined);
   const selectedOrderFollowUpTasks = selectedOrder ? (orderFollowUpTasksByOrder[selectedOrder.id] ?? []) : [];
   const selectedOrderContactAttempts = selectedOrder ? (orderContactAttemptsByOrder[selectedOrder.id] ?? []) : [];
   const selectedOrderActiveFollowUpTask = activeFollowUpTaskForOrder(selectedOrderFollowUpTasks);
@@ -62374,6 +62403,9 @@ ${waybillLineItems(w).length > 1
           currency: row.currency as TrackedOrder["currency"],
           productName: row.productName ?? "",
           location: row.location ?? "",
+          state: row.state ?? "",
+          city: row.city ?? "",
+          address: row.address ?? "",
           callOutcome: row.callOutcome ?? undefined,
           response: row.response ?? undefined,
           createdAt: row.createdAt

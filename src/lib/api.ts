@@ -1590,6 +1590,9 @@ export type RecoveryCandidateRow = {
   freeGifts?: Array<{ name: string; quantity: number }>;
   upgradedFrom?: number | null; upgradedTo?: number | null;
   location?: string | null; callOutcome?: string | null; response?: string | null;
+  // The candidate card shows these before a claim, and a Recovery Rep's
+  // GET /api/orders never contains an unclaimed candidate to fall back on.
+  state?: string | null; city?: string | null; address?: string | null;
   closedAt: string; createdAt: string; reason: string;
 };
 export type RecoveryCandidatesView = {
