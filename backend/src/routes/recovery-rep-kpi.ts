@@ -634,4 +634,166 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
   res.json(data);
 });
 
+// ── GET /worklist ─────────────────────────────────────────
+// Bright's brief: "Do not randomly call everyone. Work from the customers most
+// likely to produce money first." One ranked queue, split into the eight
+// categories he named, ordered by his five priority tiers.
+//
+// Everything is derived from orders already in the table - no new columns, and
+// nothing a rep has to remember to fill in. Where a category cannot be proven
+// from the data it says so rather than guessing (see NOT_TRACKED below).
+const WORKLIST_CATEGORIES = {
+  failed_delivery: { code: "A", label: "Failed Delivery", blurb: "Ordered, but delivery did not succeed." },
+  rescheduled: { code: "B", label: "Rescheduled", blurb: "Customer asked for another delivery date." },
+  not_picking: { code: "C", label: "Not Picking Calls", blurb: "Rang out - customer could not be reached." },
+  unreachable: { code: "D", label: "Number Not Reachable", blurb: "Switched off, unavailable or wrong number." },
+  cancelled: { code: "E", label: "Cancelled", blurb: "Customer cancelled the order." },
+  interested_no_order: { code: "F", label: "Interested, Never Ordered", blurb: "Showed interest but never completed an order." },
+  previous_success: { code: "G", label: "Previous Successful Customer", blurb: "Bought and received before." },
+  dormant: { code: "H", label: "Dormant Customer", blurb: "Has not bought in a long time." }
+} as const;
+type WorklistCategory = keyof typeof WORKLIST_CATEGORIES;
+
+// Bright's tiers, in his order. Anything he did not rank is tier 6 so it still
+// appears - it is just worked after the money.
+const CATEGORY_PRIORITY: Record<WorklistCategory, number> = {
+  rescheduled: 1,
+  failed_delivery: 2,
+  previous_success: 3,
+  cancelled: 4,
+  dormant: 5,
+  not_picking: 6,
+  unreachable: 6,
+  interested_no_order: 6
+};
+
+const NOT_PICKING_PATTERN = /no answer|not picking|didn'?t pick|did not pick|no response|unanswered|rang out/i;
+const UNREACHABLE_PATTERN = /switched off|switch off|unreachable|not reachable|out of coverage|number busy|line busy|wrong number|does not exist/i;
+const RESCHEDULE_PATTERN = /reschedul|postpon|another date|call back|callback|come back|next week|tomorrow/i;
+
+router.get("/worklist", requireRole("Owner", "Admin", "Manager", "Recovery Rep"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const dormantDays = Math.max(1, Number(req.query.dormantDays) || 60);
+    const todayMs = Date.now();
+    const daysSince = (value?: string | null) =>
+      value ? Math.floor((todayMs - new Date(value).getTime()) / 86400000) : null;
+
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, customer, phone, status, amount, currency, product_name, state, city, call_outcome, response, scheduled_date, created_at, updated_at, delivered_date, assigned_rep_id, review_hold")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(4000);
+    if (error) throw error;
+
+    const orders = (data ?? []).filter((order: any) => !order.review_hold);
+
+    // Customer-level facts first: G and H are about a person's history, not one
+    // order, so they cannot be decided row by row.
+    const byPhone = new Map<string, { delivered: number; total: number; lastDeliveredAt: string | null }>();
+    for (const order of orders) {
+      const key = String(order.phone ?? "").replace(/\D/g, "").slice(-10);
+      if (key.length < 7) continue;
+      const entry = byPhone.get(key) ?? { delivered: 0, total: 0, lastDeliveredAt: null };
+      entry.total += 1;
+      if (order.status === "Delivered") {
+        entry.delivered += 1;
+        const when = order.delivered_date ?? order.updated_at ?? order.created_at;
+        if (when && (!entry.lastDeliveredAt || when > entry.lastDeliveredAt)) entry.lastDeliveredAt = when;
+      }
+      byPhone.set(key, entry);
+    }
+
+    const categorize = (order: any): WorklistCategory | null => {
+      const status = order.status ?? "New";
+      const outcome = String(order.call_outcome ?? "");
+      const phoneKey = String(order.phone ?? "").replace(/\D/g, "").slice(-10);
+      const history = byPhone.get(phoneKey);
+
+      // Order-level categories first - a specific dead order is more actionable
+      // than a general statement about the customer.
+      if (status === "Failed") return "failed_delivery";
+      if (status === "Cancelled") return "cancelled";
+      // Postponed, or an open order the rep explicitly logged a callback on.
+      if (status === "Postponed") return "rescheduled";
+      if (!["Delivered", "Failed", "Cancelled"].includes(status) && RESCHEDULE_PATTERN.test(outcome)) return "rescheduled";
+      if (UNREACHABLE_PATTERN.test(outcome)) return "unreachable";
+      if (NOT_PICKING_PATTERN.test(outcome)) return "not_picking";
+
+      if (status === "Delivered" && history) {
+        const idleDays = daysSince(history.lastDeliveredAt);
+        if (idleDays !== null && idleDays >= dormantDays) return "dormant";
+        return "previous_success";
+      }
+      return null;
+    };
+
+    // One row per customer per category - calling the same person twice about
+    // the same thing is exactly the "randomly call everyone" problem.
+    const seen = new Set<string>();
+    const rows = orders
+      .map((order: any) => {
+        const category = categorize(order);
+        if (!category) return null;
+        const phoneKey = String(order.phone ?? "").replace(/\D/g, "").slice(-10);
+        const dedupeKey = `${phoneKey}|${category}`;
+        if (seen.has(dedupeKey)) return null;
+        seen.add(dedupeKey);
+        const history = byPhone.get(phoneKey);
+        const closedAt = order.delivered_date ?? order.updated_at ?? order.created_at;
+        return {
+          orderId: order.id,
+          customer: order.customer,
+          phone: order.phone,
+          state: order.state ?? null,
+          city: order.city ?? null,
+          productName: order.product_name ?? null,
+          amount: Number(order.amount ?? 0),
+          currency: order.currency ?? "NGN",
+          status: order.status,
+          category,
+          categoryCode: WORKLIST_CATEGORIES[category].code,
+          categoryLabel: WORKLIST_CATEGORIES[category].label,
+          priority: CATEGORY_PRIORITY[category],
+          lastOutcome: String(order.call_outcome ?? "").split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean).slice(-1)[0] ?? null,
+          scheduledDate: order.scheduled_date ?? null,
+          daysSinceClosed: daysSince(closedAt),
+          // Shown so a rep can see an order is already someone's before ringing
+          // it. Rescheduled deliveries were previously kept out of Recovery
+          // precisely because two reps could land on the same live order; they
+          // are back in as tier 1 per Bright, with the owner visible instead of
+          // the whole category hidden.
+          assignedRepId: order.assigned_rep_id ?? null,
+          customerOrders: history?.total ?? 0,
+          customerDelivered: history?.delivered ?? 0
+        };
+      })
+      .filter(Boolean) as any[];
+
+    // Freshest first inside a tier: a customer who died yesterday is far more
+    // recoverable than one who died in March.
+    rows.sort((a, b) => a.priority - b.priority || (a.daysSinceClosed ?? 9999) - (b.daysSinceClosed ?? 9999));
+
+    const counts = Object.keys(WORKLIST_CATEGORIES).reduce((acc, key) => {
+      acc[key] = rows.filter((row) => row.category === key).length;
+      return acc;
+    }, {} as Record<string, number>);
+
+    res.json({
+      rows,
+      counts,
+      dormantDays,
+      categories: WORKLIST_CATEGORIES,
+      // Said out loud rather than shipped as a silent zero: "interested but
+      // never ordered" is a person who never became an order, so it cannot be
+      // derived from the orders table. It lives in abandoned carts and sales
+      // leads, and wiring those in is its own piece of work.
+      notTracked: ["interested_no_order"]
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the recovery worklist." });
+  }
+});
+
 export default router;

@@ -1595,6 +1595,21 @@ export type RecoveryCandidateRow = {
   state?: string | null; city?: string | null; address?: string | null;
   closedAt: string; createdAt: string; reason: string;
 };
+export type RecoveryWorklistRow = {
+  orderId: string; customer: string; phone: string;
+  state?: string | null; city?: string | null;
+  productName?: string | null; amount: number; currency: string; status: string;
+  category: string; categoryCode: string; categoryLabel: string; priority: number;
+  lastOutcome?: string | null; scheduledDate?: string | null; daysSinceClosed?: number | null;
+  assignedRepId?: string | null; customerOrders: number; customerDelivered: number;
+};
+export type RecoveryWorklistView = {
+  rows: RecoveryWorklistRow[];
+  counts: Record<string, number>;
+  dormantDays: number;
+  categories: Record<string, { code: string; label: string; blurb: string }>;
+  notTracked: string[];
+};
 export type RecoveryCandidatesView = {
   rows: RecoveryCandidateRow[];
   cap: number; held: number; remaining: number; canClaim: boolean;
@@ -1603,6 +1618,8 @@ export type RecoveryCandidatesView = {
 export const recoveryRepKpiApi = {
   candidates: (repId?: string) =>
     get<RecoveryCandidatesView>(`/api/recovery-rep-kpi/candidates${repId ? `?repId=${encodeURIComponent(repId)}` : ""}`),
+  worklist: (dormantDays?: number) =>
+    get<RecoveryWorklistView>(`/api/recovery-rep-kpi/worklist${dormantDays ? `?dormantDays=${dormantDays}` : ""}`),
   claimCandidate: (orderId: string, repId?: string) =>
     post<{ ok: boolean; held: number; cap: number; remaining: number }>(
       "/api/recovery-rep-kpi/claim", { orderId, repId }),
