@@ -3,7 +3,7 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { notifyNewAbandonedCart } from "../lib/cart-notifications.js";
-import { uniqueMergedCartIds } from "../lib/cart-dedup.js";
+import { isDedupablePhone, uniqueMergedCartIds } from "../lib/cart-dedup.js";
 import { supabase } from "../lib/supabase.js";
 
 const router = Router();
@@ -356,15 +356,19 @@ router.post("/", captureRateLimit, async (req, res) => {
   // which session triggered the merge and undo if wrong.
   {
     const window7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const clientIp = (req.headers["x-forwarded-for"] as string | undefined)
-      ?.split(",")[0]?.trim() || (req as any).ip;
 
     let matchId: string | null = null;
     let dedupSignal: string | null = null;
 
     // Signal 1 — Phone (strongest)
-    if (d.phone?.trim()) {
-      const n = d.phone.replace(/\D/g, "");
+    // ⚠️ Guarded by isDedupablePhone. A truthy check alone let the literal
+    // placeholder "No phone yet" through, and PostgREST happily matched it
+    // against every other cart carrying the same sentence - so all phoneless
+    // carts collapsed into one "person". The late-phone dedupe below always
+    // had this guard; the insert-time path did not, which is where the damage
+    // happened.
+    if (isDedupablePhone(d.phone)) {
+      const n = d.phone!.replace(/\D/g, "");
       const { data: m } = await supabase
         .from("abandoned_carts")
         .select("id")
@@ -373,7 +377,7 @@ router.post("/", captureRateLimit, async (req, res) => {
         .neq("id", d.id)
         .not("status", "eq", "Converted")
         .is("merged_into", null)
-        .or(`phone.eq.${d.phone.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`)
+        .or(`phone.eq.${d.phone!.trim()},phone.eq.0${n.slice(-10)},phone.eq.${n},phone.eq.234${n.slice(-10)}`)
         .gte("last_activity", window7d)
         .order("last_activity", { ascending: false })
         .limit(1)
@@ -399,25 +403,24 @@ router.post("/", captureRateLimit, async (req, res) => {
       if (m) { matchId = m.id; dedupSignal = "email"; }
     }
 
-    // Signal 3 — IP (conservative 2h window, skip shared/private IPs)
-    if (!matchId && clientIp && !["::1", "127.0.0.1", "::ffff:127.0.0.1"].includes(clientIp)) {
-      const ipWindow = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-      const { data: ipMatches } = await supabase
-        .from("abandoned_carts")
-        .select("id, capture_payload")
-        .eq("org_id", product.org_id)
-        .eq("product_id", d.productId)
-        .neq("id", d.id)
-        .not("status", "eq", "Converted")
-        .is("merged_into", null)
-        .gte("last_activity", ipWindow)
-        .order("last_activity", { ascending: false })
-        .limit(5);
-      const ipMatch = (ipMatches ?? []).find(c =>
-        (c.capture_payload as Record<string, unknown> | null)?.clientIp === clientIp
-      );
-      if (ipMatch) { matchId = ipMatch.id; dedupSignal = "ip"; }
-    }
+    // Signal 3 — IP: REMOVED, deliberately.
+    //
+    // An IP is not a person here. Nigerian mobile carriers put thousands of
+    // subscribers behind one carrier-NAT address, and a subscriber's address
+    // rotates as they reconnect - so it is unreliable in BOTH directions. Over
+    // one 90-day sample of this org's own carts, 76 IPs were used by more than
+    // one customer and 29 customers appeared on more than one IP. The cart that
+    // exposed this had its own two touches on 102.88.108.52 and 102.89.41.194,
+    // 42 minutes apart: IP failed to identify even a single session.
+    //
+    // It was never worth much either - across the whole database it was the
+    // deciding signal on 4 merges, nearly all of which phone matching would
+    // have caught anyway. A signal that rarely helps and occasionally fuses two
+    // real customers into one record (destroying both their ad attribution and
+    // their recovery status) is a bad trade at any frequency.
+    //
+    // clientIp is still CAPTURED on the touchpoint for investigation; it is
+    // simply no longer allowed to decide that two carts are the same person.
 
     if (matchId && dedupSignal) {
       // Safety: fetch the existing cart's merged_from + ORIGINAL attribution before
