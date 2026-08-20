@@ -2542,7 +2542,12 @@ export default function PublicOrderFormPage() {
       cartsApi.capture({
         id: cartId,
         customer: orderFormName.trim() || "Partial lead",
-        phone: orderFormPhone.trim() || whatsappDigits || "No phone yet",
+        // ⚠️ Never store the words "No phone yet" as a phone number. It was
+        // written here and then matched by cart dedup like a real number, so
+        // every phoneless cart looked like the same shopper. The column is
+        // NOT NULL, so an empty string is the honest value; the cart list
+        // already renders `cart.phone || "No phone yet"` as a display label.
+        phone: orderFormPhone.trim() || whatsappDigits || "",
         whatsapp: whatsappDigits || undefined,
         email: orderFormEmail.trim() || undefined,
         address: orderFormAddress.trim() || undefined,
@@ -2563,7 +2568,7 @@ export default function PublicOrderFormPage() {
         preferredDelivery: orderFormDeliveryWindow.trim() || undefined,
         capturePayload: {
           customerName: orderFormName.trim() || "Partial lead",
-          phone: orderFormPhone.trim() || whatsappDigits || "No phone yet",
+          phone: orderFormPhone.trim() || whatsappDigits || null,
           whatsapp: whatsappDigits || null,
           email: orderFormEmail.trim() || null,
           address: orderFormAddress.trim() || null,

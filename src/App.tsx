@@ -27018,7 +27018,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const cartPatch: AbandonedCartRecord = {
       id: resolvedCartId,
       customer: orderFormName.trim() || "Partial lead",
-      phone: orderFormPhone.trim() || sanitizePhoneDigitsInput(orderFormWhatsapp) || "No phone yet",
+      // Same rule as the public form: the placeholder is a LABEL, never data.
+      phone: orderFormPhone.trim() || sanitizePhoneDigitsInput(orderFormWhatsapp) || "",
       whatsapp: sanitizePhoneDigitsInput(orderFormWhatsapp),
       email: orderFormEmail.trim(),
       city: orderFormCity.trim(),
