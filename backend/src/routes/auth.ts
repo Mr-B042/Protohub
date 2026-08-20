@@ -9,6 +9,7 @@ import { logger } from "../lib/logger.js";
 import { normalizeWorkingDays } from "../lib/business-schedule.js";
 import { loadAssignedAgentIdsByUser } from "../lib/user-agent-assignments.js";
 import { sanitizeMarketingAttributionTags } from "../lib/marketing-attribution.js";
+import { resolveLoginIdentifier } from "../lib/pda-agent-access.js";
 import {
   canFallbackToLegacyInventoryRole,
   INVENTORY_OPERATIONS_ROLE,
@@ -225,8 +226,14 @@ router.post("/register", async (req, res) => {
 });
 
 // ── POST /api/auth/login ──────────────────────────────────
+// Delivery agents sign in with their PHONE NUMBER, not an email - many have no
+// email at all. `resolveLoginIdentifier` maps a phone onto its synthetic portal
+// address and leaves real emails alone, so one form serves staff and agents.
+// The field therefore cannot be validated as an email any more; it is a free
+// identifier, and a wrong one still fails at the auth step with the normal
+// "invalid credentials" message rather than a different, enumerable one.
 const LoginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().min(1).max(320),
   password: z.string().min(1)
 });
 
@@ -246,13 +253,47 @@ async function withLoginTimeout<T>(promise: PromiseLike<T>, label: string): Prom
   }
 }
 
+// Every sign-in attempt is written to `login_audit`, which backs the Login
+// History tab on Agent Access. Fire-and-forget on purpose: an audit write must
+// never be able to fail a login.
+function recordLoginAttempt(
+  req: { ip?: string; get: (header: string) => string | undefined },
+  email: string,
+  success: boolean,
+  knownUserId?: string
+) {
+  void (async () => {
+    try {
+      let userId = knownUserId ?? null;
+      if (!userId) {
+        const { data } = await supabase.from("users").select("id").eq("email", email).maybeSingle();
+        userId = data?.id ?? null;
+      }
+      const { error } = await supabase.from("login_audit").insert({
+        email,
+        success,
+        ip: req.ip ?? null,
+        user_id: userId,
+        user_agent: (req.get("user-agent") ?? "").slice(0, 400) || null
+      });
+      if (error) logger.warn("login_audit insert failed", { error: error.message });
+    } catch (err: any) {
+      logger.warn("login_audit insert failed", { error: err?.message ?? String(err) });
+    }
+  })();
+}
+
 router.post("/login", async (req, res) => {
   const parsed = LoginSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid email or password format." });
     return;
   }
-  const { email, password } = parsed.data;
+  const typedIdentifier = parsed.data.email;
+  const password = parsed.data.password;
+  // What Supabase is asked to authenticate. `email` below stays the resolved
+  // address so the audit trail records the account that was actually tried.
+  const email = resolveLoginIdentifier(typedIdentifier);
 
   let signInResult: Awaited<ReturnType<ReturnType<typeof createSupabaseAuthClient>["auth"]["signInWithPassword"]>>;
   try {
@@ -271,9 +312,12 @@ router.post("/login", async (req, res) => {
   const { data, error } = signInResult;
   if (error || !data.session) {
     logger.warn("login failed", { email, reason: error?.message ?? "no session" });
-    // Record failed attempt (fire-and-forget, never blocks login flow)
-    supabase.from("login_audit").insert({ email, success: false, ip: req.ip ?? null })
-      .then(({ error: auditErr }) => { if (auditErr) logger.warn("login_audit insert failed", { error: auditErr.message }); });
+    // Record failed attempt (fire-and-forget, never blocks login flow).
+    // The user id is looked up separately because the sign-in itself returned
+    // nothing to identify - without it a wrong password against a real account
+    // would be invisible on that agent's Login History, which is exactly the
+    // case the security review needs to see.
+    recordLoginAttempt(req, email, false);
     res.status(401).json({ error: "Invalid email or password." });
     return;
   }
@@ -286,12 +330,13 @@ router.post("/login", async (req, res) => {
     role: string;
     active: boolean;
     marketing_attribution_tags?: unknown;
+    must_change_password?: boolean;
   } | null = null;
   try {
     const profileResult = await withLoginTimeout(
       supabase
         .from("users")
-        .select("id, org_id, name, role, active, marketing_attribution_tags")
+        .select("id, org_id, name, role, active, marketing_attribution_tags, must_change_password")
         .eq("id", data.user.id)
         .single(),
       "User profile lookup"
@@ -312,8 +357,7 @@ router.post("/login", async (req, res) => {
     return;
   }
 
-  supabase.from("login_audit").insert({ email, success: true, ip: req.ip ?? null })
-    .then(({ error: auditErr }) => { if (auditErr) logger.warn("login_audit insert failed", { error: auditErr.message }); });
+  recordLoginAttempt(req, email, true, profile.id);
   touchUserPresence(profile.id).catch(() => {});
   logger.info("login success", { userId: profile.id, email, role: profile.role });
 
@@ -326,7 +370,10 @@ router.post("/login", async (req, res) => {
       name: profile.name,
       role: publicUserRole(profile.role),
       email: data.user.email,
-      marketingAttributionTags: sanitizeMarketingAttributionTags(profile.marketing_attribution_tags)
+      marketingAttributionTags: sanitizeMarketingAttributionTags(profile.marketing_attribution_tags),
+      // Issued a temporary password: the client sends them to set their own
+      // before anything else. Cleared by /set-password.
+      mustChangePassword: Boolean(profile.must_change_password)
     }
   });
 });
@@ -983,6 +1030,13 @@ router.post("/set-password", requireAuth, async (req, res) => {
     res.status(500).json({ error: error.message });
     return;
   }
+  // A temporary password has now been replaced by one only this person knows,
+  // so the "must change" gate comes off. Setting a password FOR someone else
+  // (Owner/Admin resetting an account) puts them back on a temporary one, so
+  // the gate goes back on instead.
+  await supabase.from("users")
+    .update({ must_change_password: targetId !== req.user!.id })
+    .eq("id", targetId);
   res.json({ message: "Password updated successfully." });
 });
 
