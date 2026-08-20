@@ -149,7 +149,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, AgentAccessView, AgentLoginEvent, PortalSendOptions } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -206,6 +206,7 @@ import {
   type SalesLeadDraft,
   type SalesLeadStatus,
 } from "./pages/SalesCloserWorkspacePage";
+import AgentAccessPage from "./pages/AgentAccessPage";
 import { SalesClosersOwnerPage } from "./pages/SalesClosersOwnerPage";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
@@ -273,7 +274,7 @@ type RetentionSubPage = "Overview" | "Pipeline" | "Customers" | "Tasks" | "Calls
 // the retention sub-nav: the sub-items live in the REAL sidebar under their
 // parent, never a second sidebar, and never ten more top-level nav entries.
 type PdaSubPage =
-  | "Overview" | "Applications & KYC" | "Active Agents" | "Portal Access" | "Orders & Dispatch"
+  | "Overview" | "Applications & KYC" | "Active Agents" | "Agent Access" | "Orders & Dispatch"
   | "Inventory" | "COD & Reconciliation" | "Incidents"
   | "Reports" | "Settings";
 
@@ -287,7 +288,7 @@ const PDA_SUBNAV_ITEMS: Array<{ key: PdaSubPage; label: string; icon: typeof Lay
   // Not ownerOnly: Admin has the same backend rights over agent logins, and
   // Manager can already suspend or terminate an agent. The page is shared and
   // each action is gated individually instead.
-  { key: "Portal Access", label: "Portal Access", icon: KeyRound },
+  { key: "Agent Access", label: "Agent Access", icon: KeyRound },
   { key: "Orders & Dispatch", label: "Orders & Dispatch", icon: PackageCheck },
   { key: "Inventory", label: "Inventory", icon: Box },
   { key: "COD & Reconciliation", label: "COD & Reconciliation", icon: Banknote },
@@ -12077,6 +12078,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pdaCandidates, setPdaCandidates] = useState<PdaCandidateView | null>(null);
   const [pdaCandidateFee, setPdaCandidateFee] = useState("");
   const [pdaActiveAgents, setPdaActiveAgents] = useState<PdaActiveAgentsView | null>(null);
+  const [pdaAgentAccess, setPdaAgentAccess] = useState<AgentAccessView | null>(null);
+  const [pdaAgentAccessLoading, setPdaAgentAccessLoading] = useState(false);
+  const [pdaAgentAccessError, setPdaAgentAccessError] = useState("");
   const [pdaActiveSearch, setPdaActiveSearch] = useState("");
   const [pdaActiveAvailability, setPdaActiveAvailability] = useState("All");
   const [pdaActiveVehicle, setPdaActiveVehicle] = useState("All");
@@ -44757,6 +44761,7 @@ ${waybillLineItems(w).length > 1
       void loadPdaAppLinks();
     }
     if (pdaSubPage === "Active Agents") void loadPdaActiveAgents();
+    if (pdaSubPage === "Agent Access") void loadPdaAgentAccess();
     if (pdaSubPage === "Inventory") void loadPdaInventory();
     if (pdaSubPage === "COD & Reconciliation") {
       void loadPdaCodOverview();
@@ -45780,6 +45785,134 @@ ${waybillLineItems(w).length > 1
   // Held in state rather than a toast: these are credentials somebody has to
   // copy somewhere, and a toast that vanishes after 4 seconds loses them.
   const [pdaNewLogin, setPdaNewLogin] = useState<{ email: string; password: string } | null>(null);
+  const loadPdaAgentAccess = async () => {
+    setPdaAgentAccessLoading(true);
+    setPdaAgentAccessError("");
+    try {
+      setPdaAgentAccess(await personalDeliveryAgentsApi.agentAccess());
+    } catch (err: any) {
+      setPdaAgentAccessError(err?.message ?? "Could not load agent access.");
+    } finally { setPdaAgentAccessLoading(false); }
+  };
+
+  // Credentials are returned exactly once and never stored, so the reveal modal
+  // is opened before anything else can go wrong. Each send channel reports its
+  // own result: "created, but WhatsApp is disconnected" must not read as a
+  // failure to create, nor as a successful hand-over.
+  const pdaAnnounceCredentials = (
+    result: { created?: boolean; loginPhone?: string; email?: string; tempPassword?: string; delivery?: Array<{ channel: string; ok: boolean; error?: string }> },
+    agentName: string,
+    verb: string
+  ) => {
+    if (result.tempPassword) {
+      setPdaNewLogin({ email: result.loginPhone || result.email || "", password: result.tempPassword });
+      setModal("pdaPortalCredentials");
+    }
+    const sent = (result.delivery ?? []).filter((row) => row.ok).map((row) => row.channel);
+    const failed = (result.delivery ?? []).filter((row) => !row.ok);
+    let message = `${verb} for ${agentName}.`;
+    if (sent.length > 0) message += ` Sent via ${sent.join(" and ")}.`;
+    if (failed.length > 0) message += ` ${failed.map((row) => `${row.channel} failed: ${row.error ?? "unknown error"}`).join(" ")}`;
+    showToast(message);
+  };
+
+  const pdaAgentAccessReset = async (agentId: string, options: PortalSendOptions) => {
+    const row = pdaAgentAccess?.rows.find((entry) => entry.id === agentId);
+    const agentName = row?.fullName ?? "this agent";
+    if (!window.confirm(`Reset ${agentName}'s portal password? Their current one stops working immediately and any open session is signed out.`)) return;
+    setPdaSaving(true);
+    try {
+      const result = await personalDeliveryAgentsApi.resetPortalPassword(agentId, options);
+      pdaAnnounceCredentials(result, agentName, "New password ready");
+      await loadPdaAgentAccess();
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not reset that password.");
+    } finally { setPdaSaving(false); }
+  };
+
+  const pdaAgentAccessCreate = async (agentId: string, options: PortalSendOptions) => {
+    const row = pdaAgentAccess?.rows.find((entry) => entry.id === agentId);
+    const agentName = row?.fullName ?? "this agent";
+    setPdaSaving(true);
+    try {
+      const result = await personalDeliveryAgentsApi.createPortalLogin(agentId, options);
+      if (result.created) pdaAnnounceCredentials(result, agentName, "Login created");
+      else showToast(result.reason ?? "Nothing to create.");
+      await Promise.all([loadPdaAgentAccess(), loadPdaActiveAgents(), loadPersonalDeliveryAgents()]);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not create that login.");
+    } finally { setPdaSaving(false); }
+  };
+
+  // Blocking the portal is NOT a status change - the agent stays exactly as
+  // they were, they simply cannot sign in. Whatever they hold is still ours,
+  // which is why the confirmation says so rather than implying it is settled.
+  const pdaAgentAccessSuspend = async (agentId: string, reason: string) => {
+    const row = pdaAgentAccess?.rows.find((entry) => entry.id === agentId);
+    const agentName = row?.fullName ?? "this agent";
+    const held = row && (row.codExposure > 0 || row.stockUnitsHeld > 0)
+      ? `\n\nThey still hold ${row.stockUnitsHeld} unit(s) and ₦${Math.round(row.codExposure).toLocaleString("en-NG")} of company cash. Blocking the portal does not settle either.`
+      : "";
+    const typed = reason.trim() || window.prompt(`Why is ${agentName}'s portal access being blocked? This goes on the record.${held}`) || "";
+    if (!typed.trim()) return;
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.suspendPortalAccess(agentId, typed.trim());
+      showToast(`${agentName} can no longer sign in.`);
+      await loadPdaAgentAccess();
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not block that login.");
+    } finally { setPdaSaving(false); }
+  };
+
+  const pdaAgentAccessRestore = async (agentId: string) => {
+    const agentName = pdaAgentAccess?.rows.find((entry) => entry.id === agentId)?.fullName ?? "this agent";
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.restorePortalAccess(agentId);
+      showToast(`${agentName} can sign in again.`);
+      await loadPdaAgentAccess();
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not restore that login.");
+    } finally { setPdaSaving(false); }
+  };
+
+  const pdaAgentAccessSignOutAll = async (agentId: string) => {
+    const agentName = pdaAgentAccess?.rows.find((entry) => entry.id === agentId)?.fullName ?? "this agent";
+    if (!window.confirm(`Sign ${agentName} out of every device? They will need their password to get back in.`)) return;
+    setPdaSaving(true);
+    try {
+      const result = await personalDeliveryAgentsApi.signOutAllDevices(agentId);
+      showToast(`${agentName} signed out of ${result.sessionsRevoked} session${result.sessionsRevoked === 1 ? "" : "s"}.`);
+      await loadPdaAgentAccess();
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not sign that agent out.");
+    } finally { setPdaSaving(false); }
+  };
+
+  const pdaAgentAccessTwoFactor = async (agentId: string, required: boolean) => {
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.setTwoFactorRequired(agentId, required);
+      showToast(required
+        ? "Two-factor is now required. The agent enrols the next time they sign in."
+        : "Two-factor is no longer required.");
+      await loadPdaAgentAccess();
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not change that setting.");
+    } finally { setPdaSaving(false); }
+  };
+
+  const pdaAgentAccessAddNote = async (agentId: string, body: string) => {
+    setPdaSaving(true);
+    try {
+      await personalDeliveryAgentsApi.addNote({ agentId, body });
+      showToast("Note saved.");
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not save that note.");
+    } finally { setPdaSaving(false); }
+  };
+
   const pdaResetPortalPassword = async (agentId: string, agentName: string) => {
     if (!window.confirm(`Reset ${agentName}'s portal password? Their current one stops working immediately.`)) return;
     setPdaSaving(true);
@@ -53378,160 +53511,40 @@ ${waybillLineItems(w).length > 1
     } finally { setPdaSaving(false); }
   };
 
-  const renderPdaPortalAccess = () => {
-    // Login creation writes an auth account, so it stays Owner/Admin - the same
-    // line the backend draws. Standing an agent down is Manager-level, since
-    // they already carry that authority over applications.
+  const renderPdaAgentAccess = () => {
+    // Creating or resetting a login writes a real auth account, so it stays
+    // Owner/Admin - the same line the backend draws. Standing an agent down is
+    // Manager-level, since they already carry that authority over applications.
     const canManageLogins = currentRole === "Owner" || currentRole === "Admin";
-    const allRows = pdaActiveAgents?.rows ?? [];
-    const rows = allRows.filter((row) => PDA_OPERATIONAL_STATUSES.includes(row.accountStatus));
-    const standDown = allRows.filter((row) => !PDA_OPERATIONAL_STATUSES.includes(row.accountStatus));
-    const withLogin = rows.filter((row) => row.hasPortalLogin);
-    const without = rows.filter((row) => !row.hasPortalLogin);
+    const canStandDown = canManageLogins || currentRole === "Manager";
     return (
-      <div className="space-y-4">
-        <div>
-          <h2 className="m-0 text-lg font-black text-gray-900">Portal Access</h2>
-          <p className="m-0 mt-0.5 text-sm text-gray-500">
-            Who can sign in to the agent app, and who is stood down. These accounts are separate from your company team - you do not need User Management for them.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {[
-            { label: "Can sign in", value: withLogin.length, tone: "text-emerald-700" },
-            { label: "No login yet", value: without.length, tone: without.length > 0 ? "text-amber-700" : "text-gray-400" },
-            { label: "Approved agents", value: rows.length, tone: "text-gray-900" }
-          ].map((card) => (
-            <div key={card.label} className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-              <p className="m-0 text-[10px] font-black uppercase tracking-wide text-gray-400">{card.label}</p>
-              <p className={`m-0 mt-0.5 text-2xl font-black ${card.tone}`}>{card.value}</p>
-            </div>
-          ))}
-        </div>
-
-        {without.length > 0 && (
-          <p className="m-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800">
-            {without.length} approved {without.length === 1 ? "agent has" : "agents have"} no login yet. They were approved before logins were created automatically - use Create login below.
-          </p>
-        )}
-
-        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
-              <thead className="border-b border-gray-100 bg-gray-50">
-                <tr className="text-[10px] font-black uppercase tracking-wide text-gray-500">
-                  <th className="px-3 py-2.5">Agent</th>
-                  <th className="px-3 py-2.5">Status</th>
-                  <th className="px-3 py-2.5">Can sign in</th>
-                  <th className="px-3 py-2.5 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {rows.length === 0 ? (
-                  <tr><td colSpan={4} className="px-3 py-10 text-center text-sm text-gray-400">No approved agents yet.</td></tr>
-                ) : rows.map((row) => (
-                  <tr key={row.id} className="hover:bg-gray-50/60">
-                    <td className="px-3 py-2.5">
-                      <p className="m-0 font-bold text-gray-900">{row.fullName}</p>
-                      <p className="m-0 text-[11px] font-medium text-gray-400">{row.agentCode} · {row.phone}</p>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-700">{row.accountStatus}</span>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      {row.hasPortalLogin ? (
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-black text-emerald-700">
-                          <CheckCircle2 className="h-3.5 w-3.5" /> Yes
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-black text-amber-700">
-                          <AlertTriangle className="h-3.5 w-3.5" /> Not yet
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <div className="flex flex-wrap items-center justify-end gap-1.5">
-                        {canManageLogins && (row.hasPortalLogin ? (
-                          <>
-                            <button type="button" disabled={pdaSaving}
-                              className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#1F8FE0] hover:bg-blue-50 disabled:opacity-50"
-                              onClick={() => void pdaResetPortalPassword(row.id, row.fullName)}>
-                              Reset password
-                            </button>
-                            <button type="button" disabled={pdaSaving}
-                              className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                              onClick={() => void pdaLinkPortalLogin(row.id, row.fullName, true)}>
-                              Revoke access
-                            </button>
-                          </>
-                        ) : (
-                          <button type="button" disabled={pdaSaving}
-                            className="!min-h-0 rounded-lg bg-[#1F8FE0] px-3 py-1.5 text-[11px] font-bold text-white hover:bg-[#1a7ec4] disabled:opacity-50"
-                            onClick={() => void pdaCreatePortalLogin(row.id, row.fullName)}>
-                            Create login
-                          </button>
-                        ))}
-                        <button type="button" disabled={pdaSaving}
-                          className="!min-h-0 rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-                          onClick={() => void pdaChangeAgentStatus(row.id, row.fullName, "Temporarily Suspended")}>
-                          Suspend
-                        </button>
-                        <button type="button" disabled={pdaSaving}
-                          className="!min-h-0 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
-                          onClick={() => void pdaChangeAgentStatus(row.id, row.fullName, "Terminated")}>
-                          Terminate
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {standDown.length > 0 && (
-          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
-            <div className="border-b border-gray-100 bg-gray-50 px-4 py-2.5">
-              <h3 className="m-0 text-xs font-black uppercase tracking-wide text-gray-500">Stood down ({standDown.length})</h3>
-              <p className="m-0 mt-0.5 text-[11px] font-medium text-gray-400">
-                Suspended, terminated or rejected. Kept on the record rather than deleted, so their delivery and cash history stays auditable.
-              </p>
-            </div>
-            <div className="divide-y divide-gray-100">
-              {standDown.map((row) => (
-                <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-                  <div className="min-w-0">
-                    <p className="m-0 truncate text-sm font-bold text-gray-700">{row.fullName}</p>
-                    <p className="m-0 text-[11px] font-medium text-gray-400">{row.agentCode} · {row.accountStatus}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <button type="button" disabled={pdaSaving}
-                      className="!min-h-0 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-                      onClick={() => void pdaChangeAgentStatus(row.id, row.fullName, "Active")}>
-                      Reactivate
-                    </button>
-                    {currentRole === "Owner" && (
-                      <button type="button" disabled={pdaSaving}
-                        title="Only possible if they never took an order, held stock or handled cash."
-                        className="!min-h-0 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-400 hover:border-rose-200 hover:text-rose-600 disabled:opacity-50"
-                        onClick={() => void pdaDeleteAgent(row.id, row.fullName)}>
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <p className="m-0 text-[11px] font-medium leading-4 text-gray-400">
-          Agents sign in at the same address you do and land on My Deliveries - they see only their own deliveries, stock and COD.
-          A password is shown once when created or reset; if it is lost, reset it here rather than looking for it.
-        </p>
-      </div>
+      <AgentAccessPage
+        view={pdaAgentAccess}
+        loading={pdaAgentAccessLoading}
+        error={pdaAgentAccessError}
+        canManageLogins={canManageLogins}
+        canStandDown={canStandDown}
+        saving={pdaSaving}
+        onRefresh={() => void loadPdaAgentAccess()}
+        onCreateLogin={pdaAgentAccessCreate}
+        onResetPassword={pdaAgentAccessReset}
+        onSuspendPortal={pdaAgentAccessSuspend}
+        onRestorePortal={pdaAgentAccessRestore}
+        onSignOutAll={pdaAgentAccessSignOutAll}
+        onSetTwoFactor={pdaAgentAccessTwoFactor}
+        onTerminate={(agentId, fullName) => pdaChangeAgentStatus(agentId, fullName, "Terminated")}
+        onAddNote={pdaAgentAccessAddNote}
+        onLoadLoginHistory={async (agentId) => (await personalDeliveryAgentsApi.agentLoginHistory(agentId)).rows}
+        onOpenAgent={(_agentId, tab) => {
+          // The drawer's tiles are a summary; the record that can be acted on
+          // lives on the module's own sub-pages, so these jump there rather
+          // than rebuilding four more tables inside a panel. Those pages have
+          // no per-agent selection to pre-set, so they open unfiltered.
+          setPdaSubPage(tab === "cod" ? "COD & Reconciliation" : tab === "inventory" ? "Inventory"
+            : tab === "incidents" ? "Incidents" : "Orders & Dispatch");
+        }}
+        onAddNewAgent={() => setModal("addPersonalDeliveryAgent")}
+      />
     );
   };
 
@@ -59599,8 +59612,8 @@ ${waybillLineItems(w).length > 1
             {renderPdaNewLoginNotice()}
             {renderPdaActiveAgents()}
           </>
-        ) : pdaSubPage === "Portal Access" ? (
-          renderPdaPortalAccess()
+        ) : pdaSubPage === "Agent Access" ? (
+          renderPdaAgentAccess()
         ) : pdaSubPage === "Orders & Dispatch" ? (
           renderPdaDispatchBoard()
         ) : pdaSubPage === "Incidents" ? (

@@ -1331,3 +1331,49 @@ export async function sendTestEmail(
     return { ok: false, error: err?.message ?? "Unknown error" };
   }
 }
+
+/**
+ * Email a copy of a delivery agent's portal sign-in details to a member of
+ * management ("Also send login details to my email" on Agent Access).
+ *
+ * Bypasses the template system on purpose: the subject and body are fixed
+ * operational text, not something an org configures, and it must not be
+ * silenced by a trigger toggle meant for customer mail. It is logged under
+ * `internal_new_team_member` because that is what it is - a new account
+ * handed to someone - so it still shows up in the email log like any other
+ * internal send.
+ */
+export async function sendAgentCredentialsEmail(
+  orgId: string,
+  to: { email: string; name?: string },
+  agent: { fullName: string; agentCode: string; loginPhone: string; tempPassword: string }
+): Promise<{ ok: boolean; error?: string }> {
+  const settings = await loadSettings(orgId);
+  if (!settings) return { ok: false, error: "Email is not configured." };
+  if (!hasValidKeys(settings)) return { ok: false, error: "Add an email provider API key first." };
+  if (!settings.from_email) return { ok: false, error: "Set a from address first." };
+  if (!to.email) return { ok: false, error: "No address to send to." };
+
+  const subject = `Portal access for ${agent.fullName} (${agent.agentCode})`;
+  const body = [
+    `Portal sign-in details for ${agent.fullName} (${agent.agentCode}).`,
+    "",
+    `Login: ${agent.loginPhone}`,
+    `Temporary password: ${agent.tempPassword}`,
+    "",
+    "The agent is asked to set their own password the first time they sign in.",
+    "This password is not stored anywhere and cannot be looked up again - if it",
+    "is lost, issue a reset from Agent Access."
+  ].join("\n");
+
+  try {
+    await deliverAndLogEmail(
+      orgId, settings, "internal_new_team_member", "staff",
+      { agent_name: agent.fullName, agent_code: agent.agentCode },
+      to, subject, body
+    );
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? "Could not send the email." };
+  }
+}

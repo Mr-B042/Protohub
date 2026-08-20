@@ -2284,3 +2284,32 @@ export async function processQueuedSms(limit = 150) {
     }
   }
 }
+
+/**
+ * Send a delivery agent their portal sign-in details.
+ *
+ * Deliberately bypasses the trigger/template system the customer-facing sends
+ * go through. This is a one-off operational message to a member of staff, not
+ * a marketing or status trigger: it has no template to configure, must not be
+ * silenced by a trigger toggle being off, and must not be dropped by the
+ * customer compliance rules. It DOES still respect the account being
+ * configured at all, because there is no way to send without an API key.
+ */
+export async function sendAgentCredentialsSms(
+  orgId: string,
+  phone: string,
+  body: string
+): Promise<{ ok: boolean; error?: string }> {
+  const settings = await loadSettings(orgId);
+  if (!settings) return { ok: false, error: "SMS settings are not configured." };
+  if (!hasValidSettings(settings)) return { ok: false, error: "Add your Multitexter API key first." };
+  const normalized = normalizePhoneForSms(phone);
+  if (!normalized) return { ok: false, error: `${phone} is not a phone number SMS can reach.` };
+  try {
+    await sendViaMultitexter(settings, normalized, body);
+    return { ok: true };
+  } catch (err: unknown) {
+    const normalizedError = normalizeSmsError(err);
+    return { ok: false, error: normalizedError.message };
+  }
+}

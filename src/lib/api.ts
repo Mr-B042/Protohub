@@ -1115,6 +1115,62 @@ export type PdaApplicationLink = {
   createdByName?: string | null; createdAt: string; revokedAt?: string | null;
 };
 
+
+// ── Agent Access ──────────────────────────────────────────
+// Portal state is its own axis, deliberately separate from accountStatus: an
+// agent can be on Probation and signing in fine, or Active with a blocked
+// login while a cash problem is sorted out.
+export type PortalAccessState = "Active" | "Setup Required" | "Blocked";
+
+export type AgentAccessRow = {
+  id: string; agentCode: string; fullName: string; phone: string;
+  contactEmail: string | null;
+  city: string; state: string; location: string; fullLocation: string;
+  accountStatus: string; trustLevel: string | null;
+  portalAccess: PortalAccessState;
+  /** What the agent actually types to sign in (phone, or a legacy email). */
+  loginId: string | null;
+  /** The number a new login would be created under. */
+  loginPhone: string | null;
+  hasLogin: boolean; userId: string | null;
+  accountCreatedAt: string | null;
+  /** Last successful sign-in. Null means the account has never been used. */
+  lastLoginAt: string | null;
+  mustChangePassword: boolean;
+  twoFactorRequired: boolean;
+  recentFailedAttempts: number;
+  /** Plain-English reasons this account needs a look. Empty when it does not. */
+  securityReasons: string[];
+  activeOrders: number; stockUnitsHeld: number; codExposure: number; openIncidents: number;
+  /** What is still outstanding against them, shown before standing them down. */
+  blockers: string[];
+};
+
+export type AgentAccessView = {
+  rows: AgentAccessRow[];
+  counts: { activeAccounts: number; setupRequired: number; suspended: number; securityAttention: number };
+};
+
+export type AgentLoginEvent = {
+  id: string; at: string; success: boolean; ip: string | null; device: string | null;
+};
+
+/** Per-channel outcome. "Created but WhatsApp failed" is not "not created". */
+export type CredentialDelivery = { channel: string; ok: boolean; error?: string };
+
+export type PortalCredentialResult = {
+  created: boolean; email?: string; loginPhone?: string; tempPassword?: string; reason?: string;
+  delivery?: CredentialDelivery[];
+};
+
+export type PortalSendOptions = {
+  tempPassword?: string;
+  requirePasswordChange?: boolean;
+  sendWhatsApp?: boolean;
+  sendSms?: boolean;
+  copyToMyEmail?: boolean;
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),
@@ -1124,6 +1180,17 @@ export const personalDeliveryAgentsApi = {
   revokeApplicationLink: (id: string) =>
     post<{ ok: boolean }>(`/api/personal-delivery-agents/application-links/${id}/revoke`, {}),
   activeAgents: () => get<PdaActiveAgentsView>("/api/personal-delivery-agents/active-agents"),
+  agentAccess: () => get<AgentAccessView>("/api/personal-delivery-agents/agent-access"),
+  agentLoginHistory: (id: string) =>
+    get<{ rows: AgentLoginEvent[] }>(`/api/personal-delivery-agents/${id}/login-history`),
+  suspendPortalAccess: (id: string, reason: string) =>
+    post<{ ok: boolean; portalAccess: PortalAccessState }>(`/api/personal-delivery-agents/${id}/portal/suspend`, { reason }),
+  restorePortalAccess: (id: string) =>
+    post<{ ok: boolean; portalAccess: PortalAccessState }>(`/api/personal-delivery-agents/${id}/portal/restore`, {}),
+  signOutAllDevices: (id: string) =>
+    post<{ ok: boolean; sessionsRevoked: number }>(`/api/personal-delivery-agents/${id}/portal/sign-out-all`, {}),
+  setTwoFactorRequired: (id: string, required: boolean) =>
+    post<{ ok: boolean; twoFactorRequired: boolean }>(`/api/personal-delivery-agents/${id}/portal/two-factor`, { required }),
   linkPortalLogin: (id: string, userId: string | null) =>
     post<{ ok: boolean; linkedTo?: string; unlinked?: boolean }>(`/api/personal-delivery-agents/${id}/link-login`, { userId: userId ?? "" }),
   inventoryOverview: () => get<PdaInventoryOverview>("/api/personal-delivery-agents/inventory-overview"),
@@ -1164,12 +1231,12 @@ export const personalDeliveryAgentsApi = {
     patch<{ row: PdaDocument }>(`/api/personal-delivery-agents/documents/${documentId}`, body),
   approve: (id: string) =>
     post<{ row: PersonalDeliveryAgentRow; login?: PdaLoginResult }>(`/api/personal-delivery-agents/${id}/approve`, {}),
-  createPortalLogin: (id: string) =>
-    post<PdaLoginResult>(`/api/personal-delivery-agents/${id}/create-login`, {}),
+  createPortalLogin: (id: string, body: PortalSendOptions = {}) =>
+    post<PortalCredentialResult>(`/api/personal-delivery-agents/${id}/create-login`, body),
   deleteAgent: (id: string) =>
     del<{ ok: boolean; deleted: string }>(`/api/personal-delivery-agents/${id}`),
-  resetPortalPassword: (id: string) =>
-    post<PdaLoginResult>(`/api/personal-delivery-agents/${id}/reset-login-password`, {}),
+  resetPortalPassword: (id: string, body: PortalSendOptions = {}) =>
+    post<PortalCredentialResult>(`/api/personal-delivery-agents/${id}/reset-login-password`, body),
   applicantStatusLink: (id: string, body: { origin: string; send?: "whatsapp" }) =>
     post<{ token: string; url: string; phone: string | null; sent: { ok: boolean; error?: string } | null }>(
       `/api/personal-delivery-agents/${id}/status-link`, body),

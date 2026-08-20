@@ -18,6 +18,16 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { randomUUID } from "node:crypto";
 import { approvalBlockers } from "../lib/pda-approval.js";
 import { sendCustomWhatsApp } from "../lib/whatsapp.js";
+import { sendAgentCredentialsSms } from "../lib/sms.js";
+import { sendAgentCredentialsEmail } from "../lib/mailer.js";
+import {
+  accountabilityBlockers,
+  isPortalLoginEmail,
+  normalizeLoginPhone,
+  portalAccessState,
+  portalLoginEmail,
+  securityAttentionReasons
+} from "../lib/pda-agent-access.js";
 import {
   dispatchBlockers, deliveryProofBlockers, rescheduleKeepsStockReserved,
   failureReasonBlockers, CUSTOMER_READY
@@ -2047,6 +2057,349 @@ router.post("/:id/link-login", requireRole("Owner", "Admin"), async (req, res) =
 
 // ── GET /api/personal-delivery-agents/:id ─────────────────
 // Management only: this returns KYC documents, guarantors and bank details.
+
+// ══ Agent Access ══════════════════════════════════════════
+//
+// Who can sign in to the agent portal, and what they are still holding.
+//
+// ⚠️ This endpoint deliberately loads agents at EVERY status, unlike
+// /active-agents which returns only Approved/Probation/Active. The whole point
+// of the screen is that portal access and agent status are separate axes: a
+// Suspended agent with a blocked login and ₦35,500 of our cash is precisely
+// the row someone needs to see, and the operational endpoint cannot show it.
+
+const AGENT_ACCESS_FAILED_WINDOW_DAYS = 14;
+
+async function buildAgentAccessRows(orgId: string) {
+  const since = new Date(Date.now() - AGENT_ACCESS_FAILED_WINDOW_DAYS * 86_400_000).toISOString();
+
+  const [agentsRes, assignmentsRes, stockRes, incidentsRes] = await Promise.all([
+    supabase.from(AGENTS)
+      .select("id, agent_code, full_name, phone, email, city, state, account_status, user_id, approved_at, created_at, trust_level, availability")
+      .eq("org_id", orgId).order("created_at", { ascending: true }).limit(REPORT_ROW_CEILING),
+    supabase.from(ASSIGNMENTS)
+      .select("agent_id, delivery_status, amount_collected, amount_remitted")
+      .eq("org_id", orgId).limit(REPORT_ROW_CEILING),
+    supabase.from(STOCK)
+      .select("agent_id, available, reserved, out_for_delivery, damaged, missing, awaiting_investigation")
+      .eq("org_id", orgId).limit(REPORT_ROW_CEILING),
+    supabase.from(INCIDENTS)
+      .select("agent_id, status").eq("org_id", orgId).limit(REPORT_ROW_CEILING)
+  ]);
+
+  const agents = agentsRes.data ?? [];
+  const linkedIds = agents.map((a: any) => a.user_id).filter(Boolean) as string[];
+
+  // Logins, and every sign-in attempt that resolved to one of them.
+  const [usersRes, auditRes] = await Promise.all([
+    linkedIds.length > 0
+      ? supabase.from("users")
+        .select("id, email, phone, name, active, created_at, two_factor_required, must_change_password")
+        .eq("org_id", orgId).in("id", linkedIds)
+      : Promise.resolve({ data: [] as any[] }),
+    linkedIds.length > 0
+      ? supabase.from("login_audit")
+        .select("user_id, success, created_at")
+        .in("user_id", linkedIds).gte("created_at", since)
+        .order("created_at", { ascending: false }).limit(REPORT_ROW_CEILING)
+      : Promise.resolve({ data: [] as any[] })
+  ]);
+
+  const userById = new Map((usersRes.data ?? []).map((u: any) => [u.id, u]));
+  const audit = (auditRes.data ?? []) as any[];
+
+  // Last successful sign-in is read from our own audit trail rather than from
+  // auth.users, so the column and the Login History tab can never disagree.
+  const lastLoginByUser = new Map<string, string>();
+  const failedByUser = new Map<string, number>();
+  audit.forEach((row) => {
+    const uid = String(row.user_id);
+    if (row.success) {
+      if (!lastLoginByUser.has(uid)) lastLoginByUser.set(uid, row.created_at);
+    } else {
+      failedByUser.set(uid, (failedByUser.get(uid) ?? 0) + 1);
+    }
+  });
+
+  const assignments = (assignmentsRes.data ?? []) as any[];
+  const stock = (stockRes.data ?? []) as any[];
+  const incidents = (incidentsRes.data ?? []) as any[];
+  const ACTIVE_DELIVERY = ["Ready for Dispatch", "Dispatch Started", "Arrived at Customer Location", "Rescheduled"];
+
+  return agents.map((agent: any) => {
+    const user = agent.user_id ? userById.get(agent.user_id) : null;
+    const state = portalAccessState({ userId: agent.user_id, userActive: user?.active });
+
+    const mine = assignments.filter((r) => r.agent_id === agent.id);
+    const activeOrders = mine.filter((r) => ACTIVE_DELIVERY.includes(String(r.delivery_status))).length;
+    const codExposure = mine.reduce((sum, r) => sum + outstandingForAssignment({
+      deliveryStatus: r.delivery_status,
+      amountCollected: r.amount_collected,
+      amountRemitted: r.amount_remitted
+    } as any), 0);
+
+    // Every bucket counts as held: a damaged or missing unit is still ours and
+    // still unaccounted for, which is exactly what matters when standing
+    // someone down.
+    const stockUnitsHeld = stock.filter((r) => r.agent_id === agent.id).reduce((sum, r) =>
+      sum + Number(r.available ?? 0) + Number(r.reserved ?? 0) + Number(r.out_for_delivery ?? 0)
+      + Number(r.damaged ?? 0) + Number(r.missing ?? 0) + Number(r.awaiting_investigation ?? 0), 0);
+
+    const openIncidents = incidents.filter((r) =>
+      r.agent_id === agent.id && !["Resolved", "Closed"].includes(String(r.status))).length;
+
+    const lastLoginAt = user ? lastLoginByUser.get(user.id) ?? null : null;
+    const securityReasons = securityAttentionReasons({
+      portalState: state,
+      lastLoginAt,
+      accountCreatedAt: user?.created_at ?? null,
+      recentFailedAttempts: user ? failedByUser.get(user.id) ?? 0 : 0,
+      twoFactorRequired: Boolean(user?.two_factor_required),
+      // Enrolment lives in auth.mfa_factors, which PostgREST cannot reach.
+      // Requiring 2FA is the half this screen controls; enrolment is reported
+      // by the portal itself once the agent completes it.
+      twoFactorEnrolled: false
+    });
+
+    return {
+      id: agent.id,
+      agentCode: agent.agent_code,
+      fullName: agent.full_name,
+      phone: agent.phone ?? "",
+      contactEmail: isPortalLoginEmail(agent.email) ? null : (agent.email ?? null),
+      city: agent.city ?? "",
+      state: agent.state ?? "",
+      location: agent.city || agent.state || "",
+      fullLocation: [agent.city, agent.state].filter(Boolean).join(", "),
+      accountStatus: agent.account_status,
+      trustLevel: agent.trust_level ?? null,
+      portalAccess: state,
+      // What the agent actually types to sign in. For a phone-based login that
+      // is the number; for an older email-based one it is still the email, and
+      // showing the phone there would be a lie on a screen whose whole job is
+      // to say how someone gets in.
+      loginId: user
+        ? (isPortalLoginEmail(user.email) ? (user.phone ?? normalizeLoginPhone(agent.phone) ?? "") : String(user.email ?? ""))
+        : null,
+      /** The number a NEW login would be created under. */
+      loginPhone: user?.phone ?? normalizeLoginPhone(agent.phone),
+      hasLogin: Boolean(agent.user_id),
+      userId: agent.user_id ?? null,
+      accountCreatedAt: user?.created_at ?? null,
+      lastLoginAt,
+      mustChangePassword: Boolean(user?.must_change_password),
+      twoFactorRequired: Boolean(user?.two_factor_required),
+      recentFailedAttempts: user ? failedByUser.get(user.id) ?? 0 : 0,
+      securityReasons,
+      activeOrders,
+      stockUnitsHeld,
+      codExposure,
+      openIncidents,
+      blockers: accountabilityBlockers({
+        outstandingCod: codExposure, stockUnitsHeld, openIncidents, activeOrders
+      })
+    };
+  });
+}
+
+router.get("/agent-access", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const rows = await buildAgentAccessRows(orgIdOf(req));
+    res.json({
+      rows,
+      counts: {
+        activeAccounts: rows.filter((r) => r.portalAccess === "Active").length,
+        // Only APPROVED agents are counted as needing setup. An applicant who
+        // has not passed KYC is not "missing a login" - they are not yet
+        // entitled to one, and counting them turns the card into a permanent
+        // false backlog.
+        setupRequired: rows.filter((r) =>
+          r.portalAccess === "Setup Required" && OPERATIONAL_STATUSES.includes(String(r.accountStatus))).length,
+        suspended: rows.filter((r) => r.portalAccess === "Blocked").length,
+        securityAttention: rows.filter((r) => r.securityReasons.length > 0).length
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load agent access." });
+  }
+});
+
+// Sign-in attempts for one agent, newest first - the Login History tab.
+router.get("/:id/login-history", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, full_name, user_id, phone").eq("org_id", orgId).eq("id", paramOf(req.params.id)).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+    if (!agent.user_id) { res.json({ rows: [] }); return; }
+
+    // Match on the account id, and also on the address for anything recorded
+    // before attempts started carrying a user id.
+    const email = portalLoginEmail(agent.phone);
+    const { data } = await supabase.from("login_audit")
+      .select("id, success, ip, user_agent, created_at, email")
+      .or(email ? `user_id.eq.${agent.user_id},email.eq.${email}` : `user_id.eq.${agent.user_id}`)
+      .order("created_at", { ascending: false }).limit(100);
+
+    res.json({
+      rows: (data ?? []).map((row: any) => ({
+        id: row.id,
+        at: row.created_at,
+        success: Boolean(row.success),
+        ip: row.ip ?? null,
+        device: row.user_agent ?? null
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load login history." });
+  }
+});
+
+// ── Handing over credentials ──────────────────────────────
+//
+// A temporary password is shown once and never stored, so getting it to the
+// agent is part of the same action. Every channel reports its own outcome
+// rather than one combined ok/failed: "created but WhatsApp is disconnected"
+// is a completely different situation from "not created", and collapsing them
+// is how someone walks away thinking an agent has their details.
+async function deliverCredentials(
+  orgId: string,
+  agent: { full_name: string; agent_code: string; phone?: string | null; whatsapp_phone?: string | null },
+  credentials: { loginPhone: string; tempPassword: string },
+  channels: { whatsapp?: boolean; sms?: boolean; email?: string | null }
+): Promise<Array<{ channel: string; ok: boolean; error?: string }>> {
+  const results: Array<{ channel: string; ok: boolean; error?: string }> = [];
+  const body = [
+    `Hello ${agent.full_name}, your Protohub delivery portal access is ready.`,
+    ``,
+    `Login: ${credentials.loginPhone}`,
+    `Password: ${credentials.tempPassword}`,
+    ``,
+    `You will be asked to set your own password the first time you sign in. Do not share these details with anyone.`
+  ].join("\n");
+
+  if (channels.whatsapp) {
+    const target = agent.whatsapp_phone || agent.phone || "";
+    const result = target
+      ? await sendCustomWhatsApp(orgId, target, body, { recipientName: agent.full_name })
+        .catch((err: any) => ({ ok: false, error: err?.message ?? "WhatsApp send failed." }))
+      : { ok: false, error: "No WhatsApp number on this agent." };
+    results.push({ channel: "WhatsApp", ok: Boolean(result.ok), error: result.ok ? undefined : (result as any).error });
+  }
+  if (channels.sms) {
+    const target = agent.phone || "";
+    const result = target
+      ? await sendAgentCredentialsSms(orgId, target, body)
+        .catch((err: any) => ({ ok: false, error: err?.message ?? "SMS send failed." }))
+      : { ok: false, error: "No phone number on this agent." };
+    results.push({ channel: "SMS", ok: Boolean(result.ok), error: result.ok ? undefined : result.error });
+  }
+  if (channels.email) {
+    const result = await sendAgentCredentialsEmail(orgId, { email: channels.email }, {
+      fullName: agent.full_name, agentCode: agent.agent_code,
+      loginPhone: credentials.loginPhone, tempPassword: credentials.tempPassword
+    }).catch((err: any) => ({ ok: false, error: err?.message ?? "Email send failed." }));
+    results.push({ channel: "Email", ok: Boolean(result.ok), error: result.ok ? undefined : result.error });
+  }
+  return results;
+}
+
+// The signed-in manager's own address, for "also send a copy to me".
+async function actorEmail(req: any): Promise<string | null> {
+  const { data } = await supabase.from("users").select("email").eq("id", req.user?.id).maybeSingle();
+  const email = String(data?.email ?? "").trim();
+  return email && !isPortalLoginEmail(email) ? email : null;
+}
+
+const PortalSendSchema = z.object({
+  tempPassword: z.string().trim().min(8).max(72).optional(),
+  requirePasswordChange: z.boolean().optional(),
+  sendWhatsApp: z.boolean().optional(),
+  sendSms: z.boolean().optional(),
+  copyToMyEmail: z.boolean().optional()
+});
+
+// Block an agent from signing in WITHOUT touching their agent status. The two
+// are separate on purpose: an Active agent can be locked out while a cash
+// problem is investigated, and blocking the portal settles nothing - whatever
+// they hold is still outstanding, which is why the blockers come back with it.
+router.post("/:id/portal/suspend", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const reason = String(req.body?.reason ?? "").trim();
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, full_name, user_id").eq("org_id", orgId).eq("id", paramOf(req.params.id)).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+    if (!agent.user_id) { res.status(409).json({ error: `${agent.full_name} has no portal login to block.` }); return; }
+
+    const { error } = await supabase.from("users").update({ active: false }).eq("org_id", orgId).eq("id", agent.user_id);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    // Deactivating only refuses the NEXT sign-in; an open session would keep
+    // working until its token expired. Revoke them so "blocked" means blocked.
+    await supabase.rpc("revoke_user_sessions", { target_user_id: agent.user_id });
+    await supabase.from(NOTES).insert({
+      org_id: orgId, agent_id: agent.id, author_id: req.user!.id,
+      body: `Portal access blocked.${reason ? ` Reason: ${reason}` : ""}`
+    }).then(() => undefined, () => undefined);
+    res.json({ ok: true, portalAccess: "Blocked" });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not block that login." });
+  }
+});
+
+router.post("/:id/portal/restore", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, full_name, user_id").eq("org_id", orgId).eq("id", paramOf(req.params.id)).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+    if (!agent.user_id) { res.status(409).json({ error: `${agent.full_name} has no portal login yet.` }); return; }
+    const { error } = await supabase.from("users").update({ active: true }).eq("org_id", orgId).eq("id", agent.user_id);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    await supabase.from(NOTES).insert({
+      org_id: orgId, agent_id: agent.id, author_id: req.user!.id, body: "Portal access restored."
+    }).then(() => undefined, () => undefined);
+    res.json({ ok: true, portalAccess: "Active" });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not restore that login." });
+  }
+});
+
+router.post("/:id/portal/sign-out-all", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, full_name, user_id").eq("org_id", orgId).eq("id", paramOf(req.params.id)).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+    if (!agent.user_id) { res.status(409).json({ error: `${agent.full_name} has no portal login yet.` }); return; }
+    const { data, error } = await supabase.rpc("revoke_user_sessions", { target_user_id: agent.user_id });
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true, sessionsRevoked: Number(data ?? 0) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not sign that agent out." });
+  }
+});
+
+// Requiring 2FA is management's half; enrolling is the agent's. Recording the
+// requirement separately means the screen can show "required but not enrolled"
+// rather than pretending a toggle here is protection already in place.
+router.post("/:id/portal/two-factor", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const orgId = orgIdOf(req);
+    const required = Boolean(req.body?.required);
+    const { data: agent } = await supabase.from(AGENTS)
+      .select("id, full_name, user_id").eq("org_id", orgId).eq("id", paramOf(req.params.id)).maybeSingle();
+    if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
+    if (!agent.user_id) { res.status(409).json({ error: `${agent.full_name} has no portal login yet.` }); return; }
+    const { error } = await supabase.from("users")
+      .update({ two_factor_required: required }).eq("org_id", orgId).eq("id", agent.user_id);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true, twoFactorRequired: required });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not change that setting." });
+  }
+});
+
 router.get("/:id", requireRole(...MANAGEMENT_ROLES), async (req, res) => {
   try {
     const orgId = req.user!.orgId;
@@ -2385,38 +2738,56 @@ router.patch("/documents/:documentId", requireRole(...MANAGEMENT_ROLES), async (
 // Returns the temporary password ONCE, in the approval response, and never
 // stores or re-shows it. Nothing is emailed: agents here are onboarded over
 // WhatsApp, so the Owner copies the credentials across herself.
+function generateTempPassword() {
+  // Readable but not guessable - it is read aloud or pasted into WhatsApp.
+  return `Pda-${Math.random().toString(36).slice(2, 8)}${Math.floor(10 + Math.random() * 89)}`;
+}
+
+// ⚠️ An agent's username is their PHONE NUMBER, not an email.
+//
+// Agents are outside individuals, not staff: many have no email at all, and
+// the addresses that do exist on applications are unreliable. The phone is
+// mapped onto a stable non-routable address (see pda-agent-access.ts) because
+// Supabase auth is email-based. Nothing is ever sent there - passwords are set
+// here and shown once - so the address is an internal key, never a contact
+// route. The agent's REAL email stays on the agent record for correspondence.
 async function createPortalLoginForAgent(
   orgId: string,
   agent: { id: string; full_name: string; email?: string | null; phone?: string | null },
-  actorId: string
-): Promise<{ created: boolean; email?: string; tempPassword?: string; reason?: string }> {
-  const email = String(agent.email ?? "").trim().toLowerCase();
-  if (!email) {
-    return { created: false, reason: "No email on the application, so there is nothing to sign in with. Add one, then create the login from the agent's page." };
+  actorId: string,
+  options: { tempPassword?: string; requirePasswordChange?: boolean } = {}
+): Promise<{ created: boolean; email?: string; loginPhone?: string; tempPassword?: string; reason?: string }> {
+  const loginPhone = normalizeLoginPhone(agent.phone);
+  const email = portalLoginEmail(agent.phone);
+  if (!loginPhone || !email) {
+    return {
+      created: false,
+      reason: `"${agent.phone ?? ""}" is not a phone number an agent can sign in with. Correct it on their profile, then create the login.`
+    };
   }
-  // Reuse an existing login for this email rather than colliding with it.
+  // Reuse an existing login for this number rather than colliding with it.
   const { data: existing } = await supabase.from("users")
     .select("id, role").eq("org_id", orgId).eq("email", email).maybeSingle();
   if (existing) {
     await supabase.from(AGENTS).update({ user_id: existing.id, updated_at: new Date().toISOString() }).eq("id", agent.id);
-    return { created: false, email, reason: "That email already has a login here, so it was linked instead of creating a second one." };
+    return { created: false, email, loginPhone, reason: "That phone number already has a login here, so it was linked instead of creating a second one." };
   }
 
-  // Readable but not guessable - it is read aloud or pasted into WhatsApp.
-  const tempPassword = `Pda-${Math.random().toString(36).slice(2, 8)}${Math.floor(10 + Math.random() * 89)}`;
+  const tempPassword = options.tempPassword?.trim() || generateTempPassword();
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email, password: tempPassword, email_confirm: true
   });
   if (authError || !authData.user) {
-    return { created: false, email, reason: authError?.message ?? "Could not create the login." };
+    return { created: false, email, loginPhone, reason: authError?.message ?? "Could not create the login." };
   }
   const { error: profileError } = await supabase.from("users").insert({
     id: authData.user.id,
     org_id: orgId,
     name: agent.full_name,
     email,
-    phone: agent.phone ?? null,
-    role: "Delivery Agent"
+    phone: loginPhone,
+    role: "Delivery Agent",
+    must_change_password: options.requirePasswordChange !== false
   });
   if (profileError) {
     // Roll the auth user back so the email is free to retry with.
@@ -2426,7 +2797,7 @@ async function createPortalLoginForAgent(
   await supabase.from(AGENTS)
     .update({ user_id: authData.user.id, updated_at: new Date().toISOString() })
     .eq("id", agent.id);
-  return { created: true, email, tempPassword };
+  return { created: true, email, loginPhone, tempPassword };
 }
 
 // Permanently delete an applicant who never became an operating agent.
@@ -2499,16 +2870,35 @@ router.post("/:id/reset-login-password", requireRole("Owner", "Admin"), async (r
   try {
     const orgId = orgIdOf(req);
     const { data: agent } = await supabase.from(AGENTS)
-      .select("id, full_name, user_id").eq("org_id", orgId).eq("id", paramOf(req.params.id)).maybeSingle();
+      .select("id, agent_code, full_name, phone, whatsapp_phone, user_id")
+      .eq("org_id", orgId).eq("id", paramOf(req.params.id)).maybeSingle();
     if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
     if (!agent.user_id) { res.status(409).json({ error: `${agent.full_name} has no portal login yet.` }); return; }
     const { data: user } = await supabase.from("users")
-      .select("id, email").eq("org_id", orgId).eq("id", agent.user_id).maybeSingle();
+      .select("id, email, phone").eq("org_id", orgId).eq("id", agent.user_id).maybeSingle();
     if (!user) { res.status(404).json({ error: "That login no longer exists." }); return; }
-    const tempPassword = `Pda-${Math.random().toString(36).slice(2, 8)}${Math.floor(10 + Math.random() * 89)}`;
+    const parsed = PortalSendSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const opts = parsed.data;
+    const tempPassword = opts.tempPassword?.trim() || generateTempPassword();
     const { error } = await supabase.auth.admin.updateUserById(agent.user_id, { password: tempPassword });
     if (error) { res.status(500).json({ error: error.message }); return; }
-    res.json({ created: true, email: user.email, tempPassword });
+    // A reset hands out a password management chose, so the agent is asked to
+    // replace it - the same rule as a brand new account.
+    await supabase.from("users")
+      .update({ must_change_password: opts.requirePasswordChange !== false })
+      .eq("org_id", orgId).eq("id", agent.user_id);
+    // Anyone still holding a session was authenticated with the OLD password.
+    // Leaving those alive would make a reset-after-compromise pointless.
+    await supabase.rpc("revoke_user_sessions", { target_user_id: agent.user_id });
+
+    const loginPhone = user.phone || normalizeLoginPhone(agent.phone) || "";
+    const delivery = await deliverCredentials(orgId, agent as any, { loginPhone, tempPassword }, {
+      whatsapp: opts.sendWhatsApp,
+      sms: opts.sendSms,
+      email: opts.copyToMyEmail ? await actorEmail(req) : null
+    });
+    res.json({ created: true, email: user.email, loginPhone, tempPassword, delivery });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not reset that password." });
   }
@@ -2519,8 +2909,11 @@ router.post("/:id/reset-login-password", requireRole("Owner", "Admin"), async (r
 router.post("/:id/create-login", requireRole("Owner", "Admin"), async (req, res) => {
   try {
     const orgId = orgIdOf(req);
+    const parsed = PortalSendSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const opts = parsed.data;
     const { data: agent } = await supabase.from(AGENTS)
-      .select("id, full_name, email, phone, account_status, user_id")
+      .select("id, agent_code, full_name, email, phone, whatsapp_phone, account_status, user_id")
       .eq("org_id", orgId).eq("id", paramOf(req.params.id)).maybeSingle();
     if (!agent) { res.status(404).json({ error: "Agent not found." }); return; }
     if (agent.user_id) { res.status(409).json({ error: `${agent.full_name} already has portal access.` }); return; }
@@ -2528,9 +2921,22 @@ router.post("/:id/create-login", requireRole("Owner", "Admin"), async (req, res)
       res.status(409).json({ error: `${agent.full_name} is ${agent.account_status}. Approve the application first.` });
       return;
     }
-    const result = await createPortalLoginForAgent(orgId, agent as any, req.user!.id);
+    const result = await createPortalLoginForAgent(orgId, agent as any, req.user!.id, {
+      tempPassword: opts.tempPassword,
+      requirePasswordChange: opts.requirePasswordChange
+    });
     if (!result.created && !result.email) { res.status(409).json({ error: result.reason }); return; }
-    res.json(result);
+
+    const delivery = result.created && result.tempPassword && result.loginPhone
+      ? await deliverCredentials(orgId, agent as any,
+        { loginPhone: result.loginPhone, tempPassword: result.tempPassword },
+        {
+          whatsapp: opts.sendWhatsApp,
+          sms: opts.sendSms,
+          email: opts.copyToMyEmail ? await actorEmail(req) : null
+        })
+      : [];
+    res.json({ ...result, delivery });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not create the login." });
   }
