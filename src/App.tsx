@@ -3190,7 +3190,16 @@ const agentLocationInventory = (
   agent: Pick<DeliveryAgentRecord, "locations" | "primaryBaseState" | "zone" | "address"> | undefined | null,
   products: Product[]
 ) =>
-  agentLocationRows(agent).map((location) => {
+  // A hub that has been removed must not appear in a stock view. Deactivating
+  // one used to leave it on screen forever as "0 units / No stock", so the page
+  // kept showing hubs the agent no longer has - Lagos Agent 2 an Ogun Hub,
+  // Lagos agent 3 an Edo Hub - with no way to make them go away.
+  //
+  // Filtered HERE rather than inside agentLocationRows on purpose: that
+  // accessor has ~20 callers, and several of them - the hub editor, the map,
+  // the coverage checks - need inactive hubs in order to manage or reactivate
+  // them. Only the stock DISPLAYS should hide them.
+  agentLocationRows(agent).filter((location) => location.active !== false).map((location) => {
     const items = location.stock
       .filter((row) => Number(row.quantity ?? 0) > 0 || Number(row.defective ?? 0) > 0 || Number(row.missing ?? 0) > 0)
       .map((row) => {
