@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cartsApi, embedSettingsApi, productsApi, publicOrdersApi } from "../lib/api";
 import { browserSupabaseClient } from "../lib/realtime";
+import { makeCartId } from "../lib/cart-id";
 import type { ProductCurrencyCode } from "../types";
 
 type PublicPricing = {
@@ -416,7 +417,7 @@ function writeQueuedPublicOrders(value: QueuedPublicOrderSubmission[]) {
   }
 }
 
-const makeCartId = () => `CART-${Math.floor(100000 + Math.random() * 900000)}`;
+// Cart ids live in src/lib/cart-id.ts - the old 6-digit generator collided.
 
 function activeProductPackages(product: PublicProduct) {
   return [...(product.packages ?? [])]

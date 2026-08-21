@@ -126,6 +126,7 @@ import {
 } from "./components/ManagerProductChallenges";
 import { auth } from "./lib/auth";
 import { snakeToCamel } from "./lib/normalize";
+import { makeCartId } from "./lib/cart-id";
 import { realtimeClient } from "./lib/realtime";
 import {
   subscribeToPush,
@@ -5657,7 +5658,7 @@ const parseExpenseDateKey = (value: string) => {
   return normalizeDateKey(value);
 };
 
-const makeCartId = () => `CART-${Math.floor(100000 + Math.random() * 900000)}`;
+// Cart ids live in src/lib/cart-id.ts - the old 6-digit generator collided.
 const makeAgentId = () => `agent-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 const makeExpenseId = () => `EXP-${Math.floor(100000 + Math.random() * 900000)}`;
 const makePayrollRunId = () => `PAY-${Math.floor(100000 + Math.random() * 900000)}`;
