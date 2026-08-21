@@ -1171,6 +1171,34 @@ export type PortalSendOptions = {
   copyToMyEmail?: boolean;
 };
 
+
+// ── Delivery goals (Manager Dashboard product cards) ──────
+export type DeliveryGoalBasis = "period" | "month" | "all_time";
+
+export type ProductDeliveryGoal = {
+  productId: string;
+  useCustomGoals: boolean;
+  primaryTarget: number;
+  stretchTarget: number;
+  goalBasis: DeliveryGoalBasis;
+  showProgressBar: boolean;
+  updatedAt?: string | null;
+};
+
+export type DeliveryGoalsView = {
+  companyDefault: { primaryTarget: number; stretchTarget: number };
+  /** Only products with their own settings. Everything else follows the default. */
+  products: ProductDeliveryGoal[];
+};
+
+export const deliveryGoalsApi = {
+  list: () => get<DeliveryGoalsView>("/api/delivery-goals"),
+  saveProduct: (body: Omit<ProductDeliveryGoal, "updatedAt">) =>
+    put<{ goal: ProductDeliveryGoal }>("/api/delivery-goals/product", body),
+  saveCompanyDefault: (body: { primaryTarget: number; stretchTarget: number }) =>
+    put<{ companyDefault: { primaryTarget: number; stretchTarget: number } }>("/api/delivery-goals/company-default", body)
+};
+
 export const personalDeliveryAgentsApi = {
   detail: (id: string) => get<PdaAgentDetail>(`/api/personal-delivery-agents/${id}`),
   applications: () => get<PdaApplicationsView>("/api/personal-delivery-agents/applications"),

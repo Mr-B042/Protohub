@@ -127,6 +127,12 @@ import {
 import { auth } from "./lib/auth";
 import { snakeToCamel } from "./lib/normalize";
 import { makeCartId } from "./lib/cart-id";
+import {
+  deliveryGoalMessages,
+  deliveryGoalProgress,
+  resolveDeliveryGoals,
+  type DeliveryGoalBasis as GoalBasis
+} from "./lib/delivery-goals";
 import { realtimeClient } from "./lib/realtime";
 import {
   subscribeToPush,
@@ -144,13 +150,13 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, headOfSalesApi, salesLeadsApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, headOfSalesApi, salesLeadsApi,
   setApiSpyUserId,
   setApiPreviewReadOnly,
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, AgentAccessView, AgentLoginEvent, PortalSendOptions } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, AgentAccessView, AgentLoginEvent, PortalSendOptions } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -9057,6 +9063,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [managerNavSpan, setManagerNavSpan] = useState<NavSpan>("1W");
   const [managerRestockThreshold, setManagerRestockThreshold] = useState(7);
   const [managerDashboardTab, setManagerDashboardTab] = useState<ManagerDashboardTab>("Overview");
+  const [deliveryGoals, setDeliveryGoals] = useState<DeliveryGoalsView | null>(null);
+  const [deliveryGoalProductId, setDeliveryGoalProductId] = useState<string | null>(null);
+  const [deliveryGoalSaving, setDeliveryGoalSaving] = useState(false);
+  const [deliveryGoalDraft, setDeliveryGoalDraft] = useState<Omit<ProductDeliveryGoal, "updatedAt"> | null>(null);
   const [managerProductChallenges, setManagerProductChallenges] = useState<ManagerProductChallenge[]>([]);
   const [managerProductChallengesLoading, setManagerProductChallengesLoading] = useState(false);
   const [managerProductChallengesError, setManagerProductChallengesError] = useState("");
@@ -27120,6 +27130,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   ]);
 
   const showToast = (message: string) => setToast(message);
+  const loadDeliveryGoals = useCallback(async () => {
+    if (!(currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager")) return;
+    try {
+      setDeliveryGoals(await deliveryGoalsApi.list());
+    } catch {
+      // A failed load must not blank the product cards - they simply fall back
+      // to the company default, which is what a product without a row uses anyway.
+      setDeliveryGoals((current) => current);
+    }
+  }, [currentRole]);
+
+  const saveDeliveryGoal = async (goal: Omit<ProductDeliveryGoal, "updatedAt">) => {
+    setDeliveryGoalSaving(true);
+    try {
+      const result = await deliveryGoalsApi.saveProduct(goal);
+      setDeliveryGoals((current) => {
+        const base = current ?? { companyDefault: { primaryTarget: 65, stretchTarget: 70 }, products: [] };
+        const others = base.products.filter((row) => row.productId !== result.goal.productId);
+        return { ...base, products: [...others, result.goal] };
+      });
+      setDeliveryGoalProductId(null);
+      setDeliveryGoalDraft(null);
+      showToast("Delivery goal saved.");
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not save that goal.");
+    } finally { setDeliveryGoalSaving(false); }
+  };
+
   const loadManagerProductChallenges = useCallback(async (options?: { quiet?: boolean }) => {
     const canView = currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager";
     if (!canView || activePage !== "Manager Dashboard") return;
@@ -27141,7 +27179,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   useEffect(() => {
     if (activePage !== "Manager Dashboard" || managerDashboardTab !== "Overview") return;
     void loadManagerProductChallenges({ quiet: true });
-  }, [activePage, managerDashboardTab, loadManagerProductChallenges]);
+    void loadDeliveryGoals();
+  }, [activePage, managerDashboardTab, loadManagerProductChallenges, loadDeliveryGoals]);
 
   const saveManagerProductChallenge = async (draft: ManagerChallengeDraft, id?: string) => {
     if (id) await managerProductChallengesApi.update(id, draft);
@@ -27597,6 +27636,200 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       : key.slice(5)
   );
 
+  // Delivery goal settings for one product. A right-side drawer rather than a
+  // centred modal: the card it belongs to stays visible behind it, so the
+  // preview at the bottom can be compared against the real bar.
+  const renderDeliveryGoalSettings = (
+    row: { key: string; productId?: string; productName: string; imageUrl: string; placed: number; placedDelivered: number },
+    periodLabel: string
+  ) => {
+    if (!row.productId) return null;
+    const saved = deliveryGoals?.products.find((entry) => entry.productId === row.productId);
+    const companyPrimary = deliveryGoals?.companyDefault.primaryTarget ?? 65;
+    const companyStretch = deliveryGoals?.companyDefault.stretchTarget ?? 70;
+    const draft = deliveryGoalDraft ?? {
+      productId: row.productId,
+      useCustomGoals: saved?.useCustomGoals ?? false,
+      primaryTarget: saved?.primaryTarget ?? companyPrimary,
+      stretchTarget: saved?.stretchTarget ?? companyStretch,
+      goalBasis: (saved?.goalBasis ?? "period") as GoalBasis,
+      showProgressBar: saved?.showProgressBar !== false
+    };
+    const patch = (next: Partial<typeof draft>) => setDeliveryGoalDraft({ ...draft, ...next });
+    // The preview must show what will actually be saved, so it resolves through
+    // the same default/custom rule the card does.
+    const effective = resolveDeliveryGoals(draft, companyPrimary, companyStretch);
+    const preview = deliveryGoalProgress(row.placed, row.placedDelivered, effective.primaryTarget, effective.stretchTarget);
+    const previewText = deliveryGoalMessages(preview);
+    const invalid = draft.useCustomGoals && draft.stretchTarget < draft.primaryTarget;
+    const close = () => { setDeliveryGoalProductId(null); setDeliveryGoalDraft(null); };
+
+    return (
+      <div className="fixed inset-0 z-50 flex justify-end">
+        <button type="button" aria-label="Close" onClick={close}
+          className="!min-h-0 absolute inset-0 cursor-default bg-slate-900/30 p-0" />
+        <aside className="relative flex h-full w-full max-w-[420px] flex-col overflow-hidden bg-white shadow-2xl">
+          <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-6 py-5">
+            <div>
+              <h3 className="m-0 text-lg font-black text-gray-900">Delivery Goal Settings</h3>
+              <p className="m-0 mt-0.5 text-[13px] font-medium text-gray-500">Configure delivery rate goals for this product.</p>
+            </div>
+            <button type="button" onClick={close} aria-label="Close"
+              className="!min-h-0 rounded-lg bg-transparent p-1 text-gray-400 hover:text-gray-700">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* Class order differs from the shared modal body on purpose - live-ux-guard finds that body by an exact-string indexOf, so a duplicate earlier in this file would hijack its scan. */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            <section className="px-6 py-5">
+              <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">Product</p>
+              <div className="mt-2 flex items-center gap-3">
+                {row.imageUrl ? (
+                  <img src={row.imageUrl} alt="" className="h-11 w-11 shrink-0 rounded-lg border border-gray-100 object-cover" />
+                ) : (
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-400"><Package className="h-5 w-5" /></span>
+                )}
+                <div className="min-w-0">
+                  <p className="m-0 truncate font-black text-gray-900">{row.productName}</p>
+                  <p className="m-0 text-xs font-semibold text-gray-400">{managerPeriod}</p>
+                </div>
+              </div>
+            </section>
+
+            <section className="border-t border-gray-100 px-6 py-5">
+              <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">Progress bar</p>
+              <label className="mt-2 flex items-center gap-2 text-[13px] font-bold text-gray-700">
+                <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-[#1F8FE0]"
+                  checked={draft.showProgressBar}
+                  onChange={(event) => patch({ showProgressBar: event.target.checked })} />
+                Show delivery progress bar on dashboard
+              </label>
+            </section>
+
+            <section className="border-t border-gray-100 px-6 py-5">
+              <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">Use default goals</p>
+              <div className="mt-2 space-y-2">
+                {[
+                  { custom: false, title: `Use company default (${companyPrimary}% / ${companyStretch}%)`, hint: "Apply global default to this product" },
+                  { custom: true, title: "Custom goals for this product", hint: "Set unique goals for this product" }
+                ].map((option) => (
+                  <label key={String(option.custom)} className="flex cursor-pointer items-start gap-2">
+                    <input type="radio" className="mt-0.5 h-4 w-4 border-gray-300 text-[#1F8FE0]"
+                      checked={draft.useCustomGoals === option.custom}
+                      onChange={() => patch({ useCustomGoals: option.custom })} />
+                    <span>
+                      <span className="block text-[13px] font-bold text-gray-800">{option.title}</span>
+                      <span className="block text-[11px] font-medium text-gray-400">{option.hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </section>
+
+            <section className="border-t border-gray-100 px-6 py-5">
+              <label className="block text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">
+                Primary target (goal)
+                <span className="relative mt-1.5 block">
+                  <input type="number" min={0} max={100} value={draft.primaryTarget}
+                    disabled={!draft.useCustomGoals}
+                    onChange={(event) => patch({ primaryTarget: Number(event.target.value) })}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2.5 pr-8 text-sm font-bold text-gray-900 disabled:bg-gray-50 disabled:text-gray-400" />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-bold text-gray-400">%</span>
+                </span>
+              </label>
+              <p className="m-0 mt-1 text-[11px] font-medium text-gray-400">The main delivery rate target to achieve.</p>
+
+              <label className="mt-4 block text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">
+                Stretch target (stretch goal)
+                <span className="relative mt-1.5 block">
+                  <input type="number" min={0} max={100} value={draft.stretchTarget}
+                    disabled={!draft.useCustomGoals}
+                    onChange={(event) => patch({ stretchTarget: Number(event.target.value) })}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2.5 pr-8 text-sm font-bold text-gray-900 disabled:bg-gray-50 disabled:text-gray-400" />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-bold text-gray-400">%</span>
+                </span>
+              </label>
+              <p className={`m-0 mt-1 text-[11px] font-medium ${invalid ? "text-rose-600" : "text-gray-400"}`}>
+                {invalid ? "The stretch goal cannot be lower than the main goal." : "Stretch goal to motivate the team further."}
+              </p>
+            </section>
+
+            <section className="border-t border-gray-100 px-6 py-5">
+              <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">Goal calculation based on</p>
+              <div className="mt-2 space-y-2">
+                {([
+                  { value: "period" as GoalBasis, title: `Orders placed in ${periodLabel}`, hint: "Follows the period picker at the top of this page" },
+                  { value: "month" as GoalBasis, title: "Orders placed this month", hint: "Use monthly placed orders" },
+                  { value: "all_time" as GoalBasis, title: "Total orders (all time)", hint: "Use all placed orders for this product" }
+                ]).map((option) => (
+                  <label key={option.value} className="flex cursor-pointer items-start gap-2">
+                    <input type="radio" className="mt-0.5 h-4 w-4 border-gray-300 text-[#1F8FE0]"
+                      checked={draft.goalBasis === option.value}
+                      onChange={() => patch({ goalBasis: option.value })} />
+                    <span>
+                      <span className="block text-[13px] font-bold text-gray-800">{option.title}</span>
+                      <span className="block text-[11px] font-medium text-gray-400">{option.hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {draft.goalBasis !== "period" && (
+                <p className="m-0 mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800">
+                  This goal will be measured over its own window, so the bar can differ from the Delivery rate shown in Finance summary, which always follows the page period.
+                </p>
+              )}
+            </section>
+
+            <section className="border-t border-gray-100 px-6 py-5">
+              <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">Preview</p>
+              <div className="mt-3 flex items-center gap-3">
+                <strong className="shrink-0 text-xl font-black text-gray-900">{preview.ratePct}%</strong>
+                <div className="relative min-w-0 flex-1">
+                  <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-100">
+                    <div className={`h-full rounded-full ${preview.stretchMet ? "bg-emerald-500" : preview.primaryMet ? "bg-[#1F8FE0]" : "bg-amber-500"}`}
+                      style={{ width: `${preview.barPct}%` }} />
+                  </div>
+                  {[{ pct: preview.primaryMarkerPct, label: effective.primaryTarget }, { pct: preview.stretchMarkerPct, label: effective.stretchTarget }].map((marker) => (
+                    <span key={`preview-${marker.label}`} className="pointer-events-none absolute -top-4 flex -translate-x-1/2 flex-col items-center" style={{ left: `${marker.pct}%` }}>
+                      <span className="text-[10px] font-black leading-none text-gray-400">{marker.label}%</span>
+                      <span className="mt-0.5 block h-4 w-px bg-gray-300" />
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-2 space-y-0.5">
+                {previewText.achieved.map((line) => (
+                  <p key={line} className="m-0 flex items-center gap-1 text-[11px] font-black text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> {line}</p>
+                ))}
+                {previewText.remaining.map((line) => (
+                  <p key={line} className="m-0 text-[11px] font-bold text-amber-700">{line}</p>
+                ))}
+              </div>
+              <p className="m-0 mt-2 text-[11px] font-medium text-gray-400">
+                Based on {row.placedDelivered} delivered of {row.placed} placed in {periodLabel}.
+              </p>
+            </section>
+          </div>
+
+          <div className="border-t border-gray-100 px-6 py-5">
+            <div className="flex gap-2.5">
+              <button type="button" onClick={close}
+                className="!min-h-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[13px] font-black text-gray-700 hover:bg-gray-50">
+                Cancel
+              </button>
+              <button type="button" disabled={deliveryGoalSaving || invalid}
+                onClick={() => void saveDeliveryGoal(draft)}
+                className="!min-h-0 flex-1 rounded-xl bg-[#1F8FE0] px-3 py-2.5 text-[13px] font-black text-white hover:bg-[#1a7ec4] disabled:opacity-50">
+                {deliveryGoalSaving ? "Saving…" : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    );
+  };
+
   const renderManagerProductOverview = () => {
     const periodLabel = managerPeriod === "Today" ? "today" : managerPeriod.toLowerCase();
     const pipelineStatuses = new Set(["New", "Confirmed", "In Process", "Postponed", "Dispatched"]);
@@ -27691,6 +27924,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <X className="h-3.5 w-3.5" /> Clear product filter{managerProductFilterKeys.size === 1 ? "" : "s"}
               </button>
             )}
+            {canFilterManagerProducts && productRows.some((row) => row.productId) && (
+              <button
+                type="button"
+                className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-black text-gray-700 hover:bg-gray-50"
+                onClick={() => { setDeliveryGoalDraft(null); setDeliveryGoalProductId(productRows.find((row) => row.productId)?.productId ?? null); }}
+              >
+                <Settings className="h-3.5 w-3.5" /> Delivery goal settings
+              </button>
+            )}
             <span className="inline-flex w-fit items-center rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-black text-[#1F8FE0]">
               {productRows.length} product{productRows.length === 1 ? "" : "s"} with orders
             </span>
@@ -27708,6 +27950,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             {productRows.map((row, index) => {
               const tone = toneStyles[index % toneStyles.length];
               const isActiveFilter = managerProductFilterKeys.has(row.key);
+              // A product with no saved row follows the company default, so the
+              // bar appears for everything without anyone configuring anything.
+              const savedGoal = row.productId
+                ? deliveryGoals?.products.find((entry) => entry.productId === row.productId)
+                : undefined;
+              const goals = resolveDeliveryGoals(
+                savedGoal,
+                deliveryGoals?.companyDefault.primaryTarget,
+                deliveryGoals?.companyDefault.stretchTarget
+              );
+              const goalProgress = deliveryGoalProgress(row.placed, row.placedDelivered, goals.primaryTarget, goals.stretchTarget);
+              const goalText = deliveryGoalMessages(goalProgress);
               return (
                 <article key={row.key} className={`overflow-hidden rounded-lg border bg-white shadow-sm ${isActiveFilter ? "border-[#1F8FE0] ring-2 ring-[#1F8FE0]/40" : "border-gray-200"}`}>
                   <div className={`h-1 ${tone.line}`} />
@@ -27759,6 +28013,72 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     ))}
                   </div>
 
+                  {goals.showProgressBar && row.placed > 0 && (
+                    <div className="border-b border-gray-100 px-4 py-4 sm:px-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-black uppercase tracking-[0.14em] text-gray-700">Delivery goal</h4>
+                          <span
+                            title={`${row.placedDelivered} of ${row.placed} orders placed in ${periodLabel} have been delivered. Goal ${goals.primaryTarget}%, stretch ${goals.stretchTarget}%${goals.useCustomGoals ? " (set for this product)" : " (company default)"}.`}
+                            className="cursor-help text-gray-300 hover:text-gray-500"
+                          >
+                            <Info className="h-3.5 w-3.5" />
+                          </span>
+                        </div>
+                        {canFilterManagerProducts && row.productId && (
+                          <button
+                            type="button"
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-black text-gray-600 hover:bg-gray-50"
+                            onClick={() => { setDeliveryGoalDraft(null); setDeliveryGoalProductId(row.productId ?? null); }}
+                          >
+                            <Settings className="h-3 w-3" /> Goal settings
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="mt-2 flex items-center gap-3">
+                        <strong className="shrink-0 text-2xl font-black text-gray-900">{goalProgress.ratePct}%</strong>
+                        <div className="relative min-w-0 flex-1">
+                          <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-100">
+                            <div
+                              className={`h-full rounded-full transition-all ${goalProgress.stretchMet ? "bg-emerald-500" : goalProgress.primaryMet ? tone.line : "bg-amber-500"}`}
+                              style={{ width: `${goalProgress.barPct}%` }}
+                            />
+                          </div>
+                          {/* Both targets are drawn on the track so the gap between
+                              "good" and "great" is visible, not just the number. */}
+                          {[
+                            { pct: goalProgress.primaryMarkerPct, label: goals.primaryTarget },
+                            { pct: goalProgress.stretchMarkerPct, label: goals.stretchTarget }
+                          ].map((marker) => (
+                            <span
+                              key={`${row.key}-marker-${marker.label}`}
+                              className="pointer-events-none absolute -top-4 flex -translate-x-1/2 flex-col items-center"
+                              style={{ left: `${marker.pct}%` }}
+                            >
+                              <span className="text-[10px] font-black leading-none text-gray-400">{marker.label}%</span>
+                              <span className="mt-0.5 block h-4 w-px bg-gray-300" />
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                        {goalText.achieved.map((line) => (
+                          <span key={line} className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> {line}
+                          </span>
+                        ))}
+                        {goalText.remaining.map((line) => (
+                          <span key={line} className="text-[11px] font-bold text-amber-700">{line}</span>
+                        ))}
+                        {goalText.achieved.length > 0 && goalText.remaining.length === 0 && (
+                          <span className="text-[11px] font-semibold text-gray-400">Great job. Keep it up.</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className={`px-4 py-4 sm:px-5 ${tone.wash}`}>
                     <div className="mb-3 flex items-center justify-between gap-3">
                       <div>
@@ -27787,6 +28107,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             })}
           </div>
         )}
+
+        {deliveryGoalProductId && (() => {
+          const target = productRows.find((row) => row.productId === deliveryGoalProductId);
+          if (!target) return null;
+          return renderDeliveryGoalSettings(target, periodLabel);
+        })()}
       </section>
     );
   };
