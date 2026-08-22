@@ -144,6 +144,8 @@ async function resolveOpeningCash(orgId: string, periodStartIso: string) {
     return {
       amount: Number(weekly.amount ?? 0),
       anchored: true,
+      // Counted for THIS week, so it is frozen: nothing later can move it.
+      source: "weekly_count" as const,
       anchor: {
         id: weekly.id,
         amount: Number(weekly.amount ?? 0),
@@ -177,6 +179,11 @@ async function resolveOpeningCash(orgId: string, periodStartIso: string) {
     return {
       amount: baseline + drift,
       anchored: true,
+      // ⚠️ DERIVED, not counted. This week was never opened, so its figure is
+      // recomputed from the account opening balances every time it is viewed -
+      // editing an account's opening balance moves it retrospectively. Only a
+      // counted week is frozen.
+      source: "derived_accounts" as const,
       anchor: {
         id: "bank-accounts",
         amount: baseline,
@@ -202,13 +209,14 @@ async function resolveOpeningCash(orgId: string, periodStartIso: string) {
       .order("received_at", { ascending: true }).limit(1).maybeSingle();
     const since = earliest?.received_at ?? periodStartIso;
     const drift = since < periodStartIso ? await netBetween(orgId, since, periodStartIso) : 0;
-    return { amount: drift, anchored: false, anchor: null as any };
+    return { amount: drift, anchored: false, source: "derived_ledger" as const, anchor: null as any };
   }
 
   const drift = await netBetween(orgId, anchor.effective_at, periodStartIso);
   return {
     amount: Number(anchor.amount ?? 0) + drift,
     anchored: true,
+    source: "standalone_anchor" as const,
     anchor: {
       id: anchor.id,
       amount: Number(anchor.amount ?? 0),
@@ -286,6 +294,7 @@ router.get("/", async (req, res) => {
       period: { from, to },
       openingCash: opening.amount,
       openingAnchored: opening.anchored,
+      openingSource: opening.source,
       openingAnchor: opening.anchor,
       cashIn,
       cashOut,
@@ -779,35 +788,27 @@ router.post("/weekly-opening", requireRole("Owner"), async (req, res) => {
     const total = body.sources.reduce((sum, source) => sum + Number(source.amount ?? 0), 0);
 
     const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
-    // One anchor per week: re-opening a week corrects it rather than stacking a
-    // second figure that only wins on ordering.
-    const { data: existing } = await supabase.from("cash_opening_balances")
-      .select("id").eq("org_id", orgId).eq("week_start", body.weekStart).maybeSingle();
-    if (existing) await supabase.from("cash_opening_balances").delete().eq("id", existing.id);
-
-    const { data: saved, error } = await supabase.from("cash_opening_balances").insert({
-      org_id: orgId,
-      week_start: body.weekStart,
-      effective_at: startOfLagosDay(body.weekStart),
-      amount: total,
-      method: "manual",
-      reason: body.reason || `Counted across ${body.sources.length} cash source${body.sources.length === 1 ? "" : "s"}.`,
-      set_by: req.user!.id,
-      set_by_name: String(actor?.name ?? "").trim() || "Unknown"
-    }).select("id").single();
-    if (error) { res.status(500).json({ error: error.message }); return; }
-
-    const { error: sourceError } = await supabase.from("cash_opening_balance_sources").insert(
-      body.sources.map((source) => ({
-        opening_balance_id: saved.id,
-        bank_account_id: source.bankAccountId ?? null,
-        account_label: source.accountLabel,
+    // ⚠️ ONE round trip, ONE transaction. This used to delete the week's row
+    // and then insert a replacement: a failure between the two destroyed the
+    // very figure being corrected. The function upserts the parent and
+    // replaces its sources atomically, so a failed correction changes nothing.
+    // Only THIS week's row is touched - other weeks are never rewritten.
+    const { data: savedId, error } = await supabase.rpc("save_weekly_opening_cash", {
+      p_org_id: orgId,
+      p_week_start: body.weekStart,
+      p_amount: total,
+      p_reason: body.reason || `Counted across ${body.sources.length} cash source${body.sources.length === 1 ? "" : "s"}.`,
+      p_set_by: req.user!.id,
+      p_set_by_name: String(actor?.name ?? "").trim() || "Unknown",
+      p_sources: body.sources.map((source) => ({
+        bankAccountId: source.bankAccountId ?? null,
+        accountLabel: source.accountLabel,
         amount: source.amount
       }))
-    );
-    if (sourceError) { res.status(500).json({ error: sourceError.message }); return; }
+    });
+    if (error) { res.status(500).json({ error: error.message }); return; }
 
-    res.json({ id: saved.id, weekStart: body.weekStart, total });
+    res.json({ id: savedId, weekStart: body.weekStart, total });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not save the week's opening cash." });
   }

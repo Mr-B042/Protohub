@@ -24,6 +24,8 @@ export type CashFlowView = {
   openingCash: number;
   /** False when no one has anchored a real bank figure yet. */
   openingAnchored: boolean;
+  /** How this week's opening was arrived at. Only a counted week is frozen. */
+  openingSource?: "weekly_count" | "derived_accounts" | "standalone_anchor" | "derived_ledger";
   openingAnchor: { id: string; amount: number; effectiveAt: string; method: string; reason: string; setByName: string } | null;
   cashIn: number; cashOut: number; netCashFlow: number; closingCash: number;
   netChangeVsPreviousPct: number | null;
@@ -198,6 +200,21 @@ export default function CashFlowPage(props: CashFlowPageProps) {
       {/* An unanchored opening balance is a derived figure, not money in the
           bank. Saying so is the difference between a useful page and a
           confidently wrong one. */}
+      {view && view.openingAnchored && view.openingSource === "derived_accounts" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+          <p className="m-0 text-[13px] font-bold text-blue-900">
+            This week was never opened, so its opening cash is worked out from your account opening balances rather than counted.
+            {" "}It will move if you edit an account. Counted weeks are frozen.
+          </p>
+          {props.canSetOpeningCash && (
+            <button type="button" onClick={props.onEditWeeklyOpening}
+              className="!min-h-0 shrink-0 rounded-lg bg-[#1F8FE0] px-3 py-1.5 text-[12px] font-black text-white hover:bg-[#1a7ec4]">
+              Count this week
+            </button>
+          )}
+        </div>
+      )}
+
       {view && !view.openingAnchored && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <p className="m-0 text-[13px] font-bold text-amber-900">
