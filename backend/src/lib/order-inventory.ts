@@ -17,7 +17,7 @@ export type OrderInventoryLine = {
   isFreeGift?: boolean;
   hiddenFromCustomer?: boolean;
   note?: string;
-  sourceType: "base_product" | "package_component" | "cross_sell" | "free_gift";
+  sourceType: "base_product" | "package_component" | "cross_sell" | "free_gift" | "additional";
 };
 
 type OrderInventoryLike = {
@@ -27,6 +27,8 @@ type OrderInventoryLike = {
   package_components_snapshot?: unknown;
   cross_sell_lines?: unknown;
   free_gift_lines?: unknown;
+  /** Extra non-cross-sell products. They ship, so they deduct. */
+  additional_lines?: unknown;
 };
 
 type ProductNameRow = { id: string; name: string };
@@ -128,6 +130,37 @@ const normalizedCrossSellLines = (value: unknown): OrderInventoryLine[] => {
   return out;
 };
 
+/**
+ * Extra products added to an order that are not cross-sell.
+ *
+ * ⚠️ They deduct stock exactly like any other line - a free giveaway still
+ * physically leaves the shelf, so a zero PRICE never means zero QUANTITY. Only
+ * the money side differs, and that is handled in order-additional-lines.ts.
+ */
+const normalizedAdditionalLines = (value: unknown): OrderInventoryLine[] => {
+  if (!Array.isArray(value)) return [];
+  const out: OrderInventoryLine[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const productId = String(record.productId ?? record.product_id ?? "").trim();
+    const productName = String(record.productName ?? record.product_name ?? "").trim();
+    // quantity is PIECES ordered, never pieces x units_per_pack.
+    const quantity = normalizePositiveInt(record.quantity, 0);
+    if (!productId || !productName || quantity < 1) continue;
+    out.push({
+      productId,
+      productName,
+      quantity,
+      sourceType: "additional",
+      // Not a gift even at ₦0: a gift is its own flow with its own reporting.
+      isFreeGift: false,
+      note: String(record.note ?? "").trim() || undefined
+    });
+  }
+  return out;
+};
+
 const normalizedFreeGiftLines = (value: unknown): OrderInventoryLine[] => {
   if (!Array.isArray(value)) return [];
   const out: OrderInventoryLine[] = [];
@@ -216,6 +249,7 @@ export const orderInventoryLinesFromRow = (order: OrderInventoryLike) => {
   return collapseOrderInventoryLines([
     ...baseLines,
     ...normalizedCrossSellLines(order.cross_sell_lines),
+    ...normalizedAdditionalLines(order.additional_lines),
     ...normalizedFreeGiftLines(order.free_gift_lines)
   ]);
 };

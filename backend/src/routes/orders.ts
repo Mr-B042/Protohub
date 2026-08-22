@@ -34,6 +34,10 @@ import { generateOrderReceiptPdf, fetchReceiptBranding } from "../lib/order-rece
 import { sendConnectedUserWhatsAppToJid } from "../lib/whatsapp-runtime.js";
 import { confirmationNeedsSalesExpansionLog } from "../lib/sales-expansion.js";
 
+import {
+  checkAgentStock, normalizeAdditionalLines, orderMoneyBreakdown, stockShortfallMessage
+} from "../lib/order-additional-lines.js";
+
 const router = Router();
 router.use(requireAuth);
 
@@ -169,6 +173,7 @@ const WHATSAPP_DISPATCH_ORDER_SELECT = [
   "currency",
   "assigned_rep_id",
   "cross_sell_lines",
+  "additional_lines",
   "free_gift_lines",
   "package_components_snapshot"
 ].join(", ");
@@ -1003,7 +1008,8 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
     id: data.id, customer: data.customer, email: data.email,
     phone: data.phone, product_name: data.product_name, package_name: data.package_name,
     amount: data.amount, currency: data.currency, source: data.source,
-    cross_sell_lines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null
+    cross_sell_lines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null,
+    additional_lines: Array.isArray(data.additional_lines) ? data.additional_lines : null
   });
   sendNewOrderSms(req.user!.orgId, {
     id: data.id,
@@ -1034,6 +1040,7 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
     city: (data as any).city ?? null,
     state: (data as any).state ?? null,
     crossSellLines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null,
+    additionalLines: Array.isArray(data.additional_lines) ? data.additional_lines : null,
     packageComponentsSnapshot: Array.isArray((data as any).package_components_snapshot) ? (data as any).package_components_snapshot : null,
     productImageUrl: null as string | null,
     productVideoUrl: null as string | null
@@ -1085,7 +1092,8 @@ router.post("/", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Recovery
     id: data.id, customer: data.customer, phone: data.phone,
     product_name: data.product_name, package_name: data.package_name, amount: data.amount,
     currency: data.currency, source: data.source, rep_name: req.user!.name,
-    cross_sell_lines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null
+    cross_sell_lines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null,
+    additional_lines: Array.isArray(data.additional_lines) ? data.additional_lines : null
   });
 
   // Internal: notify assigned rep (only if someone else assigned the order)
@@ -2085,6 +2093,7 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
       state: (data as any).state ?? null,
       scheduledDate: data.scheduled_date ?? undefined,
       crossSellLines: Array.isArray(data.cross_sell_lines) ? data.cross_sell_lines : null,
+    additionalLines: Array.isArray(data.additional_lines) ? data.additional_lines : null,
       packageComponentsSnapshot: Array.isArray((data as any).package_components_snapshot) ? (data as any).package_components_snapshot : null,
       productImageUrl: null as string | null,
       productVideoUrl: null as string | null
@@ -2580,6 +2589,7 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
     full_upfront_marked_by:    ["full_upfront_marked_by", "fullUpfrontMarkedBy"],
     timeline_notes:            ["timeline_notes", "timelineNotes"],
     cross_sell_lines:          ["cross_sell_lines", "crossSellLines"],
+    additional_lines:          ["additional_lines", "additionalLines"],
     free_gift_lines:           ["free_gift_lines", "freeGiftLines"],
     review_hold:               ["review_hold", "reviewHold"],
     review_reason:             ["review_reason", "reviewReason"]
@@ -2928,7 +2938,7 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
       "logistics_cost", "amount_remitted", "remittance_status",
       "assigned_rep_id", "agent_id", "agent_location_id",
       "delivered_date", "scheduled_date", "scheduled_at",
-      "cross_sell_lines", "free_gift_lines",
+      "cross_sell_lines", "additional_lines", "free_gift_lines",
       "upsell_from_qty", "upsell_to_qty", "upsell_note"
     ] as const;
     const normalize = (value: unknown) =>
@@ -3212,7 +3222,7 @@ router.post("/:id/contact-attempts", requireRole("Owner", "Admin", "Manager", "S
 router.delete("/:id", requireRole("Owner", "Admin"), async (req, res) => {
   // Fetch before deleting so we can log context and reverse side-effects
   const { data: existing } = await supabase
-    .from("orders").select("status, customer, product_name, product_id, amount, agent_id, agent_location_id, quantity, stock_deducted, state, city, package_components_snapshot, cross_sell_lines, free_gift_lines")
+    .from("orders").select("status, customer, product_name, product_id, amount, agent_id, agent_location_id, quantity, stock_deducted, state, city, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines")
     .eq("id", req.params.id).eq("org_id", req.user!.orgId).single();
 
   if (!existing) { res.status(404).json({ error: "Order not found." }); return; }
@@ -3440,5 +3450,133 @@ router.get("/:id/receipt", requireRole("Owner", "Admin", "Manager", "Sales Rep",
     res.status(500).json({ error: err?.message ?? "Could not generate receipt." });
   }
 });
+
+// ══ Extra products on an order (not cross-sell) ═══════════
+//
+// The only way to put a second product on an order used to be Add cross-sell,
+// which pays a bonus and reports as cross-sell revenue. These lines do neither
+// unless the Owner marks an individual one bonus-eligible.
+//
+// ⚠️ They still deduct stock and still cost COGS - the only thing that differs
+// is how the money is classified.
+
+const AdditionalLinesSchema = z.object({
+  lines: z.array(z.object({
+    id: z.string().max(60).optional(),
+    productId: z.string().uuid(),
+    quantity: z.coerce.number().int().min(1).max(10_000),
+    // 0 is allowed on purpose: a giveaway still ships and still deducts.
+    amount: z.coerce.number().min(0).max(1_000_000_000),
+    bonusEligible: z.boolean().default(false),
+    note: z.string().trim().max(200).default("")
+  })).max(50),
+  /** Raise the order total by the extras. Off means the price is absorbed. */
+  adjustOrderAmount: z.boolean().default(true)
+}).strict();
+
+// ── PUT /api/orders/:id/additional-lines ──────────────────
+router.put("/:id/additional-lines",
+  requireRole("Owner", "Admin", "Manager", "Sales Rep"),
+  async (req, res) => {
+    try {
+      const parsed = AdditionalLinesSchema.safeParse(req.body ?? {});
+      if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+      const orgId = req.user!.orgId;
+      const body = parsed.data;
+
+      const { data: order } = await supabase.from("orders")
+        .select("id, status, amount, agent_id, agent_location_id, additional_lines, cross_sell_lines, stock_deducted")
+        .eq("id", req.params.id).eq("org_id", orgId).maybeSingle();
+      if (!order) { res.status(404).json({ error: "That order no longer exists." }); return; }
+
+      // ⚠️ Refuse once stock has already been taken off the agent. Changing the
+      // lines afterwards would leave the deduction and the order disagreeing
+      // about what shipped, which is exactly how the delivery-deduction bugs
+      // started. Reverse the delivery first if the items were wrong.
+      if (order.stock_deducted === true) {
+        res.status(409).json({
+          error: "Stock has already been deducted for this order. Reverse the delivery before changing its items."
+        });
+        return;
+      }
+
+      const productIds = [...new Set(body.lines.map((line) => line.productId))];
+      const { data: productRows } = productIds.length > 0
+        ? await supabase.from("products").select("id, name").eq("org_id", orgId).in("id", productIds)
+        : { data: [] } as any;
+      const nameById = new Map(((productRows ?? []) as any[]).map((row) => [row.id, row.name]));
+      const unknown = productIds.filter((id) => !nameById.has(id));
+      if (unknown.length > 0) {
+        res.status(400).json({ error: "One of those products is not in your catalogue." });
+        return;
+      }
+
+      const shaped = body.lines.map((line) => ({
+        id: line.id ?? `extra-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        productId: line.productId,
+        productName: nameById.get(line.productId) ?? "Unnamed product",
+        quantity: line.quantity,
+        amount: line.amount,
+        bonusEligible: line.bonusEligible,
+        note: line.note,
+        addedAt: new Date().toISOString(),
+        addedById: req.user!.id,
+        addedByName: "",
+        addedByRole: req.user!.role ?? ""
+      }));
+
+      const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
+      shaped.forEach((line) => { line.addedByName = String(actor?.name ?? "").trim() || "Unknown"; });
+
+      // ⚠️ BLOCKING stock check, per Bright: an agent who has not got it cannot
+      // be sent to deliver it. Requirements are summed per product first, so
+      // two lines of the same item cannot each pass against one stock figure.
+      if (order.agent_id && shaped.length > 0) {
+        const { data: stockRows } = await supabase.from("agent_location_stock")
+          .select("product_id, quantity")
+          .eq("org_id", orgId).eq("agent_id", order.agent_id)
+          .in("product_id", productIds);
+        const held = new Map<string, number>();
+        ((stockRows ?? []) as any[]).forEach((row) => {
+          held.set(row.product_id, (held.get(row.product_id) ?? 0) + Number(row.quantity ?? 0));
+        });
+        const checks = checkAgentStock(shaped, held);
+        const shortfall = stockShortfallMessage(checks);
+        if (shortfall) {
+          res.status(409).json({
+            error: `The assigned agent cannot supply this. ${shortfall}.`,
+            checks
+          });
+          return;
+        }
+      }
+
+      // The order total moves by the CHANGE in extras, so re-saving the same
+      // lines is a no-op rather than charging the customer twice.
+      const previousTotal = normalizeAdditionalLines(order.additional_lines)
+        .reduce((sum, line) => sum + line.amount, 0);
+      const nextTotal = shaped.reduce((sum, line) => sum + line.amount, 0);
+      const patch: Record<string, unknown> = {
+        additional_lines: shaped.length > 0 ? shaped : null
+      };
+      if (body.adjustOrderAmount) {
+        patch.amount = Math.max(0, Number(order.amount ?? 0) + (nextTotal - previousTotal));
+      }
+
+      const { error } = await supabase.from("orders").update(patch)
+        .eq("id", req.params.id).eq("org_id", orgId);
+      if (error) { res.status(500).json({ error: error.message }); return; }
+
+      const breakdown = orderMoneyBreakdown({
+        amount: patch.amount ?? order.amount,
+        cross_sell_lines: order.cross_sell_lines,
+        additional_lines: shaped
+      });
+
+      res.json({ lines: shaped, amount: patch.amount ?? Number(order.amount ?? 0), breakdown });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message ?? "Could not save those items." });
+    }
+  });
 
 export default router;

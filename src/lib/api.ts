@@ -3178,6 +3178,26 @@ export type CartLogPenaltiesView = {
   repsAtRiskToday: Array<{ repId: string; repName: string; cartsDue: number; logsMade: number }>;
 };
 
+export type OrderAdditionalLine = {
+  id: string; productId: string; productName: string;
+  quantity: number; amount: number; bonusEligible: boolean; note: string;
+  addedAt: string; addedById: string | null; addedByName: string; addedByRole: string;
+};
+
+export const ordersExtraApi = {
+  /** Replaces the whole set of extra (non-cross-sell) lines on an order. */
+  saveAdditionalLines: (
+    orderId: string,
+    body: {
+      lines: Array<{ productId: string; quantity: number; amount: number; bonusEligible: boolean; note: string }>;
+      adjustOrderAmount: boolean;
+    }
+  ) => put<{
+    lines: OrderAdditionalLine[]; amount: number;
+    breakdown: { total: number; crossSell: number; additional: number; main: number };
+  }>(`/api/orders/${orderId}/additional-lines`, body)
+};
+
 export const cartsApi = {
   logPenalties: (params?: { range?: CartLogRangePreset; repId?: string }) => {
     const qs = new URLSearchParams();

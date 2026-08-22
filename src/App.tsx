@@ -149,7 +149,7 @@ import {
 } from "./lib/push-client";
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
-  expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
+  expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, stockApi as _stockApi,
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   setApiSpyUserId,
   setApiPreviewReadOnly,
@@ -251,7 +251,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -1041,6 +1041,16 @@ type CrossSellLine = {
   addedByRole?: string;
   addedAt?: string;
 };
+
+// Extra products on an order that are not cross-sell. Same shape as a
+// cross-sell line plus the Owner's per-line bonus decision, so every existing
+// reader that walks add-ons stays familiar.
+type AdditionalLine = {
+  id: string; productId: string; productName: string;
+  quantity: number; amount: number;
+  bonusEligible?: boolean; note?: string;
+  addedAt?: string; addedById?: string | null; addedByName?: string; addedByRole?: string;
+};
 type SalesExpansionOffer = {
   key: string;
   offerType: "upsell" | "cross_sell";
@@ -1277,6 +1287,9 @@ type TrackedOrder = {
   upsellToQty?: number;
   upsellNote?: string;
   crossSellLines?: CrossSellLine[];
+  /** Extra products that are NOT cross-sell: they bill and ship, but pay no
+   *  cross-sell bonus unless a line is flagged bonusEligible. */
+  additionalLines?: AdditionalLine[];
   freeGiftLines?: FreeGiftLine[];
   packageComponentsSnapshot?: OrderInventoryComponentSnapshot[];
   manualBonusOverride?: number;
@@ -7608,7 +7621,8 @@ const companionConfiguredTotal = (
 
 // ── selectedPackagesSummaryForOrder ────────────────────
 const selectedPackagesSummaryForOrder = (order: TrackedOrder) => {
-  const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
+  const additionalItemTotal = [...(order.crossSellLines ?? []), ...(order.additionalLines ?? [])]
+    .reduce((sum, line) => sum + Math.max(0, Number(line.amount) || 0), 0);
   const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
   const quantity = Math.max(1, order.quantity ?? order.originalQuantity ?? 1);
   const lines = [
@@ -7620,10 +7634,16 @@ const selectedPackagesSummaryForOrder = (order: TrackedOrder) => {
     const qty = crossSellLineDisplayQuantity(line);
     lines.push(`Additional Package ${index + 1}: ${detail}${contents ? ` (${contents})` : ""} (${qty} pc${qty === 1 ? "" : "s"}, ${formatProductMoney(line.amount, order.currency)})`);
   });
+  // A customer paying for an item must see it on the receipt, whether it was
+  // recorded as a cross-sell or as a plain extra - that split is internal.
+  (order.additionalLines ?? []).forEach((line, index) => {
+    const qty = Math.max(1, Number(line.quantity) || 1);
+    lines.push(`Additional Item ${index + 1}: ${line.productName} (${qty} pc${qty === 1 ? "" : "s"}, ${formatProductMoney(Number(line.amount) || 0, order.currency)})`);
+  });
   (order.freeGiftLines ?? []).forEach((line, index) => {
     lines.push(`Free Gift ${index + 1}: ${line.productName} (${line.quantity} unit${line.quantity === 1 ? "" : "s"})`);
   });
-  if ((order.crossSellLines?.length ?? 0) > 0) {
+  if ((order.crossSellLines?.length ?? 0) + (order.additionalLines?.length ?? 0) > 0) {
     lines.push(`Total: ${formatProductMoney(order.amount, order.currency)}`);
   }
   return lines.join("\n");
@@ -15125,6 +15145,83 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         return "Not set";
     }
   };
+  // ⚠️ Main revenue is the total LESS every add-on - cross-sell and extras
+  // alike. Adding extras to the amount without subtracting them here would
+  // silently inflate main-product revenue everywhere by the value of the
+  // extras. One helper so the sites that read it cannot drift apart.
+  const orderAddOnTotals = (order: TrackedOrder) => {
+    const crossSell = (order.crossSellLines ?? [])
+      .reduce((sum, line) => sum + Math.max(0, Number(line.amount) || 0), 0);
+    const additional = (order.additionalLines ?? [])
+      .reduce((sum, line) => sum + Math.max(0, Number(line.amount) || 0), 0);
+    const total = Number(order.amount) || 0;
+    return { crossSell, additional, addOns: crossSell + additional, main: Math.max(0, total - crossSell - additional) };
+  };
+
+  // Extra products on an order that are NOT cross-sell. Kept as a draft list
+  // so several can be added in one pass - Bright's actual ask was "two or more".
+  const [extraItemsDraft, setExtraItemsDraft] = useState<Array<{
+    key: string; productId: string; quantity: string; amount: string; bonusEligible: boolean; note: string;
+  }>>([]);
+  const [extraItemsSaving, setExtraItemsSaving] = useState(false);
+  const [extraItemsError, setExtraItemsError] = useState("");
+  const [extraItemsAdjustTotal, setExtraItemsAdjustTotal] = useState(true);
+
+  const openExtraItemsModal = (order: TrackedOrder) => {
+    setOrderActionReturnTarget(orderActionReturnTargetFor(order.id));
+    setSelectedOrderId(order.id);
+    setExtraItemsError("");
+    setExtraItemsAdjustTotal(true);
+    setExtraItemsDraft((order.additionalLines ?? []).length > 0
+      ? (order.additionalLines ?? []).map((line, index) => ({
+        key: line.id ?? `existing-${index}`,
+        productId: line.productId,
+        quantity: String(line.quantity ?? 1),
+        amount: String(line.amount ?? 0),
+        bonusEligible: line.bonusEligible === true,
+        note: line.note ?? ""
+      }))
+      : [{ key: `new-${Date.now()}`, productId: "", quantity: "1", amount: "", bonusEligible: false, note: "" }]);
+    setModal("addExtraItems");
+  };
+
+  const saveExtraItems = async () => {
+    if (!selectedOrder) return;
+    setExtraItemsError("");
+    const lines = extraItemsDraft
+      .filter((row) => row.productId)
+      .map((row) => ({
+        productId: row.productId,
+        quantity: Math.max(1, Number(row.quantity) || 1),
+        amount: Math.max(0, Number(String(row.amount).replace(/,/g, "")) || 0),
+        bonusEligible: row.bonusEligible,
+        note: row.note.trim()
+      }));
+    if (extraItemsDraft.some((row) => !row.productId)) {
+      setExtraItemsError("Every row needs a product, or remove the empty row.");
+      return;
+    }
+    setExtraItemsSaving(true);
+    try {
+      const result = await ordersExtraApi.saveAdditionalLines(selectedOrder.id, {
+        lines, adjustOrderAmount: extraItemsAdjustTotal
+      });
+      showToast(lines.length === 0
+        ? "Extra items cleared."
+        : `${lines.length} extra item${lines.length === 1 ? "" : "s"} saved. Order total ${naira(result.amount)}.`);
+      // Same optimistic update the cross-sell path uses, so the receipt and the
+      // totals reflect the change without a full reload.
+      setTrackedOrders((prev) => prev.map((row) => row.id === selectedOrder.id
+        ? { ...row, additionalLines: result.lines, amount: result.amount }
+        : row));
+      closeModal();
+    } catch (err: any) {
+      // ⚠️ The stock block comes back as a readable sentence naming every
+      // product that is short, so the message is shown as-is.
+      setExtraItemsError(err?.message ?? "Could not save those items.");
+    } finally { setExtraItemsSaving(false); }
+  };
+
   const quantityForOrder = (order: TrackedOrder) => {
     const product = products.find((item) => item.id === order.productId);
     const packageRecord = product?.packages.find((item) => item.id === order.packageId);
@@ -15132,9 +15229,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
   const renderOrderPurchaseSummary = (order: TrackedOrder, variant: "mobile" | "table" = "table") => {
     const quantity = Math.max(1, quantityForOrder(order));
-    const addOnTotal = (order.crossSellLines ?? [])
-      .reduce((sum, line) => sum + Math.max(0, Number(line.amount) || 0), 0);
-    const mainAmount = Math.max(0, (Number(order.amount) || 0) - addOnTotal);
+    const addOnTotal = orderAddOnTotals(order).addOns;
+    const mainAmount = orderAddOnTotals(order).main;
     const packageName = (order.packageName ?? "").trim();
     const productName = (order.productName ?? "").trim() || "Unnamed product";
     const mainTitle = packageName && packageName.toLowerCase() !== productName.toLowerCase()
@@ -22394,11 +22490,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const renderOrderItemsReceipt = (order: TrackedOrder, options?: { className?: string; actions?: boolean }) => {
     const actions = options?.actions ?? true;
-    const crossSellTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, Number(line.amount) || 0), 0);
+    const crossSellTotal = orderAddOnTotals(order).crossSell;
     const mainQty = Math.max(1, quantityForOrder(order));
-    const mainTotal = Math.max(0, (Number(order.amount) || 0) - crossSellTotal);
+    const mainTotal = orderAddOnTotals(order).main;
     const mainUnit = Math.round(mainTotal / mainQty);
-    const addOnCount = order.crossSellLines?.length ?? 0;
+    const addOnCount = (order.crossSellLines?.length ?? 0) + (order.additionalLines?.length ?? 0);
     const giftCount = order.freeGiftLines?.length ?? 0;
     const itemCount = 1 + addOnCount + giftCount;
     // Look up the package the customer actually bought so we can surface its
@@ -22631,6 +22727,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-800 shadow-sm transition-colors hover:bg-amber-100 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-100 dark:hover:bg-amber-400/20" onClick={() => openCrossSellModal(order)}>
                 <PackagePlus className="h-4 w-4" /> Add cross-sell / upsell
+              </button>
+              {/* The plain route: more products on the order without it being
+                  treated as an upsell win or paying a cross-sell bonus. */}
+              <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-black text-sky-800 shadow-sm transition-colors hover:bg-sky-100 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-100 dark:hover:bg-sky-400/20" onClick={() => openExtraItemsModal(order)}>
+                <Plus className="h-4 w-4" /> Add other products
               </button>
               <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-800 shadow-sm transition-colors hover:bg-emerald-100 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-100 dark:hover:bg-emerald-400/20" onClick={() => openFreeGiftModal(order)}>
                 <Gift className="h-4 w-4" /> Add free gift
@@ -31003,7 +31104,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   };
 
   const formatOrderForWhatsAppDispatch = (order: TrackedOrder) => {
-    const additionalItemTotal = (order.crossSellLines ?? []).reduce((sum, line) => sum + Math.max(0, line.amount || 0), 0);
+    const additionalItemTotal = [...(order.crossSellLines ?? []), ...(order.additionalLines ?? [])]
+    .reduce((sum, line) => sum + Math.max(0, Number(line.amount) || 0), 0);
     const mainOfferTotal = Math.max(0, (order.amount || 0) - additionalItemTotal);
     const extraPricedPackages = order.crossSellLines ?? [];
     const hasMultiplePricedPackages = extraPricedPackages.length > 0;
@@ -94327,7 +94429,7 @@ ${waybillLineItems(w).length > 1
         return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section
-            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "sendToAgent" ? "h-[calc(100dvh-1rem)] sm:h-[46rem]" : ""} ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" ? "max-w-5xl" :modal === "recordRemittance" || modal === "sendToAgent" || modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
+            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "sendToAgent" ? "h-[calc(100dvh-1rem)] sm:h-[46rem]" : ""} ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" ? "max-w-5xl" :modal === "recordRemittance" || modal === "sendToAgent" || modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "addExtraItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
             role="dialog" aria-modal="true" aria-labelledby="modal-title"
           >
@@ -94343,6 +94445,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "signout" && "Sign Out"}
                 {modal === "carts" && "Abandoned Carts"}
                 {modal === "addProduct" && "Add New Product"}
+                {modal === "addExtraItems" && "Add other products"}
                 {modal === "updateStock" && "Update Stock"}
                 {modal === "addSalesRep" && "Add New Sales Representative"}
                 {modal === "addAgent" && "Add New Agent"}
@@ -97101,6 +97204,134 @@ ${waybillLineItems(w).length > 1
                   </div>
 	                {renderUpsellReversalWarning(selectedOrder, Math.max(1, Number(createOrderQuantity) || 1))}
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Back</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
+	              </div>
+	            )}
+
+	            {modal === "addExtraItems" && selectedOrder && (
+	              <div className="modal-form">
+	                <p className="m-0 flex gap-2 rounded-lg bg-sky-50 px-3 py-2.5 text-[12px] font-medium leading-4 text-sky-900">
+	                  <Info className="mt-0.5 h-4 w-4 shrink-0" />
+	                  <span>
+	                    These are ordinary items on the order — they bill the customer and come off the agent's stock,
+	                    but they do <strong className="font-black">not</strong> pay a cross-sell bonus unless you tick
+	                    it on the line. Leave the price at 0 for a giveaway; it still ships.
+	                  </span>
+	                </p>
+
+	                <div className="space-y-2">
+	                  {extraItemsDraft.map((row, index) => {
+	                    const product = products.find((item) => item.id === row.productId);
+	                    const needs = Math.max(1, Number(row.quantity) || 1);
+	                    const held = row.productId && selectedOrder.agentId
+	                      ? (agentStock.find((entry) => entry.agentId === selectedOrder.agentId && entry.productId === row.productId)?.quantity ?? 0)
+	                      : null;
+	                    return (
+	                      <div key={row.key} className="rounded-lg border border-gray-200 p-3">
+	                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,2fr)_80px_minmax(0,1fr)]">
+	                          <label className="m-0">
+	                            <span>Product</span>
+	                            <select value={row.productId}
+	                              onChange={(event) => {
+	                                const picked = products.find((item) => item.id === event.target.value);
+	                                const price = picked ? (primaryPricing(picked)?.sellingPrice ?? 0) : 0;
+	                                setExtraItemsDraft((prev) => prev.map((entry, i) => i === index
+	                                  ? { ...entry, productId: event.target.value, amount: price > 0 ? String(price * needs) : entry.amount }
+	                                  : entry));
+	                              }}>
+	                              <option value="">Choose product</option>
+	                              {catalogProducts.filter((item) => item.active).map((item) => (
+	                                <option key={item.id} value={item.id}>{item.name}</option>
+	                              ))}
+	                            </select>
+	                          </label>
+	                          <label className="m-0">
+	                            <span>Pcs</span>
+	                            <input inputMode="numeric" value={row.quantity}
+	                              onChange={(event) => {
+	                                const qty = Math.max(1, Number(event.target.value) || 1);
+	                                setExtraItemsDraft((prev) => prev.map((entry, i) => {
+	                                  if (i !== index) return entry;
+	                                  const picked = products.find((item) => item.id === entry.productId);
+	                                  const unit = picked ? (primaryPricing(picked)?.sellingPrice ?? 0) : 0;
+	                                  return { ...entry, quantity: event.target.value, amount: unit > 0 ? String(unit * qty) : entry.amount };
+	                                }));
+	                              }} />
+	                          </label>
+	                          <label className="m-0">
+	                            <span>Line price</span>
+	                            <input inputMode="decimal" value={row.amount} placeholder="0"
+	                              onChange={(event) => setExtraItemsDraft((prev) => prev.map((entry, i) =>
+	                                i === index ? { ...entry, amount: event.target.value } : entry))} />
+	                          </label>
+	                        </div>
+	                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+	                          <label className="m-0 inline-flex items-center gap-2 text-[12px] font-semibold text-gray-700">
+	                            <input type="checkbox" checked={row.bonusEligible} className="h-4 w-4"
+	                              onChange={(event) => setExtraItemsDraft((prev) => prev.map((entry, i) =>
+	                                i === index ? { ...entry, bonusEligible: event.target.checked } : entry))} />
+	                            Pay a bonus on this line
+	                          </label>
+	                          <span className="inline-flex items-center gap-2">
+	                            {/* Stock is BLOCKED server-side; this is the early warning. */}
+	                            {held !== null && (
+	                              <span className={`text-[11px] font-black ${held >= needs ? "text-emerald-600" : "text-rose-600"}`}>
+	                                {held >= needs ? `✓ ${held} with agent` : `⚠ agent has ${held}, needs ${needs}`}
+	                              </span>
+	                            )}
+	                            {product && !selectedOrder.agentId && (
+	                              <span className="text-[11px] font-semibold text-gray-400">No agent assigned yet</span>
+	                            )}
+	                            <button type="button"
+	                              className="!min-h-0 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50"
+	                              onClick={() => setExtraItemsDraft((prev) => prev.filter((_, i) => i !== index))}>
+	                              Remove
+	                            </button>
+	                          </span>
+	                        </div>
+	                      </div>
+	                    );
+	                  })}
+	                </div>
+
+	                <button type="button"
+	                  className="!min-h-0 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-[13px] font-bold text-[#1F8FE0] hover:bg-blue-50"
+	                  onClick={() => setExtraItemsDraft((prev) => [...prev, {
+	                    key: `new-${Date.now()}`, productId: "", quantity: "1", amount: "", bonusEligible: false, note: ""
+	                  }])}>
+	                  <Plus className="h-4 w-4" /> Add another product
+	                </button>
+
+	                <label className="m-0 flex items-start gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5">
+	                  <input type="checkbox" checked={extraItemsAdjustTotal} className="mt-0.5 h-4 w-4"
+	                    onChange={(event) => setExtraItemsAdjustTotal(event.target.checked)} />
+	                  <span>
+	                    <span className="block text-[13px] font-bold text-gray-900">Add these to the order total</span>
+	                    <span className="block text-[11px] font-medium text-gray-500">
+	                      On by default. Turn it off if the price is already inside the amount you agreed.
+	                    </span>
+	                  </span>
+	                </label>
+
+	                <p className="m-0 flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2.5 text-[13px] font-bold text-gray-900">
+	                  <span>Extras total</span>
+	                  <span>{naira(extraItemsDraft.reduce((sum, row) =>
+	                    sum + Math.max(0, Number(String(row.amount).replace(/,/g, "")) || 0), 0))}</span>
+	                </p>
+
+	                {extraItemsError && (
+	                  <p className="m-0 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-[12px] font-bold text-rose-700">
+	                    {extraItemsError}
+	                  </p>
+	                )}
+
+	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+	                  <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Back</button>
+	                  <button disabled={extraItemsSaving}
+	                    className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] disabled:opacity-50"
+	                    onClick={() => void saveExtraItems()}>
+	                    {extraItemsSaving ? "Saving…" : "Save items"}
+	                  </button>
+	                </div>
 	              </div>
 	            )}
 
