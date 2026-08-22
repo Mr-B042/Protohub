@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Banknote, Building2, CheckCircle2,
-  Info, Landmark, Plus, Search, Wallet, X
+  Info, Landmark, Pencil, Plus, Search, Trash2, Wallet, X
 } from "lucide-react";
 import type { BankAccountRow, BankAccountsView, BankTransferRow } from "../lib/api";
 import type { CashFlowTransaction } from "./CashFlowPage";
@@ -14,6 +14,45 @@ import type { CashFlowTransaction } from "./CashFlowPage";
 // from the cash in/out totals on the Overview tab.
 
 const naira = (value: number) => `₦${Math.round(Number(value) || 0).toLocaleString("en-NG")}`;
+
+// Recognisable brand marks for the providers Protohub actually banks with.
+// Drawn from the provider's own colour and initial rather than shipping their
+// logo files: no licensing question, nothing to load over the network, and it
+// still reads at a glance which card is Opay and which is Moniepoint.
+const BRAND_MARKS: Array<{ match: RegExp; label: string; bg: string; fg: string }> = [
+  { match: /opay/i, label: "O", bg: "bg-[#1DCF9F]", fg: "text-white" },
+  { match: /moniepoint/i, label: "M", bg: "bg-[#0357EE]", fg: "text-white" },
+  { match: /palmpay/i, label: "P", bg: "bg-[#7B2FF7]", fg: "text-white" },
+  { match: /kuda/i, label: "K", bg: "bg-[#40196D]", fg: "text-white" },
+  { match: /gt ?bank|guaranty/i, label: "GT", bg: "bg-[#DD4B24]", fg: "text-white" },
+  { match: /access/i, label: "A", bg: "bg-[#E8600F]", fg: "text-white" },
+  { match: /zenith/i, label: "Z", bg: "bg-[#E4032E]", fg: "text-white" },
+  { match: /first ?bank/i, label: "FB", bg: "bg-[#00518F]", fg: "text-white" },
+  { match: /uba/i, label: "U", bg: "bg-[#D8232A]", fg: "text-white" }
+];
+
+function AccountMark({ account }: { account: BankAccountRow }) {
+  if (account.accountType === "cash") {
+    return (
+      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
+        <Wallet className="h-5 w-5" />
+      </span>
+    );
+  }
+  const brand = BRAND_MARKS.find((entry) => entry.match.test(`${account.bankName} ${account.name}`));
+  if (!brand) {
+    return (
+      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+        <Building2 className="h-5 w-5" />
+      </span>
+    );
+  }
+  return (
+    <span className={`flex h-10 w-10 items-center justify-center rounded-xl text-sm font-black ${brand.bg} ${brand.fg}`}>
+      {brand.label}
+    </span>
+  );
+}
 const stamp = (iso: string | null) => {
   if (!iso) return "—";
   const date = new Date(iso);
@@ -40,6 +79,8 @@ export type BankAccountsTabProps = {
   }) => Promise<void>;
   onTransfer: (body: { fromAccountId: string; toAccountId: string; amount: number; note: string; markCleared: boolean }) => Promise<void>;
   onClearTransfer: (id: string) => Promise<void>;
+  onUpdateAccount: (id: string, body: Record<string, unknown>) => Promise<void>;
+  onDeleteAccount: (id: string, name: string) => Promise<void>;
   onRefresh: () => void;
 };
 
@@ -50,6 +91,7 @@ export default function BankAccountsTab(props: BankAccountsTabProps) {
   const [accountFilter, setAccountFilter] = useState("all");
   const [addOpen, setAddOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [editing, setEditing] = useState<BankAccountRow | null>(null);
 
   const accounts = view?.accounts.filter((account) => account.active) ?? [];
   const pending = (view?.transfers ?? []).filter((row) => !row.clearedAt);
@@ -137,12 +179,25 @@ export default function BankAccountsTab(props: BankAccountsTabProps) {
             <article key={account.id}
               className={`rounded-2xl border px-4 py-4 ${account.accountType === "cash" ? "border-amber-200 bg-amber-50/40" : "border-gray-200 bg-white"}`}>
               <div className="flex items-start justify-between gap-2">
-                <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${account.accountType === "cash" ? "bg-amber-100 text-amber-600" : "bg-blue-50 text-blue-600"}`}>
-                  {account.accountType === "cash" ? <Wallet className="h-4 w-4" /> : <Building2 className="h-4 w-4" />}
-                </span>
-                {account.isPrimary && (
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">Primary</span>
-                )}
+                <AccountMark account={account} />
+                <div className="flex items-center gap-1.5">
+                  {account.isPrimary && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">Primary</span>
+                  )}
+                  {canManage && (
+                    <>
+                      <button type="button" title="Edit account" onClick={() => setEditing(account)}
+                        className="!min-h-0 rounded-lg bg-transparent p-1 text-gray-300 hover:text-[#1F8FE0]">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button type="button" title="Remove account" disabled={props.saving}
+                        onClick={() => void props.onDeleteAccount(account.id, account.name)}
+                        className="!min-h-0 rounded-lg bg-transparent p-1 text-gray-300 hover:text-rose-600 disabled:opacity-40">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
               <p className="m-0 mt-2 truncate text-sm font-black text-gray-900" title={account.name}>{account.name}</p>
               <p className="m-0 text-[11px] font-semibold text-gray-400">
@@ -308,6 +363,8 @@ export default function BankAccountsTab(props: BankAccountsTabProps) {
 
       {addOpen && <AddAccountModal saving={props.saving} onClose={() => setAddOpen(false)}
         onSave={async (body) => { await props.onAddAccount(body); setAddOpen(false); }} />}
+      {editing && <EditAccountModal account={editing} saving={props.saving} onClose={() => setEditing(null)}
+        onSave={async (body) => { await props.onUpdateAccount(editing.id, body); setEditing(null); }} />}
       {transferOpen && <TransferModal accounts={accounts} saving={props.saving} onClose={() => setTransferOpen(false)}
         onSave={async (body) => { await props.onTransfer(body); setTransferOpen(false); }} />}
     </div>
@@ -506,6 +563,85 @@ function TransferModal({ accounts, saving, onClose, onSave }: {
           Transfers between your own accounts are not cash flow — nothing enters or leaves the business, so this moves balances without changing Cash In or Cash Out.
         </p>
       </div>
+    </ModalShell>
+  );
+}
+
+function EditAccountModal({ account, saving, onClose, onSave }: {
+  account: BankAccountRow; saving: boolean; onClose: () => void;
+  onSave: (body: Record<string, unknown>) => Promise<void>;
+}) {
+  const [name, setName] = useState(account.name);
+  const [bankName, setBankName] = useState(account.bankName);
+  const [last4, setLast4] = useState(account.accountNumberLast4);
+  const [isPrimary, setIsPrimary] = useState(account.isPrimary);
+  const [active, setActive] = useState(account.active);
+  const [openingBalance, setOpeningBalance] = useState(String(Math.round(account.openingBalance)));
+  const [openingDate, setOpeningDate] = useState(account.openingBalanceDate ?? "");
+
+  const amount = Number(String(openingBalance).replace(/[^\d.-]/g, ""));
+  const invalid = !name.trim() || !Number.isFinite(amount) || !/^[0-9]{0,4}$/.test(last4);
+  const openingChanged = Math.round(amount) !== Math.round(account.openingBalance);
+
+  return (
+    <ModalShell title="Edit Account" subtitle={`${account.bankName || "Account"} · balances recalculate on save.`} onClose={onClose}
+      footer={(
+        <>
+          <button type="button" onClick={onClose}
+            className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[13px] font-black text-gray-700 hover:bg-gray-50">Cancel</button>
+          <button type="button" disabled={saving || invalid}
+            onClick={() => void onSave({
+              name: name.trim(), bankName: bankName.trim(), accountNumberLast4: last4,
+              isPrimary, active, openingBalance: amount, openingBalanceDate: openingDate || null
+            })}
+            className="!min-h-0 rounded-xl bg-[#1F8FE0] px-4 py-2.5 text-[13px] font-black text-white hover:bg-[#1a7ec4] disabled:opacity-50">
+            {saving ? "Saving…" : "Save Changes"}
+          </button>
+        </>
+      )}>
+      <label className={labelClass}>Account name
+        <input value={name} onChange={(event) => setName(event.target.value)} className={fieldClass} />
+      </label>
+      <div className="grid grid-cols-2 gap-3">
+        <label className={labelClass}>Bank
+          <input value={bankName} onChange={(event) => setBankName(event.target.value)}
+            disabled={account.accountType === "cash"}
+            className={`${fieldClass} disabled:bg-gray-50 disabled:text-gray-400`} />
+        </label>
+        <label className={labelClass}>Last 4 digits
+          <input value={last4} onChange={(event) => setLast4(event.target.value.replace(/\D/g, "").slice(0, 4))}
+            disabled={account.accountType === "cash"}
+            className={`${fieldClass} disabled:bg-gray-50 disabled:text-gray-400`} />
+        </label>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <label className={labelClass}>Opening balance (₦)
+          <input value={openingBalance} onChange={(event) => setOpeningBalance(event.target.value)} inputMode="numeric" className={fieldClass} />
+        </label>
+        <label className={labelClass}>Effective date
+          <input type="date" value={openingDate} onChange={(event) => setOpeningDate(event.target.value)} className={fieldClass} />
+        </label>
+      </div>
+      {openingChanged && (
+        <p className="m-0 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-bold leading-4 text-amber-900">
+          Changing the opening balance moves every figure that runs from it — this account's current balance, total liquid cash, and the Opening and Closing Cash on the Overview tab. Only change it to a number you have actually counted.
+        </p>
+      )}
+      <label className="flex items-center gap-2 text-[13px] font-bold text-gray-700">
+        <input type="checkbox" checked={isPrimary} onChange={(event) => setIsPrimary(event.target.checked)}
+          className="h-4 w-4 rounded border-gray-300 text-[#1F8FE0]" />
+        Primary account
+      </label>
+      <label className="flex items-start gap-2 text-[13px] font-bold text-gray-700">
+        <input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)}
+          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#1F8FE0]" />
+        <span>
+          Active
+          <span className="mt-0.5 block text-[11px] font-medium text-gray-400">
+            Untick to retire an account you no longer use. Its history stays, it simply leaves the dashboard and the totals.
+          </span>
+        </span>
+      </label>
     </ModalShell>
   );
 }

@@ -79671,6 +79671,14 @@ ${waybillLineItems(w).length > 1
                     onAddAccount: (body) => runBankAction(() => cashFlowApi.addAccount(body), "Account added."),
                     onTransfer: (body) => runBankAction(() => cashFlowApi.transfer(body), "Transfer recorded."),
                     onClearTransfer: (id) => runBankAction(() => cashFlowApi.clearTransfer(id), "Transfer marked received."),
+                    onUpdateAccount: (id, body) => runBankAction(() => cashFlowApi.updateAccount(id, body), "Account updated."),
+                    onDeleteAccount: async (id, name) => {
+                      // The server refuses once anything has moved through the
+                      // account and says what blocked it; this only stops an
+                      // accidental click on an empty one.
+                      if (!window.confirm(`Remove ${name}? This is only possible while nothing has moved through it.`)) return;
+                      await runBankAction(() => cashFlowApi.deleteAccount(id), `${name} removed.`);
+                    },
                     onRefresh: () => void loadBankAccounts()
                   }}
                   onDownloadReport={() => {

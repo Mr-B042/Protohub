@@ -1224,6 +1224,7 @@ export const cashFlowApi = {
   updateAccount: (id: string, body: unknown) => patch<{ account: BankAccountRow }>(`/api/cash-flow/accounts/${id}`, body),
   transfer: (body: unknown) => post<{ id: string }>("/api/cash-flow/transfers", body),
   clearTransfer: (id: string) => post<{ ok: boolean }>(`/api/cash-flow/transfers/${id}/clear`, {}),
+  deleteAccount: (id: string) => del<{ ok: boolean; deleted: string }>(`/api/cash-flow/accounts/${id}`),
   assignAccount: (body: unknown) => post<{ remittances: number; expenses: number }>("/api/cash-flow/assign-account", body),
   openingHistory: () => get<{ rows: OpeningBalanceRow[] }>("/api/cash-flow/opening-balances"),
   setOpeningCash: (body: { amount: number; effectiveAt: string; method: "manual" | "carry_forward"; reason: string }) =>

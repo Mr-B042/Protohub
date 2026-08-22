@@ -133,6 +133,39 @@ async function netBetween(orgId: string, fromIso: string, toIso: string): Promis
  * number be read as money on hand.
  */
 async function resolveOpeningCash(orgId: string, periodStartIso: string) {
+  // ⚠️ Bank accounts win when they exist. They are the cash Protohub can
+  // actually reach - Opay and Moniepoint - so once they are set up they are
+  // THE source, and the company-wide anchor below is only a fallback for an
+  // org that has not added any. Letting both run would put two different
+  // "opening cash" figures on one page.
+  const { data: accountRows } = await supabase.from("bank_accounts")
+    .select("opening_balance, opening_balance_date, created_at")
+    .eq("org_id", orgId).eq("active", true);
+  const accounts = (accountRows ?? []) as any[];
+  if (accounts.length > 0) {
+    const baseline = accounts.reduce((sum, row) => sum + Number(row.opening_balance ?? 0), 0);
+    // Movements are counted from the EARLIEST account's effective date, so an
+    // account added later does not double-count what came before it.
+    const dates = accounts
+      .map((row) => row.opening_balance_date ?? String(row.created_at ?? "").slice(0, 10))
+      .filter(Boolean)
+      .sort();
+    const baselineIso = dates.length > 0 ? startOfLagosDay(dates[0]) : periodStartIso;
+    const drift = baselineIso < periodStartIso ? await netBetween(orgId, baselineIso, periodStartIso) : 0;
+    return {
+      amount: baseline + drift,
+      anchored: true,
+      anchor: {
+        id: "bank-accounts",
+        amount: baseline,
+        effectiveAt: baselineIso,
+        method: "bank_accounts",
+        reason: `Sum of ${accounts.length} active account${accounts.length === 1 ? "" : "s"} opening balance${accounts.length === 1 ? "" : "s"}.`,
+        setByName: "Bank accounts"
+      }
+    };
+  }
+
   const { data: anchor } = await supabase
     .from("cash_opening_balances")
     .select("id, amount, effective_at, method, reason, set_by_name")
@@ -570,6 +603,50 @@ router.post("/assign-account", requireRole("Owner", "Admin"), async (req, res) =
     res.json({ remittances, expenses });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not assign those transactions." });
+  }
+});
+
+// Removing an account. Refused outright once anything has moved through it -
+// deleting would either orphan those transactions or, worse, silently detach
+// them and change every balance on the page. Deactivating keeps the history
+// and takes it off the dashboard, which is what "remove" almost always means.
+router.delete("/accounts/:id", requireRole("Owner"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const accountId = req.params.id;
+    const { data: account } = await supabase.from("bank_accounts")
+      .select("id, name").eq("org_id", orgId).eq("id", accountId).maybeSingle();
+    if (!account) { res.status(404).json({ error: "That account does not exist here." }); return; }
+
+    const countWhere = async (table: string, column: string) => {
+      const { count } = await supabase.from(table)
+        .select("id", { count: "exact", head: true }).eq(column, accountId);
+      return count ?? 0;
+    };
+    const [remittances, expenses, transfersOut, transfersIn] = await Promise.all([
+      countWhere("remittance_transactions", "bank_account_id"),
+      countWhere("expenses", "bank_account_id"),
+      countWhere("bank_account_transfers", "from_account_id"),
+      countWhere("bank_account_transfers", "to_account_id")
+    ]);
+    const blockers = [
+      remittances > 0 && `${remittances} remittance${remittances === 1 ? "" : "s"}`,
+      expenses > 0 && `${expenses} expense${expenses === 1 ? "" : "s"}`,
+      (transfersOut + transfersIn) > 0 && `${transfersOut + transfersIn} transfer${transfersOut + transfersIn === 1 ? "" : "s"}`
+    ].filter(Boolean) as string[];
+
+    if (blockers.length > 0) {
+      res.status(409).json({
+        error: `${account.name} has ${blockers.join(", ")} against it and cannot be deleted. Deactivate it instead - that hides it from the dashboard while keeping the history.`,
+        blockers
+      });
+      return;
+    }
+    const { error } = await supabase.from("bank_accounts").delete().eq("org_id", orgId).eq("id", accountId);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true, deleted: account.name });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not remove that account." });
   }
 });
 
