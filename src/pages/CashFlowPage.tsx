@@ -84,6 +84,8 @@ export type CashFlowPageProps = {
   onDownloadReport: () => void;
   /** Bank Accounts lives inside this page: same question, asked twice. */
   bank: Omit<BankAccountsTabProps, "transactions" | "loading">;
+  /** Re-open the weekly opening-cash wizard for an already-opened week. */
+  onEditWeeklyOpening: () => void;
 };
 
 export default function CashFlowPage(props: CashFlowPageProps) {
@@ -220,8 +222,8 @@ export default function CashFlowPage(props: CashFlowPageProps) {
                 <card.icon className="h-4 w-4" />
               </span>
               {card.label === "Opening Cash" && props.canSetOpeningCash && (
-                <button type="button" title="Set opening cash"
-                  onClick={() => { setOpeningModal(true); props.onLoadOpeningHistory(); }}
+                <button type="button" title="Update this week's opening cash"
+                  onClick={props.onEditWeeklyOpening}
                   className="!min-h-0 rounded-lg bg-transparent p-1 text-gray-300 hover:text-[#1F8FE0]">
                   <Pencil className="h-3.5 w-3.5" />
                 </button>
