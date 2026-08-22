@@ -3168,6 +3168,14 @@ export type CartLogPenaltiesView = {
     pendingCount: number; pendingAmount: number;
     approvedCount: number; approvedAmount: number; waivedCount: number;
   };
+  /** Present tense, for the rep reading it. Null when viewing all reps. */
+  today: {
+    dateKey: string; cartsDue: number; logsMade: number;
+    status: "not_due" | "clear" | "missed" | "before_go_live";
+    atRisk: number; rehearsal: boolean; message: string;
+  } | null;
+  /** Supervisor view: reps who have logged nothing yet today. */
+  repsAtRiskToday: Array<{ repId: string; repName: string; cartsDue: number; logsMade: number }>;
 };
 
 export const cartsApi = {

@@ -113,6 +113,57 @@ export function summariseRepPenalties(
   return [...byRep.values()].sort((left, right) => right.atRiskAmount - left.atRiskAmount);
 }
 
+export type TodayStanding = {
+  dateKey: string;
+  cartsDue: number;
+  logsMade: number;
+  status: RepDayStatus;
+  /** What it costs if the day ends like this. 0 unless actually at risk. */
+  atRisk: number;
+  /** True before go-live: the same miss, but nothing is charged for it yet. */
+  rehearsal: boolean;
+  message: string;
+};
+
+/**
+ * Where a rep stands RIGHT NOW, today.
+ *
+ * ⚠️ Written in the second person and in the present tense on purpose. A rep
+ * reading "3 misses this week" has already lost the money; a rep reading "you
+ * have not logged anything today" can still act. The whole point of the
+ * penalty is the behaviour, not the collection.
+ */
+export function todayStanding(
+  input: RepDayInput, startDate = CART_LOG_PENALTY_START_DATE
+): TodayStanding {
+  const status = repDayStatus(input, startDate);
+  const rehearsal = input.dateKey < startDate;
+  const atRisk = status === "missed" ? CART_LOG_MISS_AMOUNT : 0;
+
+  let message: string;
+  if (!isChargeableDay(input.dateKey)) {
+    message = "Sunday - nothing due today.";
+  } else if (input.cartsDue <= 0) {
+    message = "No carts on your board today.";
+  } else if (input.logsMade > 0) {
+    message = `Logged today. ${input.cartsDue} cart${input.cartsDue === 1 ? "" : "s"} on your board.`;
+  } else if (rehearsal) {
+    message = `${input.cartsDue} cart${input.cartsDue === 1 ? "" : "s"} and nothing logged yet. From ${startDate} a day like this costs ₦${CART_LOG_MISS_AMOUNT}.`;
+  } else {
+    message = `${input.cartsDue} cart${input.cartsDue === 1 ? "" : "s"} and nothing logged yet. Log one before the day ends or this is ₦${CART_LOG_MISS_AMOUNT}.`;
+  }
+
+  return {
+    dateKey: input.dateKey,
+    cartsDue: input.cartsDue,
+    logsMade: input.logsMade,
+    status,
+    atRisk: rehearsal ? 0 : atRisk,
+    rehearsal,
+    message
+  };
+}
+
 // ── Date range presets ────────────────────────────────────
 
 export type RangePreset =
