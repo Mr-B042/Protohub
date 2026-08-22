@@ -156,7 +156,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -9466,6 +9466,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [reconciliationError, setReconciliationError] = useState("");
   const [reconciliationSaving, setReconciliationSaving] = useState(false);
   const [reconciliationHistory, setReconciliationHistory] = useState<ReconciliationHistoryWeek[]>([]);
+  // ── Reserves (Cash Flow tab) ──
+  const [reservesView, setReservesView] = useState<ReservesView | null>(null);
+  const [reservesLoading, setReservesLoading] = useState(false);
+  const [reservesSaving, setReservesSaving] = useState(false);
   // ── Batch unit-economics (Profitability tab) ──
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -9661,13 +9665,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } finally { setReconciliationSaving(false); }
   };
 
+  const loadReserves = useCallback(async () => {
+    setReservesLoading(true);
+    try {
+      setReservesView(await cashFlowApi.reserves());
+    } catch { /* Owner-gated; the tab shows its empty state rather than blocking */ }
+    finally { setReservesLoading(false); }
+  }, []);
+
+  // ⚠️ A reserve is a label, not a movement, so this reloads ONLY the reserves
+  // and the accounts it reads its liquid-cash total from. Nothing here can
+  // change a bank balance or a cash flow figure.
+  const runReserveAction = async (action: () => Promise<unknown>, message: string) => {
+    setReservesSaving(true);
+    try {
+      await action();
+      showToast(message);
+      await loadReserves();
+    } catch (err: any) {
+      showToast(err?.message ?? "That did not save.");
+      throw err;
+    } finally { setReservesSaving(false); }
+  };
+
   useEffect(() => {
     if (activePage === "Finance & Accounting" && financeTab === "Profitability") void loadBatches();
     if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") {
       void loadCashFlow(cashFlowPeriod); void loadBankAccounts(); void loadWeeklyOpening();
       void loadReconciliation(reconciliationWeek);
+      void loadReserves();
     }
-  }, [activePage, financeTab, cashFlowPeriod, reconciliationWeek, loadCashFlow, loadBankAccounts, loadWeeklyOpening, loadReconciliation]);
+  }, [activePage, financeTab, cashFlowPeriod, reconciliationWeek, loadCashFlow, loadBankAccounts, loadWeeklyOpening, loadReconciliation, loadReserves]);
   useEffect(() => {
     setBatchAutofillMeta(null);
     if (selectedBatchId) void loadBatchEconomics(selectedBatchId);
@@ -79827,6 +79855,21 @@ ${waybillLineItems(w).length > 1
                     onSaveInvestigation: saveInvestigation,
                     history: reconciliationHistory,
                     onLoadHistory: () => void loadReconciliationHistory()
+                  }}
+                  reserves={{
+                    view: reservesView,
+                    accounts: bankAccountsView?.accounts ?? [],
+                    loading: reservesLoading,
+                    saving: reservesSaving,
+                    onCreate: (body) => runReserveAction(
+                      () => cashFlowApi.addReserve(body), `${body.name} reserved.`),
+                    onUpdate: (id, body) => runReserveAction(
+                      () => cashFlowApi.updateReserve(id, body), "Reserve updated."),
+                    onRelease: (id, body) => runReserveAction(
+                      () => cashFlowApi.releaseReserve(id, body),
+                      `₦${Math.round(body.amount).toLocaleString("en-NG")} released back to operating cash.`),
+                    onDelete: (id) => runReserveAction(
+                      () => cashFlowApi.deleteReserve(id), "Reserve removed.")
                   }}
                   onDownloadReport={() => {
                     const rows = cashFlowView?.transactions ?? [];

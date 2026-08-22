@@ -19,6 +19,15 @@ import {
   withRunningBalance
 } from "../lib/cash-flow.js";
 import {
+  nextReserveRef,
+  reserveBreakdown,
+  reserveDisplayStatus,
+  reserveInsights,
+  summariseReserves,
+  upcomingReleases,
+  type ReserveInput
+} from "../lib/cash-reserves.js";
+import {
   investigationProgress,
   reconciliationStatus,
   summariseVerification,
@@ -1265,6 +1274,256 @@ router.get("/reconciliation/history", async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not load reconciliation history." });
+  }
+});
+
+// ══ Restricted Cash / Reserves ════════════════════════════
+//
+// ⚠️ A reserve is a LABEL, never a movement. Setting money aside does not
+// transfer, withdraw or touch a single naira - bank balances, cash flow totals
+// and reconciliation figures are all unaffected. The only figure a reserve
+// changes is Free Operating Cash. Nothing below writes to bank_accounts,
+// expenses or remittance_transactions, and nothing should.
+
+/** Total liquid cash across every active account, including cash in hand. */
+async function totalLiquidCash(orgId: string): Promise<number> {
+  const [{ data: accountRows }, { data: transferRows }, movements] = await Promise.all([
+    supabase.from("bank_accounts").select("id, account_type, opening_balance")
+      .eq("org_id", orgId).eq("active", true),
+    supabase.from("bank_account_transfers")
+      .select("from_account_id, to_account_id, amount, cleared_at")
+      .eq("org_id", orgId).limit(REPORT_ROW_CEILING),
+    loadAllMovements(orgId)
+  ]);
+  const accounts = (accountRows ?? []) as any[];
+  const balances = computeAccountBalances(
+    accounts.map((row) => ({ id: row.id, openingBalance: Number(row.opening_balance ?? 0) })),
+    movements,
+    ((transferRows ?? []) as any[]).map((row) => ({
+      fromAccountId: row.from_account_id, toAccountId: row.to_account_id,
+      amount: Number(row.amount ?? 0), clearedAt: row.cleared_at ?? null
+    }))
+  );
+  return summariseAccounts(
+    accounts.map((row) => ({ id: row.id, kind: row.account_type })), balances
+  ).totalLiquid;
+}
+
+const reserveRowToInput = (row: any): ReserveInput => ({
+  id: row.id,
+  name: row.name,
+  category: row.category,
+  amount: Number(row.amount ?? 0),
+  releasedAmount: Number(row.released_amount ?? 0),
+  status: row.status,
+  expectedReleaseDate: row.expected_release_date ?? null,
+  availableToUse: row.available_to_use === true
+});
+
+// ── GET /api/cash-flow/reserves ───────────────────────────
+router.get("/reserves", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const today = lagosDayOf(new Date().toISOString());
+    const [{ data: rows }, liquid] = await Promise.all([
+      supabase.from("cash_reserves").select("*").eq("org_id", orgId)
+        .order("created_at", { ascending: false }).limit(REPORT_ROW_CEILING),
+      totalLiquidCash(orgId)
+    ]);
+    const reserves = ((rows ?? []) as any[]);
+    const inputs = reserves.map(reserveRowToInput);
+    const summary = summariseReserves(inputs, liquid);
+
+    res.json({
+      reserves: reserves.map((row) => {
+        const input = reserveRowToInput(row);
+        return {
+          id: row.id,
+          refCode: row.ref_code,
+          name: row.name,
+          purpose: row.purpose ?? "",
+          bankAccountId: row.bank_account_id ?? null,
+          accountLabel: row.account_label ?? "",
+          amount: Number(row.amount ?? 0),
+          releasedAmount: Number(row.released_amount ?? 0),
+          outstanding: Math.max(Number(row.amount ?? 0) - Number(row.released_amount ?? 0), 0),
+          availableToUse: row.available_to_use === true,
+          expectedReleaseDate: row.expected_release_date ?? null,
+          category: row.category,
+          status: row.status,
+          displayStatus: reserveDisplayStatus(input, today),
+          createdByName: row.created_by_name ?? "",
+          createdAt: row.created_at
+        };
+      }),
+      summary,
+      breakdown: reserveBreakdown(inputs),
+      insights: reserveInsights(inputs, summary, today),
+      upcoming: upcomingReleases(inputs, today, 30),
+      today
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load reserves." });
+  }
+});
+
+const ReserveSchema = z.object({
+  name: z.string().trim().min(1, "Give the reserve a name.").max(80),
+  purpose: z.string().trim().max(200).default(""),
+  bankAccountId: z.string().uuid().nullable().optional(),
+  amount: z.coerce.number().positive("A reserve has to be more than ₦0.").max(1_000_000_000_000),
+  availableToUse: z.boolean().default(false),
+  expectedReleaseDate: z.string().regex(DATE_KEY).nullable().optional(),
+  category: z.enum(["payroll", "tax", "supplier", "advertising", "emergency", "owner", "other"]).default("other")
+}).strict();
+
+// ── POST /api/cash-flow/reserves ──────────────────────────
+router.post("/reserves", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = ReserveSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const body = parsed.data;
+    const today = lagosDayOf(new Date().toISOString());
+
+    const [{ data: codes }, { data: account }, { data: actor }] = await Promise.all([
+      supabase.from("cash_reserves").select("ref_code").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
+      body.bankAccountId
+        ? supabase.from("bank_accounts").select("name").eq("id", body.bankAccountId).eq("org_id", orgId).maybeSingle()
+        : Promise.resolve({ data: null } as any),
+      supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle()
+    ]);
+
+    const { data, error } = await supabase.from("cash_reserves").insert({
+      org_id: orgId,
+      ref_code: nextReserveRef(((codes ?? []) as any[]).map((row) => row.ref_code), today),
+      name: body.name,
+      purpose: body.purpose,
+      bank_account_id: body.bankAccountId ?? null,
+      account_label: String(account?.name ?? "").trim(),
+      amount: body.amount,
+      available_to_use: body.availableToUse,
+      expected_release_date: body.expectedReleaseDate ?? null,
+      category: body.category,
+      created_by: req.user!.id,
+      created_by_name: String(actor?.name ?? "").trim() || "Unknown"
+    }).select("id, ref_code").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    res.json({ id: data.id, refCode: data.ref_code });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not create that reserve." });
+  }
+});
+
+// ── PATCH /api/cash-flow/reserves/:id ─────────────────────
+router.patch("/reserves/:id", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = ReserveSchema.partial().safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const body = parsed.data;
+
+    const { data: existing } = await supabase.from("cash_reserves")
+      .select("released_amount").eq("id", req.params.id).eq("org_id", orgId).maybeSingle();
+    if (!existing) { res.status(404).json({ error: "That reserve no longer exists." }); return; }
+    // Shrinking a reserve below what has already been let out would break the
+    // running total, so it is refused rather than silently clamped.
+    if (body.amount !== undefined && body.amount < Number(existing.released_amount ?? 0)) {
+      res.status(400).json({
+        error: `₦${Math.round(Number(existing.released_amount)).toLocaleString("en-NG")} has already been released from this reserve, so it cannot be reduced below that.`
+      });
+      return;
+    }
+
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body.name !== undefined) patch.name = body.name;
+    if (body.purpose !== undefined) patch.purpose = body.purpose;
+    if (body.amount !== undefined) patch.amount = body.amount;
+    if (body.availableToUse !== undefined) patch.available_to_use = body.availableToUse;
+    if (body.expectedReleaseDate !== undefined) patch.expected_release_date = body.expectedReleaseDate ?? null;
+    if (body.category !== undefined) patch.category = body.category;
+    if (body.bankAccountId !== undefined) {
+      patch.bank_account_id = body.bankAccountId ?? null;
+      const { data: account } = body.bankAccountId
+        ? await supabase.from("bank_accounts").select("name").eq("id", body.bankAccountId).eq("org_id", orgId).maybeSingle()
+        : { data: null } as any;
+      patch.account_label = String(account?.name ?? "").trim();
+    }
+
+    const { error } = await supabase.from("cash_reserves").update(patch)
+      .eq("id", req.params.id).eq("org_id", orgId);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update that reserve." });
+  }
+});
+
+const ReleaseSchema = z.object({
+  amount: z.coerce.number().positive("Release more than ₦0.").max(1_000_000_000_000),
+  note: z.string().trim().max(200).default("")
+}).strict();
+
+// ── POST /api/cash-flow/reserves/:id/release ──────────────
+router.post("/reserves/:id/release", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = ReleaseSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
+
+    // ⚠️ One statement. Read-modify-write here would let two concurrent
+    // releases each read the same figure and both succeed, letting more out of
+    // a reserve than it ever held. The CHECK constraint refuses the second.
+    const { data: remaining, error } = await supabase.rpc("release_cash_reserve", {
+      p_reserve_id: req.params.id,
+      p_org_id: orgId,
+      p_amount: parsed.data.amount,
+      p_note: parsed.data.note,
+      p_released_by: req.user!.id,
+      p_released_by_name: String(actor?.name ?? "").trim() || "Unknown"
+    });
+    if (error) {
+      const overRelease = /cash_reserves_released_check/.test(error.message ?? "");
+      res.status(overRelease ? 400 : 500).json({
+        error: overRelease
+          ? "That is more than this reserve still holds."
+          : error.message
+      });
+      return;
+    }
+    res.json({ remaining: Number(remaining ?? 0) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not release that reserve." });
+  }
+});
+
+// ── DELETE /api/cash-flow/reserves/:id ────────────────────
+router.delete("/reserves/:id", requireRole("Owner"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { data: existing } = await supabase.from("cash_reserves")
+      .select("released_amount").eq("id", req.params.id).eq("org_id", orgId).maybeSingle();
+    if (!existing) { res.status(404).json({ error: "That reserve no longer exists." }); return; }
+
+    // A reserve that has released money is part of the audit trail, so it is
+    // cancelled rather than deleted - the releases must stay traceable.
+    if (Number(existing.released_amount ?? 0) > 0) {
+      const { error } = await supabase.from("cash_reserves")
+        .update({ status: "cancelled", updated_at: new Date().toISOString() })
+        .eq("id", req.params.id).eq("org_id", orgId);
+      if (error) { res.status(500).json({ error: error.message }); return; }
+      res.json({ ok: true, cancelled: true });
+      return;
+    }
+
+    const { error } = await supabase.from("cash_reserves")
+      .delete().eq("id", req.params.id).eq("org_id", orgId);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true, cancelled: false });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not remove that reserve." });
   }
 });
 
