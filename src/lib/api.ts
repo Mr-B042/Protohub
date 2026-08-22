@@ -1217,6 +1217,68 @@ export type BankAccountsView = {
   transfers: BankTransferRow[];
 };
 
+export type ReconciliationStatusKey =
+  | "not_verified" | "balanced" | "needs_investigation" | "investigating" | "resolved";
+
+export type ReconciliationAccount = {
+  id: string; name: string; bankName: string;
+  accountType: "bank" | "cash"; accountNumberLast4: string;
+  /** What the books say this account holds as at the end of the week. */
+  systemBalance: number;
+};
+
+export type VerificationAccountEntry = {
+  bankAccountId: string | null; accountLabel: string;
+  systemBalance: number; actualBalance: number;
+};
+
+export type VarianceInvestigationEvent = {
+  id: string; kind: string; detail: string;
+  amount: number | null; actorName: string; createdAt: string;
+};
+
+export type WeeklyReconciliationView = {
+  weekStart: string; weekEnd: string;
+  openingCash: number;
+  /** False when the opening figure is derived rather than counted. */
+  openingVerified: boolean;
+  cashIn: number; cashOut: number; expectedClosing: number;
+  accounts: ReconciliationAccount[];
+  unassigned: number;
+  verification: {
+    id: string; status: string;
+    expectedClosing: number; actualClosing: number;
+    notes: string; verifiedByName: string; verifiedAt: string | null;
+    accounts: VerificationAccountEntry[];
+  } | null;
+  investigation: {
+    id: string; status: "in_progress" | "submitted" | "resolved";
+    varianceAmount: number; reason: string; amountExplained: number;
+    description: string; occurredOn: string | null; category: string;
+    evidenceName: string; evidenceUrl: string; createdByName: string;
+    events: VarianceInvestigationEvent[];
+  } | null;
+  activity: {
+    ordersPlaced: number; ordersDelivered: number; deliveryRatePct: number;
+    agentRemittances: number; expectedRemittances: number; remittanceCoveragePct: number;
+    adSpend: number; adSpendPct: number;
+    stockPurchases: number; stockPurchasesPct: number;
+    otherExpenses: number; otherExpensesPct: number;
+  };
+  highlights: {
+    topCashIn: { label: string; amount: number; at: string } | null;
+    topCashOut: { label: string; amount: number; at: string } | null;
+    topTransfer: { label: string; amount: number; at: string } | null;
+  };
+};
+
+export type ReconciliationHistoryWeek = {
+  id: string; weekStart: string; weekEnd: string;
+  expectedClosing: number; actualClosing: number; variance: number;
+  amountExplained: number; status: ReconciliationStatusKey;
+  verifiedByName: string; verifiedAt: string | null;
+};
+
 export const cashFlowApi = {
   summary: (from: string, to: string) =>
     get<CashFlowView>(`/api/cash-flow?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
@@ -1233,7 +1295,22 @@ export const cashFlowApi = {
   assignAccount: (body: unknown) => post<{ remittances: number; expenses: number }>("/api/cash-flow/assign-account", body),
   openingHistory: () => get<{ rows: OpeningBalanceRow[] }>("/api/cash-flow/opening-balances"),
   setOpeningCash: (body: { amount: number; effectiveAt: string; method: "manual" | "carry_forward"; reason: string }) =>
-    post<{ row: OpeningBalanceRow }>("/api/cash-flow/opening-balances", body)
+    post<{ row: OpeningBalanceRow }>("/api/cash-flow/opening-balances", body),
+  reconciliation: (weekStart?: string) =>
+    get<WeeklyReconciliationView>(`/api/cash-flow/reconciliation${weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : ""}`),
+  saveVerification: (body: {
+    weekStart: string; status: "draft" | "verified"; notes: string;
+    accounts: VerificationAccountEntry[];
+  }) => post<{ id: string; weekStart: string; expectedClosing: number; actualClosing: number; variance: number; status: ReconciliationStatusKey }>(
+    "/api/cash-flow/reconciliation", body),
+  saveInvestigation: (body: {
+    weekStart: string; status: "in_progress" | "submitted" | "resolved";
+    reason: string | null; amountExplained: number; description: string;
+    occurredOn: string | null; category: string; evidenceName: string; evidenceUrl: string;
+  }) => post<{ id: string; weekStart: string; variance: number; progress: { variance: number; explained: number; unexplained: number; pct: number } }>(
+    "/api/cash-flow/reconciliation/investigation", body),
+  reconciliationHistory: () =>
+    get<{ weeks: ReconciliationHistoryWeek[] }>("/api/cash-flow/reconciliation/history")
 };
 
 export const deliveryGoalsApi = {

@@ -4,9 +4,10 @@ import {
 } from "recharts";
 import {
   ArrowDownLeft, ArrowUpRight, CalendarDays, ChevronLeft, ChevronRight, Download,
-  Eye, Filter, Info, Landmark, Pencil, RefreshCw, Search, TrendingUp, Users, Wallet, X
+  Eye, Filter, Info, Landmark, Pencil, RefreshCw, Search, ShieldCheck, TrendingUp, Users, Wallet, X
 } from "lucide-react";
 import BankAccountsTab, { type BankAccountsTabProps } from "./BankAccountsTab";
+import WeeklyReconciliationTab, { type WeeklyReconciliationTabProps } from "./WeeklyReconciliationTab";
 
 // ⚠️ Cash, not profit. Profit is recognised when an order is Delivered; the
 // money arrives when the agent remits, days later and sometimes never. A week
@@ -88,6 +89,16 @@ export type CashFlowPageProps = {
   bank: Omit<BankAccountsTabProps, "transactions" | "loading">;
   /** Re-open the weekly opening-cash wizard for an already-opened week. */
   onEditWeeklyOpening: () => void;
+  /** Weekly Reconciliation lives here too: recorded cash vs counted cash. */
+  reconciliation: WeeklyReconciliationTabProps;
+};
+
+const CASH_FLOW_TABS = ["Overview", "Bank Accounts", "Reconciliation"] as const;
+type CashFlowTab = (typeof CASH_FLOW_TABS)[number];
+const TAB_ICON: Record<CashFlowTab, typeof TrendingUp> = {
+  "Overview": TrendingUp,
+  "Bank Accounts": Wallet,
+  "Reconciliation": ShieldCheck
 };
 
 export default function CashFlowPage(props: CashFlowPageProps) {
@@ -98,7 +109,7 @@ export default function CashFlowPage(props: CashFlowPageProps) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
   const [openingModal, setOpeningModal] = useState(false);
-  const [topTab, setTopTab] = useState<"Overview" | "Bank Accounts">("Overview");
+  const [topTab, setTopTab] = useState<CashFlowTab>("Overview");
 
   useEffect(() => { setPage(1); }, [search, directionFilter, pageSize, period]);
 
@@ -157,18 +168,23 @@ export default function CashFlowPage(props: CashFlowPageProps) {
       </div>
 
       <div className="inline-flex w-full items-center rounded-xl bg-gray-100 p-1 sm:w-auto">
-        {(["Overview", "Bank Accounts"] as const).map((tab) => (
-          <button key={tab} type="button" onClick={() => setTopTab(tab)}
-            className={`!min-h-0 flex-1 rounded-lg px-4 py-2 text-[13px] font-black transition-colors sm:flex-none ${topTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>
-            <span className="inline-flex items-center gap-1.5">
-              {tab === "Bank Accounts" ? <Wallet className="h-3.5 w-3.5" /> : <TrendingUp className="h-3.5 w-3.5" />} {tab}
-            </span>
-          </button>
-        ))}
+        {CASH_FLOW_TABS.map((tab) => {
+          const Icon = TAB_ICON[tab];
+          return (
+            <button key={tab} type="button" onClick={() => setTopTab(tab)}
+              className={`!min-h-0 flex-1 rounded-lg px-4 py-2 text-[13px] font-black transition-colors sm:flex-none ${topTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>
+              <span className="inline-flex items-center gap-1.5">
+                <Icon className="h-3.5 w-3.5" /> {tab}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {topTab === "Bank Accounts" ? (
         <BankAccountsTab {...props.bank} transactions={view?.transactions ?? []} loading={loading} />
+      ) : topTab === "Reconciliation" ? (
+        <WeeklyReconciliationTab {...props.reconciliation} />
       ) : (
       <>
       <div className="flex flex-wrap items-center justify-between gap-3">

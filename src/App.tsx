@@ -156,7 +156,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -9453,6 +9453,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [weeklyOpening, setWeeklyOpening] = useState<WeeklyOpeningView | null>(null);
   const [weeklyOpeningOpen, setWeeklyOpeningOpen] = useState(false);
   const [weeklyOpeningSaving, setWeeklyOpeningSaving] = useState(false);
+  // ── Weekly Reconciliation (Cash Flow tab) ──
+  const [reconciliationView, setReconciliationView] = useState<WeeklyReconciliationView | null>(null);
+  const [reconciliationWeek, setReconciliationWeek] = useState<string>(() => {
+    // Sunday is the official week everywhere; snap on first render so the tab
+    // and the server can never disagree about which week is being counted.
+    const now = new Date(new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" }) + "T00:00:00Z");
+    now.setUTCDate(now.getUTCDate() - now.getUTCDay());
+    return now.toISOString().slice(0, 10);
+  });
+  const [reconciliationLoading, setReconciliationLoading] = useState(false);
+  const [reconciliationError, setReconciliationError] = useState("");
+  const [reconciliationSaving, setReconciliationSaving] = useState(false);
+  const [reconciliationHistory, setReconciliationHistory] = useState<ReconciliationHistoryWeek[]>([]);
   // ── Batch unit-economics (Profitability tab) ──
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -9595,10 +9608,66 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } finally { setCashOpeningSaving(false); }
   };
 
+  const loadReconciliation = useCallback(async (weekStart: string) => {
+    setReconciliationLoading(true);
+    setReconciliationError("");
+    try {
+      setReconciliationView(await cashFlowApi.reconciliation(weekStart));
+    } catch (err: any) {
+      setReconciliationError(err?.message ?? "Could not load the week's reconciliation.");
+    } finally { setReconciliationLoading(false); }
+  }, []);
+
+  const loadReconciliationHistory = useCallback(async () => {
+    try {
+      setReconciliationHistory((await cashFlowApi.reconciliationHistory()).weeks);
+    } catch { /* the modal shows an empty history rather than blocking the tab */ }
+  }, []);
+
+  const saveVerification = async (body: {
+    weekStart: string; status: "draft" | "verified"; notes: string;
+    accounts: Array<{ bankAccountId: string | null; accountLabel: string; systemBalance: number; actualBalance: number }>;
+  }) => {
+    setReconciliationSaving(true);
+    try {
+      const result = await cashFlowApi.saveVerification(body);
+      showToast(body.status === "draft"
+        ? "Closing cash count saved as a draft."
+        : Math.abs(result.variance) <= 0.5
+          ? "Closing cash verified - the week balances."
+          : `Closing cash verified. Variance of ₦${Math.abs(Math.round(result.variance)).toLocaleString("en-NG")} needs investigating.`);
+      await loadReconciliation(body.weekStart);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not save the closing cash count.");
+      throw err;
+    } finally { setReconciliationSaving(false); }
+  };
+
+  const saveInvestigation = async (body: {
+    weekStart: string; status: "in_progress" | "submitted" | "resolved";
+    reason: string | null; amountExplained: number; description: string;
+    occurredOn: string | null; category: string; evidenceName: string; evidenceUrl: string;
+  }) => {
+    setReconciliationSaving(true);
+    try {
+      const result = await cashFlowApi.saveInvestigation(body);
+      showToast(body.status === "in_progress"
+        ? "Investigation saved as a draft."
+        : `Investigation saved - ${result.progress.pct}% of the variance explained.`);
+      await loadReconciliation(body.weekStart);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not save the investigation.");
+      throw err;
+    } finally { setReconciliationSaving(false); }
+  };
+
   useEffect(() => {
     if (activePage === "Finance & Accounting" && financeTab === "Profitability") void loadBatches();
-    if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") { void loadCashFlow(cashFlowPeriod); void loadBankAccounts(); void loadWeeklyOpening(); }
-  }, [activePage, financeTab, cashFlowPeriod, loadCashFlow, loadBankAccounts, loadWeeklyOpening]);
+    if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") {
+      void loadCashFlow(cashFlowPeriod); void loadBankAccounts(); void loadWeeklyOpening();
+      void loadReconciliation(reconciliationWeek);
+    }
+  }, [activePage, financeTab, cashFlowPeriod, reconciliationWeek, loadCashFlow, loadBankAccounts, loadWeeklyOpening, loadReconciliation]);
   useEffect(() => {
     setBatchAutofillMeta(null);
     if (selectedBatchId) void loadBatchEconomics(selectedBatchId);
@@ -79747,6 +79816,18 @@ ${waybillLineItems(w).length > 1
                     onRefresh: () => void loadBankAccounts()
                   }}
                   onEditWeeklyOpening={() => setWeeklyOpeningOpen(true)}
+                  reconciliation={{
+                    view: reconciliationView,
+                    loading: reconciliationLoading,
+                    error: reconciliationError,
+                    weekStart: reconciliationWeek,
+                    onWeekChange: (next) => { setReconciliationWeek(next); void loadReconciliation(next); },
+                    saving: reconciliationSaving,
+                    onSaveVerification: saveVerification,
+                    onSaveInvestigation: saveInvestigation,
+                    history: reconciliationHistory,
+                    onLoadHistory: () => void loadReconciliationHistory()
+                  }}
                   onDownloadReport={() => {
                     const rows = cashFlowView?.transactions ?? [];
                     if (rows.length === 0) { showToast("Nothing to download for this period."); return; }
