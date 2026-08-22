@@ -71,6 +71,15 @@ export type WeeklyOpeningCashWizardProps = {
 export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClose, onSave }: WeeklyOpeningCashWizardProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [weekStart, setWeekStart] = useState(view.weekStart);
+  // The accounting week officially starts on Sunday - the same anchor payroll,
+  // bonuses and the scorecard use. Any date picked snaps to its Sunday, so a
+  // cash week can never drift out of step with those.
+  const snapToSunday = (key: string) => {
+    const date = new Date(`${key}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) return key;
+    date.setUTCDate(date.getUTCDate() - date.getUTCDay());
+    return date.toISOString().slice(0, 10);
+  };
   const [reason, setReason] = useState(view.existing?.reason ?? "");
   const [sources, setSources] = useState<SourceDraft[]>(() => {
     if (view.existing && view.existing.sources.length > 0) {
@@ -94,7 +103,6 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
     [sources]
   );
   const change = total - view.previousWeek.closingCash;
-  const weekMismatch = weekStart !== view.suggestedWeekStart;
   const anyFilled = sources.some((source) => String(source.amount).trim() !== "");
   const canConfirm = sources.length > 0 && anyFilled;
 
@@ -155,10 +163,11 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <label className="block text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">
                       Week start date
-                      <input type="date" value={weekStart} onChange={(event) => setWeekStart(event.target.value)}
+                      <input type="date" value={weekStart}
+                        onChange={(event) => setWeekStart(snapToSunday(event.target.value))}
                         className="mt-1.5 w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-black text-gray-900" />
                       <span className="mt-1 block text-[11px] font-medium normal-case tracking-normal text-gray-400">
-                        {weekdayLabel(weekStart)} · this will be the first day of your accounting week.
+                        Sunday · the official first day of your accounting week. Any date you pick snaps to its Sunday.
                       </span>
                     </label>
                     <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-3.5 py-3">
@@ -170,14 +179,9 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
                       </p>
                     </div>
                   </div>
-                  {/* Cash weeks must line up with payroll and bonus weeks, or
-                      two "this week" figures will never reconcile. */}
-                  {weekMismatch && (
-                    <p className="m-0 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] font-bold leading-4 text-amber-900">
-                      The rest of Protohub runs Sunday-anchored weeks and would use {dayLabel(view.suggestedWeekStart)}.
-                      Starting the cash week on a different day means it will not line up with payroll, bonuses or the weekly scorecard.
-                    </p>
-                  )}
+                  <p className="m-0 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[12px] font-bold leading-4 text-emerald-900">
+                    Weeks run Sunday to Saturday, the same as payroll, bonuses and the weekly scorecard — so every weekly figure in Protohub lines up.
+                  </p>
                 </>
               )}
 

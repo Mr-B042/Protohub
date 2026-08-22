@@ -9543,7 +9543,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const result = await cashFlowApi.weeklyOpening();
       setWeeklyOpening(result);
       if (result.needsOpening) setWeeklyOpeningOpen(true);
-    } catch { /* the page still renders; the banner prompts instead */ }
+    } catch { /* Owner-gated endpoint; anyone else simply gets nothing. */ }
   }, []);
 
   const saveWeeklyOpening = async (body: { weekStart: string; reason: string; sources: Array<{ bankAccountId: string | null; accountLabel: string; amount: number }> }) => {
@@ -9968,6 +9968,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     () => financeTabs.filter((tab) => tab !== "Cash Flow" || currentRole === "Owner"),
     [currentRole]
   );
+  // Losing access to the tab you are standing on must not leave a blank page.
+  // Switching to "view as Manager" while on Cash Flow used to render nothing
+  // at all - every tab body is gated, and none of them matched.
+  useEffect(() => {
+    if (!visibleFinanceTabs.includes(financeTab)) setFinanceTab("Financial Overview");
+  }, [visibleFinanceTabs, financeTab]);
+
   useEffect(() => { writePref(PREVIEW_ROLE_STORAGE_KEY, previewRole ?? ""); }, [previewRole]);
   // A blocked write throws from the API layer. Most callers catch and show
   // their own "failed to save" - which would be a lie here, since nothing was
@@ -28052,7 +28059,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 <X className="h-3.5 w-3.5" /> Clear product filter{managerProductFilterKeys.size === 1 ? "" : "s"}
               </button>
             )}
-            {canFilterManagerProducts && productRows.some((row) => row.productId) && (
+            {currentRole === "Owner" && productRows.some((row) => row.productId) && (
               <button
                 type="button"
                 className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-black text-gray-700 hover:bg-gray-50"
@@ -28153,7 +28160,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             <Info className="h-3.5 w-3.5" />
                           </span>
                         </div>
-                        {canFilterManagerProducts && row.productId && (
+                        {/* A delivery target is what the team is judged
+                            against, so only the Owner may move it. Everyone
+                            who can see the dashboard still sees the bar. */}
+                        {currentRole === "Owner" && row.productId && (
                           <button
                             type="button"
                             className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-black text-gray-600 hover:bg-gray-50"

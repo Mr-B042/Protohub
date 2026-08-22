@@ -14,7 +14,10 @@ const COMPANY_DEFAULT_STRETCH = 70;
 const DELIVERY_GOAL_BASES = ["period", "month", "all_time"] as const;
 
 const router = Router();
-// Same gate as the Manager Dashboard the goals are drawn on.
+// Reading is open to everyone who can see the Manager Dashboard - the bars are
+// part of the page. WRITING is Owner-only (see the routes below): a delivery
+// target is what the team is judged against, so moving it is the Owner's call,
+// not an Admin's.
 router.use(requireAuth, requireRole("Owner", "Admin", "Manager"));
 
 const GoalSchema = z.object({
@@ -88,7 +91,7 @@ router.get("/", async (req, res) => {
 });
 
 // ── PUT /api/delivery-goals/product ───────────────────────
-router.put("/product", async (req, res) => {
+router.put("/product", requireRole("Owner"), async (req, res) => {
   try {
     const parsed = GoalSchema.safeParse(req.body ?? {});
     if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }

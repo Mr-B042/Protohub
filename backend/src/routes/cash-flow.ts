@@ -702,9 +702,10 @@ router.get("/weekly-opening", async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const requested = String(req.query.weekStart ?? "");
-    const weekStart = DATE_KEY.test(requested)
-      ? requested
-      : sundayWeekStart(lagosDayOf(new Date().toISOString()));
+    // Any date resolves to the Sunday week it falls in - the official start.
+    const weekStart = sundayWeekStart(
+      DATE_KEY.test(requested) ? requested : lagosDayOf(new Date().toISOString())
+    );
     const weekEnd = addDaysKey(weekStart, 6);
     const previousStart = addDaysKey(weekStart, -7);
 
@@ -784,7 +785,12 @@ router.post("/weekly-opening", requireRole("Owner"), async (req, res) => {
     const parsed = WeeklyOpeningSchema.safeParse(req.body ?? {});
     if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
     const orgId = req.user!.orgId;
-    const body = parsed.data;
+    // ⚠️ The accounting week officially starts on SUNDAY, the same anchor
+    // payroll, bonuses and the Head of Sales scorecard already use. Snapped
+    // rather than rejected: whatever day is sent, the week it belongs to is
+    // unambiguous, and this guarantees one row per real week no matter which
+    // client sent it. Everything built on weekly cash can now assume Sunday.
+    const body = { ...parsed.data, weekStart: sundayWeekStart(parsed.data.weekStart) };
     const total = body.sources.reduce((sum, source) => sum + Number(source.amount ?? 0), 0);
 
     const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
