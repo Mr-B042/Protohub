@@ -2261,6 +2261,27 @@ router.get("/:id/field-edits", async (req, res) => {
 // ── PATCH /api/orders/:id ─────────────────────────────────
 // Fields that may be written even after an order is Delivered/Cancelled.
 // Everything else is locked on terminal orders.
+/**
+ * Has a field actually changed?
+ *
+ * ⚠️ Type-tolerant on purpose. Order updates pass through the field map
+ * untouched, so a form sends quantity as "2" while the row holds 2, and an
+ * empty input arrives as "" against a null column. A strict comparison would
+ * report both as changes.
+ */
+function sameFieldValue(next: unknown, before: unknown): boolean {
+  const blank = (value: unknown) => value === null || value === undefined || value === "";
+  if (blank(next) && blank(before)) return true;
+  if (blank(next) !== blank(before)) return false;
+  if (typeof next === "object" || typeof before === "object") {
+    return JSON.stringify(next) === JSON.stringify(before);
+  }
+  const asNumber = Number(next);
+  const beforeNumber = Number(before);
+  if (Number.isFinite(asNumber) && Number.isFinite(beforeNumber)) return asNumber === beforeNumber;
+  return String(next) === String(before);
+}
+
 const POST_TERMINAL_FIELDS = new Set([
   "response",
   "logistics_cost", "logisticsCost",
@@ -2699,9 +2720,52 @@ router.patch("/:id", requireRole("Owner", "Admin", "Manager", "Sales Rep", "Reco
     requestedTerminalSafeKeys.add("remittance_reason");
   }
   const hasNonTerminalField = Array.from(requestedTerminalSafeKeys).some((key) => !POST_TERMINAL_FIELDS.has(key));
-  if (isTerminal && hasNonTerminalField) {
-    res.status(403).json({ error: "This order is in a terminal state and cannot be edited." });
+  // ⚠️ Owner / Admin / Manager may correct a DELIVERED order in place. Reps
+  // still cannot. Before this, fixing a typo on a delivered order meant
+  // marking it Failed and back again, which reversed the stock deduction, tore
+  // down the waybill and left a false Failed in the audit trail - real damage
+  // to avoid a spelling mistake.
+  const canEditDelivered = ["Owner", "Admin", "Manager"].includes(req.user!.role ?? "");
+  if (isTerminal && hasNonTerminalField && !canEditDelivered) {
+    res.status(403).json({
+      error: "This order is in a terminal state and cannot be edited. Ask an Admin, Manager or the Owner to correct it."
+    });
     return;
+  }
+
+  // ⚠️ Stock has ALREADY been taken off the agent for a delivered order, so a
+  // change to what shipped leaves the deduction and the order disagreeing.
+  // Rather than let that drift in silently - the failure mode that has bitten
+  // this project repeatedly - the stock-moving fields are refused on a
+  // delivered order and the correct route is named in the error.
+  const STOCK_MOVING_FIELDS = new Set([
+    "product_id", "productId", "quantity",
+    "agent_id", "agentId", "agent_location_id", "agentLocationId",
+    "package_components_snapshot", "packageComponentsSnapshot"
+  ]);
+  if (isTerminal && canEditDelivered && current.stock_deducted === true) {
+    const stockMoving = Array.from(requestedTerminalSafeKeys).filter((key) => {
+      if (!STOCK_MOVING_FIELDS.has(key)) return false;
+      // Only an actual CHANGE counts. The edit form posts every field back, so
+      // treating an unchanged product as a stock move would block every edit.
+      //
+      // ⚠️ Compared type-tolerantly. The field map passes req.body through
+      // untouched, so quantity arrives as the string "2" while the row holds
+      // the number 2 - a strict compare would call that a change and 409 every
+      // delivered edit, making the whole feature look broken.
+      const snake = key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+      const next = (updates as Record<string, unknown>)[snake];
+      if (next === undefined) return false;
+      const before = (current as Record<string, unknown>)[snake];
+      return !sameFieldValue(next, before);
+    });
+    if (stockMoving.length > 0) {
+      res.status(409).json({
+        error: "Stock has already been deducted for this delivery, so the product, quantity or agent cannot be changed here. "
+          + "Everything else on the order is editable. To change what shipped, reverse the delivery first so the agent's stock is put back."
+      });
+      return;
+    }
   }
   if (updates.scheduled_at !== undefined || updates.timeline_notes !== undefined) {
     updates.notes = serializePlannedOrderMetadata(current.notes, {

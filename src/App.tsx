@@ -97154,8 +97154,27 @@ ${waybillLineItems(w).length > 1
 	              </div>
 	            )}
 
-	            {modal === "editOrderItems" && selectedOrder && (
+	            {modal === "editOrderItems" && selectedOrder && (() => {
+	              // ⚠️ A delivered order has already taken stock off the agent, so
+	              // what SHIPPED is frozen while everything else stays editable.
+	              // Correcting a typo used to mean marking the order Failed and
+	              // back again, which reversed the deduction and left a false
+	              // Failed in the trail - real damage to fix a spelling mistake.
+	              const deliveredCorrection = selectedOrder.status === "Delivered";
+	              const shipmentLocked = deliveredCorrection && selectedOrder.stockDeducted === true;
+	              return (
 	              <div className="modal-form">
+	                {deliveredCorrection && (
+	                  <p className={`m-0 flex gap-2 rounded-lg px-3 py-2.5 text-[12px] font-medium leading-4 ${shipmentLocked ? "bg-amber-50 text-amber-900" : "bg-sky-50 text-sky-900"}`}>
+	                    <Info className="mt-0.5 h-4 w-4 shrink-0" />
+	                    <span>
+	                      <span className="block font-black">Correcting a delivered order</span>
+	                      {shipmentLocked
+	                        ? "Customer details, address, amount and delivery date are all editable. The product, quantity and agent are locked because their stock has already been deducted — reverse the delivery to change what shipped."
+	                        : "No stock has been deducted for this delivery yet, so everything is editable."}
+	                    </span>
+	                  </p>
+	                )}
 	                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 	                  <label><span>Customer Name</span><input value={createOrderCustomer} onChange={(event) => setCreateOrderCustomer(event.target.value)} /></label>
 	                  <label><span>Phone</span><input value={createOrderPhone} onChange={(event) => setCreateOrderPhone(event.target.value)} inputMode="tel" /></label>
@@ -97166,18 +97185,18 @@ ${waybillLineItems(w).length > 1
 	                </div>
 	                <label><span>Delivery Address</span><textarea value={createOrderAddress} onChange={(event) => setCreateOrderAddress(event.target.value)} /></label>
 	                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-	                  <label><span>Product</span><select value={createOrderProductId} onChange={(event) => { const product = catalogProducts.find((item) => item.id === event.target.value); const offer = product ? activeProductPackages(product)[0] : undefined; setCreateOrderProductId(event.target.value); setCreateOrderPackageId(offer?.id ?? ""); setCreateOrderQuantity(String(offer?.quantity ?? 1)); }}><option value="">Choose product</option>{catalogProducts.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
+	                  <label><span>Product{shipmentLocked && <span className="ml-1 text-[11px] font-normal text-gray-400">(locked — stock deducted)</span>}</span><select disabled={shipmentLocked} value={createOrderProductId} onChange={(event) => { const product = catalogProducts.find((item) => item.id === event.target.value); const offer = product ? activeProductPackages(product)[0] : undefined; setCreateOrderProductId(event.target.value); setCreateOrderPackageId(offer?.id ?? ""); setCreateOrderQuantity(String(offer?.quantity ?? 1)); }}><option value="">Choose product</option>{catalogProducts.filter((product) => product.active).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>
 	                  <label><span>Package</span><select value={createOrderPackageId} onChange={(event) => { const product = products.find((item) => item.id === createOrderProductId); const offer = product?.packages.find((item) => item.id === event.target.value); setCreateOrderPackageId(event.target.value); if (offer) setCreateOrderQuantity(String(offer.quantity)); }}><option value="">Manual quantity</option>{products.find((item) => item.id === createOrderProductId)?.packages.map((item) => <option key={item.id} value={item.id}>{item.name} · {formatProductMoney(item.price, item.currency)}</option>)}</select></label>
 	                  <label>
 	                    <span>Quantity {selectedOrder.originalQuantity != null && selectedOrder.originalQuantity !== (Number(createOrderQuantity) || selectedOrder.originalQuantity) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {selectedOrder.originalQuantity})</span>}</span>
-	                    <input value={createOrderQuantity} onChange={(event) => { setCreateOrderQuantity(event.target.value); const prod = products.find((item) => item.id === createOrderProductId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(event.target.value) || 1); if (pri && pri.sellingPrice > 0) setCreateOrderAmount(String(qty * pri.sellingPrice)); }} inputMode="numeric" />
+	                    <input disabled={shipmentLocked} value={createOrderQuantity} onChange={(event) => { setCreateOrderQuantity(event.target.value); const prod = products.find((item) => item.id === createOrderProductId); const pri = prod ? primaryPricing(prod) : null; const qty = Math.max(1, Number(event.target.value) || 1); if (pri && pri.sellingPrice > 0) setCreateOrderAmount(String(qty * pri.sellingPrice)); }} inputMode="numeric" />
 	                  </label>
 	                  <label>
 	                    <span>Order Amount {selectedOrder.originalAmount != null && selectedOrder.originalAmount !== Number(createOrderAmount) && <span className="text-gray-400 font-normal text-[11px] ml-1">(original: {formatProductMoney(selectedOrder.originalAmount, selectedOrder.currency)})</span>}</span>
 	                    <input value={createOrderAmount} onChange={(event) => setCreateOrderAmount(event.target.value)} inputMode="decimal" placeholder="Edit for discount / partial delivery" />
 	                  </label>
 	                  <label><span>Assigned To</span><select value={createOrderRepId} onChange={(event) => setCreateOrderRepId(event.target.value)}><option value="auto">Keep current</option>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label>
-	                  <label><span>Delivery Agent</span><select value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const rec = createOrderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === createOrderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = Math.max(1, Number(createOrderQuantity) || 1); const stockTag = !createOrderProductId ? "" : stockQty === 0 ? " - ⚠ no stock" : stockQty >= needs ? ` - ✓ ${stockQty} in stock` : ` - ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agentOptionLabel(agent, createOrderState, createOrderCity)}{stockTag}</option>; })}</select></label>
+	                  <label><span>Delivery Agent{shipmentLocked && <span className="ml-1 text-[11px] font-normal text-gray-400">(locked)</span>}</span><select disabled={shipmentLocked} value={createOrderAgentId} onChange={(event) => setCreateOrderAgentId(event.target.value)}><option value="">Unassigned</option>{(selectedOrder ? agentsForOrder(selectedOrder) : activeAgents).map((agent) => { const rec = createOrderProductId ? agentStock.find((s) => s.agentId === agent.id && s.productId === createOrderProductId) : undefined; const stockQty = rec?.quantity ?? 0; const needs = Math.max(1, Number(createOrderQuantity) || 1); const stockTag = !createOrderProductId ? "" : stockQty === 0 ? " - ⚠ no stock" : stockQty >= needs ? ` - ✓ ${stockQty} in stock` : ` - ⚠ only ${stockQty} (needs ${needs})`; return <option key={agent.id} value={agent.id}>{agentOptionLabel(agent, createOrderState, createOrderCity)}{stockTag}</option>; })}</select></label>
 	                </div>
                   <div className="space-y-3 border border-gray-200 rounded-lg p-3 bg-gray-50/80">
                     <div className="flex items-start justify-between gap-3">
@@ -97205,7 +97224,8 @@ ${waybillLineItems(w).length > 1
 	                {renderUpsellReversalWarning(selectedOrder, Math.max(1, Number(createOrderQuantity) || 1))}
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Back</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={saveSelectedOrderEdit}>Save Order</button></div>
 	              </div>
-	            )}
+	              );
+	            })()}
 
 	            {modal === "addExtraItems" && selectedOrder && (
 	              <div className="modal-form">
