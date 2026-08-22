@@ -150,7 +150,7 @@ import {
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
   expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, stockApi as _stockApi,
-  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, headOfSalesApi, salesLeadsApi,
+  embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   setApiSpyUserId,
   setApiPreviewReadOnly,
   PreviewReadOnlyError
@@ -214,6 +214,7 @@ import {
   type SalesLeadStatus,
 } from "./pages/SalesCloserWorkspacePage";
 import AgentAccessPage from "./pages/AgentAccessPage";
+import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalanceRow } from "./pages/CashFlowPage";
 import { SalesClosersOwnerPage } from "./pages/SalesClosersOwnerPage";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
@@ -266,7 +267,7 @@ type AgentZone = string;
 type AgentStatus = "All Status" | "Active" | "Order in Progress" | "Inactive";
 type PayrollTab = "Pay Rates" | "Run Payroll" | "History";
 type CustomerSource = "Source: All" | "TikTok" | "Facebook" | "WhatsApp" | "Website";
-type FinanceTab = "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
+type FinanceTab = "Cash Flow" | "Financial Overview" | "Reports" | "Weekly Accounting" | "Sales Rep Finance" | "Agent Costs" | "Delivery Fee Audit" | "Remittance" | "Profit & Loss" | "Product Profitability" | "Package Performance" | "State Performance" | "Profitability";
 type ManagerDashboardTab = "Overview" | "Bonus" | "Upsell Bonus" | "Inventory" | "Needs Attention";
 type RecoveryRepDashboardTab = "Overview" | "Work Queue" | "Activity Sheet" | "Customer Retention";
 // One screen of recovery cards. Big enough to be a real batch of calls,
@@ -2238,7 +2239,7 @@ const customerTypeFilters = ["Customer Type: All", "New Customers", "Repeat Buye
 type CustomerTypeFilter = (typeof customerTypeFilters)[number];
 const customerDeliveryFilters = ["Delivery History: All", "Has Delivered", "No Delivered Yet", "Has Cancelled", "Needs Attention"] as const;
 type CustomerDeliveryFilter = (typeof customerDeliveryFilters)[number];
-const financeTabs: FinanceTab[] = ["Financial Overview", "Reports", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Delivery Fee Audit", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance", "Profitability"];
+const financeTabs: FinanceTab[] = ["Cash Flow", "Financial Overview", "Reports", "Weekly Accounting", "Sales Rep Finance", "Agent Costs", "Delivery Fee Audit", "Remittance", "Profit & Loss", "Product Profitability", "Package Performance", "State Performance", "Profitability"];
 type FinanceLens = "Accounting" | "Performance" | "Cash Flow" | "Operational";
 const financeTabMeta: Record<FinanceTab, {
   primaryLens: FinanceLens;
@@ -2246,6 +2247,12 @@ const financeTabMeta: Record<FinanceTab, {
   summary: string;
   caution: string;
 }> = {
+  "Cash Flow": {
+    primaryLens: "Cash Flow",
+    lenses: ["Cash Flow"],
+    summary: "Use this for liquid money only: what actually reached the company and what actually left it, with the running balance.",
+    caution: "This is NOT profit. An order becomes profit when it is delivered, but the cash appears here only when the agent remits - so a profitable period can still be cash-negative."
+  },
   "Financial Overview": {
     primaryLens: "Accounting",
     lenses: ["Accounting", "Cash Flow"],
@@ -9434,6 +9441,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [showFinanceDateRange, setShowFinanceDateRange] = useState(false);
   const [financeDateRange, setFinanceDateRange] = useState<DateRange>({ start: "", end: "" });
   const [financeTab, setFinanceTab] = useState<FinanceTab>("Financial Overview");
+  const [cashFlowView, setCashFlowView] = useState<CashFlowView | null>(null);
+  const [cashFlowLoading, setCashFlowLoading] = useState(false);
+  const [cashFlowError, setCashFlowError] = useState("");
+  const [cashFlowPeriod, setCashFlowPeriod] = useState<CashFlowPeriod>("This Week");
+  const [cashOpeningHistory, setCashOpeningHistory] = useState<OpeningBalanceRow[]>([]);
+  const [cashOpeningSaving, setCashOpeningSaving] = useState(false);
   // ── Batch unit-economics (Profitability tab) ──
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -9479,9 +9492,63 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       setSelectedBatchId((cur) => cur ?? ((Array.isArray(list) && list[0]) ? list[0].id : null));
     } catch (err: any) { showToast(`Failed to load batches: ${err?.message ?? err}`); }
   };
+  // Cash Flow period -> a concrete Lagos date range. Kept local to this page
+  // rather than reusing the finance period control: cash is asked about in
+  // days and weeks ("did money come in today"), not in the reporting periods
+  // the rest of Finance uses.
+  const cashFlowRange = useCallback((selected: CashFlowPeriod): { from: string; to: string } => {
+    const today = new Date();
+    const key = (date: Date) => date.toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
+    const shift = (days: number) => { const next = new Date(today); next.setDate(next.getDate() + days); return next; };
+    if (selected === "Today") return { from: key(today), to: key(today) };
+    if (selected === "Yesterday") { const day = shift(-1); return { from: key(day), to: key(day) }; }
+    if (selected === "This Month") {
+      const first = new Date(today.getFullYear(), today.getMonth(), 1);
+      return { from: key(first), to: key(today) };
+    }
+    // Sunday-anchored, matching every other weekly figure in this app.
+    const sunday = shift(-today.getDay());
+    if (selected === "Last Week") {
+      const start = new Date(sunday); start.setDate(start.getDate() - 7);
+      const end = new Date(sunday); end.setDate(end.getDate() - 1);
+      return { from: key(start), to: key(end) };
+    }
+    const saturday = new Date(sunday); saturday.setDate(saturday.getDate() + 6);
+    return { from: key(sunday), to: key(saturday) };
+  }, []);
+
+  const loadCashFlow = useCallback(async (selected: CashFlowPeriod) => {
+    setCashFlowLoading(true);
+    setCashFlowError("");
+    try {
+      const range = cashFlowRange(selected);
+      setCashFlowView(await cashFlowApi.summary(range.from, range.to));
+    } catch (err: any) {
+      setCashFlowError(err?.message ?? "Could not load cash flow.");
+    } finally { setCashFlowLoading(false); }
+  }, [cashFlowRange]);
+
+  const loadCashOpeningHistory = useCallback(async () => {
+    try {
+      setCashOpeningHistory((await cashFlowApi.openingHistory()).rows);
+    } catch { /* the modal simply shows an empty history rather than blocking */ }
+  }, []);
+
+  const saveCashOpeningBalance = async (body: { amount: number; effectiveAt: string; method: "manual" | "carry_forward"; reason: string }) => {
+    setCashOpeningSaving(true);
+    try {
+      await cashFlowApi.setOpeningCash(body);
+      showToast("Opening cash saved.");
+      await Promise.all([loadCashFlow(cashFlowPeriod), loadCashOpeningHistory()]);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not save opening cash.");
+    } finally { setCashOpeningSaving(false); }
+  };
+
   useEffect(() => {
     if (activePage === "Finance & Accounting" && financeTab === "Profitability") void loadBatches();
-  }, [activePage, financeTab]);
+    if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") void loadCashFlow(cashFlowPeriod);
+  }, [activePage, financeTab, cashFlowPeriod, loadCashFlow]);
   useEffect(() => {
     setBatchAutofillMeta(null);
     if (selectedBatchId) void loadBatchEconomics(selectedBatchId);
@@ -79546,6 +79613,40 @@ ${waybillLineItems(w).length > 1
                     </section>
                   </div>
                 </motion.section>
+              )}
+
+              {financeTab === "Cash Flow" && (
+                <CashFlowPage
+                  view={cashFlowView}
+                  loading={cashFlowLoading}
+                  error={cashFlowError}
+                  period={cashFlowPeriod}
+                  onPeriodChange={(next) => { setCashFlowPeriod(next); void loadCashFlow(next); }}
+                  // Anchoring opening cash moves every balance on the page, so
+                  // it is Owner/Admin - the same line the backend draws.
+                  canSetOpeningCash={currentRole === "Owner" || currentRole === "Admin"}
+                  openingHistory={cashOpeningHistory}
+                  savingOpeningCash={cashOpeningSaving}
+                  onRefresh={() => void loadCashFlow(cashFlowPeriod)}
+                  onSaveOpeningCash={saveCashOpeningBalance}
+                  onLoadOpeningHistory={() => void loadCashOpeningHistory()}
+                  onViewAgentReceivables={() => setFinanceTab("Remittance")}
+                  onDownloadReport={() => {
+                    const rows = cashFlowView?.transactions ?? [];
+                    if (rows.length === 0) { showToast("Nothing to download for this period."); return; }
+                    const header = ["Date", "Type", "Category", "Description", "Source", "Cash In", "Cash Out", "Balance"];
+                    const csv = [header, ...rows.map((row) => [
+                      row.at, row.direction === "in" ? "Cash In" : "Cash Out", row.category,
+                      row.description, row.source, row.cashIn, row.cashOut, row.balance
+                    ])].map((line) => line.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+                    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.download = `cash-flow-${cashFlowView?.period.from}-to-${cashFlowView?.period.to}.csv`;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                />
               )}
 
               {financeTab === "Financial Overview" && (

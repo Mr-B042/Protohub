@@ -1191,6 +1191,18 @@ export type DeliveryGoalsView = {
   products: ProductDeliveryGoal[];
 };
 
+
+// ── Cash Flow ─────────────────────────────────────────────
+import type { CashFlowView, OpeningBalanceRow } from "../pages/CashFlowPage";
+
+export const cashFlowApi = {
+  summary: (from: string, to: string) =>
+    get<CashFlowView>(`/api/cash-flow?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  openingHistory: () => get<{ rows: OpeningBalanceRow[] }>("/api/cash-flow/opening-balances"),
+  setOpeningCash: (body: { amount: number; effectiveAt: string; method: "manual" | "carry_forward"; reason: string }) =>
+    post<{ row: OpeningBalanceRow }>("/api/cash-flow/opening-balances", body)
+};
+
 export const deliveryGoalsApi = {
   list: () => get<DeliveryGoalsView>("/api/delivery-goals"),
   saveProduct: (body: Omit<ProductDeliveryGoal, "updatedAt">) =>
