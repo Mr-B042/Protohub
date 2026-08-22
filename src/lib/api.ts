@@ -3146,7 +3146,40 @@ export type CartFollowUpGrid = {
   rows: CartGridRow[];
 };
 
+export type CartLogRangePreset =
+  | "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "all";
+
+export type CartLogMiss = {
+  id: string | null; repId: string; repName: string; missDate: string;
+  cartsDue: number; amount: number;
+  status: "pending" | "approved" | "waived";
+  reviewedByName: string; reviewedAt: string | null; reviewNote: string;
+};
+
+export type CartLogPenaltiesView = {
+  range: CartLogRangePreset;
+  from: string; to: string; todayKey: string;
+  phase: { active: boolean; startDate: string; daysUntil: number; label: string };
+  missAmount: number;
+  chargeableDays: number;
+  misses: CartLogMiss[];
+  byRep: Array<{ repId: string; repName: string; missedDays: string[]; missedCount: number; atRiskAmount: number; clearDays: number }>;
+  totals: {
+    pendingCount: number; pendingAmount: number;
+    approvedCount: number; approvedAmount: number; waivedCount: number;
+  };
+};
+
 export const cartsApi = {
+  logPenalties: (params?: { range?: CartLogRangePreset; repId?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.range) qs.set("range", params.range);
+    if (params?.repId) qs.set("repId", params.repId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<CartLogPenaltiesView>(`/api/carts/log-penalties${suffix}`);
+  },
+  reviewLogPenalty: (body: { repId: string; missDate: string; status: "approved" | "waived"; note: string }) =>
+    post<{ ok: boolean }>("/api/carts/log-penalties/review", body),
   followUpGrid: (params?: { weekStart?: string; repId?: string }) => {
     const qs = new URLSearchParams();
     if (params?.weekStart) qs.set("weekStart", params.weekStart);

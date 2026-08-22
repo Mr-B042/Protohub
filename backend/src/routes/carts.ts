@@ -8,6 +8,11 @@ import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { sendCartAssignedSms } from "../lib/sms.js";
 import { applyCartMarketingScope } from "../lib/marketing-attribution.js";
 import { lagosDateKey, lagosStartOfDayUtc, mondayOfWeek, addDays, dowOf } from "../lib/follow-up-kpi.js";
+import {
+  CART_LOG_MISS_AMOUNT, CART_LOG_PENALTY_START_DATE, chargeableDaysIn, penaltyPhase,
+  RANGE_PRESETS, repDayStatus, resolveRange, summariseRepPenalties,
+  type RangePreset, type RepDayInput
+} from "../lib/cart-log-penalty.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 
 const router = Router();
@@ -2227,6 +2232,201 @@ router.get("/:id/live", async (req, res) => {
   if (error) { res.status(500).json({ error: error.message }); return; }
   if (!data) { res.status(404).json({ error: "Cart not found." }); return; }
   res.json({ id: data.id, liveStatus: data.live_status, lastActivity: data.last_activity });
+});
+
+// ══ Cart daily-log penalties ══════════════════════════════
+//
+// ₦500 a day for a rep who logs nothing on their assigned carts.
+//
+// ⚠️ Per REP per DAY, not per cart - a rep with 61 carts and one with 6 have
+// committed the same offence by not logging. Deliberately different from the
+// order follow-up KPI's ₦50 per order per day.
+//
+// ⚠️ Misses are DERIVED live from the attempts, never written by a job. The
+// cart_log_misses table stores only the Owner's decision, so a pending miss
+// cannot drift out of step with the board and nothing is ever auto-deducted.
+
+// ── GET /api/carts/log-penalties?range= ───────────────────
+router.get("/log-penalties",
+  requireRole("Owner", "Admin", "Manager", "Sales Rep"),
+  async (req, res) => {
+    try {
+      const orgId = req.user!.orgId;
+      const scope = scopeOf(req);
+      const scopeRepId = scope.role === "Sales Rep" ? scope.id : null;
+      const requestedRep = typeof req.query.repId === "string" && req.query.repId ? req.query.repId : null;
+      const repFilter = scopeRepId ?? requestedRep;
+
+      const todayKey = lagosDateKey(new Date());
+      const preset = (RANGE_PRESETS as string[]).includes(String(req.query.range))
+        ? (String(req.query.range) as RangePreset)
+        : "this_week";
+      const range = resolveRange(preset, todayKey);
+      // Nothing before go-live is chargeable, so the window never starts earlier.
+      const from = range.from && range.from > CART_LOG_PENALTY_START_DATE
+        ? range.from
+        : CART_LOG_PENALTY_START_DATE;
+      const to = range.to;
+      const days = to >= from ? chargeableDaysIn(from, to) : [];
+
+      let cartQuery = supabase.from("abandoned_carts")
+        .select("id, status, assigned_rep_id, assigned_at, created_at")
+        .eq("org_id", orgId).not("assigned_rep_id", "is", null);
+      if (repFilter) cartQuery = cartQuery.eq("assigned_rep_id", repFilter);
+      const { data: cartRows } = await cartQuery.limit(REPORT_ROW_CEILING);
+      const carts = (cartRows ?? []) as any[];
+
+      const [{ data: repRows }, { data: attemptRows }, { data: orderRows }, { data: decisionRows }] =
+        await Promise.all([
+          supabase.from("users").select("id, name").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
+          days.length > 0
+            ? supabase.from(CART_ATTEMPTS)
+              .select("cart_id, attempted_at, rep_id")
+              .eq("org_id", orgId)
+              .gte("attempted_at", lagosStartOfDayUtc(from))
+              .lt("attempted_at", lagosStartOfDayUtc(addDays(to, 1)))
+              .limit(REPORT_ROW_CEILING)
+            : Promise.resolve({ data: [] } as any),
+          supabase.from("orders").select("source_cart_id, status")
+            .eq("org_id", orgId).not("source_cart_id", "is", null).limit(REPORT_ROW_CEILING),
+          supabase.from("cart_log_misses")
+            .select("*").eq("org_id", orgId)
+            .gte("miss_date", from).lte("miss_date", to).limit(REPORT_ROW_CEILING)
+        ]);
+
+      const repName = new Map(((repRows ?? []) as any[]).map((row) => [row.id, row.name]));
+      const deliveredCart = new Set(((orderRows ?? []) as any[])
+        .filter((row) => row.status === "Delivered").map((row) => row.source_cart_id));
+
+      // ⚠️ A cart currently closed is exempt from EVERY day in the range, not
+      // just the days after it closed. There is no reliable timestamp for when
+      // a cart went closed, so this errs toward the rep rather than inventing
+      // one - a penalty built on a guessed date would not survive a dispute.
+      const openCarts = carts.filter((row) =>
+        !deliveredCart.has(row.id)
+        && row.status !== "Not interested"
+        && row.status !== "Wrong number");
+
+      // Logs per rep per day.
+      const logged = new Map<string, number>();
+      ((attemptRows ?? []) as any[]).forEach((row) => {
+        if (!row.rep_id) return;
+        const key = `${row.rep_id}|${lagosDateKey(row.attempted_at)}`;
+        logged.set(key, (logged.get(key) ?? 0) + 1);
+      });
+
+      const repIds = [...new Set(openCarts.map((row) => row.assigned_rep_id).filter(Boolean))] as string[];
+      const inputs: RepDayInput[] = [];
+      repIds.forEach((repId) => {
+        const theirCarts = openCarts.filter((row) => row.assigned_rep_id === repId);
+        days.forEach((dateKey) => {
+          // Only carts they already had that day count against them.
+          const cartsDue = theirCarts.filter((row) => {
+            const assigned = lagosDateKey(row.assigned_at ?? row.created_at);
+            return assigned <= dateKey;
+          }).length;
+          inputs.push({
+            repId,
+            repName: repName.get(repId) ?? "Unknown",
+            dateKey,
+            cartsDue,
+            logsMade: logged.get(`${repId}|${dateKey}`) ?? 0
+          });
+        });
+      });
+
+      const decisions = new Map(((decisionRows ?? []) as any[])
+        .map((row) => [`${row.rep_id}|${row.miss_date}`, row]));
+
+      const misses = inputs
+        .filter((input) => repDayStatus(input) === "missed")
+        .map((input) => {
+          const decision = decisions.get(`${input.repId}|${input.dateKey}`);
+          return {
+            id: decision?.id ?? null,
+            repId: input.repId,
+            repName: input.repName,
+            missDate: input.dateKey,
+            cartsDue: input.cartsDue,
+            amount: Number(decision?.amount ?? CART_LOG_MISS_AMOUNT),
+            status: (decision?.status ?? "pending") as "pending" | "approved" | "waived",
+            reviewedByName: decision?.reviewed_by_name ?? "",
+            reviewedAt: decision?.reviewed_at ?? null,
+            reviewNote: decision?.review_note ?? ""
+          };
+        })
+        .sort((left, right) => right.missDate.localeCompare(left.missDate));
+
+      const approved = misses.filter((row) => row.status === "approved");
+      const pending = misses.filter((row) => row.status === "pending");
+
+      res.json({
+        range: preset,
+        from, to, todayKey,
+        phase: penaltyPhase(todayKey),
+        missAmount: CART_LOG_MISS_AMOUNT,
+        chargeableDays: days.length,
+        misses,
+        byRep: summariseRepPenalties(inputs),
+        totals: {
+          pendingCount: pending.length,
+          pendingAmount: pending.reduce((sum, row) => sum + row.amount, 0),
+          approvedCount: approved.length,
+          approvedAmount: approved.reduce((sum, row) => sum + row.amount, 0),
+          waivedCount: misses.filter((row) => row.status === "waived").length
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message ?? "Could not load log penalties." });
+    }
+  });
+
+const ReviewSchema = z.object({
+  repId: z.string().uuid(),
+  missDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  status: z.enum(["approved", "waived"]),
+  note: z.string().trim().max(250).default("")
+}).strict();
+
+// ── POST /api/carts/log-penalties/review ──────────────────
+router.post("/log-penalties/review", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = ReviewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const body = parsed.data;
+
+    // ⚠️ Owner only, and only ever on a day at or after go-live. A charge for a
+    // day the reps were never warned about must not be creatable even by hand.
+    if (body.missDate < CART_LOG_PENALTY_START_DATE) {
+      res.status(400).json({ error: `Penalties only apply from ${CART_LOG_PENALTY_START_DATE}.` });
+      return;
+    }
+
+    const [{ data: actor }, { data: rep }] = await Promise.all([
+      supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle(),
+      supabase.from("users").select("name").eq("id", body.repId).eq("org_id", orgId).maybeSingle()
+    ]);
+    if (!rep) { res.status(400).json({ error: "That rep is not in this organisation." }); return; }
+
+    const { error } = await supabase.from("cart_log_misses").upsert({
+      org_id: orgId,
+      rep_id: body.repId,
+      rep_name: String(rep.name ?? "").trim(),
+      miss_date: body.missDate,
+      amount: CART_LOG_MISS_AMOUNT,
+      status: body.status,
+      reviewed_by: req.user!.id,
+      reviewed_by_name: String(actor?.name ?? "").trim() || "Unknown",
+      reviewed_at: new Date().toISOString(),
+      review_note: body.note
+    }, { onConflict: "org_id,rep_id,miss_date" });
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not save that decision." });
+  }
 });
 
 export default router;

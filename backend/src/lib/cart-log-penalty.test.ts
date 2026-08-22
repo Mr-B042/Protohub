@@ -1,0 +1,143 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  CART_LOG_MISS_AMOUNT, CART_LOG_PENALTY_START_DATE, chargeableDaysIn, isChargeableDay,
+  mondayOf, penaltyPhase, repDayStatus, resolveRange, summariseRepPenalties, type RepDayInput
+} from "./cart-log-penalty.js";
+
+const day = (over: Partial<RepDayInput> = {}): RepDayInput => ({
+  repId: "r1", repName: "Chelsea", dateKey: "2026-08-25", cartsDue: 61, logsMade: 0, ...over
+});
+
+test("the penalty is a flat five hundred", () => {
+  assert.equal(CART_LOG_MISS_AMOUNT, 500);
+});
+
+test("go-live is Monday 24 August 2026", () => {
+  assert.equal(CART_LOG_PENALTY_START_DATE, "2026-08-24");
+  assert.equal(new Date(`${CART_LOG_PENALTY_START_DATE}T00:00:00Z`).getUTCDay(), 1);
+});
+
+test("Sundays are off", () => {
+  assert.equal(isChargeableDay("2026-08-23"), false); // Sunday
+  assert.equal(isChargeableDay("2026-08-24"), true);  // Monday
+  assert.equal(isChargeableDay("2026-08-29"), true);  // Saturday
+});
+
+// Nobody is charged for days they were never warned about.
+test("days before go-live are never chargeable", () => {
+  assert.equal(repDayStatus(day({ dateKey: "2026-08-21", logsMade: 0 })), "before_go_live");
+  assert.equal(repDayStatus(day({ dateKey: "2026-08-22", logsMade: 0 })), "before_go_live");
+});
+
+test("the first chargeable day is go-live itself", () => {
+  assert.equal(repDayStatus(day({ dateKey: "2026-08-24", logsMade: 0 })), "missed");
+});
+
+test("logging nothing on a working day with carts due is a miss", () => {
+  assert.equal(repDayStatus(day({ logsMade: 0, cartsDue: 61 })), "missed");
+});
+
+// One log clears the day - this catches absence, not sloppiness.
+test("logging even one cart clears the whole day", () => {
+  assert.equal(repDayStatus(day({ logsMade: 1, cartsDue: 61 })), "clear");
+});
+
+test("a rep with no carts due is not_due, never clear", () => {
+  const status = repDayStatus(day({ cartsDue: 0, logsMade: 0 }));
+  assert.equal(status, "not_due");
+  assert.notEqual(status, "clear");
+});
+
+test("a Sunday with carts due is still not chargeable", () => {
+  assert.equal(repDayStatus(day({ dateKey: "2026-08-30", cartsDue: 40, logsMade: 0 })), "not_due");
+});
+
+// A rep with 61 carts and one with 6 owe the same for the same offence.
+test("the charge does not scale with board size", () => {
+  const big = summariseRepPenalties([day({ repId: "big", cartsDue: 61, logsMade: 0 })]);
+  const small = summariseRepPenalties([day({ repId: "small", cartsDue: 6, logsMade: 0 })]);
+  assert.equal(big[0].atRiskAmount, 500);
+  assert.equal(small[0].atRiskAmount, 500);
+});
+
+test("misses accumulate across days and rank worst rep first", () => {
+  const rows = summariseRepPenalties([
+    day({ repId: "a", repName: "A", dateKey: "2026-08-24", logsMade: 0 }),
+    day({ repId: "a", repName: "A", dateKey: "2026-08-25", logsMade: 0 }),
+    day({ repId: "b", repName: "B", dateKey: "2026-08-24", logsMade: 0 }),
+    day({ repId: "b", repName: "B", dateKey: "2026-08-25", logsMade: 3 })
+  ]);
+  assert.equal(rows[0].repId, "a");
+  assert.equal(rows[0].missedCount, 2);
+  assert.equal(rows[0].atRiskAmount, 1000);
+  assert.equal(rows[1].missedCount, 1);
+  assert.equal(rows[1].clearDays, 1);
+});
+
+test("a rep who never missed reports zero at risk", () => {
+  const rows = summariseRepPenalties([day({ logsMade: 4 }), day({ dateKey: "2026-08-26", logsMade: 2 })]);
+  assert.equal(rows[0].atRiskAmount, 0);
+  assert.equal(rows[0].clearDays, 2);
+  assert.deepEqual(rows[0].missedDays, []);
+});
+
+test("the countdown reads down to go-live and flips after", () => {
+  assert.equal(penaltyPhase("2026-08-22").active, false);
+  assert.equal(penaltyPhase("2026-08-22").daysUntil, 2);
+  assert.equal(penaltyPhase("2026-08-23").label, "Penalties start tomorrow");
+  assert.equal(penaltyPhase("2026-08-24").active, true);
+  assert.equal(penaltyPhase("2026-08-24").label, "Penalties are live");
+  assert.equal(penaltyPhase("2026-09-01").active, true);
+});
+
+test("Monday of a mid-week day is that week's Monday", () => {
+  assert.equal(mondayOf("2026-08-22"), "2026-08-17"); // Saturday
+  assert.equal(mondayOf("2026-08-17"), "2026-08-17"); // Monday itself
+});
+
+// A Sunday review looks BACK at the week that just ended.
+test("Sunday belongs to the week that just finished, not the next one", () => {
+  assert.equal(mondayOf("2026-08-23"), "2026-08-17");
+});
+
+test("today and yesterday resolve to single days", () => {
+  assert.deepEqual(resolveRange("today", "2026-08-22"), { from: "2026-08-22", to: "2026-08-22" });
+  assert.deepEqual(resolveRange("yesterday", "2026-08-22"), { from: "2026-08-21", to: "2026-08-21" });
+});
+
+test("this week runs Monday to today, not Monday to Saturday", () => {
+  assert.deepEqual(resolveRange("this_week", "2026-08-19"), { from: "2026-08-17", to: "2026-08-19" });
+});
+
+test("last week is a full Monday to Saturday block", () => {
+  assert.deepEqual(resolveRange("last_week", "2026-08-22"), { from: "2026-08-10", to: "2026-08-15" });
+});
+
+test("this month starts on the first", () => {
+  assert.deepEqual(resolveRange("this_month", "2026-08-22"), { from: "2026-08-01", to: "2026-08-22" });
+});
+
+test("last month spans the whole previous calendar month", () => {
+  assert.deepEqual(resolveRange("last_month", "2026-08-22"), { from: "2026-07-01", to: "2026-07-31" });
+});
+
+test("last month handles a January rollover into December", () => {
+  assert.deepEqual(resolveRange("last_month", "2026-01-15"), { from: "2025-12-01", to: "2025-12-31" });
+});
+
+// "all" must not silently invent a start date and cut history.
+test("all time leaves the lower bound off entirely", () => {
+  assert.equal(resolveRange("all", "2026-08-22").from, null);
+});
+
+test("a chargeable range skips Sundays", () => {
+  const days = chargeableDaysIn("2026-08-17", "2026-08-24");
+  assert.equal(days.length, 7);
+  assert.ok(!days.includes("2026-08-23"));
+  assert.equal(days[0], "2026-08-17");
+});
+
+test("a backwards range yields nothing rather than looping", () => {
+  assert.deepEqual(chargeableDaysIn("2026-08-24", "2026-08-17"), []);
+});

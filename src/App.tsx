@@ -156,7 +156,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -8370,6 +8370,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // a YYYY-MM-DD day key, matched against when the cart was handed to the rep -
   // not against when the log column falls, which is a different question.
   const [cartGridDayFilter, setCartGridDayFilter] = useState<string>("");
+  // ── Cart daily-log penalties (₦500/rep/day, live from Mon 24 Aug 2026) ──
+  const [cartLogPenalties, setCartLogPenalties] = useState<CartLogPenaltiesView | null>(null);
+  const [cartLogRange, setCartLogRange] = useState<CartLogRangePreset>("this_week");
+  const [cartLogSaving, setCartLogSaving] = useState(false);
   const [cartFollowUpRep, setCartFollowUpRep] = useState<string>("All reps");
   const [cartFollowUpFilter, setCartFollowUpFilter] = useState<string>("All");
   // The whole cart, not just its id: the rep making the call needs the number,
@@ -39562,6 +39566,33 @@ ${waybillLineItems(w).length > 1
     } catch { setCartFollowUpGrid(null); }
   };
 
+  const loadCartLogPenalties = async (
+    range: CartLogRangePreset = cartLogRange,
+    repId: string = cartFollowUpRep
+  ) => {
+    if (!canSeeCartFollowUps) return;
+    try {
+      const params: { range?: CartLogRangePreset; repId?: string } = { range };
+      if (!cartFollowUpIsOwnWork && repId !== "All reps") params.repId = repId;
+      setCartLogPenalties(await cartsApi.logPenalties(params));
+    } catch { setCartLogPenalties(null); }
+  };
+
+  const reviewCartLogPenalty = async (
+    body: { repId: string; missDate: string; status: "approved" | "waived"; note: string }
+  ) => {
+    setCartLogSaving(true);
+    try {
+      await cartsApi.reviewLogPenalty(body);
+      showToast(body.status === "approved"
+        ? "Miss approved - it will be charged."
+        : "Miss waived - nothing will be charged.");
+      await loadCartLogPenalties();
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not save that decision.");
+    } finally { setCartLogSaving(false); }
+  };
+
   const shiftCartFollowUpWeek = (deltaDays: number) => {
     const base = cartFollowUpGrid?.weekStart;
     if (!base) return;
@@ -39575,6 +39606,7 @@ ${waybillLineItems(w).length > 1
   const loadCartFollowUps = async () => {
     if (!canSeeCartFollowUps) return;
     void loadCartFollowUpGrid();
+    void loadCartLogPenalties();
     try {
       const result = await cartsApi.followUpOverview();
       setCartFollowUps(result?.rows ?? []);
@@ -58960,8 +58992,154 @@ ${waybillLineItems(w).length > 1
       return "bg-sky-50 text-sky-700 border-sky-200";
     };
 
+    const penalties = cartLogPenalties;
+    const RANGE_CHIPS: Array<{ key: CartLogRangePreset; label: string }> = [
+      { key: "today", label: "Today" },
+      { key: "yesterday", label: "Yesterday" },
+      { key: "this_week", label: "This week" },
+      { key: "last_week", label: "Last week" },
+      { key: "this_month", label: "This month" },
+      { key: "last_month", label: "Last month" },
+      { key: "all", label: "All time" }
+    ];
+    // Ranges that map cleanly onto the Mon-Sat board move the grid too. The
+    // month ranges do not - the grid is weekly by construction - so they move
+    // only the penalty panel, and the panel says which period it is showing.
+    const applyRange = (key: CartLogRangePreset) => {
+      setCartLogRange(key);
+      void loadCartLogPenalties(key);
+      const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
+      const mondayOfKey = (dateKey: string) => {
+        const date = new Date(`${dateKey}T00:00:00Z`);
+        const dow = date.getUTCDay();
+        date.setUTCDate(date.getUTCDate() + (dow === 0 ? -6 : 1 - dow));
+        return date.toISOString().slice(0, 10);
+      };
+      const shiftKey = (dateKey: string, days: number) => {
+        const date = new Date(`${dateKey}T00:00:00Z`);
+        date.setUTCDate(date.getUTCDate() + days);
+        return date.toISOString().slice(0, 10);
+      };
+      if (key === "today") {
+        setCartFollowUpWeekStart(mondayOfKey(todayKey)); setCartGridDayFilter(todayKey);
+        void loadCartFollowUpGrid(mondayOfKey(todayKey));
+      } else if (key === "yesterday") {
+        const yesterday = shiftKey(todayKey, -1);
+        setCartFollowUpWeekStart(mondayOfKey(yesterday)); setCartGridDayFilter(yesterday);
+        void loadCartFollowUpGrid(mondayOfKey(yesterday));
+      } else if (key === "this_week") {
+        setCartFollowUpWeekStart(null); setCartGridDayFilter("");
+        void loadCartFollowUpGrid(null);
+      } else if (key === "last_week") {
+        const lastMonday = shiftKey(mondayOfKey(todayKey), -7);
+        setCartFollowUpWeekStart(lastMonday); setCartGridDayFilter("");
+        void loadCartFollowUpGrid(lastMonday);
+      }
+    };
+
     return (
       <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        {/* ⚠️ ₦500 per REP per DAY, not per cart - a rep with 61 carts and one
+            with 6 have committed the same offence by not logging. Nothing is
+            ever auto-deducted; a miss sits pending until the Owner rules. */}
+        {penalties && (
+          <div className={`border-b px-4 py-3 ${penalties.phase.active ? "border-rose-200 bg-rose-50" : "border-amber-200 bg-amber-50"}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className={`m-0 text-[13px] font-black ${penalties.phase.active ? "text-rose-900" : "text-amber-900"}`}>
+                  {penalties.phase.active
+                    ? `Daily log penalty is live — ₦${penalties.missAmount} a day per rep`
+                    : `${penalties.phase.label} — ₦${penalties.missAmount} a day per rep`}
+                </p>
+                <p className={`m-0 mt-0.5 text-[12px] font-medium leading-4 ${penalties.phase.active ? "text-rose-800" : "text-amber-800"}`}>
+                  {penalties.phase.active
+                    ? "A rep who logs nothing on their assigned carts owes ₦500 for that day. Logging even one cart clears it. Sundays are off, and nothing is charged until the Owner approves it."
+                    : `Starts Monday ${new Date(`${penalties.phase.startDate}T12:00:00Z`).toLocaleDateString("en-NG", { day: "numeric", month: "long" })}, counting from the carts assigned that day. Nothing before then is charged — this is a practice run so everyone can see what is coming.`}
+                </p>
+              </div>
+              {penalties.phase.active && (
+                <div className="flex shrink-0 gap-4 text-right">
+                  <span>
+                    <span className="block text-[10px] font-black uppercase tracking-wide text-rose-700">Pending</span>
+                    <span className="block text-base font-black text-rose-900">{naira(penalties.totals.pendingAmount)}</span>
+                    <span className="block text-[10px] font-semibold text-rose-700">{penalties.totals.pendingCount} miss{penalties.totals.pendingCount === 1 ? "" : "es"}</span>
+                  </span>
+                  <span>
+                    <span className="block text-[10px] font-black uppercase tracking-wide text-rose-700">Approved</span>
+                    <span className="block text-base font-black text-rose-900">{naira(penalties.totals.approvedAmount)}</span>
+                    <span className="block text-[10px] font-semibold text-rose-700">{penalties.totals.approvedCount} charged</span>
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {penalties.byRep.filter((rep) => rep.missedCount > 0).length > 0 && (
+              <ul className="m-0 mt-2.5 flex list-none flex-wrap gap-2 p-0">
+                {penalties.byRep.filter((rep) => rep.missedCount > 0).map((rep) => (
+                  <li key={rep.repId}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-black text-rose-800">
+                    {rep.repName}
+                    <span className="font-semibold text-rose-600">
+                      {rep.missedCount} day{rep.missedCount === 1 ? "" : "s"} · {naira(rep.atRiskAmount)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {currentRole === "Owner" && penalties.misses.filter((row) => row.status === "pending").length > 0 && (
+              <div className="mt-2.5 rounded-lg border border-rose-200 bg-white px-3 py-2">
+                <p className="m-0 text-[10px] font-black uppercase tracking-wide text-gray-500">Awaiting your decision</p>
+                <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
+                  {penalties.misses.filter((row) => row.status === "pending").slice(0, 6).map((row) => (
+                    <li key={`${row.repId}-${row.missDate}`} className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[12px] font-semibold text-gray-700">
+                        {row.repName} · {new Date(`${row.missDate}T12:00:00Z`).toLocaleDateString("en-NG", { weekday: "short", day: "numeric", month: "short" })}
+                        <span className="ml-1 font-medium text-gray-400">({row.cartsDue} carts unlogged)</span>
+                      </span>
+                      <span className="flex shrink-0 gap-1.5">
+                        <button type="button" disabled={cartLogSaving}
+                          onClick={() => void reviewCartLogPenalty({ repId: row.repId, missDate: row.missDate, status: "waived", note: "" })}
+                          className="!min-h-0 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                          Waive
+                        </button>
+                        <button type="button" disabled={cartLogSaving}
+                          onClick={() => void reviewCartLogPenalty({ repId: row.repId, missDate: row.missDate, status: "approved", note: "" })}
+                          className="!min-h-0 rounded-md bg-rose-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-rose-700 disabled:opacity-50">
+                          Charge {naira(row.amount)}
+                        </button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Period filter. Today / Yesterday / This week / Last week move the
+            board as well; the month ranges only move the penalty panel above,
+            because the board itself is Mon-Sat by construction. */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 px-4 py-2.5">
+          <span className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-400">Period</span>
+          <div className="flex flex-wrap items-center gap-1">
+            {RANGE_CHIPS.map((chip) => (
+              <button key={chip.key} type="button" onClick={() => applyRange(chip.key)}
+                className={`!min-h-0 whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors ${
+                  cartLogRange === chip.key ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600 hover:text-gray-900"}`}>
+                {chip.label}
+              </button>
+            ))}
+          </div>
+          {penalties && (
+            <span className="ml-auto text-[10px] font-semibold text-gray-400">
+              Penalty window {new Date(`${penalties.from}T12:00:00Z`).toLocaleDateString("en-NG", { day: "numeric", month: "short" })}
+              {" – "}{new Date(`${penalties.to}T12:00:00Z`).toLocaleDateString("en-NG", { day: "numeric", month: "short" })}
+              {" · "}{penalties.chargeableDays} chargeable day{penalties.chargeableDays === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+
         <div className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => shiftCartFollowUpWeek(-7)}
