@@ -94327,15 +94327,15 @@ ${waybillLineItems(w).length > 1
         return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section
-            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" ? "max-w-5xl" :modal === "recordRemittance" || modal === "sendToAgent" || modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
+            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "sendToAgent" ? "h-[calc(100dvh-1rem)] sm:h-[46rem]" : ""} ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" ? "max-w-5xl" :modal === "recordRemittance" || modal === "sendToAgent" || modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
             role="dialog" aria-modal="true" aria-labelledby="modal-title"
           >
             {orderDetailsGold && (
               <span className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 z-10 bg-gradient-to-r from-transparent via-amber-200/30 dark:via-amber-300/20 to-transparent" style={{ animation: "goldShimmerSweep 3.2s ease-in-out infinite" }} />
             )}
-            <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 dark:border-slate-800/80 shrink-0">
-              <h2 id="modal-title" className="text-base font-semibold text-gray-900 dark:text-slate-100">
+            <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 dark:border-slate-800/80 shrink-0">
+              <h2 id="modal-title" className="min-w-0 flex-1 text-base font-semibold text-gray-900 dark:text-slate-100">
                 {modal === "createTeam" && "Create New Team"}
                 {modal === "editTeam" && "Edit Team"}
                 {modal === "notifications" && "Notifications"}
@@ -94395,17 +94395,17 @@ ${waybillLineItems(w).length > 1
 	                {modal === "editOrderCustomer" && "Edit Order"}
 	                {modal === "deleteOrder" && "Delete Order"}
 	                {modal === "reassignOrder" && "Reassign Sales Rep"}
-	                {modal === "sendToAgent" && (
-	                  <span className="flex items-center gap-3">
-	                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50">
-	                      <UserRound className="h-5 w-5 text-[#1F8FE0]" />
-	                    </span>
-	                    <span className="flex min-w-0 flex-col">
-	                      <span className="text-lg font-bold leading-tight">Assign to Delivery Agent</span>
-	                      <span className="truncate text-xs font-normal text-gray-500">
-	                        Choose the best agent{selectedOrder?.state ? ` in ${selectedOrder.state}` : ""} to handle this order.
-	                      </span>
-	                    </span>
+		                {modal === "sendToAgent" && (
+		                  <span className="flex min-w-0 items-center gap-3">
+		                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-950/40">
+		                      <UserRound className="h-5 w-5 text-[#1F8FE0] dark:text-blue-300" />
+		                    </span>
+		                    <span className="flex min-w-0 flex-col">
+		                      <span className="text-base font-bold leading-tight sm:text-lg">Assign to Delivery Agent</span>
+		                      <span className="mt-0.5 whitespace-normal text-xs font-normal leading-4 text-gray-500 dark:text-slate-400">
+		                        Choose the best agent{selectedOrder?.state ? ` in ${selectedOrder.state}` : ""} to handle this order.
+		                      </span>
+		                    </span>
 	                  </span>
 	                )}
 	                {modal === "scheduleOrder" && "Schedule Delivery"}
@@ -94485,7 +94485,7 @@ ${waybillLineItems(w).length > 1
 	              </h2>
               <button className="!min-h-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-[#1a2834] transition-colors" aria-label="Close dialog" onClick={closeModal}><X className="w-5 h-5" /></button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div className={`min-h-0 flex-1 overscroll-contain ${modal === "sendToAgent" ? "overflow-hidden" : "overflow-y-auto"}`}>
 
             {modal === "createTeam" && (
               <div className="modal-form">
@@ -97180,197 +97180,174 @@ ${waybillLineItems(w).length > 1
               const selectedAgentRow = allAgentRows.find((r) => r.agent.id === createOrderAgentId);
               const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "AG";
               return (
-                <div className="px-6 py-5 space-y-5">
-                  {/* What this order needs, before any agent is picked. */}
-                  <div className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 sm:grid-cols-3">
-                    <div className="flex items-center gap-3 bg-gray-50/80 px-4 py-3.5">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50">
-                        <MapPin className="h-4 w-4 text-[#1F8FE0]" />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-[11px] text-gray-400">Delivery to</span>
-                        <strong className="block truncate text-sm font-bold text-gray-900">{orderState || "Not set"}</strong>
-                        <span className="block text-[11px] text-gray-400">State</span>
-                      </span>
+                <div className="flex h-full min-h-0 flex-col">
+                  <div className="shrink-0 px-4 pt-4 sm:px-6">
+                    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 dark:border-slate-700 dark:bg-slate-700 sm:grid-cols-3">
+                      <div className="flex min-w-0 items-center gap-2.5 bg-gray-50/90 px-3 py-3 dark:bg-slate-900/80 sm:gap-3 sm:px-4">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-blue-950/40">
+                          <MapPin className="h-4 w-4 text-[#1F8FE0] dark:text-blue-300" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-gray-400 dark:text-slate-500">Delivery to</div>
+                          <div className="truncate text-sm font-bold text-gray-900 dark:text-slate-100">{orderState || "Not set"}</div>
+                          <div className="text-[11px] text-gray-400 dark:text-slate-500">State</div>
+                        </div>
+                      </div>
+                      <div className="flex min-w-0 items-center gap-2.5 bg-gray-50/90 px-3 py-3 dark:bg-slate-900/80 sm:gap-3 sm:px-4">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-blue-950/40">
+                          <Box className="h-4 w-4 text-[#1F8FE0] dark:text-blue-300" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-gray-400 dark:text-slate-500">Order item</div>
+                          <div className="line-clamp-2 text-sm font-bold leading-5 text-gray-900 dark:text-slate-100">{orderQty} × {selectedOrder.productName}</div>
+                          <div className="text-[11px] text-gray-400 dark:text-slate-500">Quantity</div>
+                        </div>
+                      </div>
+                      <div className="col-span-2 flex min-w-0 items-center gap-2.5 bg-emerald-50/80 px-3 py-3 dark:bg-emerald-950/30 sm:col-span-1 sm:gap-3 sm:px-4">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/60">
+                          <Boxes className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-emerald-700/70 dark:text-emerald-300/80">Need from agent</div>
+                          <div className="text-sm font-bold text-emerald-800 dark:text-emerald-200">{orderQty} unit{orderQty === 1 ? "" : "s"}</div>
+                          <div className="text-[11px] text-emerald-700/70 dark:text-emerald-300/80">Enough stock to fulfil this order</div>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3 bg-gray-50/80 px-4 py-3.5">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50">
-                        <Box className="h-4 w-4 text-[#1F8FE0]" />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-[11px] text-gray-400">Order item</span>
-                        <strong className="block truncate text-sm font-bold text-gray-900">{orderQty} × {selectedOrder.productName}</strong>
-                        <span className="block text-[11px] text-gray-400">Quantity</span>
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 bg-emerald-50/70 px-4 py-3.5">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100">
-                        <Boxes className="h-4 w-4 text-emerald-700" />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-[11px] text-emerald-700/70">Need from agent</span>
-                        <strong className="block text-sm font-bold text-emerald-800">{orderQty} unit{orderQty === 1 ? "" : "s"}</strong>
-                        <span className="block text-[11px] text-emerald-700/70">Any agent with enough stock</span>
-                      </span>
-                    </div>
-                  </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h3 className="m-0 flex items-center gap-2 text-base font-bold text-gray-900">
-                      Available agents{orderState && !sendToAgentShowAllStates ? ` in ${orderState}` : ""}
-                      <span className="inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-blue-50 px-2 text-xs font-bold text-[#1F8FE0]">{visibleRows.length}</span>
-                    </h3>
-                    <span className="flex items-center gap-3">
-                      <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] font-semibold text-gray-600">
-                        <input
-                          type="checkbox"
-                          className="!min-h-0 h-4 w-4 accent-[#1F8FE0]"
-                          checked={sendToAgentShowAllStates}
-                          onChange={(e) => setSendToAgentShowAllStates(e.target.checked)}
-                        />
-                        Show all states
-                      </label>
-                      <button
-                        className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-[13px] font-semibold text-gray-700 transition-colors hover:bg-gray-50"
-                        onClick={() => setSendToAgentShowAllStates(false)}
-                        title="Show only agents in the delivery state"
-                      >
-                        <Filter className="h-4 w-4" />Filter
-                      </button>
-                    </span>
-                  </div>
-
-                  {visibleRows.length === 0 ? (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-6 text-center">
-                      <p className="m-0 text-sm font-semibold text-amber-900">No agent in {orderState || "this state"}.</p>
-                      <p className="m-0 mt-1 text-xs text-amber-800">Tick "Show all states" to assign one from another state.</p>
-                    </div>
-                  ) : (
-                    <div className="flex max-h-[340px] flex-col gap-3 overflow-y-auto">
-                      {visibleRows.map(({ agent, stockQty, sameState }) => {
-                        const matchedLocation = bestAgentFulfillmentLocationMatch(agent, selectedOrder.state, selectedOrder.city, orderProductId);
-                        const ok = stockQty >= orderQty;
-                        const empty = stockQty === 0;
-                        const isSelected = createOrderAgentId === agent.id;
-                        const stats = agentAssignStatsFor(agent.id);
-                        // Two responsive attempts at reusing one flex row (direction-flip with
-                        // display:contents, then without it) both rendered pieces of this card
-                        // detached from their own card on real mobile browsers - confirmed by
-                        // screenshot twice. Building genuinely separate mobile/desktop blocks
-                        // instead, each a plain single-direction flex layout with nothing
-                        // breakpoint-conditional about its own structure, so there is no
-                        // direction-switch or wrapper trick left that could misrender.
-                        const radio = (
-                          <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${isSelected ? "border-[#1F8FE0]" : "border-gray-300"}`}>
-                            {isSelected && <span className="h-2.5 w-2.5 rounded-full bg-[#1F8FE0]" />}
-                          </span>
-                        );
-                        const avatar = (
-                          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-sm font-black text-gray-500">
-                            {initialsOf(agent.name)}
-                          </span>
-                        );
-                        const textColumn = (
-                          <span className="min-w-0 flex-1">
-                            <span className="flex flex-wrap items-center gap-2">
-                              <strong className="truncate text-[15px] font-bold text-gray-900">{agent.name}</strong>
-                              {!sameState && orderState && (
-                                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700">different state</span>
-                              )}
-                            </span>
-                            <span className="mt-0.5 flex flex-wrap items-center gap-2 text-[12px] text-gray-500">
-                              <MapPin className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                              {matchedLocation ? agentLocationLabel(matchedLocation) : `Based in ${agentPrimaryBaseState(agent) || "-"}`}
-                              {matchedLocation && (
-                                <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold text-[#1F8FE0]">This hub&apos;s stock</span>
-                              )}
-                            </span>
-                            {/* Real figures from this agent's own delivered orders.
-                                A star rating is not shown because nothing in
-                                Protohub has ever scored an agent - printing one
-                                would be inventing it. */}
-                            <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-gray-500">
-                              <span className="inline-flex items-center gap-1">
-                                <PackageCheck className="h-3.5 w-3.5 text-gray-400" />
-                                {stats.delivered} delivered
-                              </span>
-                              <span className="text-gray-200">|</span>
-                              <span className="inline-flex items-center gap-1">
-                                <Clock className="h-3.5 w-3.5 text-gray-400" />
-                                {stats.avgDays === null ? "No delivery history" : `Avg. delivery: ${stats.avgDays} day${stats.avgDays === 1 ? "" : "s"}`}
-                              </span>
-                              <span className="text-gray-200">|</span>
-                              <span className="inline-flex items-center gap-1">
-                                <CheckCircle2 className="h-3.5 w-3.5 text-gray-400" />
-                                {stats.reliability === null ? "No record yet" : `Reliability: ${stats.reliability}%`}
-                              </span>
-                            </span>
-                          </span>
-                        );
-                        const stockBadge = (
-                          <span className={`flex shrink-0 flex-col items-center rounded-xl px-4 py-2.5 ${empty ? "bg-rose-50" : ok ? "bg-emerald-50" : "bg-amber-50"}`}>
-                            <span className="flex items-center gap-1.5">
-                              <Box className={`h-4 w-4 ${empty ? "text-rose-600" : ok ? "text-emerald-700" : "text-amber-700"}`} />
-                              <strong className={`text-base font-bold ${empty ? "text-rose-600" : ok ? "text-emerald-700" : "text-amber-700"}`}>{stockQty} units</strong>
-                            </span>
-                            <span className={`text-[11px] ${empty ? "text-rose-500" : ok ? "text-emerald-600" : "text-amber-600"}`}>
-                              {empty ? "No stock" : ok ? "In stock" : `Needs ${orderQty}`}
-                            </span>
-                          </span>
-                        );
-                        const chevron = <ChevronRight className="h-5 w-5 shrink-0 text-gray-300" />;
-                        return (
+                    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <h3 className="m-0 flex min-w-0 items-center gap-2 text-base font-bold text-gray-900 dark:text-slate-100">
+                        <span className="truncate">Available agents{orderState && !sendToAgentShowAllStates ? ` in ${orderState}` : ""}</span>
+                        <span className="inline-flex h-6 min-w-[24px] shrink-0 items-center justify-center rounded-full bg-blue-50 px-2 text-xs font-bold text-[#1F8FE0] dark:bg-blue-950/40 dark:text-blue-300">{visibleRows.length}</span>
+                      </h3>
+                      {orderState ? (
+                        <div className="grid grid-cols-2 rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-slate-700 dark:bg-slate-900">
                           <button
-                            key={agent.id}
                             type="button"
-                            onClick={() => setCreateOrderAgentId(agent.id)}
-                            className={`!min-h-0 w-full rounded-xl border-2 text-left transition-colors ${isSelected ? "border-[#1F8FE0] bg-blue-50/40" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+                            aria-pressed={!sendToAgentShowAllStates}
+                            className={`!min-h-0 rounded-md px-3 py-2 text-xs font-bold transition-colors ${!sendToAgentShowAllStates ? "bg-white text-[#1F8FE0] shadow-sm dark:bg-slate-700 dark:text-blue-300" : "text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-slate-200"}`}
+                            onClick={() => setSendToAgentShowAllStates(false)}
                           >
-                            {/* Desktop / iPad - the original single row, untouched. */}
-                            <span className="hidden items-center gap-3 px-4 py-3.5 sm:flex">
-                              {radio}{avatar}{textColumn}{stockBadge}{chevron}
-                            </span>
-                            {/* Mobile - stacked into three lines so nothing fights for width. */}
-                            <span className="flex flex-col gap-3 px-4 py-3.5 sm:hidden">
-                              <span className="flex items-center gap-3">{radio}{avatar}</span>
-                              {textColumn}
-                              <span className="flex items-center justify-between gap-3">{stockBadge}{chevron}</span>
-                            </span>
+                            In {orderState}
                           </button>
-                        );
-                      })}
+                          <button
+                            type="button"
+                            aria-pressed={sendToAgentShowAllStates}
+                            className={`!min-h-0 rounded-md px-3 py-2 text-xs font-bold transition-colors ${sendToAgentShowAllStates ? "bg-white text-[#1F8FE0] shadow-sm dark:bg-slate-700 dark:text-blue-300" : "text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-slate-200"}`}
+                            onClick={() => setSendToAgentShowAllStates(true)}
+                          >
+                            All states
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-xs font-semibold text-gray-500 dark:text-slate-400">All active agents</div>
+                      )}
                     </div>
-                  )}
+                  </div>
 
-                  <p className="m-0 flex items-start gap-2 rounded-xl bg-gray-50 px-4 py-3 text-[13px] text-gray-500">
-                    <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#1F8FE0]" />
-                    Stock shown is real-time and from the agent&apos;s hub{orderState ? ` in ${orderState}` : ""}.
-                  </p>
+                  <div className="min-h-0 flex-1 px-4 py-3 sm:px-6">
+                    {visibleRows.length === 0 ? (
+                      <div className="flex h-full min-h-36 flex-col items-center justify-center rounded-xl border border-amber-200 bg-amber-50 px-4 py-6 text-center dark:border-amber-900/70 dark:bg-amber-950/30">
+                        <p className="m-0 text-sm font-semibold text-amber-900 dark:text-amber-200">No agent in {orderState || "this state"}.</p>
+                        <button
+                          type="button"
+                          className="!min-h-0 mt-3 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-200"
+                          onClick={() => setSendToAgentShowAllStates(true)}
+                        >
+                          Show agents in all states
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex h-full flex-col gap-2.5 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]">
+                        {visibleRows.map(({ agent, stockQty, sameState }) => {
+                          const matchedLocation = bestAgentFulfillmentLocationMatch(agent, selectedOrder.state, selectedOrder.city, orderProductId);
+                          const ok = stockQty >= orderQty;
+                          const empty = stockQty === 0;
+                          const isSelected = createOrderAgentId === agent.id;
+                          const stats = agentAssignStatsFor(agent.id);
+                          const stockTone = empty
+                            ? "bg-rose-50 text-rose-700 dark:bg-rose-950/35 dark:text-rose-300"
+                            : ok
+                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/35 dark:text-emerald-300"
+                              : "bg-amber-50 text-amber-700 dark:bg-amber-950/35 dark:text-amber-300";
+                          return (
+                            <button
+                              key={agent.id}
+                              type="button"
+                              aria-pressed={isSelected}
+                              onClick={() => setCreateOrderAgentId(agent.id)}
+                              className={`!min-h-0 block w-full shrink-0 overflow-hidden rounded-xl border-2 text-left transition-colors ${isSelected ? "border-[#1F8FE0] bg-blue-50/50 dark:border-blue-400 dark:bg-blue-950/25" : "border-gray-200 bg-white hover:border-blue-200 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900/70 dark:hover:border-slate-600 dark:hover:bg-slate-900"}`}
+                            >
+                              <div className="grid grid-cols-[1.25rem_2.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2.5 p-3 sm:grid-cols-[1.25rem_3rem_minmax(0,1fr)_8.5rem_1.25rem] sm:items-center sm:p-4">
+                                <div className={`mt-3 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 sm:mt-0 ${isSelected ? "border-[#1F8FE0]" : "border-gray-300 dark:border-slate-600"}`}>
+                                  {isSelected && <div className="h-2.5 w-2.5 rounded-full bg-[#1F8FE0]" />}
+                                </div>
+                                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-sm font-black text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 sm:h-12 sm:w-12">
+                                  {initialsOf(agent.name)}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                                    <strong className="min-w-0 truncate text-sm font-bold text-gray-900 dark:text-slate-100 sm:text-[15px]">{agent.name}</strong>
+                                    {!sameState && orderState && (
+                                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">different state</span>
+                                    )}
+                                  </div>
+                                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-gray-500 dark:text-slate-400 sm:text-xs">
+                                    <MapPin className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                                    <span className="min-w-0 truncate">{matchedLocation ? agentLocationLabel(matchedLocation) : `Based in ${agentPrimaryBaseState(agent) || "-"}`}</span>
+                                    {matchedLocation && (
+                                      <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-[#1F8FE0] dark:bg-blue-950/40 dark:text-blue-300">This hub&apos;s stock</span>
+                                    )}
+                                  </div>
+                                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-gray-500 dark:text-slate-400">
+                                    <span className="inline-flex items-center gap-1"><PackageCheck className="h-3.5 w-3.5" />{stats.delivered} delivered</span>
+                                    <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" />{stats.avgDays === null ? "No delivery history" : `${stats.avgDays} day avg.`}</span>
+                                    <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" />{stats.reliability === null ? "No record yet" : `${stats.reliability}% reliable`}</span>
+                                  </div>
+                                </div>
+                                <div className={`col-start-2 col-end-4 flex min-w-0 items-center justify-between gap-3 rounded-lg px-3 py-2 sm:col-start-4 sm:col-end-5 sm:row-start-1 sm:flex-col sm:justify-center sm:gap-0.5 ${stockTone}`}>
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <Box className="h-4 w-4 shrink-0" />
+                                    <strong className="text-sm font-bold sm:text-base">{stockQty} unit{stockQty === 1 ? "" : "s"}</strong>
+                                  </span>
+                                  <span className="text-[11px] font-semibold">{empty ? "No stock" : ok ? "In stock" : `Needs ${orderQty}`}</span>
+                                </div>
+                                <ChevronRight className="col-start-5 row-start-1 hidden h-5 w-5 shrink-0 text-gray-300 dark:text-slate-600 sm:block" />
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
 
-                  {/* The consequence of the current pick, kept from the old modal -
-                      it is the one thing that stops an order being sent to an
-                      agent who cannot fulfil it. */}
-                  {selectedAgentRow && selectedAgentRow.stockQty < orderQty && (
-                    <p className={`m-0 rounded-xl border px-4 py-3 text-[13px] leading-5 ${selectedAgentRow.stockQty > 0 ? "border-amber-200 bg-amber-50 text-amber-900" : "border-rose-200 bg-rose-50 text-rose-900"}`}>
-                      {selectedAgentRow.stockQty > 0
-                        ? <><strong>Not enough stock.</strong> {selectedAgentRow.agent.name} has {selectedAgentRow.stockQty} and this order needs {orderQty}. Distribute stock to them first.</>
-                        : <><strong>No stock.</strong> {selectedAgentRow.agent.name} has none of {selectedOrder.productName} and cannot fulfil this order until stock is distributed.</>}
-                    </p>
-                  )}
-                  {selectedAgentRow && !selectedAgentRow.sameState && orderState && (
-                    <p className="m-0 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-5 text-amber-900">
-                      <strong>Different state.</strong> {selectedAgentRow.agent.name} is based in {agentPrimaryBaseState(selectedAgentRow.agent) || "-"} while the customer is in {orderState}. Confirm this route works before assigning.
-                    </p>
-                  )}
-
-                  <div className="flex flex-col-reverse items-stretch gap-3 border-t border-gray-100 pt-4 sm:flex-row sm:items-center sm:justify-end">
-                    <button className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-6 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 sm:w-auto" onClick={closeModal}>Cancel</button>
-                    <button
-                      className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1F8FE0] px-6 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#1560a8] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-                      onClick={() => { if (!createOrderAgentId) { showToast("Pick a delivery agent first - tap an agent above, then Assign to this Agent."); return; } saveOrderAgent(selectedOrder); }}
-                    >
-                      <Send className="h-4 w-4" />Assign to this Agent
-                    </button>
+                  <div className="shrink-0 border-t border-gray-100 bg-white px-4 py-3 dark:border-slate-800 dark:bg-[#0f1822] sm:px-6">
+                    <div className="mb-3 flex items-start gap-2 rounded-lg bg-gray-50 px-3 py-2 text-xs leading-5 text-gray-500 dark:bg-slate-900 dark:text-slate-400">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#1F8FE0] dark:text-blue-300" />
+                      Stock is live and comes from each agent&apos;s hub{orderState ? ` for ${orderState}` : ""}.
+                    </div>
+                    {selectedAgentRow && selectedAgentRow.stockQty < orderQty && (
+                      <p className={`mb-3 rounded-lg border px-3 py-2 text-xs leading-5 ${selectedAgentRow.stockQty > 0 ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200" : "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-200"}`}>
+                        {selectedAgentRow.stockQty > 0
+                          ? <><strong>Not enough stock.</strong> {selectedAgentRow.agent.name} has {selectedAgentRow.stockQty}; this order needs {orderQty}.</>
+                          : <><strong>No stock.</strong> Distribute {selectedOrder.productName} to {selectedAgentRow.agent.name} before fulfilment.</>}
+                      </p>
+                    )}
+                    {selectedAgentRow && !selectedAgentRow.sameState && orderState && (
+                      <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200">
+                        <strong>Different state.</strong> Confirm the route from {agentPrimaryBaseState(selectedAgentRow.agent) || "the agent's hub"} to {orderState} before assigning.
+                      </p>
+                    )}
+                    <div className="flex flex-col-reverse items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end">
+                      <button className="!min-h-0 inline-flex w-full items-center justify-center rounded-lg border border-gray-200 px-6 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto" onClick={closeModal}>Cancel</button>
+                      <button
+                        disabled={!createOrderAgentId}
+                        className="!min-h-0 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1F8FE0] px-6 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#1560a8] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                        onClick={() => { if (!createOrderAgentId) { showToast("Pick a delivery agent first - tap an agent above, then Assign to this Agent."); return; } saveOrderAgent(selectedOrder); }}
+                      >
+                        <Send className="h-4 w-4" />Assign to this Agent
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
