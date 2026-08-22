@@ -20,8 +20,14 @@ import {
 } from "../lib/cash-flow.js";
 
 const router = Router();
-// Money in and out of the business - the same audience as Finance & Accounting.
-router.use(requireAuth, requireRole("Owner", "Admin", "Manager"));
+// ⚠️ OWNER ONLY, deliberately narrower than the rest of Finance & Accounting.
+// This page shows the true bank position, what is still owed by agents, and
+// every account balance - the most sensitive money view in the app - and
+// Bright asked for it kept to himself for now. Enforced here rather than only
+// by hiding the tab, so the endpoints refuse a direct call regardless of what
+// the UI shows. Widen this and the tab's own role check together, never one
+// alone.
+router.use(requireAuth, requireRole("Owner"));
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const RangeSchema = z.object({

@@ -9932,6 +9932,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const currentRole: EditableUserRole = isSpying
     ? (spiedUser!.role)
     : isPreviewingRole ? previewRole! : realRole;
+  // ⚠️ Cash Flow is OWNER ONLY for now - it shows the true bank position, what
+  // agents still owe, and every account balance. The backend refuses the
+  // endpoints for anyone else, so this list only keeps the UI honest; the two
+  // must be widened together.
+  const visibleFinanceTabs = useMemo(
+    () => financeTabs.filter((tab) => tab !== "Cash Flow" || currentRole === "Owner"),
+    [currentRole]
+  );
   useEffect(() => { writePref(PREVIEW_ROLE_STORAGE_KEY, previewRole ?? ""); }, [previewRole]);
   // A blocked write throws from the API layer. Most callers catch and show
   // their own "failed to save" - which would be a lie here, since nothing was
@@ -25677,7 +25685,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       if (nextPage === "Finance & Accounting") {
         const financeTabSlug = queryParams.get("tab") ?? "";
-        const financeTabFromRoute = financeTabs.find((tab) => slugify(tab) === financeTabSlug);
+        // Resolved against the tabs this role may actually see, so a shared
+        // ?tab=cash-flow link cannot drop a non-Owner onto an empty page.
+        const allowedTabs = financeTabs.filter((tab) => tab !== "Cash Flow" || currentRole === "Owner");
+        const financeTabFromRoute = allowedTabs.find((tab) => slugify(tab) === financeTabSlug);
         setFinanceTab(financeTabFromRoute ?? "Financial Overview");
       }
       if (nextPage === "Call Rep Console") {
@@ -79171,7 +79182,7 @@ ${waybillLineItems(w).length > 1
               </div>
 
               <div className="grid grid-cols-2 gap-2 sm:hidden" role="tablist" aria-label="Financial report sections">
-                {financeTabs.map((tab) => (
+                {visibleFinanceTabs.map((tab) => (
                   <button
                     role="tab"
                     aria-selected={financeTab === tab}
@@ -79188,7 +79199,7 @@ ${waybillLineItems(w).length > 1
               </div>
               <div className="hidden sm:block w-full overflow-x-auto no-scrollbar -mx-1 px-1">
                 <nav className="inline-flex items-center gap-1 bg-gray-100 p-1 rounded-lg min-w-max" role="tablist" aria-label="Financial report sections">
-                  {financeTabs.map((tab) => (
+                  {visibleFinanceTabs.map((tab) => (
                     <button
                       role="tab"
                       aria-selected={financeTab === tab}
@@ -79637,16 +79648,16 @@ ${waybillLineItems(w).length > 1
                 </motion.section>
               )}
 
-              {financeTab === "Cash Flow" && (
+              {financeTab === "Cash Flow" && currentRole === "Owner" && (
                 <CashFlowPage
                   view={cashFlowView}
                   loading={cashFlowLoading}
                   error={cashFlowError}
                   period={cashFlowPeriod}
                   onPeriodChange={(next) => { setCashFlowPeriod(next); void loadCashFlow(next); }}
-                  // Anchoring opening cash moves every balance on the page, so
-                  // it is Owner/Admin - the same line the backend draws.
-                  canSetOpeningCash={currentRole === "Owner" || currentRole === "Admin"}
+                  // The whole page is Owner-only for now, so anyone who can
+                  // see it can also anchor the balance it runs from.
+                  canSetOpeningCash={currentRole === "Owner"}
                   openingHistory={cashOpeningHistory}
                   savingOpeningCash={cashOpeningSaving}
                   onRefresh={() => void loadCashFlow(cashFlowPeriod)}
@@ -79655,7 +79666,7 @@ ${waybillLineItems(w).length > 1
                   onViewAgentReceivables={() => setFinanceTab("Remittance")}
                   bank={{
                     view: bankAccountsView,
-                    canManage: currentRole === "Owner" || currentRole === "Admin",
+                    canManage: currentRole === "Owner",
                     saving: bankAccountSaving,
                     onAddAccount: (body) => runBankAction(() => cashFlowApi.addAccount(body), "Account added."),
                     onTransfer: (body) => runBankAction(() => cashFlowApi.transfer(body), "Transfer recorded."),
