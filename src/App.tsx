@@ -156,7 +156,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -9475,6 +9475,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [inventoryValueLoading, setInventoryValueLoading] = useState(false);
   const [inventoryValueError, setInventoryValueError] = useState("");
   const [inventoryValueSaving, setInventoryValueSaving] = useState(false);
+  // ── Account Reconciliation (Cash Flow tab) ──
+  const [acctReconView, setAcctReconView] = useState<AccountReconciliationsView | null>(null);
+  const [acctReconLoading, setAcctReconLoading] = useState(false);
+  const [acctReconError, setAcctReconError] = useState("");
+  const [acctReconSaving, setAcctReconSaving] = useState(false);
+  const [acctReconWorkspace, setAcctReconWorkspace] = useState<ReconciliationWorkspace | null>(null);
+  const [acctReconWorkspaceLoading, setAcctReconWorkspaceLoading] = useState(false);
   // ── Batch unit-economics (Profitability tab) ──
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -9720,6 +9727,44 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } finally { setInventoryValueSaving(false); }
   };
 
+  const loadAccountReconciliations = useCallback(async () => {
+    setAcctReconLoading(true);
+    setAcctReconError("");
+    try {
+      setAcctReconView(await cashFlowApi.accountReconciliations());
+    } catch (err: any) {
+      setAcctReconError(err?.message ?? "Could not load reconciliations.");
+    } finally { setAcctReconLoading(false); }
+  }, []);
+
+  const openReconWorkspace = useCallback(async (accountId: string, statementDate: string) => {
+    setAcctReconWorkspaceLoading(true);
+    try {
+      setAcctReconWorkspace(await cashFlowApi.reconciliationWorkspace(accountId, statementDate));
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not open that reconciliation.");
+      setAcctReconWorkspace(null);
+    } finally { setAcctReconWorkspaceLoading(false); }
+  }, []);
+
+  // Every write reloads BOTH the list and the open workspace: an adjustment
+  // changes the remaining difference the workspace is judged on, and leaving
+  // one stale would show two disagreeing figures for the same account.
+  const runReconAction = async (
+    action: () => Promise<unknown>, message: string, reopenAccount?: { accountId: string; statementDate: string }
+  ) => {
+    setAcctReconSaving(true);
+    try {
+      await action();
+      showToast(message);
+      await loadAccountReconciliations();
+      if (reopenAccount) await openReconWorkspace(reopenAccount.accountId, reopenAccount.statementDate);
+    } catch (err: any) {
+      showToast(err?.message ?? "That did not save.");
+      throw err;
+    } finally { setAcctReconSaving(false); }
+  };
+
   useEffect(() => {
     if (activePage === "Finance & Accounting" && financeTab === "Profitability") void loadBatches();
     if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") {
@@ -9727,8 +9772,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       void loadReconciliation(reconciliationWeek);
       void loadReserves();
       void loadInventoryValue(reconciliationWeek);
+      void loadAccountReconciliations();
     }
-  }, [activePage, financeTab, cashFlowPeriod, reconciliationWeek, loadCashFlow, loadBankAccounts, loadWeeklyOpening, loadReconciliation, loadReserves, loadInventoryValue]);
+  }, [activePage, financeTab, cashFlowPeriod, reconciliationWeek, loadCashFlow, loadBankAccounts, loadWeeklyOpening, loadReconciliation, loadReserves, loadInventoryValue, loadAccountReconciliations]);
   useEffect(() => {
     setBatchAutofillMeta(null);
     if (selectedBatchId) void loadBatchEconomics(selectedBatchId);
@@ -79933,6 +79979,48 @@ ${waybillLineItems(w).length > 1
                         ],
                         "Inventory value exported."
                       );
+                    }
+                  }}
+                  accountReconciliation={{
+                    view: acctReconView,
+                    loading: acctReconLoading,
+                    error: acctReconError,
+                    saving: acctReconSaving,
+                    workspace: acctReconWorkspace,
+                    workspaceLoading: acctReconWorkspaceLoading,
+                    onOpenWorkspace: (accountId, statementDate) => void openReconWorkspace(accountId, statementDate),
+                    onCloseWorkspace: () => setAcctReconWorkspace(null),
+                    onSave: async (body) => {
+                      await runReconAction(
+                        () => cashFlowApi.saveAccountReconciliation(body),
+                        body.status === "reconciled" ? "Account reconciled." : "Reconciliation saved.",
+                        body.status === "reconciled"
+                          ? undefined
+                          : { accountId: body.bankAccountId, statementDate: body.statementDate });
+                      if (body.status === "reconciled") setAcctReconWorkspace(null);
+                    },
+                    onAddAdjustment: (id, body) => runReconAction(
+                      () => cashFlowApi.addReconAdjustment(id, body), "Adjustment added.",
+                      acctReconWorkspace
+                        ? { accountId: acctReconWorkspace.account.id, statementDate: acctReconWorkspace.statementDate }
+                        : undefined),
+                    onRemoveAdjustment: (id, adjustmentId) => runReconAction(
+                      () => cashFlowApi.removeReconAdjustment(id, adjustmentId), "Adjustment removed.",
+                      acctReconWorkspace
+                        ? { accountId: acctReconWorkspace.account.id, statementDate: acctReconWorkspace.statementDate }
+                        : undefined),
+                    onReopen: (id) => runReconAction(
+                      () => cashFlowApi.reopenAccountReconciliation(id), "Reconciliation reopened."),
+                    onExport: () => {
+                      const rows = acctReconView?.reconciliations ?? [];
+                      if (rows.length === 0) { showToast("Nothing to export."); return; }
+                      triggerCsvDownload("account-reconciliations", [
+                        ["Statement Date", "Account", "Per Statement", "Per Books", "Remaining Difference", "Status", "Reconciled By"],
+                        ...rows.map((row) => [
+                          row.statementDate, row.accountName, String(row.statementBalance),
+                          String(row.bookBalance), String(row.remainingDifference), row.status, row.reconciledByName
+                        ])
+                      ], "Reconciliation report exported.");
                     }
                   }}
                   onDownloadReport={() => {

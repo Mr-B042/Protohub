@@ -19,6 +19,13 @@ import {
   withRunningBalance
 } from "../lib/cash-flow.js";
 import {
+  isReconciled,
+  remainingDifference,
+  summariseReconciliations,
+  unmatchedBookItems,
+  type BookItem
+} from "../lib/account-reconciliation.js";
+import {
   groupValue,
   inventoryHealth,
   movementDirection,
@@ -1787,6 +1794,388 @@ router.post("/inventory/snapshot", requireRole("Owner"), async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not save the valuation." });
+  }
+});
+
+// ══ Account Reconciliation ════════════════════════════════
+//
+// Weekly Reconciliation asks whether the business as a whole holds what it
+// thinks. This asks the narrower question per account: does GTBank agree with
+// us? A week can reconcile in total while one account is out by exactly what
+// another is out the other way.
+//
+// ⚠️ difference = STATEMENT − BOOKS, the same convention as the weekly count.
+// Negative means the bank holds less than we recorded.
+
+/** How far back the unmatched list looks when nothing has been reconciled yet. */
+const RECONCILE_LOOKBACK_DAYS = 90;
+
+/** Our recorded movements against one account, up to a statement date. */
+async function bookItemsForAccount(
+  orgId: string, accountId: string, fromKey: string, toKey: string
+): Promise<BookItem[]> {
+  const fromIso = startOfLagosDay(fromKey);
+  const toIso = endOfLagosDay(toKey);
+  const [{ data: expenses }, { data: remits }, { data: transfers }] = await Promise.all([
+    supabase.from("expenses")
+      .select("id, date, category, description, amount")
+      .eq("org_id", orgId).eq("bank_account_id", accountId)
+      .gte("date", fromKey).lte("date", toKey).limit(REPORT_ROW_CEILING),
+    supabase.from("remittance_transactions")
+      .select("id, received_at, delta_amount, order_id")
+      .eq("org_id", orgId).eq("bank_account_id", accountId)
+      .gte("received_at", fromIso).lt("received_at", toIso).limit(REPORT_ROW_CEILING),
+    supabase.from("bank_account_transfers")
+      .select("id, from_account_id, to_account_id, amount, transferred_at, note")
+      .eq("org_id", orgId)
+      .or(`from_account_id.eq.${accountId},to_account_id.eq.${accountId}`)
+      .gte("transferred_at", fromIso).lt("transferred_at", toIso).limit(REPORT_ROW_CEILING)
+  ]);
+
+  return [
+    ...((expenses ?? []) as any[]).map((row) => ({
+      sourceType: "expense" as const,
+      sourceId: String(row.id),
+      occurredOn: row.date,
+      description: String(row.description ?? row.category ?? "Expense"),
+      amount: Number(row.amount ?? 0),
+      direction: "out" as const
+    })),
+    ...((remits ?? []) as any[]).map((row) => ({
+      sourceType: "remittance" as const,
+      sourceId: String(row.id),
+      occurredOn: lagosDayOf(row.received_at),
+      description: `Remittance${row.order_id ? ` · order ${row.order_id}` : ""}`,
+      amount: Number(row.delta_amount ?? 0),
+      direction: "in" as const
+    })),
+    // A transfer between our own accounts is not cash flow, but it absolutely
+    // shows on the statement, so it has to be matchable here.
+    ...((transfers ?? []) as any[]).map((row) => ({
+      sourceType: "transfer" as const,
+      sourceId: String(row.id),
+      occurredOn: lagosDayOf(row.transferred_at),
+      description: row.note || (row.from_account_id === accountId ? "Transfer out" : "Transfer in"),
+      amount: Number(row.amount ?? 0),
+      direction: (row.from_account_id === accountId ? "out" : "in") as "in" | "out"
+    }))
+  ].sort((left, right) => right.occurredOn.localeCompare(left.occurredOn));
+}
+
+async function adjustmentsFor(reconciliationId: string) {
+  const { data } = await supabase.from("account_reconciliation_adjustments")
+    .select("id, occurred_on, description, amount, direction, kind")
+    .eq("reconciliation_id", reconciliationId).order("created_at", { ascending: true });
+  return ((data ?? []) as any[]).map((row) => ({
+    id: row.id,
+    occurredOn: row.occurred_on,
+    description: row.description ?? "",
+    amount: Number(row.amount ?? 0),
+    direction: row.direction as "in" | "out",
+    kind: row.kind
+  }));
+}
+
+// ── GET /api/cash-flow/account-reconciliations ────────────
+router.get("/account-reconciliations", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const [{ data: rows }, { data: accountRows }] = await Promise.all([
+      supabase.from("account_reconciliations")
+        .select("*").eq("org_id", orgId)
+        .order("statement_date", { ascending: false }).limit(REPORT_ROW_CEILING),
+      supabase.from("bank_accounts")
+        .select("id, name, bank_name, account_type, account_number_last4, is_primary, active")
+        .eq("org_id", orgId).order("is_primary", { ascending: false })
+    ]);
+    const records = (rows ?? []) as any[];
+
+    const adjustmentsByRecon = new Map<string, Array<{ amount: number; direction: "in" | "out" }>>();
+    if (records.length > 0) {
+      const { data: adjustments } = await supabase.from("account_reconciliation_adjustments")
+        .select("reconciliation_id, amount, direction")
+        .in("reconciliation_id", records.map((row) => row.id));
+      ((adjustments ?? []) as any[]).forEach((row) => {
+        const list = adjustmentsByRecon.get(row.reconciliation_id) ?? [];
+        list.push({ amount: Number(row.amount ?? 0), direction: row.direction });
+        adjustmentsByRecon.set(row.reconciliation_id, list);
+      });
+    }
+
+    const accountById = new Map(((accountRows ?? []) as any[]).map((row) => [row.id, row]));
+    const shaped = records.map((row) => {
+      const adjustments = adjustmentsByRecon.get(row.id) ?? [];
+      const account = accountById.get(row.bank_account_id);
+      const remaining = remainingDifference(row.statement_balance, row.book_balance, adjustments);
+      return {
+        id: row.id,
+        bankAccountId: row.bank_account_id,
+        accountName: account?.name ?? "Removed account",
+        bankName: account?.bank_name ?? "",
+        accountType: (account?.account_type ?? "bank") as "bank" | "cash",
+        accountNumberLast4: account?.account_number_last4 ?? "",
+        statementDate: row.statement_date,
+        statementBalance: Number(row.statement_balance ?? 0),
+        bookBalance: Number(row.book_balance ?? 0),
+        adjustmentCount: adjustments.length,
+        remainingDifference: remaining,
+        settled: isReconciled(remaining),
+        status: row.status,
+        notes: row.notes ?? "",
+        reconciledByName: row.reconciled_by_name ?? "",
+        reconciledAt: row.reconciled_at,
+        createdAt: row.created_at
+      };
+    });
+
+    res.json({
+      reconciliations: shaped,
+      summary: summariseReconciliations(records.map((row) => ({
+        id: row.id,
+        statementBalance: Number(row.statement_balance ?? 0),
+        bookBalance: Number(row.book_balance ?? 0),
+        status: row.status,
+        adjustments: adjustmentsByRecon.get(row.id) ?? []
+      }))),
+      accounts: ((accountRows ?? []) as any[]).filter((row) => row.active).map((row) => ({
+        id: row.id, name: row.name, bankName: row.bank_name ?? "",
+        accountType: row.account_type, accountNumberLast4: row.account_number_last4 ?? ""
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load reconciliations." });
+  }
+});
+
+// ── GET /api/cash-flow/account-reconciliations/workspace ──
+router.get("/account-reconciliations/workspace", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const accountId = String(req.query.accountId ?? "");
+    const statementDate = String(req.query.statementDate ?? "");
+    if (!accountId) { res.status(400).json({ error: "Pick an account to reconcile." }); return; }
+    const toKey = DATE_KEY.test(statementDate) ? statementDate : lagosDayOf(new Date().toISOString());
+
+    const [{ data: account }, { data: existing }, { data: previous }] = await Promise.all([
+      supabase.from("bank_accounts")
+        .select("id, name, bank_name, account_type, account_number_last4")
+        .eq("id", accountId).eq("org_id", orgId).maybeSingle(),
+      supabase.from("account_reconciliations")
+        .select("*").eq("org_id", orgId).eq("bank_account_id", accountId)
+        .eq("statement_date", toKey).maybeSingle(),
+      // The last settled statement date bounds the unmatched list: anything
+      // before it has already been agreed and re-listing it would ask the
+      // Owner to tick off the same rows every month.
+      supabase.from("account_reconciliations")
+        .select("statement_date, reconciled_at, reconciled_by_name")
+        .eq("org_id", orgId).eq("bank_account_id", accountId).eq("status", "reconciled")
+        .lt("statement_date", toKey)
+        .order("statement_date", { ascending: false }).limit(1).maybeSingle()
+    ]);
+    if (!account) { res.status(404).json({ error: "That account no longer exists." }); return; }
+
+    const fromKey = previous?.statement_date
+      ? addDaysKey(previous.statement_date, 1)
+      : addDaysKey(toKey, -RECONCILE_LOOKBACK_DAYS);
+
+    const balances = await accountBalancesAsAt(orgId, endOfLagosDay(toKey));
+    const bookBalance = balances.accounts.find((row) => row.id === accountId)?.systemBalance ?? 0;
+
+    const items = await bookItemsForAccount(orgId, accountId, fromKey, toKey);
+    let matches: Array<{ sourceType: string; sourceId: string }> = [];
+    let adjustments: Awaited<ReturnType<typeof adjustmentsFor>> = [];
+    if (existing?.id) {
+      const [{ data: matchRows }, adjustmentRows] = await Promise.all([
+        supabase.from("account_reconciliation_matches")
+          .select("source_type, source_id").eq("reconciliation_id", existing.id),
+        adjustmentsFor(existing.id)
+      ]);
+      matches = ((matchRows ?? []) as any[]).map((row) => ({
+        sourceType: row.source_type, sourceId: row.source_id
+      }));
+      adjustments = adjustmentRows;
+    }
+
+    res.json({
+      account: {
+        id: account.id, name: account.name, bankName: account.bank_name ?? "",
+        accountType: account.account_type, accountNumberLast4: account.account_number_last4 ?? ""
+      },
+      statementDate: toKey,
+      periodFrom: fromKey,
+      // Live, not snapshotted, while a reconciliation is still open - the
+      // whole job is comparing today's books against the statement.
+      bookBalance,
+      existing: existing ? {
+        id: existing.id,
+        statementBalance: Number(existing.statement_balance ?? 0),
+        bookBalance: Number(existing.book_balance ?? 0),
+        status: existing.status,
+        notes: existing.notes ?? "",
+        reconciledByName: existing.reconciled_by_name ?? "",
+        reconciledAt: existing.reconciled_at
+      } : null,
+      items,
+      unmatched: unmatchedBookItems(items, matches),
+      matches,
+      adjustments,
+      lastReconciled: previous ? {
+        statementDate: previous.statement_date,
+        at: previous.reconciled_at,
+        byName: previous.reconciled_by_name ?? ""
+      } : null
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not open that reconciliation." });
+  }
+});
+
+const AccountReconSchema = z.object({
+  bankAccountId: z.string().uuid(),
+  statementDate: z.string().regex(DATE_KEY),
+  statementBalance: z.coerce.number().min(-1_000_000_000_000).max(1_000_000_000_000),
+  status: z.enum(["in_progress", "reconciled"]).default("in_progress"),
+  notes: z.string().trim().max(250).default(""),
+  matches: z.array(z.object({
+    sourceType: z.enum(["expense", "remittance", "transfer"]),
+    sourceId: z.string().min(1).max(100)
+  })).max(2000).default([])
+}).strict();
+
+// ── POST /api/cash-flow/account-reconciliations ───────────
+router.post("/account-reconciliations", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = AccountReconSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const body = parsed.data;
+
+    const balances = await accountBalancesAsAt(orgId, endOfLagosDay(body.statementDate));
+    const bookBalance = balances.accounts.find((row) => row.id === body.bankAccountId)?.systemBalance ?? 0;
+
+    const { data: existing } = await supabase.from("account_reconciliations")
+      .select("id").eq("org_id", orgId).eq("bank_account_id", body.bankAccountId)
+      .eq("statement_date", body.statementDate).maybeSingle();
+
+    const adjustments = existing?.id ? await adjustmentsFor(existing.id) : [];
+    const remaining = remainingDifference(body.statementBalance, bookBalance, adjustments);
+    // ⚠️ An account cannot be signed off while it still disagrees with the
+    // statement. Marking it reconciled with a gap outstanding is exactly the
+    // silent acceptance this page exists to prevent - explain it with an
+    // adjustment or leave it open.
+    if (body.status === "reconciled" && !isReconciled(remaining)) {
+      res.status(400).json({
+        error: `₦${Math.abs(Math.round(remaining)).toLocaleString("en-NG")} is still unexplained. Add an adjustment for it, or leave the reconciliation in progress.`
+      });
+      return;
+    }
+
+    const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
+    const actorName = String(actor?.name ?? "").trim() || "Unknown";
+    const now = new Date().toISOString();
+
+    const { data: saved, error } = await supabase.from("account_reconciliations").upsert({
+      org_id: orgId,
+      bank_account_id: body.bankAccountId,
+      statement_date: body.statementDate,
+      statement_balance: body.statementBalance,
+      book_balance: bookBalance,
+      status: body.status,
+      notes: body.notes,
+      reconciled_by: body.status === "reconciled" ? req.user!.id : null,
+      reconciled_by_name: body.status === "reconciled" ? actorName : "",
+      reconciled_at: body.status === "reconciled" ? now : null,
+      created_by: req.user!.id,
+      created_by_name: actorName,
+      updated_at: now
+    }, { onConflict: "org_id,bank_account_id,statement_date" }).select("id").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    // Matches are replaced wholesale: the client always sends the full ticked
+    // set, so a row unticked in the UI has to disappear here too.
+    await supabase.from("account_reconciliation_matches").delete().eq("reconciliation_id", saved.id);
+    if (body.matches.length > 0) {
+      await supabase.from("account_reconciliation_matches").insert(body.matches.map((match) => ({
+        reconciliation_id: saved.id,
+        source_type: match.sourceType,
+        source_id: match.sourceId
+      })));
+    }
+
+    res.json({ id: saved.id, bookBalance, remainingDifference: remaining, settled: isReconciled(remaining) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not save that reconciliation." });
+  }
+});
+
+const AdjustmentSchema = z.object({
+  occurredOn: z.string().regex(DATE_KEY).nullable().optional(),
+  description: z.string().trim().min(1, "Say what the adjustment is for.").max(200),
+  amount: z.coerce.number().positive("An adjustment has to be more than ₦0.").max(1_000_000_000_000),
+  direction: z.enum(["in", "out"]),
+  kind: z.enum(["bank_charge", "interest", "vat", "transfer", "other"]).default("other")
+}).strict();
+
+// ── POST /api/cash-flow/account-reconciliations/:id/adjustments ──
+router.post("/account-reconciliations/:id/adjustments", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = AdjustmentSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const { data: owner } = await supabase.from("account_reconciliations")
+      .select("id, status").eq("id", req.params.id).eq("org_id", orgId).maybeSingle();
+    if (!owner) { res.status(404).json({ error: "That reconciliation no longer exists." }); return; }
+    if (owner.status === "reconciled") {
+      res.status(409).json({ error: "This account is already reconciled. Reopen it before adding adjustments." });
+      return;
+    }
+
+    const { error } = await supabase.from("account_reconciliation_adjustments").insert({
+      reconciliation_id: owner.id,
+      occurred_on: parsed.data.occurredOn ?? null,
+      description: parsed.data.description,
+      amount: parsed.data.amount,
+      direction: parsed.data.direction,
+      kind: parsed.data.kind
+    });
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not add that adjustment." });
+  }
+});
+
+// ── DELETE .../:id/adjustments/:adjustmentId ──────────────
+router.delete("/account-reconciliations/:id/adjustments/:adjustmentId", requireRole("Owner"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { data: owner } = await supabase.from("account_reconciliations")
+      .select("id, status").eq("id", req.params.id).eq("org_id", orgId).maybeSingle();
+    if (!owner) { res.status(404).json({ error: "That reconciliation no longer exists." }); return; }
+    if (owner.status === "reconciled") {
+      res.status(409).json({ error: "This account is already reconciled. Reopen it before changing adjustments." });
+      return;
+    }
+    const { error } = await supabase.from("account_reconciliation_adjustments")
+      .delete().eq("id", req.params.adjustmentId).eq("reconciliation_id", owner.id);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not remove that adjustment." });
+  }
+});
+
+// ── POST /api/cash-flow/account-reconciliations/:id/reopen ──
+router.post("/account-reconciliations/:id/reopen", requireRole("Owner"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { error } = await supabase.from("account_reconciliations")
+      .update({ status: "in_progress", reconciled_at: null, reconciled_by: null, reconciled_by_name: "", updated_at: new Date().toISOString() })
+      .eq("id", req.params.id).eq("org_id", orgId);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not reopen that reconciliation." });
   }
 });
 

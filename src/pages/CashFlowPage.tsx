@@ -10,6 +10,7 @@ import BankAccountsTab, { type BankAccountsTabProps } from "./BankAccountsTab";
 import WeeklyReconciliationTab, { type WeeklyReconciliationTabProps } from "./WeeklyReconciliationTab";
 import ReservesTab, { type ReservesTabProps } from "./ReservesTab";
 import InventoryValueTab, { type InventoryValueTabProps } from "./InventoryValueTab";
+import AccountReconciliationTab, { type AccountReconciliationTabProps } from "./AccountReconciliationTab";
 
 // ⚠️ Cash, not profit. Profit is recognised when an order is Delivered; the
 // money arrives when the agent remits, days later and sometimes never. A week
@@ -97,14 +98,17 @@ export type CashFlowPageProps = {
   reserves: ReservesTabProps;
   /** Inventory Value: cash tied up in stock, valued at cost. */
   inventory: InventoryValueTabProps;
+  /** Account Reconciliation: our books vs each bank statement. */
+  accountReconciliation: AccountReconciliationTabProps;
 };
 
-const CASH_FLOW_TABS = ["Overview", "Bank Accounts", "Reconciliation", "Reserves", "Inventory Value"] as const;
+const CASH_FLOW_TABS = ["Overview", "Bank Accounts", "Reconciliation", "Account Reconciliation", "Reserves", "Inventory Value"] as const;
 type CashFlowTab = (typeof CASH_FLOW_TABS)[number];
 const TAB_ICON: Record<CashFlowTab, typeof TrendingUp> = {
   "Overview": TrendingUp,
   "Bank Accounts": Wallet,
   "Reconciliation": ShieldCheck,
+  "Account Reconciliation": Landmark,
   "Reserves": Lock,
   "Inventory Value": Boxes
 };
@@ -197,6 +201,8 @@ export default function CashFlowPage(props: CashFlowPageProps) {
         <ReservesTab {...props.reserves} />
       ) : topTab === "Inventory Value" ? (
         <InventoryValueTab {...props.inventory} />
+      ) : topTab === "Account Reconciliation" ? (
+        <AccountReconciliationTab {...props.accountReconciliation} />
       ) : (
       <>
       <div className="flex flex-wrap items-center justify-between gap-3">
