@@ -10,7 +10,7 @@ import { applyCartMarketingScope } from "../lib/marketing-attribution.js";
 import { lagosDateKey, lagosStartOfDayUtc, mondayOfWeek, addDays, dowOf } from "../lib/follow-up-kpi.js";
 import {
   CART_LOG_MISS_AMOUNT, CART_LOG_PENALTY_START_DATE, chargeableDaysIn, penaltyPhase,
-  RANGE_PRESETS, repDayStatus, resolveRange, summariseRepPenalties,
+  RANGE_PRESETS, repDayStatus, resolveRange, summariseRepPenalties, todayStanding,
   type RangePreset, type RepDayInput
 } from "../lib/cart-log-penalty.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
@@ -2360,6 +2360,37 @@ router.get("/log-penalties",
       const approved = misses.filter((row) => row.status === "approved");
       const pending = misses.filter((row) => row.status === "pending");
 
+      // ⚠️ Today is computed OUTSIDE the selected range. A rep looking at last
+      // month still needs to know they have not logged today - the one thing
+      // they can still act on - and hiding it behind a date filter would make
+      // the warning disappear exactly when someone is browsing history.
+      const myRepId = scopeRepId ?? requestedRep;
+      const todaysCarts = openCarts.filter((row) =>
+        (!myRepId || row.assigned_rep_id === myRepId)
+        && lagosDateKey(row.assigned_at ?? row.created_at) <= todayKey);
+      let todayAttempts = 0;
+      if (myRepId) {
+        todayAttempts = logged.get(`${myRepId}|${todayKey}`) ?? 0;
+      }
+      const standing = myRepId
+        ? todayStanding({
+          repId: myRepId, repName: repName.get(myRepId) ?? "You",
+          dateKey: todayKey, cartsDue: todaysCarts.length, logsMade: todayAttempts
+        })
+        : null;
+
+      // For a supervisor: how many reps have logged nothing yet today.
+      const repsAtRiskToday = myRepId ? [] : [...new Set(todaysCarts.map((row) => row.assigned_rep_id))]
+        .filter((repId): repId is string => Boolean(repId))
+        .map((repId) => ({
+          repId,
+          repName: repName.get(repId) ?? "Unknown",
+          cartsDue: todaysCarts.filter((row) => row.assigned_rep_id === repId).length,
+          logsMade: 0
+        }))
+        .map((row) => ({ ...row, logsMade: logged.get(`${row.repId}|${todayKey}`) ?? 0 }))
+        .filter((row) => row.logsMade === 0 && row.cartsDue > 0);
+
       res.json({
         range: preset,
         from, to, todayKey,
@@ -2368,6 +2399,10 @@ router.get("/log-penalties",
         chargeableDays: days.length,
         misses,
         byRep: summariseRepPenalties(inputs),
+        /** Present tense, for the person reading. Null for a supervisor. */
+        today: standing,
+        /** Supervisor view: who has logged nothing yet today. */
+        repsAtRiskToday,
         totals: {
           pendingCount: pending.length,
           pendingAmount: pending.reduce((sum, row) => sum + row.amount, 0),

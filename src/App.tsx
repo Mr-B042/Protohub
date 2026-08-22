@@ -59073,6 +59073,48 @@ ${waybillLineItems(w).length > 1
               )}
             </div>
 
+            {/* ⚠️ Today sits ABOVE the historical summary and outside the date
+                filter. A rep who has not logged today can still act; a rep
+                reading last month's misses has already lost the money. */}
+            {penalties.today && penalties.today.status === "missed" && (
+              <p className={`m-0 mt-2.5 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[12px] font-bold leading-4 ${
+                penalties.today.rehearsal
+                  ? "border-amber-300 bg-white text-amber-900"
+                  : "border-rose-400 bg-white text-rose-900"}`}>
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  <span className="block">{penalties.today.rehearsal ? "Practice run" : "You owe a log today"}</span>
+                  <span className="block font-semibold">{penalties.today.message}</span>
+                </span>
+              </p>
+            )}
+            {penalties.today && penalties.today.status === "clear" && (
+              <p className="m-0 mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[12px] font-bold text-emerald-700">
+                <CheckCircle2 className="h-4 w-4" /> {penalties.today.message}
+              </p>
+            )}
+
+            {penalties.repsAtRiskToday.length > 0 && (
+              <div className="mt-2.5 rounded-lg border border-rose-300 bg-white px-3 py-2">
+                <p className="m-0 text-[10px] font-black uppercase tracking-wide text-rose-700">
+                  Logged nothing yet today
+                </p>
+                <ul className="m-0 mt-1 flex list-none flex-wrap gap-2 p-0">
+                  {penalties.repsAtRiskToday.map((rep) => (
+                    <li key={rep.repId} className="text-[12px] font-bold text-gray-800">
+                      {rep.repName}
+                      <span className="ml-1 font-semibold text-gray-400">({rep.cartsDue} carts)</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="m-0 mt-1 text-[11px] font-medium text-gray-500">
+                  {penalties.phase.active
+                    ? `₦${(penalties.repsAtRiskToday.length * penalties.missAmount).toLocaleString("en-NG")} at risk if the day ends like this.`
+                    : "Nothing is charged yet — this is what Monday will look like."}
+                </p>
+              </div>
+            )}
+
             {penalties.byRep.filter((rep) => rep.missedCount > 0).length > 0 && (
               <ul className="m-0 mt-2.5 flex list-none flex-wrap gap-2 p-0">
                 {penalties.byRep.filter((rep) => rep.missedCount > 0).map((rep) => (

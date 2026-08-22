@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CART_LOG_MISS_AMOUNT, CART_LOG_PENALTY_START_DATE, chargeableDaysIn, isChargeableDay,
-  mondayOf, penaltyPhase, repDayStatus, resolveRange, summariseRepPenalties, type RepDayInput
+  mondayOf, penaltyPhase, repDayStatus, resolveRange, summariseRepPenalties, todayStanding, type RepDayInput
 } from "./cart-log-penalty.js";
 
 const day = (over: Partial<RepDayInput> = {}): RepDayInput => ({
@@ -140,4 +140,41 @@ test("a chargeable range skips Sundays", () => {
 
 test("a backwards range yields nothing rather than looping", () => {
   assert.deepEqual(chargeableDaysIn("2026-08-24", "2026-08-17"), []);
+});
+
+// ── Today's standing, the part a rep actually reads ──
+
+test("a rep who has logged nothing today is told they still can", () => {
+  const standing = todayStanding(day({ dateKey: "2026-08-25", cartsDue: 61, logsMade: 0 }));
+  assert.equal(standing.status, "missed");
+  assert.equal(standing.atRisk, 500);
+  assert.match(standing.message, /before the day ends/);
+});
+
+test("a rep who has logged today is clear and owes nothing", () => {
+  const standing = todayStanding(day({ dateKey: "2026-08-25", logsMade: 1 }));
+  assert.equal(standing.status, "clear");
+  assert.equal(standing.atRisk, 0);
+  assert.match(standing.message, /Logged today/);
+});
+
+// Before go-live the warning still shows, but no money is at stake.
+test("during the rehearsal the same miss costs nothing", () => {
+  const standing = todayStanding(day({ dateKey: "2026-08-21", cartsDue: 40, logsMade: 0 }));
+  assert.equal(standing.rehearsal, true);
+  assert.equal(standing.atRisk, 0);
+  assert.match(standing.message, /From 2026-08-24 a day like this costs/);
+});
+
+test("Sunday says nothing is due rather than showing a risk", () => {
+  const standing = todayStanding(day({ dateKey: "2026-08-30", cartsDue: 40, logsMade: 0 }));
+  assert.equal(standing.atRisk, 0);
+  assert.match(standing.message, /Sunday/);
+});
+
+test("an empty board is not a warning", () => {
+  const standing = todayStanding(day({ dateKey: "2026-08-25", cartsDue: 0, logsMade: 0 }));
+  assert.equal(standing.status, "not_due");
+  assert.equal(standing.atRisk, 0);
+  assert.match(standing.message, /No carts/);
 });
