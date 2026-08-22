@@ -216,6 +216,7 @@ import {
 import AgentAccessPage from "./pages/AgentAccessPage";
 import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalanceRow } from "./pages/CashFlowPage";
 import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
+import DraftTextarea from "./components/DraftTextarea";
 import {
   isMoneyHidden, maskFormattedMoney, maskMoneyText, naira, setMoneyHiddenGlobal, shortNaira, subscribeMoneyHidden
 } from "./lib/money-privacy";
@@ -12852,6 +12853,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [statusChangeReasonPreset, setStatusChangeReasonPreset] = useState("");
   const [statusChangeOutcomePreset, setStatusChangeOutcomePreset] = useState<string | null>(null);
   const [statusChangeReason, setStatusChangeReason] = useState("");
+  // ⚠️ Mirrors the reason box keystroke-for-keystroke. The box commits to state
+  // on a debounce, so validating against state alone could reject a reason the
+  // rep is looking at. Validation reads this.
+  const statusChangeReasonRef = useRef("");
   const [repScheduleDate, setRepScheduleDate] = useState(todayKey());
   const [repScheduleTime, setRepScheduleTime] = useState(() => nextTimeValue());
   const [orderScheduleDate, setOrderScheduleDate] = useState(todayKey());
@@ -13787,6 +13792,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const nextDraftStatus = statusChangePreset ?? (currentStatus === "New" ? "Confirmed" : currentStatus);
     setStatusChangeDraft(nextDraftStatus);
     setStatusChangeReason(statusChangeReasonPreset);
+    statusChangeReasonRef.current = statusChangeReasonPreset;
     hydrateCallOutcomeDraft(nextDraftStatus === "Delivered" ? "" : (statusChangeOutcomePreset ?? selectedOrder.callOutcome));
     hydrateDeliveryDateDraft(selectedOrder);
     setOrderScheduleDate(plannedParts.date || scheduledKeyForOrder(selectedOrder) || todayKey());
@@ -37531,7 +37537,13 @@ ${waybillLineItems(w).length > 1
     if (!selectedOrder) return;
     const isRescheduleAction = statusChangeDraft === "Reschedule";
     const requiresReason = !isRescheduleAction && ["Cancelled", "Failed", "Postponed"].includes(statusChangeDraft);
-    if (requiresReason && !statusChangeReason.trim()) {
+    // ⚠️ The ref is authoritative, NOT `ref.current || state`. That fallback
+    // looks harmless but means clearing the box reads the stale state instead
+    // of the empty string, so a required reason would validate as filled while
+    // the rep is staring at an empty field. The box seeds this ref on mount, so
+    // it is always current whenever this modal is open.
+    const reasonNow = statusChangeReasonRef.current;
+    if (requiresReason && !reasonNow.trim()) {
       showToast("A reason is required when cancelling, failing, or postponing an order.");
       return;
     }
@@ -37562,14 +37574,14 @@ ${waybillLineItems(w).length > 1
                 kind: "schedule",
                 scheduledDate: orderScheduleDate,
                 scheduledTime: orderScheduleTime,
-                reason: statusChangeReason.trim(),
+                reason: reasonNow.trim(),
                 callOutcome: outcomePayload,
                 by: currentRole === "Sales Rep" ? repScopeName : ownerName
               }
             : {
                 kind: "status",
                 status: statusChangeDraft as Exclude<OrderStatus, "All Orders">,
-                reason: statusChangeReason.trim(),
+                reason: reasonNow.trim(),
                 callOutcome: outcomePayload,
                 deliveredDate: statusChangeDraft === "Delivered" ? deliveryDateDraft : undefined
               };
@@ -37582,7 +37594,7 @@ ${waybillLineItems(w).length > 1
       }
     }
     if (isRescheduleAction) {
-      const reasonText = statusChangeReason.trim();
+      const reasonText = reasonNow.trim();
       const extras = [
         reasonText ? `Note: ${reasonText}.` : "",
         resolvedOutcome ? `Call outcome: ${resolvedOutcome}.` : ""
@@ -37598,7 +37610,7 @@ ${waybillLineItems(w).length > 1
       updateOrderStatus(
         selectedOrder.id,
         statusChangeDraft,
-        statusChangeReason.trim(),
+        reasonNow.trim(),
         false,
         statusChangeDraft === "Delivered" ? deliveryDateDraft : undefined,
         outcomePayload
@@ -96591,7 +96603,7 @@ ${waybillLineItems(w).length > 1
                         orderNotesFor(selectedOrder).map((note) => renderOrderNoteCard(note, { compact: true }))
                       )}
                     </div>
-	                  <label><span>Note</span><textarea value={orderNoteDraft} onChange={(event) => setOrderNoteDraft(event.target.value)} /></label>
+	                  <label><span>Note</span><DraftTextarea value={orderNoteDraft} onCommit={setOrderNoteDraft} rows={3} /></label>
 	                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
 	                    <label><span>Follow-up Date</span><input type="date" value={orderFollowUpDate} onChange={(event) => setOrderFollowUpDate(event.target.value)} /></label>
 	                    <label><span>Follow-up Time</span><input type="time" value={orderFollowUpTime} onChange={(event) => setOrderFollowUpTime(event.target.value)} /></label>
@@ -96760,7 +96772,17 @@ ${waybillLineItems(w).length > 1
                       </div>
                     </div>
                   )}
-	                <label><span>{statusChangeDraft === "Reschedule" ? "Reschedule Note" : "Reason for Status Change *"}</span><textarea value={statusChangeReason} onChange={(event) => setStatusChangeReason(event.target.value)} placeholder={statusChangeDraft === "Reschedule" ? "Customer asked for another delivery slot, pickup delayed, delivery moved to tomorrow..." : "Customer confirmed after call, no answer, requested later delivery..."} /></label>
+	                <label><span>{statusChangeDraft === "Reschedule" ? "Reschedule Note" : "Reason for Status Change *"}</span>
+	                  {/* ⚠️ DraftTextarea, not a plain textarea. Typing here used to
+	                      re-render the whole of App - ~1,400 hooks and the entire
+	                      active page - between the keypress and the letter showing.
+	                      Reps were writing one-word reasons to escape the lag. */}
+	                  <DraftTextarea
+	                    value={statusChangeReason}
+	                    onCommit={setStatusChangeReason}
+	                    liveRef={statusChangeReasonRef}
+	                    rows={4}
+	                    placeholder={statusChangeDraft === "Reschedule" ? "Customer asked for another delivery slot, pickup delayed, delivery moved to tomorrow..." : "Customer confirmed after call, no answer, requested later delivery..."} /></label>
 	                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={submitRepStatusChange}>{statusChangeDraft === "Reschedule" ? "Save Schedule" : "Change Status"}</button></div>
                       </>
                     );
@@ -96804,7 +96826,7 @@ ${waybillLineItems(w).length > 1
                       {salesExpansionDraft.eligibility === "exempt" ? (
                         <section className="space-y-3 border-y border-amber-200 bg-amber-50 py-4 px-3">
                           <label><span>Exemption reason *</span><select value={salesExpansionDraft.exemptionReason} onChange={(event) => setSalesExpansionDraft((draft) => ({ ...draft, exemptionReason: event.target.value }))}><option value="">Choose reason</option>{salesExpansionExemptionOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                          {(salesExpansionDraft.exemptionReason === "other" || salesExpansionDraft.exemptionReason === "no_approved_offer_available") && <label><span>Explanation *</span><textarea value={salesExpansionDraft.exemptionNote} onChange={(event) => setSalesExpansionDraft((draft) => ({ ...draft, exemptionNote: event.target.value }))} placeholder="Explain why an offer was not appropriate or available." /></label>}
+                          {(salesExpansionDraft.exemptionReason === "other" || salesExpansionDraft.exemptionReason === "no_approved_offer_available") && <label><span>Explanation *</span><DraftTextarea value={salesExpansionDraft.exemptionNote} onCommit={(next) => setSalesExpansionDraft((draft) => ({ ...draft, exemptionNote: next }))} rows={3} placeholder="Explain why an offer was not appropriate or available." /></label>}
                         </section>
                       ) : (
                         <section className="space-y-4">
@@ -96831,7 +96853,7 @@ ${waybillLineItems(w).length > 1
                       )}
 
                       {context.setupWarnings.length > 0 && <section className="border-y border-amber-200 bg-amber-50 px-3 py-3"><p className="text-xs font-black text-amber-800">Manager setup notice</p>{context.setupWarnings.map((warning) => <p key={warning} className="mt-1 text-xs text-amber-700">{warning}</p>)}</section>}
-                      <label><span>Rep note</span><textarea value={salesExpansionDraft.repNote} onChange={(event) => setSalesExpansionDraft((draft) => ({ ...draft, repNote: event.target.value }))} placeholder="Short note about the customer's reaction or what should happen next." /></label>
+                      <label><span>Rep note</span><DraftTextarea value={salesExpansionDraft.repNote} onCommit={(next) => setSalesExpansionDraft((draft) => ({ ...draft, repNote: next }))} rows={3} placeholder="Short note about the customer's reaction or what should happen next." /></label>
                       <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end"><button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={closeModal}>Cancel</button><button type="button" disabled={salesExpansionSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white disabled:opacity-60" onClick={() => void saveSalesExpansionLog()}>{salesExpansionSaving ? "Saving..." : pendingSalesExpansionAction?.kind === "schedule" ? "Save log & reschedule" : pendingSalesExpansionAction ? "Save log & mark ready" : "Save sales log"}</button></div>
                     </>;
                   })()}
@@ -97405,7 +97427,7 @@ ${waybillLineItems(w).length > 1
                   ) : (
                     <>
                       <label><span>Reassign To</span><select value={reassignRepId} onChange={(event) => setReassignRepId(event.target.value)}>{assignableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}{user.role !== "Sales Rep" ? ` (${user.role})` : ""}</option>)}</select></label>
-                      <label><span>Handover Reason</span><textarea value={handoverReason} onChange={(event) => setHandoverReason(event.target.value)} placeholder="Why are we moving this order?" /></label>
+                      <label><span>Handover Reason</span><DraftTextarea value={handoverReason} onCommit={setHandoverReason} rows={3} placeholder="Why are we moving this order?" /></label>
                     </>
                   )}
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
@@ -100936,8 +100958,8 @@ ${waybillLineItems(w).length > 1
 	                  )}
 	                  <label className="flex flex-col gap-1 sm:col-span-2">
 	                    <span className="text-xs font-bold text-gray-600">What did the customer say?</span>
-	                    <textarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.outcomeNote}
-	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, outcomeNote: e.target.value }))} />
+	                    <DraftTextarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.outcomeNote}
+	                      onCommit={(next) => setCartAttemptDraft((v) => ({ ...v, outcomeNote: next }))} />
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Call them again on</span>
@@ -104214,7 +104236,7 @@ ${waybillLineItems(w).length > 1
                     <span className="text-sm font-bold text-emerald-800">New total bonus</span>
                     <span className="text-lg font-extrabold text-emerald-700">₦{liveTotal.toLocaleString("en-NG")}</span>
                   </div>
-                  <label><span>Reason {currentRole === "Owner" ? <span className="text-gray-400 font-normal normal-case">(optional - owner)</span> : <span className="text-rose-500">*</span>}</span><textarea value={manualBonusReasonText} onChange={(e) => setManualBonusReasonText(e.target.value)} placeholder={currentRole === "Owner" ? "Optional note for the record" : "Required - why are you adjusting this bonus?"} /></label>
+                  <label><span>Reason {currentRole === "Owner" ? <span className="text-gray-400 font-normal normal-case">(optional - owner)</span> : <span className="text-rose-500">*</span>}</span><DraftTextarea value={manualBonusReasonText} onCommit={setManualBonusReasonText} rows={3} placeholder={currentRole === "Owner" ? "Optional note for the record" : "Required - why are you adjusting this bonus?"} /></label>
                   <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-3 py-2 rounded-lg border border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-50" onClick={() => { clearManualBonus(order.id); closeModal(); }}>Clear & Restore Auto</button>
                     <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
@@ -104385,7 +104407,7 @@ ${waybillLineItems(w).length > 1
                   <span>Also remove all bonuses for the related order/week</span>
                 </label>
                 <label><span>Order ID (optional)</span><input value={penaltyOrderId} onChange={(e) => setPenaltyOrderId(e.target.value)} placeholder="e.g. 1746891234567001" /></label>
-                <label><span>Reason / Notes</span><textarea value={penaltyReason} onChange={(e) => setPenaltyReason(e.target.value)} placeholder="What happened?" /></label>
+                <label><span>Reason / Notes</span><DraftTextarea value={penaltyReason} onCommit={setPenaltyReason} rows={3} placeholder="What happened?" /></label>
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50" onClick={closeModal}>Cancel</button>
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700" onClick={savePenalty}>Apply Penalty</button>
@@ -105020,7 +105042,7 @@ ${waybillLineItems(w).length > 1
             {modal === "flagCustomer" && (
               <div className="modal-form">
                 <p className="text-sm text-gray-600">This customer will be marked as high-risk. A warning will appear when creating orders for this phone number.</p>
-                <label><span>Reason for flagging *</span><textarea value={flagReasonDraft} onChange={(e) => setFlagReasonDraft(e.target.value)} placeholder="e.g., Refused delivery 3 times, RTS x2, wrong number repeatedly..." rows={3} /></label>
+                <label><span>Reason for flagging *</span><DraftTextarea value={flagReasonDraft} onCommit={setFlagReasonDraft} placeholder="e.g., Refused delivery 3 times, RTS x2, wrong number repeatedly..." rows={3} /></label>
                 <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
                   <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors" onClick={saveFlagCustomer}><AlertTriangle className="w-4 h-4" /> Flag Customer</button>
