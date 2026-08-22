@@ -10,6 +10,10 @@ import type {
   ReconBookItem, ReconciliationWorkspace
 } from "../lib/api";
 import { AccountMark } from "./BankAccountsTab";
+// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ignores the topbar "hide money" toggle - which is exactly how these
+// pages kept showing real figures with privacy mode on.
+import { naira, signedNaira } from "../lib/money-privacy";
 
 // Reconciling ONE account against its bank statement.
 //
@@ -18,12 +22,6 @@ import { AccountMark } from "./BankAccountsTab";
 // supplied design computed this the other way on one screen; carrying both
 // would put two opposite meanings on the same minus sign.
 
-const naira = (value: number) => `₦${Math.round(Number(value) || 0).toLocaleString("en-NG")}`;
-const signedNaira = (value: number) => {
-  const rounded = Math.round(Number(value) || 0);
-  if (rounded === 0) return "₦0";
-  return `${rounded < 0 ? "−" : "+"}₦${Math.abs(rounded).toLocaleString("en-NG")}`;
-};
 const dateLabel = (key: string | null) =>
   key ? new Date(`${key}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric", year: "numeric" }) : "—";
 const stamp = (iso: string | null) => {

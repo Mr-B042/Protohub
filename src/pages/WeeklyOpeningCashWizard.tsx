@@ -2,6 +2,10 @@ import { useMemo, useState } from "react";
 import {
   ArrowRight, BadgeCheck, CalendarDays, CheckCircle2, Info, Lock, Plus, Sparkles, X
 } from "lucide-react";
+// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ignores the topbar "hide money" toggle - which is exactly how these
+// pages kept showing real figures with privacy mode on.
+import { naira } from "../lib/money-privacy";
 
 // The gate on a new accounting week.
 //
@@ -31,7 +35,6 @@ export type WeeklyOpeningView = {
 
 type SourceDraft = { key: string; bankAccountId: string | null; accountLabel: string; amount: string };
 
-const naira = (value: number) => `₦${Math.round(Number(value) || 0).toLocaleString("en-NG")}`;
 const dayLabel = (key: string) =>
   new Date(`${key}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric", year: "numeric" });
 const weekdayLabel = (key: string) =>

@@ -10,6 +10,10 @@ import type {
   WeeklyReconciliationView
 } from "../lib/api";
 import { AccountMark } from "./BankAccountsTab";
+// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ignores the topbar "hide money" toggle - which is exactly how these
+// pages kept showing real figures with privacy mode on.
+import { naira, signedNaira } from "../lib/money-privacy";
 
 // Weekly Reconciliation: does the cash we think we have actually exist?
 //
@@ -18,13 +22,7 @@ import { AccountMark } from "./BankAccountsTab";
 // never recomputes it, so the headline and the per-account breakdown cannot
 // drift apart.
 
-const naira = (value: number) => `₦${Math.round(Number(value) || 0).toLocaleString("en-NG")}`;
 /** Variance reads with an explicit sign - "−₦120,000" is the whole point. */
-const signedNaira = (value: number) => {
-  const rounded = Math.round(Number(value) || 0);
-  if (rounded === 0) return "₦0";
-  return `${rounded < 0 ? "−" : "+"}₦${Math.abs(rounded).toLocaleString("en-NG")}`;
-};
 const dayLabel = (key: string) =>
   new Date(`${key}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric" });
 const longDay = (key: string) =>

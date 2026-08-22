@@ -5,6 +5,10 @@ import {
   Lock, MoreVertical, Pencil, PiggyBank, Plus, ShieldAlert, Trash2, TrendingUp, Unlock, Wallet, X
 } from "lucide-react";
 import type { BankAccountRow, ReserveCategoryKey, ReserveRow, ReservesView } from "../lib/api";
+// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ignores the topbar "hide money" toggle - which is exactly how these
+// pages kept showing real figures with privacy mode on.
+import { maskMoneyText, naira, signedNaira } from "../lib/money-privacy";
 
 // Restricted cash: money still in the account but already spoken for.
 //
@@ -12,11 +16,6 @@ import type { BankAccountRow, ReserveCategoryKey, ReserveRow, ReservesView } fro
 // transfer or withdraw a naira - bank balances, cash flow and reconciliation
 // are all untouched. The only figure a reserve changes is Free Operating Cash.
 
-const naira = (value: number) => `₦${Math.round(Number(value) || 0).toLocaleString("en-NG")}`;
-const signedNaira = (value: number) => {
-  const rounded = Math.round(Number(value) || 0);
-  return rounded < 0 ? `−₦${Math.abs(rounded).toLocaleString("en-NG")}` : `₦${rounded.toLocaleString("en-NG")}`;
-};
 const dateLabel = (key: string | null) =>
   key ? new Date(`${key}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric", year: "numeric" }) : "—";
 
@@ -352,7 +351,8 @@ export default function ReservesTab(props: ReservesTabProps) {
                     </span>
                     <span className="min-w-0">
                       <span className="block text-[12px] font-black text-gray-900">{insight.title}</span>
-                      <span className="block text-[11px] font-medium text-gray-500">{insight.detail}</span>
+                      {/* Insight text is built server-side with amounts inline. */}
+                      <span className="block text-[11px] font-medium text-gray-500">{maskMoneyText(insight.detail)}</span>
                     </span>
                   </li>
                 );

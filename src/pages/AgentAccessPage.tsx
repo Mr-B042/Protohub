@@ -26,6 +26,10 @@ import {
   X
 } from "lucide-react";
 import type { AgentAccessRow, AgentAccessView, AgentLoginEvent, PortalSendOptions } from "../lib/api";
+// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ignores the topbar "hide money" toggle - which is exactly how these
+// pages kept showing real figures with privacy mode on.
+import { naira } from "../lib/money-privacy";
 
 // The portal permission set an agent role carries. Mirrors the backend's
 // `/my/*` endpoints - these are descriptions of what the API already enforces,
@@ -64,7 +68,6 @@ function toneFor(seed: string) {
   return AVATAR_TONES[hash % AVATAR_TONES.length];
 }
 
-const naira = (value: number) => `₦${Math.round(Number(value ?? 0)).toLocaleString("en-NG")}`;
 
 function dayLabel(iso: string | null | undefined) {
   if (!iso) return null;

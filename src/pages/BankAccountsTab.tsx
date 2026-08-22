@@ -5,6 +5,10 @@ import {
 } from "lucide-react";
 import type { BankAccountRow, BankAccountsView, BankTransferRow } from "../lib/api";
 import type { CashFlowTransaction } from "./CashFlowPage";
+// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ignores the topbar "hide money" toggle - which is exactly how these
+// pages kept showing real figures with privacy mode on.
+import { naira } from "../lib/money-privacy";
 
 // Bank accounts inside Cash Flow, not beside it: "how much cash do we have" and
 // "where is it" are the same question asked twice.
@@ -13,7 +17,6 @@ import type { CashFlowTransaction } from "./CashFlowPage";
 // or left the business - so transfers move balances here while being excluded
 // from the cash in/out totals on the Overview tab.
 
-const naira = (value: number) => `₦${Math.round(Number(value) || 0).toLocaleString("en-NG")}`;
 
 // Recognisable brand marks for the providers Protohub actually banks with.
 // Drawn from the provider's own colour and initial rather than shipping their

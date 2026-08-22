@@ -216,6 +216,9 @@ import {
 import AgentAccessPage from "./pages/AgentAccessPage";
 import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalanceRow } from "./pages/CashFlowPage";
 import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
+import {
+  isMoneyHidden, maskFormattedMoney, maskMoneyText, naira, setMoneyHiddenGlobal, shortNaira, subscribeMoneyHidden
+} from "./lib/money-privacy";
 import { SalesClosersOwnerPage } from "./pages/SalesClosersOwnerPage";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
@@ -2929,40 +2932,9 @@ const makeSku = (name: string) => {
   return `${cleanParts.join("-") || "PRD"}-${Math.floor(100 + Math.random() * 900)}`;
 };
 
-// App-wide "hide money" privacy toggle. A plain module-level flag (not React
-// state) so every formatXMoney helper - including the ones defined outside
-// the component that can't use hooks - can mask its output with a single
-// check. The topbar toggle button drives re-renders via useSyncExternalStore
-// subscribing to moneyHiddenListeners; the flag itself just needs to be read.
-const MONEY_HIDDEN_STORAGE_KEY = "protohub_hide_money";
-let moneyHiddenGlobal = (() => {
-  try {
-    return typeof window !== "undefined" && window.localStorage.getItem(MONEY_HIDDEN_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-})();
-const moneyHiddenListeners = new Set<() => void>();
-const isMoneyHidden = () => moneyHiddenGlobal;
-const setMoneyHiddenGlobal = (value: boolean) => {
-  moneyHiddenGlobal = value;
-  try {
-    window.localStorage.setItem(MONEY_HIDDEN_STORAGE_KEY, value ? "1" : "0");
-  } catch {
-    // localStorage unavailable (private browsing, etc.) - toggle still works for this session.
-  }
-  moneyHiddenListeners.forEach((listener) => listener());
-};
-const subscribeMoneyHidden = (listener: () => void) => {
-  moneyHiddenListeners.add(listener);
-  return () => moneyHiddenListeners.delete(listener);
-};
-// Keeps any leading currency symbol/prefix (₦, $, £, "NGN ", etc.) so a
-// masked amount still visibly reads as money, just with the digits hidden.
-const maskFormattedMoney = (formatted: string) => {
-  const prefixMatch = formatted.match(/^[^\d-]*/);
-  return `${prefixMatch ? prefixMatch[0] : ""}••••`;
-};
+// The "hide money" store moved to src/lib/money-privacy.ts so the extracted
+// pages can share it - importing it from here would be circular. Behaviour is
+// unchanged; this file now consumes the same helpers everything else does.
 
 const formatProductMoney = (amount: number, code: ProductCurrencyCode) => {
   const formatted = new Intl.NumberFormat(productCurrencies[code].locale, {
@@ -9609,7 +9581,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setWeeklyOpeningSaving(true);
     try {
       const result = await cashFlowApi.saveWeeklyOpening(body);
-      showToast(`Opening cash set for the week: ₦${Math.round(result.total).toLocaleString("en-NG")}.`);
+      showToast(`Opening cash set for the week: ${naira(result.total)}.`);
       setWeeklyOpeningOpen(false);
       await Promise.all([loadWeeklyOpening(), loadCashFlow(cashFlowPeriod), loadBankAccounts()]);
     } catch (err: any) {
@@ -9681,7 +9653,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         ? "Closing cash count saved as a draft."
         : Math.abs(result.variance) <= 0.5
           ? "Closing cash verified - the week balances."
-          : `Closing cash verified. Variance of ₦${Math.abs(Math.round(result.variance)).toLocaleString("en-NG")} needs investigating.`);
+          : `Closing cash verified. Variance of ${naira(Math.abs(result.variance))} needs investigating.`);
       await loadReconciliation(body.weekStart);
     } catch (err: any) {
       showToast(err?.message ?? "Could not save the closing cash count.");
@@ -9748,7 +9720,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     try {
       const result = await cashFlowApi.saveInventorySnapshot(body);
       showToast(body.status === "final"
-        ? `Valuation saved: ₦${Math.round(result.totalValue).toLocaleString("en-NG")} across ${result.totalUnits.toLocaleString("en-NG")} units.`
+        ? `Valuation saved: ${naira(result.totalValue)} across ${result.totalUnits.toLocaleString("en-NG")} units.`
         : "Valuation saved as a draft.");
       await loadInventoryValue(body.weekStart);
     } catch (err: any) {
@@ -22695,7 +22667,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       bonusManuallyAdjusted: true
     } : o));
     closeModal();
-    showToast(`Bonus adjusted on ${order.id} - ₦${total.toLocaleString("en-NG")}`);
+    showToast(`Bonus adjusted on ${order.id} - ${naira(total)}`);
     ordersApi.update(order.id, {
       manual_bonus_components: components,
       manual_bonus_override: total,
@@ -27157,7 +27129,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (seenFollowUpNotificationIdsRef.current.has(notification.id)) continue;
       seenFollowUpNotificationIdsRef.current.add(notification.id);
       if (notification.type !== "order_follow_up" || notification.read) continue;
-      showToast(notification.title ?? notification.message ?? "Follow-up due.");
+      showToast(maskMoneyText(notification.title ?? notification.message ?? "Follow-up due."));
     }
   }, [systemNotifications]);
 
@@ -36981,7 +36953,7 @@ ${waybillLineItems(w).length > 1
     const ids = followUpMisses.map((m) => m.id);
     if (ids.length === 0) return;
     const totalAmount = followUpMisses.reduce((sum, miss) => sum + (Number(miss.amount ?? 50) || 0), 0);
-    showConfirm(`Approve all ${ids.length} pending follow-up ${ids.length === 1 ? "penalty" : "penalties"} (₦${totalAmount.toLocaleString("en-NG")})?`, () => {
+    showConfirm(`Approve all ${ids.length} pending follow-up ${ids.length === 1 ? "penalty" : "penalties"} (${naira(totalAmount)})?`, () => {
       setFollowUpMisses([]);
       ids.forEach((id) => followUpKpiApi.approveMiss(id).catch(() => {}));
       showToast(`Approved ${ids.length} follow-up ${ids.length === 1 ? "penalty" : "penalties"}.`);
@@ -36991,7 +36963,7 @@ ${waybillLineItems(w).length > 1
     const ids = followUpMisses.map((m) => m.id);
     if (ids.length === 0) return;
     const totalAmount = followUpMisses.reduce((sum, miss) => sum + (Number(miss.amount ?? 50) || 0), 0);
-    showConfirm(`Waive all ${ids.length} pending follow-up ${ids.length === 1 ? "penalty" : "penalties"} (₦${totalAmount.toLocaleString("en-NG")})? This removes the debt - it won't be charged.`, () => {
+    showConfirm(`Waive all ${ids.length} pending follow-up ${ids.length === 1 ? "penalty" : "penalties"} (${naira(totalAmount)})? This removes the debt - it won't be charged.`, () => {
       setFollowUpMisses([]);
       ids.forEach((id) => followUpKpiApi.waiveMiss(id).catch(() => {}));
       showToast(`Waived ${ids.length} follow-up ${ids.length === 1 ? "penalty" : "penalties"}.`);
@@ -39108,7 +39080,7 @@ ${waybillLineItems(w).length > 1
 
     setWaybillRecords((prev) => [record, ...prev]);
     closeModal();
-    showToast(`Waybill created - ${itemsLabel} → ${receivingState}.${fee > 0 ? ` Fee ₦${fee.toLocaleString()} booked to expenses.` : ""}`);
+    showToast(`Waybill created - ${itemsLabel} → ${receivingState}.${fee > 0 ? ` Fee ${naira(fee)} booked to expenses.` : ""}`);
     // Roll back the waybill record if the
     // server rejects the create. Stock movement stays as a paper trail of
     // the attempt and is reconciled by the next stockApi.movements load.
@@ -46566,7 +46538,7 @@ ${waybillLineItems(w).length > 1
     const row = pdaAgentAccess?.rows.find((entry) => entry.id === agentId);
     const agentName = row?.fullName ?? "this agent";
     const held = row && (row.codExposure > 0 || row.stockUnitsHeld > 0)
-      ? `\n\nThey still hold ${row.stockUnitsHeld} unit(s) and ₦${Math.round(row.codExposure).toLocaleString("en-NG")} of company cash. Blocking the portal does not settle either.`
+      ? `\n\nThey still hold ${row.stockUnitsHeld} unit(s) and ${naira(row.codExposure)} of company cash. Blocking the portal does not settle either.`
       : "";
     const typed = reason.trim() || window.prompt(`Why is ${agentName}'s portal access being blocked? This goes on the record.${held}`) || "";
     if (!typed.trim()) return;
@@ -60601,7 +60573,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const money = (value: number) => naira(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const metricValue = (key: string, value: number) =>
       key === "teamAov" || key === "incrementalRevenue" ? money(value) : pct(value);
@@ -60988,7 +60960,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const money = (value: number) => naira(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const metricValue = (key: string, value: number) =>
       key === "teamAov" || key === "incrementalRevenue" ? money(value) : pct(value);
@@ -61322,7 +61294,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const money = (value: number) => naira(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const stat = (label: string, value: string) => (
       <div className="rounded-xl border border-gray-200 bg-white px-4 py-3.5">
@@ -61367,7 +61339,7 @@ ${waybillLineItems(w).length > 1
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={rows}>
                     <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} width={isPct ? 36 : 52} tickFormatter={(v) => isPct ? `${v}%` : `₦${Math.round(Number(v) / 1000)}k`} />
+                    <YAxis tick={{ fontSize: 10 }} width={isPct ? 36 : 52} tickFormatter={(v) => isPct ? `${v}%` : shortNaira(Number(v))} />
                     <Tooltip formatter={(value: any) => format(Number(value))} />
                     {trend.map((rep: any, index: number) => (
                       <Line key={rep.repId} type="monotone" dataKey={rep.name} stroke={REP_TREND_COLORS[index % REP_TREND_COLORS.length]} strokeWidth={2} dot={{ r: 3 }} />
@@ -61552,7 +61524,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const money = (value: number) => naira(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const scrollToSection = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
     // Same shape as the server's own pctDelta so a card and its table row can
@@ -62050,7 +62022,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const money = (value: number) => naira(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const severityTone = (severity: string) =>
       severity === "High" ? "bg-rose-50 text-rose-700 border-rose-200"
@@ -62336,7 +62308,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const money = (value: number) => naira(Math.max(0, value));
     const statusTone = (status: string) =>
       status === "Completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700"
         : status === "Abandoned" ? "border-gray-300 bg-gray-100 text-gray-500"
@@ -62792,7 +62764,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const money = (value: number) => naira(Math.max(0, value));
     const pct = (value: number) => `${value}%`;
     const report = headOfSalesWeeklyReport;
     const snapshot = report?.performanceSnapshot ?? headOfSalesWeeklyReportLivePreview;
@@ -63071,7 +63043,7 @@ ${waybillLineItems(w).length > 1
       );
     }
 
-    const money = (value: number) => `₦${Math.round(Math.max(0, value)).toLocaleString("en-NG")}`;
+    const money = (value: number) => naira(Math.max(0, value));
     const data = headOfSalesBonusData;
     const tiers: any[] = data?.settings?.tiers ?? [];
     const record = data?.record;
@@ -63351,7 +63323,7 @@ ${waybillLineItems(w).length > 1
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={historyChronological.map((row: any) => ({ ...row, label: formatDateOnly(row.weekStart) }))}>
                     <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `₦${Number(v).toLocaleString("en-NG")}`} width={60} />
+                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => shortNaira(Number(v))} width={60} />
                     <Tooltip formatter={(value: any) => money(Number(value))} />
                     <Line type="monotone" dataKey="amount" stroke="#1F8FE0" strokeWidth={2} dot={{ r: 4 }} />
                   </LineChart>
@@ -67202,8 +67174,12 @@ ${waybillLineItems(w).length > 1
                               <Bell className="w-4 h-4" />
                             </span>
                             <div className="min-w-0 flex-1">
-                              <p className="text-sm font-semibold text-gray-900 m-0">{title}</p>
-                              <p className="text-sm text-gray-600 mt-0.5">{notification.message}</p>
+                              {/* ⚠️ Masked at RENDER time. Notification text is
+                                  built on the server with the amount already in
+                                  the sentence, so no formatter can reach those
+                                  digits - the string itself is rewritten. */}
+                              <p className="text-sm font-semibold text-gray-900 m-0">{maskMoneyText(title)}</p>
+                              <p className="text-sm text-gray-600 mt-0.5">{maskMoneyText(notification.message ?? "")}</p>
                               <p className="text-[11px] text-gray-400 mt-1">{formatDateTime(notification.createdAt)}</p>
                             </div>
                             {!notification.read && <span className="mt-1.5 w-2 h-2 rounded-full bg-[#1F8FE0] shrink-0" />}
@@ -77205,7 +77181,7 @@ ${waybillLineItems(w).length > 1
                                   <Field label="Route" value={`${linkedWaybill.sendingState} → ${linkedWaybill.receivingState}`} />
                                   <Field label="Logistics partner" value={linkedWaybill.logisticsPartner} />
                                   <Field label="Quantity" value={linkedWaybill.quantity} />
-                                  <Field label="Fee" value={`₦${linkedWaybill.waybillFee.toLocaleString()}`} />
+                                  <Field label="Fee" value={naira(linkedWaybill.waybillFee)} />
                                   <Field label="Sent" value={formatMoment(linkedWaybill.createdAt) || formatDateOnly(linkedWaybill.dateSent)} />
                                   <Field label="Received" value={(() => {
                                     const receivedMoment = getWaybillStatusMoment(linkedWaybill, stockMovements);
@@ -80033,7 +80009,7 @@ ${waybillLineItems(w).length > 1
                       () => cashFlowApi.updateReserve(id, body), "Reserve updated."),
                     onRelease: (id, body) => runReserveAction(
                       () => cashFlowApi.releaseReserve(id, body),
-                      `₦${Math.round(body.amount).toLocaleString("en-NG")} released back to operating cash.`),
+                      `${naira(body.amount)} released back to operating cash.`),
                     onDelete: (id) => runReserveAction(
                       () => cashFlowApi.deleteReserve(id), "Reserve removed.")
                   }}

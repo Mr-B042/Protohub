@@ -6,6 +6,10 @@ import {
   Scale, Tag, TrendingUp, Users, X
 } from "lucide-react";
 import type { InventoryValueView, StockConditionKey, ValuedProductRow } from "../lib/api";
+// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ignores the topbar "hide money" toggle - which is exactly how these
+// pages kept showing real figures with privacy mode on.
+import { naira } from "../lib/money-privacy";
 
 // Inventory Value: how much cash is tied up in stock.
 //
@@ -13,7 +17,6 @@ import type { InventoryValueView, StockConditionKey, ValuedProductRow } from "..
 // spent; counting it at retail would book profit that has not been earned.
 // Retail sits alongside, always labelled an estimate.
 
-const naira = (value: number) => `₦${Math.round(Number(value) || 0).toLocaleString("en-NG")}`;
 const signedUnits = (value: number) => `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(Math.round(value))}`;
 const dayLabel = (key: string) =>
   new Date(`${key}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric" });
