@@ -3,12 +3,13 @@ import {
   CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis
 } from "recharts";
 import {
-  ArrowDownLeft, ArrowUpRight, CalendarDays, ChevronLeft, ChevronRight, Download,
+  ArrowDownLeft, ArrowUpRight, Boxes, CalendarDays, ChevronLeft, ChevronRight, Download,
   Eye, Filter, Info, Landmark, Lock, Pencil, RefreshCw, Search, ShieldCheck, TrendingUp, Users, Wallet, X
 } from "lucide-react";
 import BankAccountsTab, { type BankAccountsTabProps } from "./BankAccountsTab";
 import WeeklyReconciliationTab, { type WeeklyReconciliationTabProps } from "./WeeklyReconciliationTab";
 import ReservesTab, { type ReservesTabProps } from "./ReservesTab";
+import InventoryValueTab, { type InventoryValueTabProps } from "./InventoryValueTab";
 
 // ⚠️ Cash, not profit. Profit is recognised when an order is Delivered; the
 // money arrives when the agent remits, days later and sometimes never. A week
@@ -94,15 +95,18 @@ export type CashFlowPageProps = {
   reconciliation: WeeklyReconciliationTabProps;
   /** Reserves: cash that is still here but already spoken for. */
   reserves: ReservesTabProps;
+  /** Inventory Value: cash tied up in stock, valued at cost. */
+  inventory: InventoryValueTabProps;
 };
 
-const CASH_FLOW_TABS = ["Overview", "Bank Accounts", "Reconciliation", "Reserves"] as const;
+const CASH_FLOW_TABS = ["Overview", "Bank Accounts", "Reconciliation", "Reserves", "Inventory Value"] as const;
 type CashFlowTab = (typeof CASH_FLOW_TABS)[number];
 const TAB_ICON: Record<CashFlowTab, typeof TrendingUp> = {
   "Overview": TrendingUp,
   "Bank Accounts": Wallet,
   "Reconciliation": ShieldCheck,
-  "Reserves": Lock
+  "Reserves": Lock,
+  "Inventory Value": Boxes
 };
 
 export default function CashFlowPage(props: CashFlowPageProps) {
@@ -191,6 +195,8 @@ export default function CashFlowPage(props: CashFlowPageProps) {
         <WeeklyReconciliationTab {...props.reconciliation} />
       ) : topTab === "Reserves" ? (
         <ReservesTab {...props.reserves} />
+      ) : topTab === "Inventory Value" ? (
+        <InventoryValueTab {...props.inventory} />
       ) : (
       <>
       <div className="flex flex-wrap items-center justify-between gap-3">
