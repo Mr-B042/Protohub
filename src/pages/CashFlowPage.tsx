@@ -11,6 +11,7 @@ import WeeklyReconciliationTab, { type WeeklyReconciliationTabProps } from "./We
 import ReservesTab, { type ReservesTabProps } from "./ReservesTab";
 import InventoryValueTab, { type InventoryValueTabProps } from "./InventoryValueTab";
 import AccountReconciliationTab, { type AccountReconciliationTabProps } from "./AccountReconciliationTab";
+import PeriodCloseTab, { type PeriodCloseTabProps } from "./PeriodCloseTab";
 
 // ⚠️ Cash, not profit. Profit is recognised when an order is Delivered; the
 // money arrives when the agent remits, days later and sometimes never. A week
@@ -100,9 +101,11 @@ export type CashFlowPageProps = {
   inventory: InventoryValueTabProps;
   /** Account Reconciliation: our books vs each bank statement. */
   accountReconciliation: AccountReconciliationTabProps;
+  /** Period Close: the week is finished and the books are fixed. */
+  periodClose: PeriodCloseTabProps;
 };
 
-const CASH_FLOW_TABS = ["Overview", "Bank Accounts", "Reconciliation", "Account Reconciliation", "Reserves", "Inventory Value"] as const;
+const CASH_FLOW_TABS = ["Overview", "Bank Accounts", "Reconciliation", "Account Reconciliation", "Reserves", "Inventory Value", "Period Close"] as const;
 type CashFlowTab = (typeof CASH_FLOW_TABS)[number];
 const TAB_ICON: Record<CashFlowTab, typeof TrendingUp> = {
   "Overview": TrendingUp,
@@ -110,7 +113,8 @@ const TAB_ICON: Record<CashFlowTab, typeof TrendingUp> = {
   "Reconciliation": ShieldCheck,
   "Account Reconciliation": Landmark,
   "Reserves": Lock,
-  "Inventory Value": Boxes
+  "Inventory Value": Boxes,
+  "Period Close": Lock
 };
 
 export default function CashFlowPage(props: CashFlowPageProps) {
@@ -203,6 +207,8 @@ export default function CashFlowPage(props: CashFlowPageProps) {
         <InventoryValueTab {...props.inventory} />
       ) : topTab === "Account Reconciliation" ? (
         <AccountReconciliationTab {...props.accountReconciliation} />
+      ) : topTab === "Period Close" ? (
+        <PeriodCloseTab {...props.periodClose} />
       ) : (
       <>
       <div className="flex flex-wrap items-center justify-between gap-3">

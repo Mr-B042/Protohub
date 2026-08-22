@@ -18,6 +18,14 @@ import {
   dayRange,
   withRunningBalance
 } from "../lib/cash-flow.js";
+import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
+import {
+  CLOSE_CHECKS,
+  freeOperatingCash,
+  summariseClose,
+  summariseProfit,
+  type EvaluatedCheck
+} from "../lib/period-close.js";
 import {
   isReconciled,
   remainingDifference,
@@ -2176,6 +2184,397 @@ router.post("/account-reconciliations/:id/reopen", requireRole("Owner"), async (
     res.json({ ok: true });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not reopen that reconciliation." });
+  }
+});
+
+// ══ Period Close ══════════════════════════════════════════
+//
+// ⚠️ Closing a week does NOT set next week's opening cash. The supplied design
+// said it would, but a week must open on a COUNTED figure - carrying forward a
+// computed closing is never checked against the real accounts, which is how a
+// drift survives for months. Closing records the figure; the wizard shows it
+// to compare against, and the Owner still counts.
+
+// Per-order COGS. Duplicated locally in the same ~20 lines as
+// customer-retention.ts, manager-bonuses.ts and recovery-rep-kpi.ts, following
+// the convention those files already set out, rather than refactoring three
+// working modules to share it.
+type PricingMap = Map<string, { byCurrency: Map<string, number>; primary: number; hasPrimary: boolean }>;
+async function loadClosePricingMap(productIds: string[]): Promise<PricingMap> {
+  const map: PricingMap = new Map();
+  if (productIds.length === 0) return map;
+  const { data } = await supabase.from("product_pricings")
+    .select("product_id, currency, unit_cost, is_primary").in("product_id", productIds);
+  for (const row of (data ?? []) as any[]) {
+    let entry = map.get(row.product_id);
+    if (!entry) { entry = { byCurrency: new Map(), primary: 0, hasPrimary: false }; map.set(row.product_id, entry); }
+    const cost = Number(row.unit_cost ?? 0) || 0;
+    if (row.currency) entry.byCurrency.set(row.currency, cost);
+    if (row.is_primary) { entry.primary = cost; entry.hasPrimary = true; }
+  }
+  return map;
+}
+const closeUnitCost = (map: PricingMap, productId?: string | null, currency?: string | null) => {
+  if (!productId) return 0;
+  const entry = map.get(productId);
+  if (!entry) return 0;
+  if (currency && entry.byCurrency.has(currency)) return entry.byCurrency.get(currency) ?? 0;
+  if (entry.hasPrimary) return entry.primary;
+  const first = entry.byCurrency.values().next();
+  return first.done ? 0 : first.value;
+};
+
+const naira0 = (value: number) => `₦${Math.round(value).toLocaleString("en-NG")}`;
+
+// ── GET /api/cash-flow/period-close?weekStart= ────────────
+router.get("/period-close", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const requested = String(req.query.weekStart ?? "");
+    const weekStart = sundayWeekStart(
+      DATE_KEY.test(requested) ? requested : lagosDayOf(new Date().toISOString())
+    );
+    const weekEnd = addDaysKey(weekStart, 6);
+    const fromIso = startOfLagosDay(weekStart);
+    const toIso = endOfLagosDay(weekEnd);
+
+    const [
+      { data: closeRow }, { data: verification }, { data: investigation },
+      { data: snapshot }, { data: reserveRows }, { data: deliveredOrders },
+      opening, liquid, agentsCod
+    ] = await Promise.all([
+      supabase.from("period_closes").select("*").eq("org_id", orgId).eq("week_start", weekStart).maybeSingle(),
+      supabase.from("weekly_cash_verifications").select("*").eq("org_id", orgId).eq("week_start", weekStart).maybeSingle(),
+      supabase.from("cash_variance_investigations").select("status, amount_explained").eq("org_id", orgId).eq("week_start", weekStart).maybeSingle(),
+      supabase.from("inventory_valuation_snapshots").select("id, status, total_value").eq("org_id", orgId).eq("week_start", weekStart).maybeSingle(),
+      supabase.from("cash_reserves").select("amount, released_amount, status, category").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
+      supabase.from("orders")
+        .select("id, amount, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines, status")
+        .eq("org_id", orgId).eq("status", "Delivered").neq("review_hold", true)
+        .gte("updated_at", fromIso).lt("updated_at", toIso).limit(REPORT_ROW_CEILING),
+      resolveOpeningCash(orgId, fromIso),
+      totalLiquidCash(orgId),
+      cashStillWithAgents(orgId)
+    ]);
+
+    const [remits, spends] = await Promise.all([
+      loadRemittances(orgId, fromIso, toIso),
+      loadExpenses(orgId, weekStart, weekEnd)
+    ]);
+    const cashIn = remits.reduce((sum, row) => sum + row.cashIn, 0);
+    const cashOut = spends.reduce((sum, row) => sum + row.cashOut, 0);
+    const expectedClosing = opening.amount + cashIn - cashOut;
+
+    // Accrual P&L: recognised on delivery, not on the cash arriving.
+    const orders = (deliveredOrders ?? []) as any[];
+    const productIds = [...new Set(orders.flatMap((order) => orderInventoryLinesFromRow(order).map((line) => line.productId)))]
+      .filter(Boolean) as string[];
+    const pricingMap = await loadClosePricingMap(productIds);
+    const totalRevenue = orders.reduce((sum, order) => sum + (Number(order.amount ?? 0) || 0), 0);
+    const totalCogs = orders.reduce((sum, order) =>
+      sum + orderInventoryLinesFromRow(order).reduce(
+        (lineSum, line) => lineSum + line.quantity * closeUnitCost(pricingMap, line.productId, order.currency), 0), 0);
+    const ordersMissingCost = orders.filter((order) =>
+      orderInventoryLinesFromRow(order).some((line) => closeUnitCost(pricingMap, line.productId, order.currency) <= 0)).length;
+    const profit = summariseProfit({ totalRevenue, totalCogs, operatingExpenses: cashOut });
+
+    const reserves = ((reserveRows ?? []) as any[]).filter((row) => row.status !== "cancelled");
+    const reservedCash = reserves.reduce((sum, row) =>
+      sum + Math.max(Number(row.amount ?? 0) - Number(row.released_amount ?? 0), 0), 0);
+    const payrollReserve = reserves.filter((row) => row.category === "payroll")
+      .reduce((sum, row) => sum + Math.max(Number(row.amount ?? 0) - Number(row.released_amount ?? 0), 0), 0);
+
+    const actualClosing = verification ? Number(verification.actual_closing ?? 0) : 0;
+    const variance = verification ? actualClosing - Number(verification.expected_closing ?? 0) : 0;
+    const varianceSettled = Math.abs(variance) <= 0.5;
+
+    let verifiedAccounts: any[] = [];
+    if (verification?.id) {
+      const { data: rows } = await supabase.from("weekly_cash_verification_accounts")
+        .select("bank_account_id, account_label, actual_balance").eq("verification_id", verification.id);
+      verifiedAccounts = (rows ?? []) as any[];
+    }
+    const { data: cashAccounts } = await supabase.from("bank_accounts")
+      .select("id").eq("org_id", orgId).eq("active", true).eq("account_type", "cash");
+    const cashAccountIds = new Set(((cashAccounts ?? []) as any[]).map((row) => row.id));
+
+    const byGroup = new Map<string, number>();
+    spends.forEach((row) => byGroup.set(row.category, (byGroup.get(row.category) ?? 0) + row.cashOut));
+
+    // Manual ticks, keyed by check. Only manual checks are storable.
+    const manualByKey = new Map<string, any>();
+    if (closeRow?.id) {
+      const { data: checkRows } = await supabase.from("period_close_checks")
+        .select("check_key, done, done_by_name, done_at").eq("period_close_id", closeRow.id);
+      ((checkRows ?? []) as any[]).forEach((row) => manualByKey.set(row.check_key, row));
+    }
+
+    // ⚠️ Computed checks are FACTS read from live data. They are never stored
+    // and cannot be ticked by hand, so a week can never be closed on a green
+    // light nobody earned.
+    const computed: Record<string, { done: boolean; evidence: string }> = {
+      revenue_verified: {
+        done: orders.length > 0,
+        evidence: `${orders.length} delivered orders · ${naira0(totalRevenue)}`
+      },
+      delivered_finalised: {
+        done: orders.length > 0,
+        evidence: `${orders.length} order${orders.length === 1 ? "" : "s"} marked delivered this week`
+      },
+      cogs_posted: {
+        done: orders.length > 0 && ordersMissingCost === 0,
+        evidence: ordersMissingCost > 0
+          ? `${ordersMissingCost} delivered order${ordersMissingCost === 1 ? "" : "s"} have a product with no unit cost`
+          : `${naira0(totalCogs)} costed across ${orders.length} orders`
+      },
+      opening_cash_counted: {
+        done: opening.source === "weekly_count",
+        evidence: opening.source === "weekly_count"
+          ? `${naira0(opening.amount)} counted`
+          : `${naira0(opening.amount)} derived, not counted`
+      },
+      cash_in_recorded: {
+        done: remits.length > 0,
+        evidence: `${remits.length} remittances · ${naira0(cashIn)}`
+      },
+      remittances_reconciled: {
+        done: agentsCod <= 0,
+        evidence: agentsCod > 0 ? `${naira0(agentsCod)} still with agents` : "Nothing outstanding"
+      },
+      cash_out_recorded: {
+        done: spends.length > 0,
+        evidence: `${spends.length} expenses · ${naira0(cashOut)}`
+      },
+      ad_spend_verified: {
+        done: (byGroup.get("Facebook / Instagram Ads") ?? 0) > 0,
+        evidence: naira0(byGroup.get("Facebook / Instagram Ads") ?? 0)
+      },
+      opex_recorded: {
+        done: (byGroup.get("Other Operating Expenses") ?? 0) > 0 || (byGroup.get("Payroll") ?? 0) > 0,
+        evidence: naira0((byGroup.get("Other Operating Expenses") ?? 0) + (byGroup.get("Payroll") ?? 0))
+      },
+      stock_purchases_recorded: {
+        done: (byGroup.get("Stock Purchases") ?? 0) > 0,
+        evidence: (byGroup.get("Stock Purchases") ?? 0) > 0
+          ? naira0(byGroup.get("Stock Purchases") ?? 0)
+          : "No stock purchases have ever been recorded as an expense"
+      },
+      bank_balances_verified: {
+        done: !!verification && verification.status !== "draft",
+        evidence: verification
+          ? `${verifiedAccounts.length} accounts counted · ${naira0(actualClosing)}`
+          : "Closing cash has not been counted"
+      },
+      cash_in_hand_counted: {
+        done: verifiedAccounts.some((row) => !row.bank_account_id || cashAccountIds.has(row.bank_account_id)),
+        evidence: verifiedAccounts.some((row) => !row.bank_account_id || cashAccountIds.has(row.bank_account_id))
+          ? "Physical cash included in the count" : "No physical cash counted"
+      },
+      cod_reconciled: {
+        done: agentsCod <= 0,
+        evidence: agentsCod > 0 ? `${naira0(agentsCod)} collected but not remitted` : "All COD remitted"
+      },
+      inventory_valued: {
+        done: !!snapshot && snapshot.status === "final",
+        evidence: snapshot
+          ? `${naira0(Number(snapshot.total_value ?? 0))}${snapshot.status === "final" ? "" : " (draft)"}`
+          : "No valuation captured"
+      },
+      payroll_reserve_reviewed: {
+        done: payrollReserve > 0,
+        evidence: payrollReserve > 0 ? `${naira0(payrollReserve)} set aside` : "Nothing set aside for salaries"
+      },
+      reserves_not_overcommitted: {
+        done: reservedCash <= liquid,
+        evidence: reservedCash <= liquid
+          ? `${naira0(reservedCash)} reserved of ${naira0(liquid)}`
+          : `${naira0(reservedCash - liquid)} more reserved than held`
+      },
+      variance_investigated: {
+        done: varianceSettled || !!investigation,
+        evidence: varianceSettled
+          ? "No variance to investigate"
+          : investigation ? `Investigation ${investigation.status}` : `${naira0(Math.abs(variance))} unexplained`
+      },
+      variances_resolved: {
+        done: varianceSettled || investigation?.status === "resolved",
+        evidence: varianceSettled
+          ? "Week balances"
+          : investigation?.status === "resolved" ? "Variance explained and resolved" : "Variance still open"
+      },
+      notes_added: {
+        done: String(closeRow?.closing_notes ?? "").trim().length > 0,
+        evidence: String(closeRow?.closing_notes ?? "").trim().length > 0 ? "Notes recorded" : "No closing notes yet"
+      }
+    };
+
+    const checks: EvaluatedCheck[] = CLOSE_CHECKS.map((definition) => {
+      if (definition.kind === "computed") {
+        const result = computed[definition.key] ?? { done: false, evidence: "Not evaluated" };
+        return { ...definition, done: result.done, evidence: result.evidence };
+      }
+      const manual = manualByKey.get(definition.key);
+      return {
+        ...definition,
+        done: manual?.done === true,
+        evidence: manual?.done === true ? `Ticked by ${manual.done_by_name || "someone"}` : "",
+        doneByName: manual?.done_by_name ?? "",
+        doneAt: manual?.done_at ?? null
+      };
+    });
+
+    const inventoryAtCost = snapshot ? Number(snapshot.total_value ?? 0) : 0;
+
+    res.json({
+      weekStart,
+      weekEnd,
+      status: closeRow?.status ?? "open",
+      closingNotes: closeRow?.closing_notes ?? "",
+      closedByName: closeRow?.closed_by_name ?? "",
+      closedAt: closeRow?.closed_at ?? null,
+      approvedByName: closeRow?.approved_by_name ?? "",
+      profit,
+      cashPosition: {
+        totalLiquidCash: liquid,
+        codWithAgents: agentsCod,
+        inventoryAtCost,
+        reservedCash,
+        freeOperatingCash: freeOperatingCash({ totalLiquidCash: liquid, reservedCash })
+      },
+      expectedClosingCash: expectedClosing,
+      actualClosingCash: actualClosing,
+      cashVariance: variance,
+      varianceSettled,
+      progress: summariseClose(checks),
+      // Closing does NOT write next week's opening. Stated to the UI so the
+      // panel can say what really happens instead of the design's promise.
+      setsNextWeekOpening: false
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the week's close." });
+  }
+});
+
+const CloseCheckSchema = z.object({
+  weekStart: z.string().regex(DATE_KEY),
+  checkKey: z.string().min(1).max(60),
+  done: z.boolean()
+}).strict();
+
+// ── POST /api/cash-flow/period-close/check ────────────────
+router.post("/period-close/check", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = CloseCheckSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const weekStart = sundayWeekStart(parsed.data.weekStart);
+
+    // ⚠️ Only MANUAL checks can be ticked. A computed check is a fact read
+    // from live data; letting one be set by hand would let a week close on a
+    // green light nobody earned, which is the whole point of the split.
+    const definition = CLOSE_CHECKS.find((check) => check.key === parsed.data.checkKey);
+    if (!definition) { res.status(400).json({ error: "Unknown check." }); return; }
+    if (definition.kind !== "manual") {
+      res.status(400).json({ error: `"${definition.label}" is worked out from your data and cannot be ticked by hand.` });
+      return;
+    }
+
+    const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
+    const actorName = String(actor?.name ?? "").trim() || "Unknown";
+
+    const { data: closeRow, error: closeError } = await supabase.from("period_closes")
+      .upsert({ org_id: orgId, week_start: weekStart, updated_at: new Date().toISOString() },
+        { onConflict: "org_id,week_start" })
+      .select("id, status").single();
+    if (closeError || !closeRow) {
+      res.status(500).json({ error: closeError?.message ?? "Could not open the week's checklist." });
+      return;
+    }
+    if (closeRow.status === "closed") {
+      res.status(409).json({ error: "This week is closed. Reopen it before changing the checklist." });
+      return;
+    }
+
+    const { error } = await supabase.from("period_close_checks").upsert({
+      period_close_id: closeRow.id,
+      check_key: parsed.data.checkKey,
+      done: parsed.data.done,
+      done_by: parsed.data.done ? req.user!.id : null,
+      done_by_name: parsed.data.done ? actorName : "",
+      done_at: parsed.data.done ? new Date().toISOString() : null
+    }, { onConflict: "period_close_id,check_key" });
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update that check." });
+  }
+});
+
+const CloseWeekSchema = z.object({
+  weekStart: z.string().regex(DATE_KEY),
+  closingNotes: z.string().trim().max(500).default(""),
+  approvedByUserId: z.string().uuid().nullable().optional(),
+  status: z.enum(["draft", "closed"]).default("draft")
+}).strict();
+
+// ── POST /api/cash-flow/period-close ──────────────────────
+router.post("/period-close", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = CloseWeekSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const weekStart = sundayWeekStart(parsed.data.weekStart);
+    const body = parsed.data;
+
+    if (body.status === "closed" && !body.closingNotes.trim()) {
+      res.status(400).json({ error: "Add closing notes before locking the week." });
+      return;
+    }
+
+    const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
+    const actorName = String(actor?.name ?? "").trim() || "Unknown";
+    let approverName = "";
+    if (body.approvedByUserId) {
+      const { data: approver } = await supabase.from("users")
+        .select("name").eq("id", body.approvedByUserId).eq("org_id", orgId).maybeSingle();
+      if (!approver) { res.status(400).json({ error: "That approver is not in this organisation." }); return; }
+      approverName = String(approver.name ?? "").trim();
+    }
+
+    const now = new Date().toISOString();
+    const { data: saved, error } = await supabase.from("period_closes").upsert({
+      org_id: orgId,
+      week_start: weekStart,
+      status: body.status,
+      closing_notes: body.closingNotes,
+      approved_by: body.approvedByUserId ?? null,
+      approved_by_name: approverName,
+      closed_by: body.status === "closed" ? req.user!.id : null,
+      closed_by_name: body.status === "closed" ? actorName : "",
+      closed_at: body.status === "closed" ? now : null,
+      updated_at: now
+    }, { onConflict: "org_id,week_start" }).select("id").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    res.json({ id: saved.id, weekStart, status: body.status });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not save the week's close." });
+  }
+});
+
+// ── POST /api/cash-flow/period-close/reopen ───────────────
+router.post("/period-close/reopen", requireRole("Owner"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const weekStart = sundayWeekStart(String(req.body?.weekStart ?? ""));
+    if (!DATE_KEY.test(weekStart)) { res.status(400).json({ error: "Pick a week to reopen." }); return; }
+    const { error } = await supabase.from("period_closes")
+      .update({ status: "reopened", closed_at: null, closed_by: null, closed_by_name: "", updated_at: new Date().toISOString() })
+      .eq("org_id", orgId).eq("week_start", weekStart);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not reopen that week." });
   }
 });
 

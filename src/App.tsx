@@ -156,7 +156,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -9482,6 +9482,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [acctReconSaving, setAcctReconSaving] = useState(false);
   const [acctReconWorkspace, setAcctReconWorkspace] = useState<ReconciliationWorkspace | null>(null);
   const [acctReconWorkspaceLoading, setAcctReconWorkspaceLoading] = useState(false);
+  // ── Period Close (Cash Flow tab) ──
+  const [periodCloseView, setPeriodCloseView] = useState<PeriodCloseView | null>(null);
+  const [periodCloseLoading, setPeriodCloseLoading] = useState(false);
+  const [periodCloseError, setPeriodCloseError] = useState("");
+  const [periodCloseSaving, setPeriodCloseSaving] = useState(false);
   // ── Batch unit-economics (Profitability tab) ──
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -9765,6 +9770,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } finally { setAcctReconSaving(false); }
   };
 
+  const loadPeriodClose = useCallback(async (weekStart: string) => {
+    setPeriodCloseLoading(true);
+    setPeriodCloseError("");
+    try {
+      setPeriodCloseView(await cashFlowApi.periodClose(weekStart));
+    } catch (err: any) {
+      setPeriodCloseError(err?.message ?? "Could not load the week's close.");
+    } finally { setPeriodCloseLoading(false); }
+  }, []);
+
+  const runCloseAction = async (action: () => Promise<unknown>, message: string, weekStart: string) => {
+    setPeriodCloseSaving(true);
+    try {
+      await action();
+      showToast(message);
+      await loadPeriodClose(weekStart);
+    } catch (err: any) {
+      showToast(err?.message ?? "That did not save.");
+      throw err;
+    } finally { setPeriodCloseSaving(false); }
+  };
+
   useEffect(() => {
     if (activePage === "Finance & Accounting" && financeTab === "Profitability") void loadBatches();
     if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") {
@@ -9773,8 +9800,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       void loadReserves();
       void loadInventoryValue(reconciliationWeek);
       void loadAccountReconciliations();
+      void loadPeriodClose(reconciliationWeek);
     }
-  }, [activePage, financeTab, cashFlowPeriod, reconciliationWeek, loadCashFlow, loadBankAccounts, loadWeeklyOpening, loadReconciliation, loadReserves, loadInventoryValue, loadAccountReconciliations]);
+  }, [activePage, financeTab, cashFlowPeriod, reconciliationWeek, loadCashFlow, loadBankAccounts, loadWeeklyOpening, loadReconciliation, loadReserves, loadInventoryValue, loadAccountReconciliations, loadPeriodClose]);
   useEffect(() => {
     setBatchAutofillMeta(null);
     if (selectedBatchId) void loadBatchEconomics(selectedBatchId);
@@ -80022,6 +80050,34 @@ ${waybillLineItems(w).length > 1
                         ])
                       ], "Reconciliation report exported.");
                     }
+                  }}
+                  periodClose={{
+                    view: periodCloseView,
+                    loading: periodCloseLoading,
+                    error: periodCloseError,
+                    weekStart: reconciliationWeek,
+                    onWeekChange: (next) => {
+                      setReconciliationWeek(next);
+                      void loadPeriodClose(next);
+                      void loadReconciliation(next);
+                      void loadInventoryValue(next);
+                    },
+                    saving: periodCloseSaving,
+                    // A second approver has to be a real person in the org, so
+                    // the list comes from users rather than being free text.
+                    approvers: users
+                      .filter((person: any) => person.active !== false && person.id !== authUser?.id)
+                      .map((person: any) => ({ id: person.id, name: person.name, role: person.role })),
+                    onToggleCheck: (checkKey, done) => runCloseAction(
+                      () => cashFlowApi.setCloseCheck({ weekStart: reconciliationWeek, checkKey, done }),
+                      done ? "Check ticked." : "Check cleared.", reconciliationWeek),
+                    onSave: (body) => runCloseAction(
+                      () => cashFlowApi.savePeriodClose({ ...body, weekStart: reconciliationWeek }),
+                      body.status === "closed" ? "Week closed and locked." : "Close saved as a draft.",
+                      reconciliationWeek),
+                    onReopen: () => runCloseAction(
+                      () => cashFlowApi.reopenPeriod(reconciliationWeek),
+                      "Week reopened.", reconciliationWeek)
                   }}
                   onDownloadReport={() => {
                     const rows = cashFlowView?.transactions ?? [];

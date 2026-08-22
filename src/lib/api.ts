@@ -1401,6 +1401,39 @@ export type ReconciliationWorkspace = {
   lastReconciled: { statementDate: string; at: string | null; byName: string } | null;
 };
 
+export type CloseCheckRow = {
+  key: string; group: string; label: string;
+  /** "computed" is a fact read from data; "manual" is someone's claim. */
+  kind: "computed" | "manual";
+  required: boolean; done: boolean; evidence: string;
+  doneByName?: string; doneAt?: string | null;
+};
+
+export type PeriodCloseView = {
+  weekStart: string; weekEnd: string;
+  status: "open" | "draft" | "closed" | "reopened";
+  closingNotes: string; closedByName: string; closedAt: string | null; approvedByName: string;
+  profit: {
+    totalRevenue: number; totalCogs: number; grossProfit: number;
+    operatingExpenses: number; netProfit: number; netMarginPct: number;
+  };
+  cashPosition: {
+    totalLiquidCash: number; codWithAgents: number; inventoryAtCost: number;
+    reservedCash: number; freeOperatingCash: number;
+  };
+  expectedClosingCash: number; actualClosingCash: number;
+  cashVariance: number; varianceSettled: boolean;
+  progress: {
+    checks: CloseCheckRow[]; total: number; completed: number;
+    blocking: CloseCheckRow[];
+    computedTotal: number; computedDone: number;
+    manualTotal: number; manualDone: number;
+    progressPct: number; canClose: boolean;
+  };
+  /** False: closing never writes next week's opening cash. */
+  setsNextWeekOpening: boolean;
+};
+
 export const cashFlowApi = {
   summary: (from: string, to: string) =>
     get<CashFlowView>(`/api/cash-flow?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
@@ -1463,7 +1496,16 @@ export const cashFlowApi = {
   removeReconAdjustment: (id: string, adjustmentId: string) =>
     del<{ ok: boolean }>(`/api/cash-flow/account-reconciliations/${id}/adjustments/${adjustmentId}`),
   reopenAccountReconciliation: (id: string) =>
-    post<{ ok: boolean }>(`/api/cash-flow/account-reconciliations/${id}/reopen`, {})
+    post<{ ok: boolean }>(`/api/cash-flow/account-reconciliations/${id}/reopen`, {}),
+  periodClose: (weekStart?: string) =>
+    get<PeriodCloseView>(`/api/cash-flow/period-close${weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : ""}`),
+  setCloseCheck: (body: { weekStart: string; checkKey: string; done: boolean }) =>
+    post<{ ok: boolean }>("/api/cash-flow/period-close/check", body),
+  savePeriodClose: (body: {
+    weekStart: string; closingNotes: string; approvedByUserId: string | null; status: "draft" | "closed";
+  }) => post<{ id: string; weekStart: string; status: string }>("/api/cash-flow/period-close", body),
+  reopenPeriod: (weekStart: string) =>
+    post<{ ok: boolean }>("/api/cash-flow/period-close/reopen", { weekStart })
 };
 
 export const deliveryGoalsApi = {
