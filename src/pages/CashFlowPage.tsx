@@ -13,6 +13,10 @@ import InventoryValueTab, { type InventoryValueTabProps } from "./InventoryValue
 import AccountReconciliationTab, { type AccountReconciliationTabProps } from "./AccountReconciliationTab";
 import PeriodCloseTab, { type PeriodCloseTabProps } from "./PeriodCloseTab";
 import WeeklyOverviewTab, { type WeeklyOverviewTabProps } from "./WeeklyOverviewTab";
+// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ignores the topbar "hide money" toggle - which is exactly how these
+// pages kept showing real figures with privacy mode on.
+import { naira, shortNaira } from "../lib/money-privacy";
 
 // ⚠️ Cash, not profit. Profit is recognised when an order is Delivered; the
 // money arrives when the agent remits, days later and sometimes never. A week
@@ -58,13 +62,6 @@ export const CASH_FLOW_PERIODS: CashFlowPeriod[] = ["Today", "Yesterday", "This 
 const OUT_COLORS = ["#EF4444", "#3B82F6", "#8B5CF6", "#EC4899", "#F59E0B"];
 const IN_COLORS = ["#10B981", "#CBD5E1"];
 
-const naira = (value: number) => `₦${Math.round(Number(value) || 0).toLocaleString("en-NG")}`;
-const shortNaira = (value: number) => {
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `₦${(value / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
-  if (abs >= 1_000) return `₦${Math.round(value / 1_000)}K`;
-  return `₦${Math.round(value)}`;
-};
 const dayLabel = (key: string) =>
   new Date(`${key}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric" });
 const dowLabel = (key: string) =>

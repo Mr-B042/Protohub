@@ -7,6 +7,10 @@ import {
   Lock, TrendingUp, Users, Wallet
 } from "lucide-react";
 import type { WeeklyOverviewView, WeekMovement } from "../lib/api";
+// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ignores the topbar "hide money" toggle - which is exactly how these
+// pages kept showing real figures with privacy mode on.
+import { maskMoneyText, naira, shortNaira, signedNaira } from "../lib/money-privacy";
 
 // The whole week's financial position on one screen.
 //
@@ -14,19 +18,6 @@ import type { WeeklyOverviewView, WeekMovement } from "../lib/api";
 // with different rules. An overview that quietly disagrees with the page it
 // summarises is worse than no overview at all.
 
-const naira = (value: number) => `₦${Math.round(Number(value) || 0).toLocaleString("en-NG")}`;
-const signedNaira = (value: number) => {
-  const rounded = Math.round(Number(value) || 0);
-  if (rounded === 0) return "₦0";
-  return `${rounded < 0 ? "−" : "+"}₦${Math.abs(rounded).toLocaleString("en-NG")}`;
-};
-const shortNaira = (value: number) => {
-  const abs = Math.abs(value);
-  const sign = value < 0 ? "−" : "";
-  if (abs >= 1_000_000) return `${sign}₦${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
-  if (abs >= 1_000) return `${sign}₦${Math.round(abs / 1_000)}K`;
-  return `${sign}₦${Math.round(abs)}`;
-};
 const dayLabel = (key: string) =>
   new Date(`${key}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric" });
 const fullDay = (key: string) =>
@@ -268,7 +259,9 @@ export default function WeeklyOverviewTab(props: WeeklyOverviewTabProps) {
                 <li key={check.key} className="flex items-center justify-between gap-2">
                   <span className="min-w-0">
                     <span className="block truncate text-[12px] font-bold text-gray-900">{check.label}</span>
-                    <span className="block truncate text-[11px] font-medium text-gray-400" title={check.detail}>{check.detail}</span>
+                    {/* Server-built detail carries amounts inside the sentence. */}
+                    <span className="block truncate text-[11px] font-medium text-gray-400"
+                      title={maskMoneyText(check.detail)}>{maskMoneyText(check.detail)}</span>
                   </span>
                   <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-black ${RATING_STYLE[check.rating].chip}`}>
                     {RATING_STYLE[check.rating].label}

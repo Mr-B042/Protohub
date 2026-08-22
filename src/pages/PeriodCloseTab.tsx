@@ -5,6 +5,10 @@ import {
   ShieldCheck, TrendingUp, UserCheck, Users, Wallet
 } from "lucide-react";
 import type { CloseCheckRow, PeriodCloseView } from "../lib/api";
+// ⚠️ Shared formatters, NOT a local `naira()`. A private one silently
+// ignores the topbar "hide money" toggle - which is exactly how these
+// pages kept showing real figures with privacy mode on.
+import { maskMoneyText, naira, signedNaira } from "../lib/money-privacy";
 
 // Weekly close: is this week actually finished?
 //
@@ -13,12 +17,6 @@ import type { CloseCheckRow, PeriodCloseView } from "../lib/api";
 // someone asserts them and their name is recorded. Both are labelled so a
 // reader can tell which greens are earned and which are asserted.
 
-const naira = (value: number) => `₦${Math.round(Number(value) || 0).toLocaleString("en-NG")}`;
-const signedNaira = (value: number) => {
-  const rounded = Math.round(Number(value) || 0);
-  if (rounded === 0) return "₦0";
-  return `${rounded < 0 ? "−" : "+"}₦${Math.abs(rounded).toLocaleString("en-NG")}`;
-};
 const dayLabel = (key: string) =>
   new Date(`${key}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric" });
 const fullDay = (key: string) =>
@@ -405,7 +403,10 @@ function CheckRow({ row, disabled, onToggle }: {
             {row.required && !row.done && <span className="ml-1 text-[10px] font-black text-rose-500">REQUIRED</span>}
           </span>
           {row.evidence && (
-            <span className="block truncate text-[11px] font-medium text-gray-400" title={row.evidence}>{row.evidence}</span>
+            // ⚠️ Server-built evidence ("₦9,963,500 still with agents") has the
+            // amount baked into the sentence, so it is masked as text.
+            <span className="block truncate text-[11px] font-medium text-gray-400"
+              title={maskMoneyText(row.evidence)}>{maskMoneyText(row.evidence)}</span>
           )}
         </span>
       </span>
