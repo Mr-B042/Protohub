@@ -9453,6 +9453,20 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [weeklyOpening, setWeeklyOpening] = useState<WeeklyOpeningView | null>(null);
   const [weeklyOpeningOpen, setWeeklyOpeningOpen] = useState(false);
   const [weeklyOpeningSaving, setWeeklyOpeningSaving] = useState(false);
+  // ⚠️ Preview = looking at Cash Flow without opening the week. Deliberately
+  // NOT persisted anywhere: it lasts until the tab is left or the week rolls,
+  // so an unopened week can never quietly become the normal state of the page.
+  const [weeklyOpeningPreview, setWeeklyOpeningPreview] = useState(false);
+  // ⚠️ Mirrored in a ref because loadWeeklyOpening is a stable useCallback: a
+  // dep array holding the state would capture `false` forever and pop the
+  // wizard straight back over the page the moment anything reloaded.
+  const weeklyOpeningPreviewRef = useRef(false);
+  const weeklyOpeningWeekRef = useRef<string | null>(null);
+  const enterWeeklyOpeningPreview = useCallback(() => {
+    weeklyOpeningPreviewRef.current = true;
+    setWeeklyOpeningPreview(true);
+    setWeeklyOpeningOpen(false);
+  }, []);
   // ── Weekly Reconciliation (Cash Flow tab) ──
   const [reconciliationView, setReconciliationView] = useState<WeeklyReconciliationView | null>(null);
   const [reconciliationWeek, setReconciliationWeek] = useState<string>(() => {
@@ -9579,8 +9593,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const loadWeeklyOpening = useCallback(async () => {
     try {
       const result = await cashFlowApi.weeklyOpening();
+      // A different week has to be asked about again, even mid-session, so
+      // rolling into Sunday never inherits last week's "just looking".
+      if (weeklyOpeningWeekRef.current !== null && weeklyOpeningWeekRef.current !== result.weekStart) {
+        weeklyOpeningPreviewRef.current = false;
+        setWeeklyOpeningPreview(false);
+      }
+      weeklyOpeningWeekRef.current = result.weekStart;
       setWeeklyOpening(result);
-      if (result.needsOpening) setWeeklyOpeningOpen(true);
+      if (result.needsOpening && !weeklyOpeningPreviewRef.current) setWeeklyOpeningOpen(true);
     } catch { /* Owner-gated endpoint; anyone else simply gets nothing. */ }
   }, []);
 
@@ -79905,7 +79926,7 @@ ${waybillLineItems(w).length > 1
                 </motion.section>
               )}
 
-              {financeTab === "Cash Flow" && currentRole === "Owner" && weeklyOpening?.needsOpening && !weeklyOpeningOpen && (
+              {financeTab === "Cash Flow" && currentRole === "Owner" && weeklyOpening?.needsOpening && !weeklyOpeningOpen && !weeklyOpeningPreview && (
                 <div className="rounded-2xl border border-amber-300 bg-amber-50 px-5 py-6 text-center">
                   <h3 className="m-0 text-base font-black text-amber-900">This week has not been opened yet</h3>
                   <p className="m-0 mx-auto mt-1 max-w-lg text-[13px] font-medium leading-5 text-amber-800">
@@ -79913,10 +79934,16 @@ ${waybillLineItems(w).length > 1
                     {" "}{new Date(`${weeklyOpening.weekStart}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric" })}
                     {" – "}{new Date(`${weeklyOpening.weekEnd}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric" })}.
                   </p>
-                  <button type="button" onClick={() => setWeeklyOpeningOpen(true)}
-                    className="!min-h-0 mt-3 rounded-xl bg-amber-600 px-4 py-2.5 text-[13px] font-black text-white hover:bg-amber-700">
-                    Set opening cash for this week
-                  </button>
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                    <button type="button" onClick={() => setWeeklyOpeningOpen(true)}
+                      className="!min-h-0 rounded-xl bg-amber-600 px-4 py-2.5 text-[13px] font-black text-white hover:bg-amber-700">
+                      Set opening cash for this week
+                    </button>
+                    <button type="button" onClick={enterWeeklyOpeningPreview}
+                      className="!min-h-0 rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-[13px] font-black text-amber-800 hover:bg-amber-100">
+                      Look around without opening it
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -79928,11 +79955,28 @@ ${waybillLineItems(w).length > 1
                   // has no verified starting figure to be right about.
                   blocking={weeklyOpening.needsOpening}
                   onClose={() => setWeeklyOpeningOpen(false)}
+                  onPreview={enterWeeklyOpeningPreview}
                   onSave={saveWeeklyOpening}
                 />
               )}
 
-              {financeTab === "Cash Flow" && currentRole === "Owner" && !weeklyOpening?.needsOpening && (
+              {financeTab === "Cash Flow" && currentRole === "Owner" && weeklyOpening?.needsOpening && weeklyOpeningPreview && (
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3">
+                  <p className="m-0 text-[13px] font-bold leading-5 text-amber-900">
+                    Preview only — this week has not been opened.
+                    <span className="block font-medium text-amber-800">
+                      Opening cash is derived, not counted, so every closing and variance figure below inherits that
+                      guess. Nothing you do here is recorded against the week until you set the opening cash.
+                    </span>
+                  </p>
+                  <button type="button" onClick={() => setWeeklyOpeningOpen(true)}
+                    className="!min-h-0 shrink-0 rounded-xl bg-amber-600 px-4 py-2.5 text-[13px] font-black text-white hover:bg-amber-700">
+                    Open the week properly
+                  </button>
+                </div>
+              )}
+
+              {financeTab === "Cash Flow" && currentRole === "Owner" && (!weeklyOpening?.needsOpening || weeklyOpeningPreview) && (
                 <CashFlowPage
                   view={cashFlowView}
                   loading={cashFlowLoading}

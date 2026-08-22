@@ -65,10 +65,12 @@ export type WeeklyOpeningCashWizardProps = {
   /** Blocking weeks cannot be dismissed - the page behind is not usable yet. */
   blocking: boolean;
   onClose: () => void;
+  /** Browse Cash Flow without opening the week. Nothing is recorded. */
+  onPreview?: () => void;
   onSave: (body: { weekStart: string; reason: string; sources: Array<{ bankAccountId: string | null; accountLabel: string; amount: number }> }) => Promise<void>;
 };
 
-export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClose, onSave }: WeeklyOpeningCashWizardProps) {
+export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClose, onPreview, onSave }: WeeklyOpeningCashWizardProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [weekStart, setWeekStart] = useState(view.weekStart);
   // The accounting week officially starts on Sunday - the same anchor payroll,
@@ -295,7 +297,14 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
                 </p>
                 <p className="m-0 mt-3 text-[10px] font-black uppercase tracking-[0.14em] text-gray-400">Total opening cash</p>
                 <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                  <span className="text-3xl font-black text-emerald-600">{naira(total)}</span>
+                  {/* ⚠️ Never render ₦0 at this size: the naira sign against a
+                      zero reads as the word "NO" and looks like an answer to a
+                      question nobody asked. Nothing entered yet says so. */}
+                  {total > 0 ? (
+                    <span className="text-3xl font-black text-emerald-600">{naira(total)}</span>
+                  ) : (
+                    <span className="text-xl font-black text-gray-400">Nothing entered yet</span>
+                  )}
                   {canConfirm && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">
                       <BadgeCheck className="h-3 w-3" /> Ready
@@ -307,7 +316,9 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
                     <li key={source.key} className="flex items-center justify-between gap-2 text-[12px]">
                       <span className="truncate text-gray-500">{source.accountLabel || "Unnamed"}</span>
                       <span className="shrink-0 font-black text-gray-800">
-                        {naira(Number(String(source.amount).replace(/[^\d.-]/g, "")) || 0)}
+                        {(Number(String(source.amount).replace(/[^\d.-]/g, "")) || 0) > 0
+                          ? naira(Number(String(source.amount).replace(/[^\d.-]/g, "")) || 0)
+                          : <span className="font-semibold text-gray-400">—</span>}
                       </span>
                     </li>
                   ))}
@@ -367,6 +378,16 @@ export default function WeeklyOpeningCashWizard({ view, saving, blocking, onClos
               <button type="button" onClick={onClose}
                 className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[13px] font-black text-gray-700 hover:bg-gray-50">
                 Cancel
+              </button>
+            )}
+            {/* ⚠️ An escape for LOOKING, not for working. It records nothing,
+                does not open the week, and is not remembered - the wizard is
+                back on the next visit. The page behind it runs on a derived
+                opening balance and says so on every screen. */}
+            {blocking && step === 1 && onPreview && (
+              <button type="button" onClick={onPreview}
+                className="!min-h-0 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[13px] font-black text-gray-600 hover:bg-gray-50">
+                Skip for now — just looking
               </button>
             )}
             {step < 3 ? (
