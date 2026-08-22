@@ -18,6 +18,7 @@ import {
   dayRange,
   withRunningBalance
 } from "../lib/cash-flow.js";
+import { summariseReceivables } from "../lib/agent-receivables.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import {
   financialHighlights,
@@ -273,22 +274,51 @@ async function resolveOpeningCash(orgId: string, periodStartIso: string) {
   };
 }
 
-/** Cash collected from customers that agents have not handed over. */
-async function cashStillWithAgents(orgId: string): Promise<number> {
+/**
+ * Cash collected from customers that agents have not handed over.
+ *
+ * ⚠️ This used to be `order.amount − remitted` across every delivered order,
+ * which was badly wrong. An agent DEDUCTS their delivery fee before remitting,
+ * so on a settled order that gap IS the agent's fee: 1,711 of 1,723 settled
+ * orders had a gap equal to logistics_cost to the naira, and ₦8.19m of fees the
+ * agents were entitled to keep was being reported as missing money. It also
+ * ignored remittance_status entirely, so an order the business had already
+ * marked Paid still counted against the agent.
+ *
+ * ⚠️ Only a RECORDED fee is netted off, never an estimate. Monthly-remit agents
+ * do not produce their fees until month end, so their deliveries carry no
+ * logistics_cost for weeks and they owe the FULL amount until the real figure
+ * lands. That is the same reason the provisional logistics accrual is barred
+ * from touching remittance - see agent-receivables.ts.
+ */
+async function agentReceivables(orgId: string) {
   const { data: orders } = await supabase.from("orders")
-    .select("id, amount").eq("org_id", orgId)
+    .select("id, amount, amount_remitted, logistics_cost, remittance_status, agent_id, agent_name_snapshot, updated_at")
+    .eq("org_id", orgId)
     .eq("status", "Delivered").neq("review_hold", true)
+    // ⚠️ NOT .neq("remittance_status", "Paid"). PostgREST renders that as
+    // `<> 'Paid'`, which is NULL for a null status and filters the row OUT -
+    // and an unsettled order is exactly the one carrying no status yet. That
+    // single operator would have hidden every order this figure is about.
+    .or("remittance_status.is.null,remittance_status.neq.Paid")
     .limit(REPORT_ROW_CEILING);
-  const rows = (orders ?? []) as any[];
-  if (rows.length === 0) return 0;
-  const { data: remitted } = await supabase.from("remittance_transactions")
-    .select("order_id, delta_amount").eq("org_id", orgId).limit(REPORT_ROW_CEILING);
-  const paid = new Map<string, number>();
-  ((remitted ?? []) as any[]).forEach((row) => {
-    paid.set(row.order_id, (paid.get(row.order_id) ?? 0) + Number(row.delta_amount ?? 0));
-  });
-  return rows.reduce((sum, order) =>
-    sum + Math.max(0, Number(order.amount ?? 0) - (paid.get(order.id) ?? 0)), 0);
+
+  return summariseReceivables(((orders ?? []) as any[]).map((row) => ({
+    orderId: row.id,
+    agentId: row.agent_id ?? null,
+    agentName: String(row.agent_name_snapshot ?? "").trim(),
+    amount: Number(row.amount ?? 0),
+    // Verified equal to the sum of remittance_transactions (₦31,231,600 both)
+    // and maintained by the remittance module, so one query rather than two.
+    amountRemitted: Number(row.amount_remitted ?? 0),
+    logisticsCost: Number(row.logistics_cost ?? 0),
+    remittanceStatus: row.remittance_status ?? null,
+    settledOn: row.updated_at ? lagosDayOf(row.updated_at) : null
+  })));
+}
+
+async function cashStillWithAgents(orgId: string): Promise<number> {
+  return (await agentReceivables(orgId)).totalOwed;
 }
 
 // ── GET /api/cash-flow ────────────────────────────────────
@@ -307,7 +337,7 @@ router.get("/", async (req, res) => {
       resolveOpeningCash(orgId, fromIso),
       loadRemittances(orgId, fromIso, toIso),
       loadExpenses(orgId, from, to),
-      cashStillWithAgents(orgId)
+      agentReceivables(orgId)
     ]);
 
     const cashIn = remits.reduce((sum, row) => sum + row.cashIn, 0);
@@ -346,7 +376,16 @@ router.get("/", async (req, res) => {
       netCashFlow: cashIn - cashOut,
       closingCash: opening.amount + cashIn - cashOut,
       netChangeVsPreviousPct: changeVsPrevious(cashIn - cashOut, prevNet),
-      cashStillWithAgents: held,
+      cashStillWithAgents: held.totalOwed,
+      // Shown alongside the figure so it can be explained rather than trusted:
+      // an agent awaiting their month-end fee owes the gross amount, which is
+      // why the total can look high while nothing is actually late.
+      agentReceivables: {
+        orderCount: held.orderCount,
+        agentCount: held.agentCount,
+        ordersAwaitingFee: held.ordersAwaitingFee,
+        topAgents: held.byAgent.slice(0, 4)
+      },
       trend: buildDailyTrend(
         dayRange(from, to),
         remits.map((row) => ({ day: lagosDayOf(row.at), amount: row.cashIn })),

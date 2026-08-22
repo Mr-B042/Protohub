@@ -36,6 +36,11 @@ export type CashFlowView = {
   cashIn: number; cashOut: number; netCashFlow: number; closingCash: number;
   netChangeVsPreviousPct: number | null;
   cashStillWithAgents: number;
+  /** Context for the figure above, so it can be explained not just trusted. */
+  agentReceivables?: {
+    orderCount: number; agentCount: number; ordersAwaitingFee: number;
+    topAgents: Array<{ agentName: string; orders: number; owed: number; ordersAwaitingFee: number; oldestSettledOn: string | null }>;
+  };
   trend: Array<{ day: string; cashIn: number; cashOut: number; net: number }>;
   cashInBreakdown: { slices: Array<{ label: string; amount: number; sharePct: number }>; total: number };
   cashOutBreakdown: { slices: Array<{ label: string; amount: number; sharePct: number }>; total: number };
@@ -344,15 +349,42 @@ export default function CashFlowPage(props: CashFlowPageProps) {
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600"><Users className="h-5 w-5" /></span>
             <div className="min-w-0">
               <p className="m-0 text-2xl font-black text-amber-600">{naira(view?.cashStillWithAgents ?? 0)}</p>
-              <p className="m-0 text-[11px] font-semibold text-gray-400">Not yet remitted to the company</p>
+              <p className="m-0 text-[11px] font-semibold text-gray-400">
+                {view?.agentReceivables
+                  ? `${view.agentReceivables.orderCount} order${view.agentReceivables.orderCount === 1 ? "" : "s"} across ${view.agentReceivables.agentCount} agent${view.agentReceivables.agentCount === 1 ? "" : "s"}`
+                  : "Not yet remitted to the company"}
+              </p>
             </div>
           </div>
           <div className="mt-3 flex gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
             <p className="m-0 text-[11px] font-medium leading-4 text-amber-900">
-              This is cash collected from customers but not yet remitted by agents. It is already counted as profit, but it is not in the bank.
+              Cash collected from customers and not yet handed over. Already counted as profit, but not in the bank.
+              Each agent&rsquo;s delivery fee is excluded — this is only what is owed to the company.
             </p>
           </div>
+          {/* An agent whose month-end fee has not landed owes the GROSS amount,
+              so the total can look high while nothing is actually late. Said
+              here rather than leaving the reader to wonder. */}
+          {(view?.agentReceivables?.ordersAwaitingFee ?? 0) > 0 && (
+            <p className="m-0 mt-2 text-[11px] font-medium leading-4 text-gray-500">
+              {view!.agentReceivables!.ordersAwaitingFee} of these are still awaiting a delivery fee, so they show at
+              the full order value until the fee is recorded at month end.
+            </p>
+          )}
+          {(view?.agentReceivables?.topAgents.length ?? 0) > 0 && (
+            <ul className="m-0 mt-2.5 list-none space-y-1 border-t border-gray-100 p-0 pt-2.5">
+              {view!.agentReceivables!.topAgents.map((agent) => (
+                <li key={agent.agentName} className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-[11px] font-semibold text-gray-600">
+                    {agent.agentName}
+                    <span className="ml-1 font-medium text-gray-400">({agent.orders})</span>
+                  </span>
+                  <span className="shrink-0 text-[11px] font-black text-gray-800">{naira(agent.owed)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           <button type="button" onClick={props.onViewAgentReceivables}
             className="!min-h-0 mt-3 inline-flex w-full items-center justify-between rounded-lg bg-transparent px-0 py-1 text-[13px] font-bold text-[#1F8FE0] hover:underline">
             View agent receivables <ChevronRight className="h-4 w-4" />
