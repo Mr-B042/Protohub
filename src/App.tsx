@@ -215,6 +215,7 @@ import {
 } from "./pages/SalesCloserWorkspacePage";
 import AgentAccessPage from "./pages/AgentAccessPage";
 import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalanceRow } from "./pages/CashFlowPage";
+import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
 import { SalesClosersOwnerPage } from "./pages/SalesClosersOwnerPage";
 
 const ORG_MANIFEST_PATH = "/org-manifest.webmanifest";
@@ -9449,6 +9450,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cashOpeningSaving, setCashOpeningSaving] = useState(false);
   const [bankAccountsView, setBankAccountsView] = useState<BankAccountsView | null>(null);
   const [bankAccountSaving, setBankAccountSaving] = useState(false);
+  const [weeklyOpening, setWeeklyOpening] = useState<WeeklyOpeningView | null>(null);
+  const [weeklyOpeningOpen, setWeeklyOpeningOpen] = useState(false);
+  const [weeklyOpeningSaving, setWeeklyOpeningSaving] = useState(false);
   // ── Batch unit-economics (Profitability tab) ──
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -9530,6 +9534,30 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } finally { setCashFlowLoading(false); }
   }, [cashFlowRange]);
 
+  // ⚠️ A new accounting week must be opened before Cash Flow is usable. An
+  // opening balance guessed after the fact is worthless, and last week's
+  // closing cash is only checkable if this week's opening was actually
+  // counted - so the wizard blocks rather than nags.
+  const loadWeeklyOpening = useCallback(async () => {
+    try {
+      const result = await cashFlowApi.weeklyOpening();
+      setWeeklyOpening(result);
+      if (result.needsOpening) setWeeklyOpeningOpen(true);
+    } catch { /* the page still renders; the banner prompts instead */ }
+  }, []);
+
+  const saveWeeklyOpening = async (body: { weekStart: string; reason: string; sources: Array<{ bankAccountId: string | null; accountLabel: string; amount: number }> }) => {
+    setWeeklyOpeningSaving(true);
+    try {
+      const result = await cashFlowApi.saveWeeklyOpening(body);
+      showToast(`Opening cash set for the week: ₦${Math.round(result.total).toLocaleString("en-NG")}.`);
+      setWeeklyOpeningOpen(false);
+      await Promise.all([loadWeeklyOpening(), loadCashFlow(cashFlowPeriod), loadBankAccounts()]);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not save the week's opening cash.");
+    } finally { setWeeklyOpeningSaving(false); }
+  };
+
   const loadBankAccounts = useCallback(async () => {
     try {
       setBankAccountsView(await cashFlowApi.accounts());
@@ -9569,8 +9597,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   useEffect(() => {
     if (activePage === "Finance & Accounting" && financeTab === "Profitability") void loadBatches();
-    if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") { void loadCashFlow(cashFlowPeriod); void loadBankAccounts(); }
-  }, [activePage, financeTab, cashFlowPeriod, loadCashFlow, loadBankAccounts]);
+    if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") { void loadCashFlow(cashFlowPeriod); void loadBankAccounts(); void loadWeeklyOpening(); }
+  }, [activePage, financeTab, cashFlowPeriod, loadCashFlow, loadBankAccounts, loadWeeklyOpening]);
   useEffect(() => {
     setBatchAutofillMeta(null);
     if (selectedBatchId) void loadBatchEconomics(selectedBatchId);
@@ -79648,7 +79676,34 @@ ${waybillLineItems(w).length > 1
                 </motion.section>
               )}
 
-              {financeTab === "Cash Flow" && currentRole === "Owner" && (
+              {financeTab === "Cash Flow" && currentRole === "Owner" && weeklyOpening?.needsOpening && !weeklyOpeningOpen && (
+                <div className="rounded-2xl border border-amber-300 bg-amber-50 px-5 py-6 text-center">
+                  <h3 className="m-0 text-base font-black text-amber-900">This week has not been opened yet</h3>
+                  <p className="m-0 mx-auto mt-1 max-w-lg text-[13px] font-medium leading-5 text-amber-800">
+                    Cash Flow needs a counted opening balance before it can show anything meaningful for
+                    {" "}{new Date(`${weeklyOpening.weekStart}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric" })}
+                    {" – "}{new Date(`${weeklyOpening.weekEnd}T12:00:00Z`).toLocaleDateString("en-NG", { month: "short", day: "numeric" })}.
+                  </p>
+                  <button type="button" onClick={() => setWeeklyOpeningOpen(true)}
+                    className="!min-h-0 mt-3 rounded-xl bg-amber-600 px-4 py-2.5 text-[13px] font-black text-white hover:bg-amber-700">
+                    Set opening cash for this week
+                  </button>
+                </div>
+              )}
+
+              {financeTab === "Cash Flow" && currentRole === "Owner" && weeklyOpening && weeklyOpeningOpen && (
+                <WeeklyOpeningCashWizard
+                  view={weeklyOpening}
+                  saving={weeklyOpeningSaving}
+                  // An unopened week cannot be dismissed - the page behind it
+                  // has no verified starting figure to be right about.
+                  blocking={weeklyOpening.needsOpening}
+                  onClose={() => setWeeklyOpeningOpen(false)}
+                  onSave={saveWeeklyOpening}
+                />
+              )}
+
+              {financeTab === "Cash Flow" && currentRole === "Owner" && !weeklyOpening?.needsOpening && (
                 <CashFlowPage
                   view={cashFlowView}
                   loading={cashFlowLoading}
@@ -79681,6 +79736,7 @@ ${waybillLineItems(w).length > 1
                     },
                     onRefresh: () => void loadBankAccounts()
                   }}
+                  onEditWeeklyOpening={() => setWeeklyOpeningOpen(true)}
                   onDownloadReport={() => {
                     const rows = cashFlowView?.transactions ?? [];
                     if (rows.length === 0) { showToast("Nothing to download for this period."); return; }

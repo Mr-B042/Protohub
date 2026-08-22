@@ -133,6 +133,28 @@ async function netBetween(orgId: string, fromIso: string, toIso: string): Promis
  * number be read as money on hand.
  */
 async function resolveOpeningCash(orgId: string, periodStartIso: string) {
+  // A counted weekly opening beats everything else: it is the figure someone
+  // physically checked against the accounts on the first day of this week.
+  const weekStartKey = lagosDayOf(periodStartIso);
+  const { data: weekly } = await supabase
+    .from("cash_opening_balances")
+    .select("id, amount, effective_at, method, reason, set_by_name, week_start")
+    .eq("org_id", orgId).eq("week_start", weekStartKey).maybeSingle();
+  if (weekly) {
+    return {
+      amount: Number(weekly.amount ?? 0),
+      anchored: true,
+      anchor: {
+        id: weekly.id,
+        amount: Number(weekly.amount ?? 0),
+        effectiveAt: weekly.effective_at,
+        method: weekly.method,
+        reason: weekly.reason ?? "",
+        setByName: weekly.set_by_name ?? ""
+      }
+    };
+  }
+
   // ⚠️ Bank accounts win when they exist. They are the cash Protohub can
   // actually reach - Opay and Moniepoint - so once they are set up they are
   // THE source, and the company-wide anchor below is only a fallback for an
@@ -647,6 +669,147 @@ router.delete("/accounts/:id", requireRole("Owner"), async (req, res) => {
     res.json({ ok: true, deleted: account.name });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not remove that account." });
+  }
+});
+
+// ── Weekly opening cash ───────────────────────────────────
+// Protohub accounts weekly, so each week starts from a counted figure rather
+// than a balance that has drifted since whenever it was last set.
+
+/** Sunday-anchored, matching every other weekly figure in this app. */
+function sundayWeekStart(dateKey: string): string {
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - date.getUTCDay());
+  return date.toISOString().slice(0, 10);
+}
+function addDaysKey(dateKey: string, days: number): string {
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+// ── GET /api/cash-flow/weekly-opening?weekStart= ──────────
+router.get("/weekly-opening", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const requested = String(req.query.weekStart ?? "");
+    const weekStart = DATE_KEY.test(requested)
+      ? requested
+      : sundayWeekStart(lagosDayOf(new Date().toISOString()));
+    const weekEnd = addDaysKey(weekStart, 6);
+    const previousStart = addDaysKey(weekStart, -7);
+
+    const [{ data: existing }, { data: accounts }] = await Promise.all([
+      supabase.from("cash_opening_balances")
+        .select("id, amount, effective_at, method, reason, set_by_name, week_start")
+        .eq("org_id", orgId).eq("week_start", weekStart).maybeSingle(),
+      supabase.from("bank_accounts")
+        .select("id, name, bank_name, account_type, account_number_last4, is_primary")
+        .eq("org_id", orgId).eq("active", true)
+        .order("is_primary", { ascending: false }).order("created_at", { ascending: true })
+    ]);
+
+    let sources: Array<{ bankAccountId: string | null; accountLabel: string; amount: number }> = [];
+    if (existing) {
+      const { data: rows } = await supabase.from("cash_opening_balance_sources")
+        .select("bank_account_id, account_label, amount").eq("opening_balance_id", existing.id);
+      sources = ((rows ?? []) as any[]).map((row) => ({
+        bankAccountId: row.bank_account_id ?? null,
+        accountLabel: row.account_label ?? "",
+        amount: Number(row.amount ?? 0)
+      }));
+    }
+
+    // Last week's CLOSING cash - its opening plus everything that moved. This
+    // is what the new opening should be checked against: a large unexplained
+    // gap means either a miscount or cash that never got recorded.
+    const previousOpening = await resolveOpeningCash(orgId, startOfLagosDay(previousStart));
+    const previousNet = await netBetween(orgId, startOfLagosDay(previousStart), startOfLagosDay(weekStart));
+
+    res.json({
+      weekStart,
+      weekEnd,
+      /** True when this week has never been opened - the page blocks on it. */
+      needsOpening: !existing,
+      existing: existing ? {
+        id: existing.id,
+        amount: Number(existing.amount ?? 0),
+        effectiveAt: existing.effective_at,
+        reason: existing.reason ?? "",
+        setByName: existing.set_by_name ?? "",
+        sources
+      } : null,
+      accounts: ((accounts ?? []) as any[]).map((row) => ({
+        id: row.id,
+        name: row.name,
+        bankName: row.bank_name ?? "",
+        accountType: row.account_type,
+        accountNumberLast4: row.account_number_last4 ?? "",
+        isPrimary: row.is_primary === true
+      })),
+      previousWeek: {
+        from: previousStart,
+        to: addDaysKey(previousStart, 6),
+        closingCash: previousOpening.amount + previousNet
+      },
+      /** The week start the rest of the app would use, for a mismatch warning. */
+      suggestedWeekStart: sundayWeekStart(weekStart)
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the week's opening cash." });
+  }
+});
+
+const WeeklyOpeningSchema = z.object({
+  weekStart: z.string().regex(DATE_KEY),
+  reason: z.string().trim().max(250).default(""),
+  sources: z.array(z.object({
+    bankAccountId: z.string().uuid().nullable().optional(),
+    accountLabel: z.string().trim().min(1).max(80),
+    amount: z.coerce.number().min(0).max(1_000_000_000_000)
+  })).min(1, "Add at least one cash source.").max(20)
+}).strict();
+
+router.post("/weekly-opening", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = WeeklyOpeningSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const body = parsed.data;
+    const total = body.sources.reduce((sum, source) => sum + Number(source.amount ?? 0), 0);
+
+    const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
+    // One anchor per week: re-opening a week corrects it rather than stacking a
+    // second figure that only wins on ordering.
+    const { data: existing } = await supabase.from("cash_opening_balances")
+      .select("id").eq("org_id", orgId).eq("week_start", body.weekStart).maybeSingle();
+    if (existing) await supabase.from("cash_opening_balances").delete().eq("id", existing.id);
+
+    const { data: saved, error } = await supabase.from("cash_opening_balances").insert({
+      org_id: orgId,
+      week_start: body.weekStart,
+      effective_at: startOfLagosDay(body.weekStart),
+      amount: total,
+      method: "manual",
+      reason: body.reason || `Counted across ${body.sources.length} cash source${body.sources.length === 1 ? "" : "s"}.`,
+      set_by: req.user!.id,
+      set_by_name: String(actor?.name ?? "").trim() || "Unknown"
+    }).select("id").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    const { error: sourceError } = await supabase.from("cash_opening_balance_sources").insert(
+      body.sources.map((source) => ({
+        opening_balance_id: saved.id,
+        bank_account_id: source.bankAccountId ?? null,
+        account_label: source.accountLabel,
+        amount: source.amount
+      }))
+    );
+    if (sourceError) { res.status(500).json({ error: sourceError.message }); return; }
+
+    res.json({ id: saved.id, weekStart: body.weekStart, total });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not save the week's opening cash." });
   }
 });
 

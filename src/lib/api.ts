@@ -1194,6 +1194,7 @@ export type DeliveryGoalsView = {
 
 // ── Cash Flow ─────────────────────────────────────────────
 import type { CashFlowView, OpeningBalanceRow } from "../pages/CashFlowPage";
+import type { WeeklyOpeningView } from "../pages/WeeklyOpeningCashWizard";
 
 export type BankAccountRow = {
   id: string; name: string; accountType: "bank" | "cash";
@@ -1225,6 +1226,10 @@ export const cashFlowApi = {
   transfer: (body: unknown) => post<{ id: string }>("/api/cash-flow/transfers", body),
   clearTransfer: (id: string) => post<{ ok: boolean }>(`/api/cash-flow/transfers/${id}/clear`, {}),
   deleteAccount: (id: string) => del<{ ok: boolean; deleted: string }>(`/api/cash-flow/accounts/${id}`),
+  weeklyOpening: (weekStart?: string) =>
+    get<WeeklyOpeningView>(`/api/cash-flow/weekly-opening${weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : ""}`),
+  saveWeeklyOpening: (body: { weekStart: string; reason: string; sources: Array<{ bankAccountId: string | null; accountLabel: string; amount: number }> }) =>
+    post<{ id: string; weekStart: string; total: number }>("/api/cash-flow/weekly-opening", body),
   assignAccount: (body: unknown) => post<{ remittances: number; expenses: number }>("/api/cash-flow/assign-account", body),
   openingHistory: () => get<{ rows: OpeningBalanceRow[] }>("/api/cash-flow/opening-balances"),
   setOpeningCash: (body: { amount: number; effectiveAt: string; method: "manual" | "carry_forward"; reason: string }) =>
