@@ -20,6 +20,12 @@ import {
 } from "../lib/cash-flow.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
 import {
+  financialHighlights,
+  healthChecks,
+  rankSlices,
+  weekOverWeek
+} from "../lib/weekly-overview.js";
+import {
   CLOSE_CHECKS,
   freeOperatingCash,
   summariseClose,
@@ -2575,6 +2581,178 @@ router.post("/period-close/reopen", requireRole("Owner"), async (req, res) => {
     res.json({ ok: true });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not reopen that week." });
+  }
+});
+
+// ══ Weekly Financial Control Overview ═════════════════════
+//
+// ⚠️ Every figure is sourced from the tab that owns it and none is recomputed
+// with different rules. An overview that quietly disagrees with the page it
+// summarises is worse than no overview at all.
+
+/** One week's raw shape, used for this week and last so they compare like for like. */
+async function weekShape(orgId: string, weekStart: string) {
+  const weekEnd = addDaysKey(weekStart, 6);
+  const fromIso = startOfLagosDay(weekStart);
+  const toIso = endOfLagosDay(weekEnd);
+
+  const [opening, remits, spends, { data: deliveredOrders }, { data: verification }] = await Promise.all([
+    resolveOpeningCash(orgId, fromIso),
+    loadRemittances(orgId, fromIso, toIso),
+    loadExpenses(orgId, weekStart, weekEnd),
+    supabase.from("orders")
+      .select("id, amount, currency, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines")
+      .eq("org_id", orgId).eq("status", "Delivered").neq("review_hold", true)
+      .gte("updated_at", fromIso).lt("updated_at", toIso).limit(REPORT_ROW_CEILING),
+    supabase.from("weekly_cash_verifications")
+      .select("expected_closing, actual_closing, status").eq("org_id", orgId).eq("week_start", weekStart).maybeSingle()
+  ]);
+
+  const orders = (deliveredOrders ?? []) as any[];
+  const productIds = [...new Set(orders.flatMap((order) => orderInventoryLinesFromRow(order).map((line) => line.productId)))]
+    .filter(Boolean) as string[];
+  const pricingMap = await loadClosePricingMap(productIds);
+
+  const cashIn = remits.reduce((sum, row) => sum + row.cashIn, 0);
+  const cashOut = spends.reduce((sum, row) => sum + row.cashOut, 0);
+  const revenue = orders.reduce((sum, order) => sum + (Number(order.amount ?? 0) || 0), 0);
+  const cogs = orders.reduce((sum, order) =>
+    sum + orderInventoryLinesFromRow(order).reduce(
+      (lineSum, line) => lineSum + line.quantity * closeUnitCost(pricingMap, line.productId, order.currency), 0), 0);
+
+  const inByCategory = new Map<string, number>();
+  remits.forEach((row) => inByCategory.set(row.source, (inByCategory.get(row.source) ?? 0) + row.cashIn));
+  const outByCategory = new Map<string, number>();
+  spends.forEach((row) => outByCategory.set(row.category, (outByCategory.get(row.category) ?? 0) + row.cashOut));
+
+  const verified = !!verification && verification.status !== "draft";
+  const actualClosing = verified ? Number(verification!.actual_closing ?? 0) : 0;
+  const variance = verified
+    ? actualClosing - Number(verification!.expected_closing ?? 0)
+    : 0;
+
+  return {
+    weekStart, weekEnd,
+    openingCash: opening.amount,
+    openingCounted: opening.source === "weekly_count",
+    cashIn, cashOut,
+    netCashFlow: cashIn - cashOut,
+    expectedClosing: opening.amount + cashIn - cashOut,
+    actualClosing, variance, verified,
+    revenue, cogs,
+    deliveredValue: revenue,
+    inByCategory, outByCategory
+  };
+}
+
+// ── GET /api/cash-flow/weekly-overview?weekStart= ─────────
+router.get("/weekly-overview", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const requested = String(req.query.weekStart ?? "");
+    const weekStart = sundayWeekStart(
+      DATE_KEY.test(requested) ? requested : lagosDayOf(new Date().toISOString())
+    );
+    const previousStart = addDaysKey(weekStart, -7);
+
+    const [current, previous, liquid, agentsCod, { data: reserveRows }, { data: accountRows }] = await Promise.all([
+      weekShape(orgId, weekStart),
+      weekShape(orgId, previousStart),
+      totalLiquidCash(orgId),
+      cashStillWithAgents(orgId),
+      supabase.from("cash_reserves").select("amount, released_amount, status").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
+      supabase.from("bank_accounts").select("id, name, account_type, opening_balance")
+        .eq("org_id", orgId).eq("active", true)
+    ]);
+
+    const reservedCash = ((reserveRows ?? []) as any[])
+      .filter((row) => row.status !== "cancelled")
+      .reduce((sum, row) => sum + Math.max(Number(row.amount ?? 0) - Number(row.released_amount ?? 0), 0), 0);
+
+    // Split the liquid total the way the design's position panel does.
+    const balances = await accountBalancesAsAt(orgId, endOfLagosDay(current.weekEnd));
+    const accountTypeById = new Map(((accountRows ?? []) as any[]).map((row) => [row.id, row.account_type]));
+    const bankTotal = balances.accounts
+      .filter((row) => accountTypeById.get(row.id) !== "cash")
+      .reduce((sum, row) => sum + row.systemBalance, 0);
+    const cashInHand = balances.accounts
+      .filter((row) => accountTypeById.get(row.id) === "cash")
+      .reduce((sum, row) => sum + row.systemBalance, 0);
+
+    // Six weeks of variance, oldest first, for the trend line. Only counted
+    // weeks appear - an uncounted week has no variance, and plotting zero
+    // would draw a flat healthy line through weeks nobody ever checked.
+    const trendStarts = Array.from({ length: 6 }, (_, index) => addDaysKey(weekStart, -7 * (5 - index)));
+    const { data: trendRows } = await supabase.from("weekly_cash_verifications")
+      .select("week_start, expected_closing, actual_closing, status")
+      .eq("org_id", orgId).in("week_start", trendStarts);
+    const trendByWeek = new Map(((trendRows ?? []) as any[]).map((row) => [row.week_start, row]));
+    const varianceTrend = trendStarts.map((start) => {
+      const row = trendByWeek.get(start);
+      const counted = !!row && row.status !== "draft";
+      return {
+        weekStart: start,
+        weekEnd: addDaysKey(start, 6),
+        variance: counted ? Number(row.actual_closing ?? 0) - Number(row.expected_closing ?? 0) : null,
+        counted
+      };
+    });
+
+    const opexRatio = current.revenue > 0
+      ? Math.round((current.cashOut / current.revenue) * 10000) / 100 : 0;
+    const collectionPct = current.deliveredValue > 0
+      ? Math.round((current.cashIn / current.deliveredValue) * 10000) / 100 : 0;
+    const freeCash = liquid - reservedCash;
+
+    res.json({
+      weekStart: current.weekStart,
+      weekEnd: current.weekEnd,
+      previousWeekStart: previous.weekStart,
+      headline: {
+        netProfit: weekOverWeek(current.revenue - current.cogs - current.cashOut,
+          previous.revenue - previous.cogs - previous.cashOut),
+        cashIn: weekOverWeek(current.cashIn, previous.cashIn),
+        cashOut: weekOverWeek(current.cashOut, previous.cashOut),
+        expectedClosing: weekOverWeek(current.expectedClosing, previous.expectedClosing),
+        cashVariance: current.variance,
+        varianceVerified: current.verified
+      },
+      summary: [
+        { label: "Opening Cash", ...weekOverWeek(current.openingCash, previous.openingCash) },
+        { label: "Cash In (Received)", ...weekOverWeek(current.cashIn, previous.cashIn) },
+        { label: "Cash Out (Spent)", ...weekOverWeek(current.cashOut, previous.cashOut) },
+        { label: "Closing Cash (Expected)", ...weekOverWeek(current.expectedClosing, previous.expectedClosing) },
+        { label: "Closing Cash (Actual)", ...weekOverWeek(current.actualClosing, previous.actualClosing) },
+        { label: "Cash Variance", ...weekOverWeek(current.variance, previous.variance) }
+      ],
+      cashPosition: {
+        bankAccounts: bankTotal,
+        cashInHand,
+        codWithAgents: agentsCod,
+        reservedCash,
+        freeOperatingCash: freeCash,
+        totalLiquid: liquid
+      },
+      health: healthChecks({
+        freeOperatingCash: freeCash,
+        netCashFlow: current.netCashFlow,
+        operatingExpenseRatioPct: opexRatio,
+        collectionEfficiencyPct: collectionPct,
+        cashVariance: current.variance,
+        varianceVerified: current.verified,
+        hasRevenue: current.revenue > 0
+      }),
+      varianceTrend,
+      highlights: financialHighlights(
+        { cashIn: current.cashIn, cashOut: current.cashOut, revenue: current.revenue, cogs: current.cogs, deliveredValue: current.deliveredValue },
+        { cashIn: previous.cashIn, cashOut: previous.cashOut, revenue: previous.revenue, cogs: previous.cogs, deliveredValue: previous.deliveredValue }
+      ),
+      topCashIn: rankSlices(current.inByCategory).slice(0, 5),
+      topCashOut: rankSlices(current.outByCategory).slice(0, 5),
+      openingCounted: current.openingCounted
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the weekly overview." });
   }
 });
 

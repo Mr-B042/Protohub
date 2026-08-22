@@ -3,7 +3,7 @@ import {
   CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis
 } from "recharts";
 import {
-  ArrowDownLeft, ArrowUpRight, Boxes, CalendarDays, ChevronLeft, ChevronRight, Download,
+  ArrowDownLeft, ArrowUpRight, Boxes, CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Download,
   Eye, Filter, Info, Landmark, Lock, Pencil, RefreshCw, Search, ShieldCheck, TrendingUp, Users, Wallet, X
 } from "lucide-react";
 import BankAccountsTab, { type BankAccountsTabProps } from "./BankAccountsTab";
@@ -12,6 +12,7 @@ import ReservesTab, { type ReservesTabProps } from "./ReservesTab";
 import InventoryValueTab, { type InventoryValueTabProps } from "./InventoryValueTab";
 import AccountReconciliationTab, { type AccountReconciliationTabProps } from "./AccountReconciliationTab";
 import PeriodCloseTab, { type PeriodCloseTabProps } from "./PeriodCloseTab";
+import WeeklyOverviewTab, { type WeeklyOverviewTabProps } from "./WeeklyOverviewTab";
 
 // ⚠️ Cash, not profit. Profit is recognised when an order is Delivered; the
 // money arrives when the agent remits, days later and sometimes never. A week
@@ -103,12 +104,15 @@ export type CashFlowPageProps = {
   accountReconciliation: AccountReconciliationTabProps;
   /** Period Close: the week is finished and the books are fixed. */
   periodClose: PeriodCloseTabProps;
+  /** Weekly Overview: the whole week's position, sourced from the tabs above. */
+  weeklyOverview: WeeklyOverviewTabProps;
 };
 
-const CASH_FLOW_TABS = ["Overview", "Bank Accounts", "Reconciliation", "Account Reconciliation", "Reserves", "Inventory Value", "Period Close"] as const;
+const CASH_FLOW_TABS = ["Overview", "Weekly Overview", "Bank Accounts", "Reconciliation", "Account Reconciliation", "Reserves", "Inventory Value", "Period Close"] as const;
 type CashFlowTab = (typeof CASH_FLOW_TABS)[number];
 const TAB_ICON: Record<CashFlowTab, typeof TrendingUp> = {
   "Overview": TrendingUp,
+  "Weekly Overview": ClipboardList,
   "Bank Accounts": Wallet,
   "Reconciliation": ShieldCheck,
   "Account Reconciliation": Landmark,
@@ -209,6 +213,10 @@ export default function CashFlowPage(props: CashFlowPageProps) {
         <AccountReconciliationTab {...props.accountReconciliation} />
       ) : topTab === "Period Close" ? (
         <PeriodCloseTab {...props.periodClose} />
+      ) : topTab === "Weekly Overview" ? (
+        // The close lives on its own tab, so the overview's button switches to
+        // it rather than opening a second copy that could drift out of step.
+        <WeeklyOverviewTab {...props.weeklyOverview} onOpenClose={() => setTopTab("Period Close")} />
       ) : (
       <>
       <div className="flex flex-wrap items-center justify-between gap-3">
