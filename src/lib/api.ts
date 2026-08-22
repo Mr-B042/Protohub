@@ -1351,6 +1351,56 @@ export type InventoryValueView = {
   slowMovingWindowDays: number;
 };
 
+export type AccountReconciliationRow = {
+  id: string; bankAccountId: string; accountName: string; bankName: string;
+  accountType: "bank" | "cash"; accountNumberLast4: string;
+  statementDate: string; statementBalance: number; bookBalance: number;
+  adjustmentCount: number;
+  /** Statement minus books, after adjustments. Negative = bank holds less. */
+  remainingDifference: number;
+  settled: boolean;
+  status: "in_progress" | "reconciled";
+  notes: string; reconciledByName: string; reconciledAt: string | null; createdAt: string;
+};
+
+export type ReconBookItem = {
+  sourceType: "expense" | "remittance" | "transfer";
+  sourceId: string; occurredOn: string; description: string;
+  amount: number; direction: "in" | "out";
+};
+
+export type ReconAdjustment = {
+  id: string; occurredOn: string | null; description: string;
+  amount: number; direction: "in" | "out";
+  kind: "bank_charge" | "interest" | "vat" | "transfer" | "other";
+};
+
+export type AccountReconciliationsView = {
+  reconciliations: AccountReconciliationRow[];
+  summary: {
+    total: number; reconciled: number; inProgress: number; unreconciled: number;
+    reconciledPct: number; inProgressPct: number; unreconciledPct: number;
+    totalVariance: number; varianceCount: number;
+    bands: Record<"matched" | "small" | "large", { amount: number; count: number; sharePct: number }>;
+  };
+  accounts: Array<{ id: string; name: string; bankName: string; accountType: "bank" | "cash"; accountNumberLast4: string }>;
+};
+
+export type ReconciliationWorkspace = {
+  account: { id: string; name: string; bankName: string; accountType: "bank" | "cash"; accountNumberLast4: string };
+  statementDate: string; periodFrom: string; bookBalance: number;
+  existing: {
+    id: string; statementBalance: number; bookBalance: number;
+    status: "in_progress" | "reconciled"; notes: string;
+    reconciledByName: string; reconciledAt: string | null;
+  } | null;
+  items: ReconBookItem[];
+  unmatched: ReconBookItem[];
+  matches: Array<{ sourceType: string; sourceId: string }>;
+  adjustments: ReconAdjustment[];
+  lastReconciled: { statementDate: string; at: string | null; byName: string } | null;
+};
+
 export const cashFlowApi = {
   summary: (from: string, to: string) =>
     get<CashFlowView>(`/api/cash-flow?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
@@ -1395,7 +1445,25 @@ export const cashFlowApi = {
     weekStart: string; status: "draft" | "final"; notes: string;
     lines: Array<{ productId: string | null; productName: string; units: number; unitCost: number; condition: StockConditionKey; note: string }>;
   }) => post<{ id: string; weekStart: string; totalUnits: number; totalValue: number }>(
-    "/api/cash-flow/inventory/snapshot", body)
+    "/api/cash-flow/inventory/snapshot", body),
+  accountReconciliations: () => get<AccountReconciliationsView>("/api/cash-flow/account-reconciliations"),
+  reconciliationWorkspace: (accountId: string, statementDate: string) =>
+    get<ReconciliationWorkspace>(
+      `/api/cash-flow/account-reconciliations/workspace?accountId=${encodeURIComponent(accountId)}&statementDate=${encodeURIComponent(statementDate)}`),
+  saveAccountReconciliation: (body: {
+    bankAccountId: string; statementDate: string; statementBalance: number;
+    status: "in_progress" | "reconciled"; notes: string;
+    matches: Array<{ sourceType: "expense" | "remittance" | "transfer"; sourceId: string }>;
+  }) => post<{ id: string; bookBalance: number; remainingDifference: number; settled: boolean }>(
+    "/api/cash-flow/account-reconciliations", body),
+  addReconAdjustment: (id: string, body: {
+    occurredOn: string | null; description: string; amount: number;
+    direction: "in" | "out"; kind: "bank_charge" | "interest" | "vat" | "transfer" | "other";
+  }) => post<{ ok: boolean }>(`/api/cash-flow/account-reconciliations/${id}/adjustments`, body),
+  removeReconAdjustment: (id: string, adjustmentId: string) =>
+    del<{ ok: boolean }>(`/api/cash-flow/account-reconciliations/${id}/adjustments/${adjustmentId}`),
+  reopenAccountReconciliation: (id: string) =>
+    post<{ ok: boolean }>(`/api/cash-flow/account-reconciliations/${id}/reopen`, {})
 };
 
 export const deliveryGoalsApi = {
