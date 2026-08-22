@@ -18,6 +18,12 @@ import {
   dayRange,
   withRunningBalance
 } from "../lib/cash-flow.js";
+import {
+  investigationProgress,
+  reconciliationStatus,
+  summariseVerification,
+  VARIANCE_REASONS
+} from "../lib/weekly-reconciliation.js";
 
 const router = Router();
 // ⚠️ OWNER ONLY, deliberately narrower than the rest of Finance & Accounting.
@@ -412,13 +418,19 @@ const rowToAccount = (row: any) => ({
 });
 
 /** Every movement ever, so an account balance reflects its whole life. */
-async function loadAllMovements(orgId: string) {
-  const [{ data: remits }, { data: spends }] = await Promise.all([
-    supabase.from("remittance_transactions")
-      .select("bank_account_id, delta_amount").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
-    supabase.from("expenses")
-      .select("bank_account_id, amount").eq("org_id", orgId).limit(REPORT_ROW_CEILING)
-  ]);
+async function loadAllMovements(orgId: string, untilIso?: string) {
+  // `untilIso` bounds the movements to those that had happened by an instant,
+  // which is what a WEEK-END balance means. Without it the balance is "now",
+  // and reconciling last week against today's account totals would compare two
+  // different moments and manufacture a variance out of thin air.
+  const untilKey = untilIso ? lagosDayOf(new Date(new Date(untilIso).getTime() - 1).toISOString()) : null;
+  const remitQuery = supabase.from("remittance_transactions")
+    .select("bank_account_id, delta_amount").eq("org_id", orgId).limit(REPORT_ROW_CEILING);
+  const spendQuery = supabase.from("expenses")
+    .select("bank_account_id, amount").eq("org_id", orgId).limit(REPORT_ROW_CEILING);
+  if (untilIso) remitQuery.lt("received_at", untilIso);
+  if (untilKey) spendQuery.lte("date", untilKey);
+  const [{ data: remits }, { data: spends }] = await Promise.all([remitQuery, spendQuery]);
   return [
     ...((remits ?? []) as any[]).map((row) => ({
       accountId: row.bank_account_id ?? null, cashIn: Number(row.delta_amount ?? 0), cashOut: 0
@@ -817,6 +829,442 @@ router.post("/weekly-opening", requireRole("Owner"), async (req, res) => {
     res.json({ id: savedId, weekStart: body.weekStart, total });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not save the week's opening cash." });
+  }
+});
+
+// ══ Weekly Reconciliation ═════════════════════════════════
+//
+// Cash Flow reports what was RECORDED. This asks the other question - what is
+// actually in the accounts - and the gap between the two is the point of the
+// whole tab. A week that reconciles to zero means the books can be trusted; a
+// week that does not means money moved without being written down.
+
+/** Per-account balances as they stood at an instant, newest account last. */
+async function accountBalancesAsAt(orgId: string, untilIso: string) {
+  const [{ data: accountRows }, { data: transferRows }, movements] = await Promise.all([
+    supabase.from("bank_accounts")
+      .select("id, name, bank_name, account_type, account_number_last4, is_primary, opening_balance")
+      .eq("org_id", orgId).eq("active", true)
+      .order("is_primary", { ascending: false }).order("created_at", { ascending: true }),
+    supabase.from("bank_account_transfers")
+      .select("from_account_id, to_account_id, amount, cleared_at")
+      .eq("org_id", orgId).lt("transferred_at", untilIso).limit(REPORT_ROW_CEILING),
+    loadAllMovements(orgId, untilIso)
+  ]);
+  const accounts = ((accountRows ?? []) as any[]);
+  const balances = computeAccountBalances(
+    accounts.map((row) => ({ id: row.id, openingBalance: Number(row.opening_balance ?? 0) })),
+    movements,
+    ((transferRows ?? []) as any[]).map((row) => ({
+      fromAccountId: row.from_account_id,
+      toAccountId: row.to_account_id,
+      amount: Number(row.amount ?? 0),
+      clearedAt: row.cleared_at ?? null
+    }))
+  );
+  return {
+    accounts: accounts.map((row) => ({
+      id: row.id,
+      name: row.name,
+      bankName: row.bank_name ?? "",
+      accountType: row.account_type,
+      accountNumberLast4: row.account_number_last4 ?? "",
+      systemBalance: balances.find((entry) => entry.accountId === row.id)?.currentBalance
+        ?? Number(row.opening_balance ?? 0)
+    })),
+    unassigned: unassignedTotal(movements)
+  };
+}
+
+/** The week's trading and spending shape, for the summary strip. */
+async function weekActivity(orgId: string, weekStart: string, weekEnd: string) {
+  const fromIso = startOfLagosDay(weekStart);
+  const toIso = endOfLagosDay(weekEnd);
+  const [{ data: placed }, { data: deliveredRows }, spends, remits] = await Promise.all([
+    supabase.from("orders").select("id, status, review_hold")
+      .eq("org_id", orgId).gte("created_at", fromIso).lt("created_at", toIso)
+      .limit(REPORT_ROW_CEILING),
+    // Delivered THIS week regardless of when placed - that is what generates
+    // the cash the agents owe, so it is the right base for the remittance
+    // ratio even though the delivery rate beside it is a cohort figure.
+    supabase.from("orders").select("id, amount")
+      .eq("org_id", orgId).eq("status", "Delivered").neq("review_hold", true)
+      .gte("updated_at", fromIso).lt("updated_at", toIso)
+      .limit(REPORT_ROW_CEILING),
+    loadExpenses(orgId, weekStart, weekEnd),
+    loadRemittances(orgId, fromIso, toIso)
+  ]);
+
+  const cohort = ((placed ?? []) as any[]).filter((row) => row.review_hold !== true);
+  const cohortDelivered = cohort.filter((row) => row.status === "Delivered").length;
+  const deliveredValue = ((deliveredRows ?? []) as any[])
+    .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  const remitted = remits.reduce((sum, row) => sum + row.cashIn, 0);
+  const byGroup = new Map<string, number>();
+  spends.forEach((row) => byGroup.set(row.category, (byGroup.get(row.category) ?? 0) + row.cashOut));
+  const cashOut = spends.reduce((sum, row) => sum + row.cashOut, 0);
+  const share = (value: number) => (cashOut > 0 ? Math.round((value / cashOut) * 10000) / 100 : 0);
+
+  return {
+    // ⚠️ COHORT delivery rate - of the orders PLACED this week, how many have
+    // been delivered. Deliberately the Orders page definition, not the
+    // dashboard's throughput one; the two differ on purpose and unifying them
+    // here would put a third number in front of the same word.
+    ordersPlaced: cohort.length,
+    ordersDelivered: cohortDelivered,
+    deliveryRatePct: cohort.length > 0 ? Math.round((cohortDelivered / cohort.length) * 10000) / 100 : 0,
+    agentRemittances: remitted,
+    /** Value delivered this week - what agents should eventually hand over. */
+    expectedRemittances: deliveredValue,
+    remittanceCoveragePct: deliveredValue > 0 ? Math.round((remitted / deliveredValue) * 10000) / 100 : 0,
+    adSpend: byGroup.get("Facebook / Instagram Ads") ?? 0,
+    adSpendPct: share(byGroup.get("Facebook / Instagram Ads") ?? 0),
+    stockPurchases: byGroup.get("Stock Purchases") ?? 0,
+    stockPurchasesPct: share(byGroup.get("Stock Purchases") ?? 0),
+    otherExpenses: (byGroup.get("Other Operating Expenses") ?? 0) + (byGroup.get("Payroll") ?? 0)
+      + (byGroup.get("Logistics / Dispatch") ?? 0),
+    otherExpensesPct: share((byGroup.get("Other Operating Expenses") ?? 0) + (byGroup.get("Payroll") ?? 0)
+      + (byGroup.get("Logistics / Dispatch") ?? 0))
+  };
+}
+
+// ── GET /api/cash-flow/reconciliation?weekStart= ──────────
+router.get("/reconciliation", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const requested = String(req.query.weekStart ?? "");
+    const weekStart = sundayWeekStart(
+      DATE_KEY.test(requested) ? requested : lagosDayOf(new Date().toISOString())
+    );
+    const weekEnd = addDaysKey(weekStart, 6);
+    const fromIso = startOfLagosDay(weekStart);
+    const toIso = endOfLagosDay(weekEnd);
+
+    const [opening, live, verificationRow, investigationRow, activity] = await Promise.all([
+      resolveOpeningCash(orgId, fromIso),
+      accountBalancesAsAt(orgId, toIso),
+      supabase.from("weekly_cash_verifications")
+        .select("*").eq("org_id", orgId).eq("week_start", weekStart).maybeSingle(),
+      supabase.from("cash_variance_investigations")
+        .select("*").eq("org_id", orgId).eq("week_start", weekStart).maybeSingle(),
+      weekActivity(orgId, weekStart, weekEnd)
+    ]);
+
+    const [remits, spends] = await Promise.all([
+      loadRemittances(orgId, fromIso, toIso),
+      loadExpenses(orgId, weekStart, weekEnd)
+    ]);
+    const cashIn = remits.reduce((sum, row) => sum + row.cashIn, 0);
+    const cashOut = spends.reduce((sum, row) => sum + row.cashOut, 0);
+    const expectedClosing = opening.amount + cashIn - cashOut;
+
+    const verification = (verificationRow?.data ?? null) as any;
+    let verifiedAccounts: any[] = [];
+    if (verification?.id) {
+      const { data: rows } = await supabase.from("weekly_cash_verification_accounts")
+        .select("bank_account_id, account_label, system_balance, actual_balance")
+        .eq("verification_id", verification.id);
+      verifiedAccounts = ((rows ?? []) as any[]).map((row) => ({
+        bankAccountId: row.bank_account_id ?? null,
+        accountLabel: row.account_label ?? "",
+        systemBalance: Number(row.system_balance ?? 0),
+        actualBalance: Number(row.actual_balance ?? 0)
+      }));
+    }
+
+    const investigation = (investigationRow?.data ?? null) as any;
+    let events: any[] = [];
+    if (investigation?.id) {
+      const { data: rows } = await supabase.from("cash_variance_investigation_events")
+        .select("id, kind, detail, amount, actor_name, created_at")
+        .eq("investigation_id", investigation.id).order("created_at", { ascending: true });
+      events = ((rows ?? []) as any[]).map((row) => ({
+        id: row.id, kind: row.kind, detail: row.detail ?? "",
+        amount: row.amount === null || row.amount === undefined ? null : Number(row.amount),
+        actorName: row.actor_name ?? "", createdAt: row.created_at
+      }));
+    }
+
+    // Largest single movements, for the highlights panel.
+    const topIn = remits.slice().sort((a, b) => b.cashIn - a.cashIn)[0] ?? null;
+    const topOut = spends.slice().sort((a, b) => b.cashOut - a.cashOut)[0] ?? null;
+    const { data: transferRows } = await supabase.from("bank_account_transfers")
+      .select("id, amount, transferred_at, from_account_id, to_account_id")
+      .eq("org_id", orgId).gte("transferred_at", fromIso).lt("transferred_at", toIso)
+      .order("amount", { ascending: false }).limit(1);
+    const topTransfer = ((transferRows ?? []) as any[])[0] ?? null;
+    const accountName = (id: string | null) =>
+      live.accounts.find((account) => account.id === id)?.name ?? "Unassigned";
+
+    res.json({
+      weekStart,
+      weekEnd,
+      openingCash: opening.amount,
+      // Only a counted week is a verified opening; everything else is derived
+      // and can still move under the reconciliation's feet.
+      openingVerified: opening.source === "weekly_count",
+      cashIn,
+      cashOut,
+      expectedClosing,
+      accounts: live.accounts,
+      unassigned: live.unassigned,
+      verification: verification ? {
+        id: verification.id,
+        status: verification.status,
+        // The frozen pair, kept apart from the live figures above so a
+        // backdated entry cannot quietly rewrite a signed-off variance.
+        expectedClosing: Number(verification.expected_closing ?? 0),
+        actualClosing: Number(verification.actual_closing ?? 0),
+        notes: verification.notes ?? "",
+        verifiedByName: verification.verified_by_name ?? "",
+        verifiedAt: verification.verified_at,
+        accounts: verifiedAccounts
+      } : null,
+      investigation: investigation ? {
+        id: investigation.id,
+        status: investigation.status,
+        varianceAmount: Number(investigation.variance_amount ?? 0),
+        reason: investigation.reason ?? "",
+        amountExplained: Number(investigation.amount_explained ?? 0),
+        description: investigation.description ?? "",
+        occurredOn: investigation.occurred_on,
+        category: investigation.category ?? "",
+        evidenceName: investigation.evidence_name ?? "",
+        evidenceUrl: investigation.evidence_url ?? "",
+        createdByName: investigation.created_by_name ?? "",
+        events
+      } : null,
+      activity,
+      highlights: {
+        topCashIn: topIn ? { label: topIn.description, amount: topIn.cashIn, at: topIn.at } : null,
+        topCashOut: topOut ? { label: topOut.description, amount: topOut.cashOut, at: topOut.at } : null,
+        topTransfer: topTransfer ? {
+          label: `Transfer from ${accountName(topTransfer.from_account_id)} to ${accountName(topTransfer.to_account_id)}`,
+          amount: Number(topTransfer.amount ?? 0),
+          at: topTransfer.transferred_at
+        } : null
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the week's reconciliation." });
+  }
+});
+
+const VerificationSchema = z.object({
+  weekStart: z.string().regex(DATE_KEY),
+  status: z.enum(["draft", "verified"]).default("verified"),
+  notes: z.string().trim().max(250).default(""),
+  accounts: z.array(z.object({
+    bankAccountId: z.string().uuid().nullable().optional(),
+    accountLabel: z.string().trim().min(1).max(80),
+    systemBalance: z.coerce.number().min(-1_000_000_000_000).max(1_000_000_000_000),
+    actualBalance: z.coerce.number().min(-1_000_000_000_000).max(1_000_000_000_000)
+  })).min(1, "Count at least one account.").max(30)
+}).strict();
+
+// ── POST /api/cash-flow/reconciliation ────────────────────
+router.post("/reconciliation", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = VerificationSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const weekStart = sundayWeekStart(parsed.data.weekStart);
+    const body = parsed.data;
+
+    const summary = summariseVerification(body.accounts.map((row) => ({
+      bankAccountId: row.bankAccountId ?? null,
+      accountLabel: row.accountLabel,
+      systemBalance: row.systemBalance,
+      actualBalance: row.actualBalance
+    })));
+
+    const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
+    // ⚠️ One transaction. A delete-then-insert here would destroy the very
+    // count being corrected if the second call failed - the same hazard the
+    // weekly opening cash function was written to avoid.
+    const { data: savedId, error } = await supabase.rpc("save_weekly_cash_verification", {
+      p_org_id: orgId,
+      p_week_start: weekStart,
+      p_expected: summary.totalSystem,
+      p_actual: summary.totalActual,
+      p_status: body.status,
+      p_notes: body.notes,
+      p_verified_by: req.user!.id,
+      p_verified_by_name: String(actor?.name ?? "").trim() || "Unknown",
+      p_accounts: body.accounts.map((row) => ({
+        bankAccountId: row.bankAccountId ?? null,
+        accountLabel: row.accountLabel,
+        systemBalance: row.systemBalance,
+        actualBalance: row.actualBalance
+      }))
+    });
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    res.json({
+      id: savedId,
+      weekStart,
+      expectedClosing: summary.totalSystem,
+      actualClosing: summary.totalActual,
+      variance: summary.variance,
+      status: reconciliationStatus({ verified: body.status === "verified", variance: summary.variance })
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not save the closing cash count." });
+  }
+});
+
+const InvestigationSchema = z.object({
+  weekStart: z.string().regex(DATE_KEY),
+  status: z.enum(["in_progress", "submitted", "resolved"]).default("in_progress"),
+  reason: z.enum(VARIANCE_REASONS).nullable().optional(),
+  amountExplained: z.coerce.number().min(0).max(1_000_000_000_000).default(0),
+  description: z.string().trim().max(500).default(""),
+  occurredOn: z.string().regex(DATE_KEY).nullable().optional(),
+  category: z.string().trim().max(60).default(""),
+  evidenceName: z.string().trim().max(200).default(""),
+  evidenceUrl: z.string().trim().max(500).default("")
+}).strict();
+
+// ── POST /api/cash-flow/reconciliation/investigation ──────
+router.post("/reconciliation/investigation", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = InvestigationSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const weekStart = sundayWeekStart(parsed.data.weekStart);
+    const body = parsed.data;
+
+    // A submitted investigation must actually explain something. Allowing an
+    // empty one through would let a week be signed off with the money still
+    // missing and no account of where it went.
+    if (body.status !== "in_progress" && !body.description.trim()) {
+      res.status(400).json({ error: "Add an explanation before submitting the investigation." });
+      return;
+    }
+
+    const { data: verification } = await supabase.from("weekly_cash_verifications")
+      .select("id, expected_closing, actual_closing")
+      .eq("org_id", orgId).eq("week_start", weekStart).maybeSingle();
+    if (!verification) {
+      res.status(400).json({ error: "Verify the week's closing cash before investigating a variance." });
+      return;
+    }
+    const variance = Number(verification.actual_closing ?? 0) - Number(verification.expected_closing ?? 0);
+
+    const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
+    const actorName = String(actor?.name ?? "").trim() || "Unknown";
+    const { data: existing } = await supabase.from("cash_variance_investigations")
+      .select("id, status, amount_explained, evidence_name")
+      .eq("org_id", orgId).eq("week_start", weekStart).maybeSingle();
+
+    const payload = {
+      org_id: orgId,
+      week_start: weekStart,
+      verification_id: verification.id,
+      variance_amount: variance,
+      reason: body.reason ?? "",
+      amount_explained: body.amountExplained,
+      description: body.description,
+      occurred_on: body.occurredOn ?? null,
+      category: body.category,
+      evidence_name: body.evidenceName,
+      evidence_url: body.evidenceUrl,
+      status: body.status,
+      created_by: existing ? undefined : req.user!.id,
+      created_by_name: existing ? undefined : actorName,
+      updated_at: new Date().toISOString()
+    };
+    Object.keys(payload).forEach((key) => {
+      if ((payload as any)[key] === undefined) delete (payload as any)[key];
+    });
+
+    const { data: saved, error } = await supabase.from("cash_variance_investigations")
+      .upsert(payload, { onConflict: "org_id,week_start" })
+      .select("id").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    // The history panel is built from these, so each meaningful step is
+    // recorded as it happens rather than reconstructed afterwards.
+    const events: Array<{ kind: string; detail: string; amount: number | null }> = [];
+    if (!existing) events.push({ kind: "started", detail: "Investigation started", amount: null });
+    if (body.evidenceName && body.evidenceName !== (existing?.evidence_name ?? "")) {
+      events.push({ kind: "evidence_uploaded", detail: body.evidenceName, amount: null });
+    }
+    if (body.amountExplained > 0 && body.amountExplained !== Number(existing?.amount_explained ?? 0)) {
+      events.push({ kind: "partial_explained", detail: "Amount explained updated", amount: body.amountExplained });
+    }
+    if (body.status === "submitted" && existing?.status !== "submitted") {
+      events.push({ kind: "submitted", detail: "Investigation submitted", amount: null });
+    }
+    if (body.status === "resolved" && existing?.status !== "resolved") {
+      events.push({ kind: "resolved", detail: "Variance resolved", amount: null });
+    }
+    if (events.length > 0) {
+      await supabase.from("cash_variance_investigation_events").insert(events.map((event) => ({
+        investigation_id: saved.id,
+        kind: event.kind,
+        detail: event.detail,
+        amount: event.amount,
+        actor_id: req.user!.id,
+        actor_name: actorName
+      })));
+    }
+
+    // Keep the week's headline in step with its investigation.
+    await supabase.from("weekly_cash_verifications")
+      .update({ status: body.status === "resolved" ? "resolved" : "investigating", updated_at: new Date().toISOString() })
+      .eq("id", verification.id);
+
+    res.json({
+      id: saved.id,
+      weekStart,
+      variance,
+      progress: investigationProgress(variance, body.amountExplained)
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not save the investigation." });
+  }
+});
+
+// ── GET /api/cash-flow/reconciliation/history ─────────────
+router.get("/reconciliation/history", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const { data } = await supabase.from("weekly_cash_verifications")
+      .select("id, week_start, expected_closing, actual_closing, status, verified_by_name, verified_at")
+      .eq("org_id", orgId).order("week_start", { ascending: false }).limit(52);
+    const rows = (data ?? []) as any[];
+    const { data: investigations } = await supabase.from("cash_variance_investigations")
+      .select("week_start, status, amount_explained")
+      .eq("org_id", orgId).in("week_start", rows.map((row) => row.week_start));
+    const byWeek = new Map<string, any>();
+    ((investigations ?? []) as any[]).forEach((row) => byWeek.set(row.week_start, row));
+
+    res.json({
+      weeks: rows.map((row) => {
+        const expected = Number(row.expected_closing ?? 0);
+        const actual = Number(row.actual_closing ?? 0);
+        const investigation = byWeek.get(row.week_start);
+        return {
+          id: row.id,
+          weekStart: row.week_start,
+          weekEnd: addDaysKey(row.week_start, 6),
+          expectedClosing: expected,
+          actualClosing: actual,
+          variance: actual - expected,
+          amountExplained: Number(investigation?.amount_explained ?? 0),
+          status: reconciliationStatus({
+            verified: row.status !== "draft",
+            variance: actual - expected,
+            investigationStatus: investigation?.status ?? null
+          }),
+          verifiedByName: row.verified_by_name ?? "",
+          verifiedAt: row.verified_at
+        };
+      })
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load reconciliation history." });
   }
 });
 

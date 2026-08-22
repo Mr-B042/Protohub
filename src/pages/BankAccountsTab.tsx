@@ -31,7 +31,12 @@ const BRAND_MARKS: Array<{ match: RegExp; label: string; bg: string; fg: string 
   { match: /uba/i, label: "U", bg: "bg-[#D8232A]", fg: "text-white" }
 ];
 
-function AccountMark({ account }: { account: BankAccountRow }) {
+// Exported so Weekly Reconciliation can show the same mark against the same
+// account. Typed structurally rather than as BankAccountRow: reconciliation
+// carries a lighter account shape and only these three fields are read.
+export function AccountMark({ account }: {
+  account: { accountType: "bank" | "cash"; bankName: string; name: string };
+}) {
   if (account.accountType === "cash") {
     return (
       <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
