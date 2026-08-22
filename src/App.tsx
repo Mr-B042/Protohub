@@ -156,7 +156,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -9487,6 +9487,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [periodCloseLoading, setPeriodCloseLoading] = useState(false);
   const [periodCloseError, setPeriodCloseError] = useState("");
   const [periodCloseSaving, setPeriodCloseSaving] = useState(false);
+  // ── Weekly Overview (Cash Flow tab) ──
+  const [weeklyOverviewView, setWeeklyOverviewView] = useState<WeeklyOverviewView | null>(null);
+  const [weeklyOverviewLoading, setWeeklyOverviewLoading] = useState(false);
+  const [weeklyOverviewError, setWeeklyOverviewError] = useState("");
   // ── Batch unit-economics (Profitability tab) ──
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -9792,6 +9796,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } finally { setPeriodCloseSaving(false); }
   };
 
+  const loadWeeklyOverview = useCallback(async (weekStart: string) => {
+    setWeeklyOverviewLoading(true);
+    setWeeklyOverviewError("");
+    try {
+      setWeeklyOverviewView(await cashFlowApi.weeklyOverview(weekStart));
+    } catch (err: any) {
+      setWeeklyOverviewError(err?.message ?? "Could not load the weekly overview.");
+    } finally { setWeeklyOverviewLoading(false); }
+  }, []);
+
   useEffect(() => {
     if (activePage === "Finance & Accounting" && financeTab === "Profitability") void loadBatches();
     if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") {
@@ -9801,8 +9815,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       void loadInventoryValue(reconciliationWeek);
       void loadAccountReconciliations();
       void loadPeriodClose(reconciliationWeek);
+      void loadWeeklyOverview(reconciliationWeek);
     }
-  }, [activePage, financeTab, cashFlowPeriod, reconciliationWeek, loadCashFlow, loadBankAccounts, loadWeeklyOpening, loadReconciliation, loadReserves, loadInventoryValue, loadAccountReconciliations, loadPeriodClose]);
+  }, [activePage, financeTab, cashFlowPeriod, reconciliationWeek, loadCashFlow, loadBankAccounts, loadWeeklyOpening, loadReconciliation, loadReserves, loadInventoryValue, loadAccountReconciliations, loadPeriodClose, loadWeeklyOverview]);
   useEffect(() => {
     setBatchAutofillMeta(null);
     if (selectedBatchId) void loadBatchEconomics(selectedBatchId);
@@ -80078,6 +80093,36 @@ ${waybillLineItems(w).length > 1
                     onReopen: () => runCloseAction(
                       () => cashFlowApi.reopenPeriod(reconciliationWeek),
                       "Week reopened.", reconciliationWeek)
+                  }}
+                  weeklyOverview={{
+                    view: weeklyOverviewView,
+                    loading: weeklyOverviewLoading,
+                    error: weeklyOverviewError,
+                    weekStart: reconciliationWeek,
+                    onWeekChange: (next) => {
+                      setReconciliationWeek(next);
+                      void loadWeeklyOverview(next);
+                      void loadReconciliation(next);
+                      void loadPeriodClose(next);
+                    },
+                    onExport: () => {
+                      const rows = weeklyOverviewView?.summary ?? [];
+                      if (rows.length === 0) { showToast("Nothing to export."); return; }
+                      triggerCsvDownload(
+                        `weekly-overview-${weeklyOverviewView?.weekStart ?? "week"}`,
+                        [
+                          ["Description", "This Week", "Last Week", "Change", "Change %"],
+                          ...rows.map((row) => [
+                            row.label, String(row.current), String(row.previous),
+                            String(row.delta), row.pct === null ? "n/a" : `${row.pct}%`
+                          ])
+                        ],
+                        "Weekly overview exported."
+                      );
+                    },
+                    // Overridden by CashFlowPage, which owns the tab state and
+                    // switches straight to Period Close.
+                    onOpenClose: () => {}
                   }}
                   onDownloadReport={() => {
                     const rows = cashFlowView?.transactions ?? [];

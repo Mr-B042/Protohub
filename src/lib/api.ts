@@ -1434,6 +1434,28 @@ export type PeriodCloseView = {
   setsNextWeekOpening: boolean;
 };
 
+export type WeekMovement = { current: number; previous: number; delta: number; pct: number | null };
+
+export type WeeklyOverviewView = {
+  weekStart: string; weekEnd: string; previousWeekStart: string;
+  headline: {
+    netProfit: WeekMovement; cashIn: WeekMovement; cashOut: WeekMovement;
+    expectedClosing: WeekMovement; cashVariance: number; varianceVerified: boolean;
+  };
+  summary: Array<{ label: string } & WeekMovement>;
+  cashPosition: {
+    bankAccounts: number; cashInHand: number; codWithAgents: number;
+    reservedCash: number; freeOperatingCash: number; totalLiquid: number;
+  };
+  health: Array<{ key: string; label: string; rating: "good" | "fair" | "poor" | "unknown"; detail: string }>;
+  /** variance is null for a week nobody counted - never plotted as zero. */
+  varianceTrend: Array<{ weekStart: string; weekEnd: string; variance: number | null; counted: boolean }>;
+  highlights: Array<{ key: string; label: string; value: number; format: "naira" | "pct"; movement: WeekMovement }>;
+  topCashIn: Array<{ label: string; amount: number; sharePct: number }>;
+  topCashOut: Array<{ label: string; amount: number; sharePct: number }>;
+  openingCounted: boolean;
+};
+
 export const cashFlowApi = {
   summary: (from: string, to: string) =>
     get<CashFlowView>(`/api/cash-flow?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
@@ -1505,7 +1527,9 @@ export const cashFlowApi = {
     weekStart: string; closingNotes: string; approvedByUserId: string | null; status: "draft" | "closed";
   }) => post<{ id: string; weekStart: string; status: string }>("/api/cash-flow/period-close", body),
   reopenPeriod: (weekStart: string) =>
-    post<{ ok: boolean }>("/api/cash-flow/period-close/reopen", { weekStart })
+    post<{ ok: boolean }>("/api/cash-flow/period-close/reopen", { weekStart }),
+  weeklyOverview: (weekStart?: string) =>
+    get<WeeklyOverviewView>(`/api/cash-flow/weekly-overview${weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : ""}`)
 };
 
 export const deliveryGoalsApi = {
