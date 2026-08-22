@@ -156,7 +156,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, AgentAccessView, AgentLoginEvent, PortalSendOptions } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -9447,6 +9447,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cashFlowPeriod, setCashFlowPeriod] = useState<CashFlowPeriod>("This Week");
   const [cashOpeningHistory, setCashOpeningHistory] = useState<OpeningBalanceRow[]>([]);
   const [cashOpeningSaving, setCashOpeningSaving] = useState(false);
+  const [bankAccountsView, setBankAccountsView] = useState<BankAccountsView | null>(null);
+  const [bankAccountSaving, setBankAccountSaving] = useState(false);
   // ── Batch unit-economics (Profitability tab) ──
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -9528,6 +9530,26 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } finally { setCashFlowLoading(false); }
   }, [cashFlowRange]);
 
+  const loadBankAccounts = useCallback(async () => {
+    try {
+      setBankAccountsView(await cashFlowApi.accounts());
+    } catch { /* the tab shows its empty state rather than blocking the page */ }
+  }, []);
+
+  // Every bank action reloads BOTH the accounts and the cash flow: a transfer
+  // moves balances without being cash flow, and an account's opening balance
+  // changes the totals, so leaving one stale would show two disagreeing numbers.
+  const runBankAction = async (action: () => Promise<unknown>, message: string) => {
+    setBankAccountSaving(true);
+    try {
+      await action();
+      showToast(message);
+      await Promise.all([loadBankAccounts(), loadCashFlow(cashFlowPeriod)]);
+    } catch (err: any) {
+      showToast(err?.message ?? "That did not save.");
+    } finally { setBankAccountSaving(false); }
+  };
+
   const loadCashOpeningHistory = useCallback(async () => {
     try {
       setCashOpeningHistory((await cashFlowApi.openingHistory()).rows);
@@ -9547,8 +9569,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   useEffect(() => {
     if (activePage === "Finance & Accounting" && financeTab === "Profitability") void loadBatches();
-    if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") void loadCashFlow(cashFlowPeriod);
-  }, [activePage, financeTab, cashFlowPeriod, loadCashFlow]);
+    if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") { void loadCashFlow(cashFlowPeriod); void loadBankAccounts(); }
+  }, [activePage, financeTab, cashFlowPeriod, loadCashFlow, loadBankAccounts]);
   useEffect(() => {
     setBatchAutofillMeta(null);
     if (selectedBatchId) void loadBatchEconomics(selectedBatchId);
@@ -79631,6 +79653,15 @@ ${waybillLineItems(w).length > 1
                   onSaveOpeningCash={saveCashOpeningBalance}
                   onLoadOpeningHistory={() => void loadCashOpeningHistory()}
                   onViewAgentReceivables={() => setFinanceTab("Remittance")}
+                  bank={{
+                    view: bankAccountsView,
+                    canManage: currentRole === "Owner" || currentRole === "Admin",
+                    saving: bankAccountSaving,
+                    onAddAccount: (body) => runBankAction(() => cashFlowApi.addAccount(body), "Account added."),
+                    onTransfer: (body) => runBankAction(() => cashFlowApi.transfer(body), "Transfer recorded."),
+                    onClearTransfer: (id) => runBankAction(() => cashFlowApi.clearTransfer(id), "Transfer marked received."),
+                    onRefresh: () => void loadBankAccounts()
+                  }}
                   onDownloadReport={() => {
                     const rows = cashFlowView?.transactions ?? [];
                     if (rows.length === 0) { showToast("Nothing to download for this period."); return; }

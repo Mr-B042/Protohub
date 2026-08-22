@@ -5,6 +5,11 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import {
+  computeAccountBalances,
+  summariseAccounts,
+  unassignedTotal
+} from "../lib/bank-accounts.js";
+import {
   buildBreakdown,
   buildDailyTrend,
   CASH_OUT_GROUPS,
@@ -307,6 +312,258 @@ router.post("/opening-balances", requireRole("Owner", "Admin"), async (req, res)
     } });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not save that opening cash." });
+  }
+});
+
+
+// ══ Bank accounts ═════════════════════════════════════════
+
+const AccountSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  accountType: z.enum(["bank", "cash"]).default("bank"),
+  bankName: z.string().trim().max(80).default(""),
+  accountNumberLast4: z.string().trim().regex(/^[0-9]{0,4}$/, "Use the last 4 digits only.").default(""),
+  isPrimary: z.boolean().default(false),
+  openingBalance: z.coerce.number().min(-1_000_000_000_000).max(1_000_000_000_000).default(0),
+  openingBalanceDate: z.string().regex(DATE_KEY).nullable().optional()
+}).strict();
+
+const rowToAccount = (row: any) => ({
+  id: row.id,
+  name: row.name,
+  accountType: row.account_type as "bank" | "cash",
+  bankName: row.bank_name ?? "",
+  accountNumberLast4: row.account_number_last4 ?? "",
+  isPrimary: row.is_primary === true,
+  active: row.active !== false,
+  openingBalance: Number(row.opening_balance ?? 0),
+  openingBalanceDate: row.opening_balance_date ?? null,
+  updatedAt: row.updated_at ?? null
+});
+
+/** Every movement ever, so an account balance reflects its whole life. */
+async function loadAllMovements(orgId: string) {
+  const [{ data: remits }, { data: spends }] = await Promise.all([
+    supabase.from("remittance_transactions")
+      .select("bank_account_id, delta_amount").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
+    supabase.from("expenses")
+      .select("bank_account_id, amount").eq("org_id", orgId).limit(REPORT_ROW_CEILING)
+  ]);
+  return [
+    ...((remits ?? []) as any[]).map((row) => ({
+      accountId: row.bank_account_id ?? null, cashIn: Number(row.delta_amount ?? 0), cashOut: 0
+    })),
+    ...((spends ?? []) as any[]).map((row) => ({
+      accountId: row.bank_account_id ?? null, cashIn: 0, cashOut: Number(row.amount ?? 0)
+    }))
+  ];
+}
+
+// ── GET /api/cash-flow/accounts ───────────────────────────
+router.get("/accounts", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const [{ data: accountRows }, { data: transferRows }, movements] = await Promise.all([
+      supabase.from("bank_accounts").select("*").eq("org_id", orgId)
+        .order("is_primary", { ascending: false }).order("created_at", { ascending: true }),
+      supabase.from("bank_account_transfers")
+        .select("id, from_account_id, to_account_id, amount, transferred_at, cleared_at, note")
+        .eq("org_id", orgId).order("transferred_at", { ascending: false }).limit(REPORT_ROW_CEILING),
+      loadAllMovements(orgId)
+    ]);
+
+    const accounts = ((accountRows ?? []) as any[]).map(rowToAccount);
+    const transfers = ((transferRows ?? []) as any[]).map((row) => ({
+      id: row.id,
+      fromAccountId: row.from_account_id,
+      toAccountId: row.to_account_id,
+      amount: Number(row.amount ?? 0),
+      transferredAt: row.transferred_at,
+      clearedAt: row.cleared_at ?? null,
+      note: row.note ?? ""
+    }));
+
+    const balances = computeAccountBalances(
+      accounts.filter((account) => account.active).map((account) => ({ id: account.id, openingBalance: account.openingBalance })),
+      movements,
+      transfers
+    );
+    const totals = summariseAccounts(
+      accounts.filter((account) => account.active).map((account) => ({ id: account.id, kind: account.accountType })),
+      balances
+    );
+
+    res.json({
+      accounts: accounts.map((account) => ({
+        ...account,
+        ...(balances.find((row) => row.accountId === account.id) ?? {
+          currentBalance: account.openingBalance, availableBalance: account.openingBalance, pendingIn: 0, pendingOut: 0
+        })
+      })),
+      totals,
+      // Cash recorded before accounts existed. Reported rather than hidden so
+      // the gap between the ledger and the account balances is explained.
+      unassigned: unassignedTotal(movements),
+      transfers
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load accounts." });
+  }
+});
+
+router.post("/accounts", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const parsed = AccountSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const body = parsed.data;
+    // Only one account can be primary, so promoting one demotes the rest.
+    if (body.isPrimary) {
+      await supabase.from("bank_accounts").update({ is_primary: false }).eq("org_id", orgId);
+    }
+    const { data, error } = await supabase.from("bank_accounts").insert({
+      org_id: orgId,
+      name: body.name,
+      account_type: body.accountType,
+      bank_name: body.bankName,
+      account_number_last4: body.accountNumberLast4,
+      is_primary: body.isPrimary,
+      opening_balance: body.openingBalance,
+      opening_balance_date: body.openingBalanceDate ?? null
+    }).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ account: rowToAccount(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not add that account." });
+  }
+});
+
+router.patch("/accounts/:id", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const parsed = AccountSchema.partial().extend({ active: z.boolean().optional() }).safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const body = parsed.data;
+    if (body.isPrimary) {
+      await supabase.from("bank_accounts").update({ is_primary: false }).eq("org_id", orgId);
+    }
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (body.name !== undefined) patch.name = body.name;
+    if (body.accountType !== undefined) patch.account_type = body.accountType;
+    if (body.bankName !== undefined) patch.bank_name = body.bankName;
+    if (body.accountNumberLast4 !== undefined) patch.account_number_last4 = body.accountNumberLast4;
+    if (body.isPrimary !== undefined) patch.is_primary = body.isPrimary;
+    if (body.active !== undefined) patch.active = body.active;
+    if (body.openingBalance !== undefined) patch.opening_balance = body.openingBalance;
+    if (body.openingBalanceDate !== undefined) patch.opening_balance_date = body.openingBalanceDate ?? null;
+
+    const { data, error } = await supabase.from("bank_accounts")
+      .update(patch).eq("org_id", orgId).eq("id", req.params.id).select("*").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ account: rowToAccount(data) });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not update that account." });
+  }
+});
+
+// ── Transfers between our own accounts ────────────────────
+// ⚠️ Never cash flow. Nothing enters or leaves the business, so these are
+// excluded from cash in/out while still moving the two account balances.
+const TransferSchema = z.object({
+  fromAccountId: z.string().uuid(),
+  toAccountId: z.string().uuid(),
+  amount: z.coerce.number().positive().max(1_000_000_000_000),
+  transferredAt: z.string().min(10).optional(),
+  note: z.string().trim().max(250).default(""),
+  markCleared: z.boolean().default(false)
+}).strict().superRefine((value, context) => {
+  if (value.fromAccountId === value.toAccountId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Choose two different accounts.", path: ["toAccountId"] });
+  }
+});
+
+router.post("/transfers", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const parsed = TransferSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const body = parsed.data;
+    const { data: owned } = await supabase.from("bank_accounts")
+      .select("id").eq("org_id", orgId).in("id", [body.fromAccountId, body.toAccountId]);
+    if ((owned ?? []).length !== 2) { res.status(404).json({ error: "One of those accounts does not exist here." }); return; }
+
+    const { data, error } = await supabase.from("bank_account_transfers").insert({
+      org_id: orgId,
+      from_account_id: body.fromAccountId,
+      to_account_id: body.toAccountId,
+      amount: body.amount,
+      transferred_at: body.transferredAt ? new Date(body.transferredAt).toISOString() : new Date().toISOString(),
+      cleared_at: body.markCleared ? new Date().toISOString() : null,
+      note: body.note,
+      created_by: req.user!.id
+    }).select("id").single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ id: data.id });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not record that transfer." });
+  }
+});
+
+router.post("/transfers/:id/clear", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const { error } = await supabase.from("bank_account_transfers")
+      .update({ cleared_at: new Date().toISOString() })
+      .eq("org_id", req.user!.orgId).eq("id", req.params.id).is("cleared_at", null);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not clear that transfer." });
+  }
+});
+
+// ── Assigning historical cash to an account ───────────────
+// Rows recorded before accounts existed have no account and read as
+// Unassigned. This lets the Owner attribute them in bulk rather than one at a
+// time, or leave them alone - guessing on their behalf would invent a bank
+// history that never happened.
+const AssignSchema = z.object({
+  accountId: z.string().uuid(),
+  from: z.string().regex(DATE_KEY),
+  to: z.string().regex(DATE_KEY),
+  target: z.enum(["remittances", "expenses", "both"]).default("both"),
+  onlyUnassigned: z.boolean().default(true)
+}).strict();
+
+router.post("/assign-account", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const parsed = AssignSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const body = parsed.data;
+    const { data: account } = await supabase.from("bank_accounts")
+      .select("id").eq("org_id", orgId).eq("id", body.accountId).maybeSingle();
+    if (!account) { res.status(404).json({ error: "That account does not exist here." }); return; }
+
+    let remittances = 0;
+    let expenses = 0;
+    if (body.target !== "expenses") {
+      let query = supabase.from("remittance_transactions").update({ bank_account_id: body.accountId })
+        .eq("org_id", orgId)
+        .gte("received_at", startOfLagosDay(body.from)).lt("received_at", endOfLagosDay(body.to));
+      if (body.onlyUnassigned) query = query.is("bank_account_id", null);
+      const { data } = await query.select("id");
+      remittances = (data ?? []).length;
+    }
+    if (body.target !== "remittances") {
+      let query = supabase.from("expenses").update({ bank_account_id: body.accountId })
+        .eq("org_id", orgId).gte("date", body.from).lte("date", body.to);
+      if (body.onlyUnassigned) query = query.is("bank_account_id", null);
+      const { data } = await query.select("id");
+      expenses = (data ?? []).length;
+    }
+    res.json({ remittances, expenses });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not assign those transactions." });
   }
 });
 
