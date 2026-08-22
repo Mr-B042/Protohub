@@ -1195,9 +1195,36 @@ export type DeliveryGoalsView = {
 // ── Cash Flow ─────────────────────────────────────────────
 import type { CashFlowView, OpeningBalanceRow } from "../pages/CashFlowPage";
 
+export type BankAccountRow = {
+  id: string; name: string; accountType: "bank" | "cash";
+  bankName: string; accountNumberLast4: string;
+  isPrimary: boolean; active: boolean;
+  openingBalance: number; openingBalanceDate: string | null;
+  currentBalance: number; availableBalance: number; pendingIn: number; pendingOut: number;
+};
+
+export type BankTransferRow = {
+  id: string; fromAccountId: string; toAccountId: string;
+  amount: number; transferredAt: string; clearedAt: string | null; note: string;
+};
+
+export type BankAccountsView = {
+  accounts: BankAccountRow[];
+  totals: { totalLiquid: number; totalBank: number; cashInHand: number; pendingToClear: number };
+  /** Cash recorded before accounts existed - belongs to no account. */
+  unassigned: number;
+  transfers: BankTransferRow[];
+};
+
 export const cashFlowApi = {
   summary: (from: string, to: string) =>
     get<CashFlowView>(`/api/cash-flow?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  accounts: () => get<BankAccountsView>("/api/cash-flow/accounts"),
+  addAccount: (body: unknown) => post<{ account: BankAccountRow }>("/api/cash-flow/accounts", body),
+  updateAccount: (id: string, body: unknown) => patch<{ account: BankAccountRow }>(`/api/cash-flow/accounts/${id}`, body),
+  transfer: (body: unknown) => post<{ id: string }>("/api/cash-flow/transfers", body),
+  clearTransfer: (id: string) => post<{ ok: boolean }>(`/api/cash-flow/transfers/${id}/clear`, {}),
+  assignAccount: (body: unknown) => post<{ remittances: number; expenses: number }>("/api/cash-flow/assign-account", body),
   openingHistory: () => get<{ rows: OpeningBalanceRow[] }>("/api/cash-flow/opening-balances"),
   setOpeningCash: (body: { amount: number; effectiveAt: string; method: "manual" | "carry_forward"; reason: string }) =>
     post<{ row: OpeningBalanceRow }>("/api/cash-flow/opening-balances", body)
