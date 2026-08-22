@@ -19,6 +19,15 @@ import {
   withRunningBalance
 } from "../lib/cash-flow.js";
 import {
+  groupValue,
+  inventoryHealth,
+  movementDirection,
+  summariseInventory,
+  summariseMovements,
+  valueProduct,
+  type ProductStockInput
+} from "../lib/inventory-valuation.js";
+import {
   nextReserveRef,
   reserveBreakdown,
   reserveDisplayStatus,
@@ -1524,6 +1533,260 @@ router.delete("/reserves/:id", requireRole("Owner"), async (req, res) => {
     res.json({ ok: true, cancelled: false });
   } catch (error: any) {
     res.status(500).json({ error: error?.message ?? "Could not remove that reserve." });
+  }
+});
+
+// ══ Inventory Value ═══════════════════════════════════════
+//
+// ⚠️ Valued AT COST, never at what it might sell for. Stock is money already
+// spent; counting it at retail would book profit that has not been earned.
+// Retail is carried alongside and labelled an estimate.
+
+/** How far back "has this moved at all" looks. */
+const SLOW_MOVING_WINDOW_DAYS = 30;
+
+// ── GET /api/cash-flow/inventory?weekStart= ───────────────
+router.get("/inventory", async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const requested = String(req.query.weekStart ?? "");
+    const weekStart = sundayWeekStart(
+      DATE_KEY.test(requested) ? requested : lagosDayOf(new Date().toISOString())
+    );
+    const weekEnd = addDaysKey(weekStart, 6);
+    const fromIso = startOfLagosDay(weekStart);
+    const toIso = endOfLagosDay(weekEnd);
+    const windowIso = startOfLagosDay(addDaysKey(weekEnd, -SLOW_MOVING_WINDOW_DAYS));
+
+    const [{ data: productRows }, { data: pricingRows }, { data: locationStock }, { data: weekMoves }, { data: windowMoves }, { data: snapshotRow }] =
+      await Promise.all([
+        supabase.from("products")
+          .select("id, name, sku, image_url, catalog_type, warehouse_stock, agent_stock, reorder_point")
+          .eq("org_id", orgId).eq("active", true).limit(REPORT_ROW_CEILING),
+        supabase.from("product_pricings")
+          .select("product_id, currency, unit_cost, selling_price, is_primary").limit(REPORT_ROW_CEILING),
+        supabase.from("agent_location_stock")
+          .select("product_id, agent_id, agent_location_id, quantity, defective, missing")
+          .eq("org_id", orgId).limit(REPORT_ROW_CEILING),
+        supabase.from("stock_movements")
+          .select("product_id, type, qty")
+          .eq("org_id", orgId).gte("created_at", fromIso).lt("created_at", toIso)
+          .limit(REPORT_ROW_CEILING),
+        supabase.from("stock_movements")
+          .select("product_id, type, qty")
+          .eq("org_id", orgId).gte("created_at", windowIso).lt("created_at", toIso)
+          .limit(REPORT_ROW_CEILING),
+        supabase.from("inventory_valuation_snapshots")
+          .select("*").eq("org_id", orgId).eq("week_start", weekStart).maybeSingle()
+      ]);
+
+    // Primary pricing wins; otherwise the first row on file. Same rule the
+    // batch economics and retention costings already use, so one product
+    // cannot be costed two different ways in two places.
+    const pricingByProduct = new Map<string, { unitCost: number; sellingPrice: number }>();
+    ((pricingRows ?? []) as any[]).forEach((row) => {
+      const existing = pricingByProduct.get(row.product_id);
+      if (existing && !row.is_primary) return;
+      pricingByProduct.set(row.product_id, {
+        unitCost: Number(row.unit_cost ?? 0),
+        sellingPrice: Number(row.selling_price ?? 0)
+      });
+    });
+
+    const damagedByProduct = new Map<string, number>();
+    ((locationStock ?? []) as any[]).forEach((row) => {
+      const spoiled = Number(row.defective ?? 0) + Number(row.missing ?? 0);
+      if (spoiled > 0) damagedByProduct.set(row.product_id, (damagedByProduct.get(row.product_id) ?? 0) + spoiled);
+    });
+
+    const soldRecently = new Map<string, number>();
+    ((windowMoves ?? []) as any[]).forEach((row) => {
+      if (movementDirection(row.type) !== "out") return;
+      soldRecently.set(row.product_id, (soldRecently.get(row.product_id) ?? 0) + Math.abs(Number(row.qty ?? 0)));
+    });
+
+    const weekTrend = new Map<string, number>();
+    ((weekMoves ?? []) as any[]).forEach((row) => {
+      const direction = movementDirection(row.type);
+      if (direction === "internal") return;
+      const qty = Number(row.qty ?? 0);
+      const delta = direction === "out" ? -Math.abs(qty) : direction === "in" ? Math.abs(qty) : qty;
+      weekTrend.set(row.product_id, (weekTrend.get(row.product_id) ?? 0) + delta);
+    });
+
+    const inputs: ProductStockInput[] = ((productRows ?? []) as any[]).map((row) => ({
+      productId: row.id,
+      name: row.name,
+      sku: row.sku ?? "",
+      imageUrl: row.image_url ?? null,
+      catalogType: row.catalog_type ?? "standard",
+      warehouseUnits: Number(row.warehouse_stock ?? 0),
+      agentUnits: Number(row.agent_stock ?? 0),
+      damagedUnits: damagedByProduct.get(row.id) ?? 0,
+      unitCost: pricingByProduct.get(row.id)?.unitCost ?? 0,
+      sellingPrice: pricingByProduct.get(row.id)?.sellingPrice ?? 0,
+      reorderPoint: Number(row.reorder_point ?? 0),
+      unitsSoldRecently: soldRecently.get(row.id) ?? 0,
+      weekTrend: weekTrend.get(row.id) ?? 0
+    }));
+
+    const valued = inputs.map(valueProduct);
+    const costByProduct = new Map(valued.map((row) => [row.productId, row.unitCost]));
+    const totals = summariseInventory(valued);
+
+    // Per-location and per-agent value, from the hub-level stock table rather
+    // than the products cache - that cache has drifted before, and a location
+    // breakdown built on it would inherit the drift.
+    const [{ data: locationRows }, { data: agentRows }] = await Promise.all([
+      supabase.from("agent_locations").select("id, name, state, agent_id").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
+      supabase.from("agents").select("id, name").eq("org_id", orgId).limit(REPORT_ROW_CEILING)
+    ]);
+    const locationById = new Map(((locationRows ?? []) as any[]).map((row) => [row.id, row]));
+    const agentById = new Map(((agentRows ?? []) as any[]).map((row) => [row.id, row.name]));
+
+    const byLocation = groupValue(((locationStock ?? []) as any[]).map((row) => {
+      const location = locationById.get(row.agent_location_id);
+      const units = Number(row.quantity ?? 0);
+      return {
+        key: String(location?.state ?? "unknown"),
+        label: String(location?.state ?? "Unassigned"),
+        amount: units * (costByProduct.get(row.product_id) ?? 0),
+        units
+      };
+    }));
+
+    const byAgent = groupValue(((locationStock ?? []) as any[]).map((row) => {
+      const units = Number(row.quantity ?? 0);
+      return {
+        key: String(row.agent_id ?? "unknown"),
+        label: agentById.get(row.agent_id) ?? "Unassigned",
+        amount: units * (costByProduct.get(row.product_id) ?? 0),
+        units
+      };
+    }));
+
+    // ⚠️ Products carry no merchandising category - only catalog_type, which
+    // is 'standard' or 'combo_only'. Grouped by that and labelled honestly
+    // rather than inventing a taxonomy the data does not have.
+    const byType = groupValue(valued.map((row) => ({
+      key: row.catalogType,
+      label: row.catalogType === "combo_only" ? "Combo only" : "Standard",
+      amount: row.costValue,
+      units: row.units
+    })));
+
+    let snapshotLines: any[] = [];
+    if (snapshotRow?.data?.id) {
+      const { data: lines } = await supabase.from("inventory_valuation_snapshot_lines")
+        .select("product_id, product_name, units, unit_cost, value, condition, note")
+        .eq("snapshot_id", snapshotRow.data.id);
+      snapshotLines = ((lines ?? []) as any[]).map((row) => ({
+        productId: row.product_id ?? null,
+        productName: row.product_name ?? "",
+        units: Number(row.units ?? 0),
+        unitCost: Number(row.unit_cost ?? 0),
+        value: Number(row.value ?? 0),
+        condition: row.condition,
+        note: row.note ?? ""
+      }));
+    }
+
+    res.json({
+      weekStart,
+      weekEnd,
+      products: valued.filter((row) => row.units > 0 || row.damagedUnits > 0)
+        .sort((left, right) => right.costValue - left.costValue),
+      totals,
+      health: inventoryHealth(valued),
+      byLocation,
+      byAgent,
+      byType,
+      movements: summariseMovements(
+        ((weekMoves ?? []) as any[]).map((row) => ({
+          type: row.type, qty: Number(row.qty ?? 0), productId: row.product_id
+        })),
+        costByProduct
+      ),
+      lowStock: valued
+        .filter((row) => row.condition === "at_risk" || row.condition === "damaged")
+        .sort((left, right) => left.units - right.units)
+        .slice(0, 10),
+      snapshot: snapshotRow?.data ? {
+        id: snapshotRow.data.id,
+        status: snapshotRow.data.status,
+        totalUnits: Number(snapshotRow.data.total_units ?? 0),
+        totalValue: Number(snapshotRow.data.total_value ?? 0),
+        notes: snapshotRow.data.notes ?? "",
+        capturedByName: snapshotRow.data.captured_by_name ?? "",
+        capturedAt: snapshotRow.data.captured_at,
+        lines: snapshotLines
+      } : null,
+      slowMovingWindowDays: SLOW_MOVING_WINDOW_DAYS
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load inventory value." });
+  }
+});
+
+const SnapshotSchema = z.object({
+  weekStart: z.string().regex(DATE_KEY),
+  status: z.enum(["draft", "final"]).default("draft"),
+  notes: z.string().trim().max(500).default(""),
+  lines: z.array(z.object({
+    productId: z.string().uuid().nullable().optional(),
+    productName: z.string().trim().min(1).max(120),
+    units: z.coerce.number().min(0).max(10_000_000),
+    unitCost: z.coerce.number().min(0).max(1_000_000_000),
+    condition: z.enum(["healthy", "slow_moving", "at_risk", "damaged"]).default("healthy"),
+    note: z.string().trim().max(200).default("")
+  })).min(1, "A valuation needs at least one product.").max(500)
+}).strict();
+
+// ── POST /api/cash-flow/inventory/snapshot ────────────────
+router.post("/inventory/snapshot", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = SnapshotSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const weekStart = sundayWeekStart(parsed.data.weekStart);
+    const body = parsed.data;
+
+    const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
+    // ⚠️ A snapshot is a RECORD, not a correction. This never writes back to
+    // products.warehouse_stock or agent_location_stock - a physical count that
+    // disagrees with the system is a stock adjustment, made through the stock
+    // module where it lands in stock_movements and stays auditable.
+    const { data: savedId, error } = await supabase.rpc("save_inventory_valuation", {
+      p_org_id: orgId,
+      p_week_start: weekStart,
+      p_status: body.status,
+      p_notes: body.notes,
+      p_captured_by: req.user!.id,
+      p_captured_by_name: String(actor?.name ?? "").trim() || "Unknown",
+      p_lines: body.lines.map((line) => ({
+        productId: line.productId ?? null,
+        productName: line.productName,
+        units: line.units,
+        unitCost: line.unitCost,
+        value: line.units * line.unitCost,
+        condition: line.condition,
+        note: line.note
+      }))
+    });
+    if (error) {
+      const alreadyFinal = /already final/.test(error.message ?? "");
+      res.status(alreadyFinal ? 409 : 500).json({ error: error.message });
+      return;
+    }
+
+    res.json({
+      id: savedId,
+      weekStart,
+      totalUnits: body.lines.reduce((sum, line) => sum + line.units, 0),
+      totalValue: body.lines.reduce((sum, line) => sum + line.units * line.unitCost, 0)
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not save the valuation." });
   }
 });
 

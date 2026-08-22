@@ -1306,6 +1306,51 @@ export type ReservesView = {
   today: string;
 };
 
+export type StockConditionKey = "healthy" | "slow_moving" | "at_risk" | "damaged";
+
+export type ValuedProductRow = {
+  productId: string; name: string; sku: string; imageUrl: string | null;
+  catalogType: string; units: number; damagedUnits: number;
+  unitCost: number; costValue: number; retailValue: number;
+  condition: StockConditionKey; weekTrend: number;
+  /** True when stock is held with no unit cost on file - it values at ₦0. */
+  missingCost: boolean;
+};
+
+export type InventoryValueView = {
+  weekStart: string; weekEnd: string;
+  products: ValuedProductRow[];
+  totals: {
+    totalUnits: number; totalCostValue: number; totalRetailValue: number;
+    averageUnitCost: number; productLines: number;
+    unpricedLines: number; unpricedUnits: number;
+  };
+  health: {
+    slices: Array<{ condition: StockConditionKey; label: string; amount: number; units: number; sharePct: number }>;
+    total: number;
+  };
+  byLocation: Array<{ key: string; label: string; amount: number; units: number; sharePct: number }>;
+  byAgent: Array<{ key: string; label: string; amount: number; units: number; sharePct: number }>;
+  byType: Array<{ key: string; label: string; amount: number; units: number; sharePct: number }>;
+  movements: {
+    stockInUnits: number; stockInValue: number;
+    stockOutUnits: number; stockOutValue: number;
+    adjustmentUnits: number; adjustmentValue: number;
+    netUnits: number; netValue: number;
+  };
+  lowStock: ValuedProductRow[];
+  snapshot: {
+    id: string; status: "draft" | "final";
+    totalUnits: number; totalValue: number; notes: string;
+    capturedByName: string; capturedAt: string;
+    lines: Array<{
+      productId: string | null; productName: string; units: number;
+      unitCost: number; value: number; condition: StockConditionKey; note: string;
+    }>;
+  } | null;
+  slowMovingWindowDays: number;
+};
+
 export const cashFlowApi = {
   summary: (from: string, to: string) =>
     get<CashFlowView>(`/api/cash-flow?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
@@ -1343,7 +1388,14 @@ export const cashFlowApi = {
   updateReserve: (id: string, body: unknown) => patch<{ ok: boolean }>(`/api/cash-flow/reserves/${id}`, body),
   releaseReserve: (id: string, body: { amount: number; note: string }) =>
     post<{ remaining: number }>(`/api/cash-flow/reserves/${id}/release`, body),
-  deleteReserve: (id: string) => del<{ ok: boolean; cancelled: boolean }>(`/api/cash-flow/reserves/${id}`)
+  deleteReserve: (id: string) => del<{ ok: boolean; cancelled: boolean }>(`/api/cash-flow/reserves/${id}`),
+  inventory: (weekStart?: string) =>
+    get<InventoryValueView>(`/api/cash-flow/inventory${weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : ""}`),
+  saveInventorySnapshot: (body: {
+    weekStart: string; status: "draft" | "final"; notes: string;
+    lines: Array<{ productId: string | null; productName: string; units: number; unitCost: number; condition: StockConditionKey; note: string }>;
+  }) => post<{ id: string; weekStart: string; totalUnits: number; totalValue: number }>(
+    "/api/cash-flow/inventory/snapshot", body)
 };
 
 export const deliveryGoalsApi = {

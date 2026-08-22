@@ -156,7 +156,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -9470,6 +9470,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [reservesView, setReservesView] = useState<ReservesView | null>(null);
   const [reservesLoading, setReservesLoading] = useState(false);
   const [reservesSaving, setReservesSaving] = useState(false);
+  // ── Inventory Value (Cash Flow tab) ──
+  const [inventoryValueView, setInventoryValueView] = useState<InventoryValueView | null>(null);
+  const [inventoryValueLoading, setInventoryValueLoading] = useState(false);
+  const [inventoryValueError, setInventoryValueError] = useState("");
+  const [inventoryValueSaving, setInventoryValueSaving] = useState(false);
   // ── Batch unit-economics (Profitability tab) ──
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -9688,14 +9693,42 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } finally { setReservesSaving(false); }
   };
 
+  const loadInventoryValue = useCallback(async (weekStart: string) => {
+    setInventoryValueLoading(true);
+    setInventoryValueError("");
+    try {
+      setInventoryValueView(await cashFlowApi.inventory(weekStart));
+    } catch (err: any) {
+      setInventoryValueError(err?.message ?? "Could not load inventory value.");
+    } finally { setInventoryValueLoading(false); }
+  }, []);
+
+  const saveInventorySnapshot = async (body: {
+    weekStart: string; status: "draft" | "final"; notes: string;
+    lines: Array<{ productId: string | null; productName: string; units: number; unitCost: number; condition: StockConditionKey; note: string }>;
+  }) => {
+    setInventoryValueSaving(true);
+    try {
+      const result = await cashFlowApi.saveInventorySnapshot(body);
+      showToast(body.status === "final"
+        ? `Valuation saved: ₦${Math.round(result.totalValue).toLocaleString("en-NG")} across ${result.totalUnits.toLocaleString("en-NG")} units.`
+        : "Valuation saved as a draft.");
+      await loadInventoryValue(body.weekStart);
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not save the valuation.");
+      throw err;
+    } finally { setInventoryValueSaving(false); }
+  };
+
   useEffect(() => {
     if (activePage === "Finance & Accounting" && financeTab === "Profitability") void loadBatches();
     if (activePage === "Finance & Accounting" && financeTab === "Cash Flow") {
       void loadCashFlow(cashFlowPeriod); void loadBankAccounts(); void loadWeeklyOpening();
       void loadReconciliation(reconciliationWeek);
       void loadReserves();
+      void loadInventoryValue(reconciliationWeek);
     }
-  }, [activePage, financeTab, cashFlowPeriod, reconciliationWeek, loadCashFlow, loadBankAccounts, loadWeeklyOpening, loadReconciliation, loadReserves]);
+  }, [activePage, financeTab, cashFlowPeriod, reconciliationWeek, loadCashFlow, loadBankAccounts, loadWeeklyOpening, loadReconciliation, loadReserves, loadInventoryValue]);
   useEffect(() => {
     setBatchAutofillMeta(null);
     if (selectedBatchId) void loadBatchEconomics(selectedBatchId);
@@ -79870,6 +79903,37 @@ ${waybillLineItems(w).length > 1
                       `₦${Math.round(body.amount).toLocaleString("en-NG")} released back to operating cash.`),
                     onDelete: (id) => runReserveAction(
                       () => cashFlowApi.deleteReserve(id), "Reserve removed.")
+                  }}
+                  inventory={{
+                    view: inventoryValueView,
+                    loading: inventoryValueLoading,
+                    error: inventoryValueError,
+                    // Shares the reconciliation week: both answer "what was the
+                    // position at the end of THIS week", so two pickers that
+                    // could disagree would be a bug waiting to happen.
+                    weekStart: reconciliationWeek,
+                    onWeekChange: (next) => {
+                      setReconciliationWeek(next);
+                      void loadInventoryValue(next);
+                      void loadReconciliation(next);
+                    },
+                    saving: inventoryValueSaving,
+                    onSaveSnapshot: saveInventorySnapshot,
+                    onExport: () => {
+                      const rows = inventoryValueView?.products ?? [];
+                      if (rows.length === 0) { showToast("Nothing to export."); return; }
+                      triggerCsvDownload(
+                        `inventory-value-${inventoryValueView?.weekStart ?? "week"}`,
+                        [
+                          ["Product", "SKU", "Units", "Unit Cost", "Value At Cost", "Retail Estimate", "Condition", "Week Trend"],
+                          ...rows.map((row) => [
+                            row.name, row.sku, String(row.units), String(row.unitCost),
+                            String(row.costValue), String(row.retailValue), row.condition, String(row.weekTrend)
+                          ])
+                        ],
+                        "Inventory value exported."
+                      );
+                    }
                   }}
                   onDownloadReport={() => {
                     const rows = cashFlowView?.transactions ?? [];
