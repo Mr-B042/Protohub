@@ -4,10 +4,11 @@ import {
 } from "recharts";
 import {
   ArrowDownLeft, ArrowUpRight, CalendarDays, ChevronLeft, ChevronRight, Download,
-  Eye, Filter, Info, Landmark, Pencil, RefreshCw, Search, ShieldCheck, TrendingUp, Users, Wallet, X
+  Eye, Filter, Info, Landmark, Lock, Pencil, RefreshCw, Search, ShieldCheck, TrendingUp, Users, Wallet, X
 } from "lucide-react";
 import BankAccountsTab, { type BankAccountsTabProps } from "./BankAccountsTab";
 import WeeklyReconciliationTab, { type WeeklyReconciliationTabProps } from "./WeeklyReconciliationTab";
+import ReservesTab, { type ReservesTabProps } from "./ReservesTab";
 
 // ⚠️ Cash, not profit. Profit is recognised when an order is Delivered; the
 // money arrives when the agent remits, days later and sometimes never. A week
@@ -91,14 +92,17 @@ export type CashFlowPageProps = {
   onEditWeeklyOpening: () => void;
   /** Weekly Reconciliation lives here too: recorded cash vs counted cash. */
   reconciliation: WeeklyReconciliationTabProps;
+  /** Reserves: cash that is still here but already spoken for. */
+  reserves: ReservesTabProps;
 };
 
-const CASH_FLOW_TABS = ["Overview", "Bank Accounts", "Reconciliation"] as const;
+const CASH_FLOW_TABS = ["Overview", "Bank Accounts", "Reconciliation", "Reserves"] as const;
 type CashFlowTab = (typeof CASH_FLOW_TABS)[number];
 const TAB_ICON: Record<CashFlowTab, typeof TrendingUp> = {
   "Overview": TrendingUp,
   "Bank Accounts": Wallet,
-  "Reconciliation": ShieldCheck
+  "Reconciliation": ShieldCheck,
+  "Reserves": Lock
 };
 
 export default function CashFlowPage(props: CashFlowPageProps) {
@@ -185,6 +189,8 @@ export default function CashFlowPage(props: CashFlowPageProps) {
         <BankAccountsTab {...props.bank} transactions={view?.transactions ?? []} loading={loading} />
       ) : topTab === "Reconciliation" ? (
         <WeeklyReconciliationTab {...props.reconciliation} />
+      ) : topTab === "Reserves" ? (
+        <ReservesTab {...props.reserves} />
       ) : (
       <>
       <div className="flex flex-wrap items-center justify-between gap-3">

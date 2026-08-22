@@ -1279,6 +1279,33 @@ export type ReconciliationHistoryWeek = {
   verifiedByName: string; verifiedAt: string | null;
 };
 
+export type ReserveCategoryKey =
+  | "payroll" | "tax" | "supplier" | "advertising" | "emergency" | "owner" | "other";
+
+export type ReserveRow = {
+  id: string; refCode: string; name: string; purpose: string;
+  bankAccountId: string | null; accountLabel: string;
+  amount: number; releasedAmount: number; outstanding: number;
+  availableToUse: boolean; expectedReleaseDate: string | null;
+  category: ReserveCategoryKey; status: "active" | "released" | "cancelled";
+  displayStatus: "active" | "due_soon" | "overdue" | "released" | "cancelled";
+  createdByName: string; createdAt: string;
+};
+
+export type ReservesView = {
+  reserves: ReserveRow[];
+  summary: {
+    totalReserved: number; totalLiquidCash: number;
+    /** Liquid cash minus what is still held. Can be negative. */
+    freeOperatingCash: number; reservedPct: number;
+    activeCount: number; overCommitted: boolean;
+  };
+  breakdown: { slices: Array<{ id: string; label: string; amount: number; sharePct: number }>; total: number };
+  insights: Array<{ kind: "healthy" | "warning" | "info" | "critical"; title: string; detail: string }>;
+  upcoming: Array<{ id: string; name: string; amount: number; releaseDate: string; daysLeft: number }>;
+  today: string;
+};
+
 export const cashFlowApi = {
   summary: (from: string, to: string) =>
     get<CashFlowView>(`/api/cash-flow?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
@@ -1310,7 +1337,13 @@ export const cashFlowApi = {
   }) => post<{ id: string; weekStart: string; variance: number; progress: { variance: number; explained: number; unexplained: number; pct: number } }>(
     "/api/cash-flow/reconciliation/investigation", body),
   reconciliationHistory: () =>
-    get<{ weeks: ReconciliationHistoryWeek[] }>("/api/cash-flow/reconciliation/history")
+    get<{ weeks: ReconciliationHistoryWeek[] }>("/api/cash-flow/reconciliation/history"),
+  reserves: () => get<ReservesView>("/api/cash-flow/reserves"),
+  addReserve: (body: unknown) => post<{ id: string; refCode: string }>("/api/cash-flow/reserves", body),
+  updateReserve: (id: string, body: unknown) => patch<{ ok: boolean }>(`/api/cash-flow/reserves/${id}`, body),
+  releaseReserve: (id: string, body: { amount: number; note: string }) =>
+    post<{ remaining: number }>(`/api/cash-flow/reserves/${id}/release`, body),
+  deleteReserve: (id: string) => del<{ ok: boolean; cancelled: boolean }>(`/api/cash-flow/reserves/${id}`)
 };
 
 export const deliveryGoalsApi = {
