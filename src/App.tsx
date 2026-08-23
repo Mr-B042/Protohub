@@ -29341,6 +29341,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         const expansionRows = expansionProfitByOrder.filter((row) => row.order.assignedRepId === rep.id);
         const revenue = expansionRows.reduce((sum, row) => sum + row.revenue, 0);
         const contribution = expansionRows.reduce((sum, row) => sum + row.contributionProfit, 0);
+        // ⚠️ The SAME commission already netted off to get Contribution, not a
+        // separately-derived figure. Revenue − COGS − bonus = Contribution has
+        // to hold across the row, or the leaderboard argues with itself.
+        const bonusEarned = expansionRows.reduce((sum, row) => sum + row.commission, 0);
         const upsellOrders = expansionRows.filter((row) => row.lines.some((line) => line.kind === "Upsell")).length;
         const crossSellOrders = expansionRows.filter((row) => row.lines.some((line) => line.kind === "Cross-sell")).length;
         const expansionRatePct = deliveredOrders.length > 0 ? (expansionRows.length / deliveredOrders.length) * 100 : 0;
@@ -29348,6 +29352,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           rep,
           revenue,
           contribution,
+          bonusEarned,
           deliveredOrders: deliveredOrders.length,
           expansionOrders: expansionRows.length,
           upsellOrders,
@@ -29787,16 +29792,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </div>
                   </div>
 
-                  <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-5">
                     {[
-                      { label: "Expansion orders", value: `${row.expansionOrders}/${row.deliveredOrders}`, helper: `${Math.round(row.expansionRatePct)}% rate` },
-                      { label: "Upsells", value: String(row.upsellOrders), helper: "delivered" },
-                      { label: "Cross-sells", value: String(row.crossSellOrders), helper: "delivered" },
-                      { label: "Contribution", value: expansionAttributionReady ? formatUpsellMoney(row.contribution) : "-", helper: "after commission" }
+                      { label: "Expansion orders", value: `${row.expansionOrders}/${row.deliveredOrders}`, helper: `${Math.round(row.expansionRatePct)}% rate`, tone: "text-gray-900" },
+                      { label: "Upsells", value: String(row.upsellOrders), helper: "delivered", tone: "text-gray-900" },
+                      { label: "Cross-sells", value: String(row.crossSellOrders), helper: "delivered", tone: "text-gray-900" },
+                      // What the rep personally earned on this expansion work -
+                      // the figure the Contribution beside it is net OF.
+                      { label: "Bonus earned", value: expansionAttributionReady ? formatUpsellMoney(row.bonusEarned) : "-", helper: "this week", tone: "text-emerald-700" },
+                      { label: "Contribution", value: expansionAttributionReady ? formatUpsellMoney(row.contribution) : "-", helper: "after bonus", tone: "text-gray-900" }
                     ].map((metric) => (
                       <div key={metric.label} className="min-w-0">
                         <p className="break-words text-[9px] font-black uppercase leading-4 tracking-[0.12em] text-gray-400">{metric.label}</p>
-                        <strong className="mt-0.5 block break-words text-sm font-black text-gray-900">{metric.value}</strong>
+                        <strong className={`mt-0.5 block break-words text-sm font-black ${metric.tone}`}>{metric.value}</strong>
                         <p className="mt-0.5 text-[10px] font-semibold text-gray-400">{metric.helper}</p>
                       </div>
                     ))}
