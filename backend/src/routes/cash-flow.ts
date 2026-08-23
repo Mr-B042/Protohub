@@ -294,7 +294,7 @@ async function resolveOpeningCash(orgId: string, periodStartIso: string) {
  */
 async function agentReceivables(orgId: string) {
   const { data: orders } = await supabase.from("orders")
-    .select("id, amount, amount_remitted, logistics_cost, remittance_status, agent_id, agent_name_snapshot, updated_at")
+    .select("id, amount, amount_remitted, logistics_cost, remittance_status, agent_id, agent_name_snapshot, delivered_date")
     .eq("org_id", orgId)
     .eq("status", "Delivered").neq("review_hold", true)
     // ⚠️ NOT .neq("remittance_status", "Paid"). PostgREST renders that as
@@ -314,7 +314,9 @@ async function agentReceivables(orgId: string) {
     amountRemitted: Number(row.amount_remitted ?? 0),
     logisticsCost: Number(row.logistics_cost ?? 0),
     remittanceStatus: row.remittance_status ?? null,
-    settledOn: row.updated_at ? lagosDayOf(row.updated_at) : null
+    // ⚠️ delivered_date, not updated_at: updated_at moves on any write, so
+    // "oldest outstanding" would read as today after any bulk backfill.
+    settledOn: row.delivered_date ?? null
   })));
 }
 
@@ -968,7 +970,12 @@ async function weekActivity(orgId: string, weekStart: string, weekEnd: string) {
     // ratio even though the delivery rate beside it is a cohort figure.
     supabase.from("orders").select("id, amount")
       .eq("org_id", orgId).eq("status", "Delivered").neq("review_hold", true)
-      .gte("updated_at", fromIso).lt("updated_at", toIso)
+      // ⚠️ delivered_date, NEVER updated_at. updated_at moves on ANY write -
+      // a note, a remittance, a bulk backfill - so it says when the row was
+      // last touched, not when the order was delivered. A COGS backfill bumped
+      // all 1,819 of them in one go and every "delivered this week" figure
+      // briefly became "every order ever".
+      .gte("delivered_date", weekStart).lte("delivered_date", weekEnd)
       .limit(REPORT_ROW_CEILING),
     loadExpenses(orgId, weekStart, weekEnd),
     loadRemittances(orgId, fromIso, toIso)
@@ -2297,7 +2304,12 @@ router.get("/period-close", async (req, res) => {
       supabase.from("orders")
         .select("id, amount, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at, status")
         .eq("org_id", orgId).eq("status", "Delivered").neq("review_hold", true)
-        .gte("updated_at", fromIso).lt("updated_at", toIso).limit(REPORT_ROW_CEILING),
+        // ⚠️ delivered_date, NEVER updated_at. updated_at moves on ANY write -
+      // a note, a remittance, a bulk backfill - so it says when the row was
+      // last touched, not when the order was delivered. A COGS backfill bumped
+      // all 1,819 of them in one go and every "delivered this week" figure
+      // briefly became "every order ever".
+      .gte("delivered_date", weekStart).lte("delivered_date", weekEnd).limit(REPORT_ROW_CEILING),
       resolveOpeningCash(orgId, fromIso),
       totalLiquidCash(orgId),
       cashStillWithAgents(orgId)
@@ -2645,7 +2657,12 @@ async function weekShape(orgId: string, weekStart: string) {
     supabase.from("orders")
       .select("id, amount, currency, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at")
       .eq("org_id", orgId).eq("status", "Delivered").neq("review_hold", true)
-      .gte("updated_at", fromIso).lt("updated_at", toIso).limit(REPORT_ROW_CEILING),
+      // ⚠️ delivered_date, NEVER updated_at. updated_at moves on ANY write -
+      // a note, a remittance, a bulk backfill - so it says when the row was
+      // last touched, not when the order was delivered. A COGS backfill bumped
+      // all 1,819 of them in one go and every "delivered this week" figure
+      // briefly became "every order ever".
+      .gte("delivered_date", weekStart).lte("delivered_date", weekEnd).limit(REPORT_ROW_CEILING),
     supabase.from("weekly_cash_verifications")
       .select("expected_closing, actual_closing, status").eq("org_id", orgId).eq("week_start", weekStart).maybeSingle()
   ]);
