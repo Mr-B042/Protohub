@@ -15581,6 +15581,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         total += Math.max(0, Number(component.quantity) || 0) * unitCostForProductInCurrency(component.productId, order.currency);
       }
     }
+    for (const line of order.additionalLines ?? []) {
+      total += Math.max(0, Number(line.quantity) || 0) * unitCostForProductInCurrency(line.productId, order.currency);
+    }
     for (const line of order.freeGiftLines ?? []) {
       total += Math.max(0, Number(line.quantity) || 0) * unitCostForProductInCurrency(line.productId, order.currency);
     }
@@ -15617,6 +15620,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     order.crossSellLines?.forEach((line) => {
       crossSellLineInventoryComponents(line).forEach((component) => addLine(component.productId, component.quantity));
     });
+    order.additionalLines?.forEach((line) => addLine(line.productId, line.quantity));
     order.freeGiftLines?.forEach((line) => addLine(line.productId, line.quantity));
     return Array.from(lines, ([productId, quantity]) => ({ productId, quantity }));
   };
@@ -30286,6 +30290,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   {filterProductId && selectedScopedDemand ? (
                     <p className="m-0 mt-2 border-t border-blue-100 pt-2 text-[10px] leading-4 text-blue-900">
                       Evidence: {selectedScopedDemand.recentUnits} units across {selectedScopedDemand.recentOrders} placed order{selectedScopedDemand.recentOrders === 1 ? "" : "s"} in {smartStockLookbackDays} days
+                      {selectedScopedDemand.recentOrders > 0 && <> · {managerInventoryRoundRate(selectedScopedDemand.recentUnits / selectedScopedDemand.recentOrders)} units/order</>}
                       {" · "}{managerInventoryRoundRate(selectedScopedDemand.baselinePerDay)}/day baseline
                       {" · "}{managerInventoryRoundRate(selectedScopedDemand.surgePerDay)}/day recent surge
                       {selectedScopedDemand.allocatedPerDay > 0 && <> · {managerInventoryRoundRate(selectedScopedDemand.allocatedPerDay)}/day allocated from unassigned state demand</>}.

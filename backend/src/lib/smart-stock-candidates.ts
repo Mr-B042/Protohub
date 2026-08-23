@@ -5,6 +5,7 @@ export type SmartStockCandidate = {
   stock: number;
   recentOrders: number;
   recentUnits: number;
+  forecastUnitsPerDay: number;
   daysOfStock: number;
   agentId?: string;
   agentName?: string;
@@ -15,7 +16,13 @@ export type SmartStockCandidate = {
 export function buildSmartStockAlertCandidates(args: {
   stateSupply: Array<{ productId: string; state: string; stock: number }>;
   agentSupply: Array<{ agentId: string; agentName: string; locationId?: string; locationName?: string; productId: string; state: string; stock: number }>;
-  demand: Array<{ productId: string; state: string; recentOrders: number; recentUnits: number }>;
+  demand: Array<{
+    productId: string;
+    state: string;
+    recentOrders: number;
+    recentUnits: number;
+    forecastUnitsPerDay?: number;
+  }>;
   minimumRecentUnits?: number;
   daysThreshold?: number;
   recentDaysWindow?: number;
@@ -30,7 +37,7 @@ export function buildSmartStockAlertCandidates(args: {
   for (const [key, demand] of demandByKey.entries()) {
     if (demand.recentUnits < minimumRecentUnits) continue;
     const stock = stateSupplyByKey.get(key) ?? 0;
-    const dailyUnits = demand.recentUnits / recentDaysWindow;
+    const dailyUnits = Math.max(0, demand.forecastUnitsPerDay ?? demand.recentUnits / recentDaysWindow);
     const daysOfStock = dailyUnits > 0 ? stock / dailyUnits : Number.POSITIVE_INFINITY;
     if (daysOfStock >= daysThreshold) continue;
     stateCandidates.push({
@@ -40,6 +47,7 @@ export function buildSmartStockAlertCandidates(args: {
       stock,
       recentOrders: demand.recentOrders,
       recentUnits: demand.recentUnits,
+      forecastUnitsPerDay: dailyUnits,
       daysOfStock
     });
   }
@@ -49,7 +57,7 @@ export function buildSmartStockAlertCandidates(args: {
     const key = `${row.productId}::${row.state}`;
     const demand = demandByKey.get(key);
     if (!demand || demand.recentUnits < minimumRecentUnits || stateCandidateKeys.has(key)) return [];
-    const dailyUnits = demand.recentUnits / recentDaysWindow;
+    const dailyUnits = Math.max(0, demand.forecastUnitsPerDay ?? demand.recentUnits / recentDaysWindow);
     const stock = Math.max(0, row.stock);
     const daysOfStock = dailyUnits > 0 ? stock / dailyUnits : Number.POSITIVE_INFINITY;
     if (daysOfStock >= daysThreshold) return [];
@@ -60,6 +68,7 @@ export function buildSmartStockAlertCandidates(args: {
       stock,
       recentOrders: demand.recentOrders,
       recentUnits: demand.recentUnits,
+      forecastUnitsPerDay: dailyUnits,
       daysOfStock,
       agentId: row.agentId,
       agentName: row.agentName,

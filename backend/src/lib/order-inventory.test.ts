@@ -2,6 +2,22 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { orderInventoryLinesFromRow } from "./order-inventory.js";
 
+test("package quantities are physical units, not one unit per order", () => {
+  const packageQuantities = [3, 6, 10];
+  const physicalUnits = packageQuantities.reduce((sum, quantity) => {
+    const lines = orderInventoryLinesFromRow({
+      product_id: "edge-brusher",
+      product_name: "Edge Brusher Max",
+      quantity
+    });
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0]?.quantity, quantity);
+    return sum + (lines[0]?.quantity ?? 0);
+  }, 0);
+
+  assert.equal(physicalUnits, 19);
+});
+
 test("combo add-on inventory deduction uses component snapshot, not wrapper product", () => {
   const lines = orderInventoryLinesFromRow({
     product_id: "main-product",

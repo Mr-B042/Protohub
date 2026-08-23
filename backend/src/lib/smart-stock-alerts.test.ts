@@ -19,6 +19,7 @@ test("an empty agent is flagged even when another agent makes the state total lo
     stock: 0,
     recentOrders: 7,
     recentUnits: 7,
+    forecastUnitsPerDay: 1,
     daysOfStock: 0,
     agentId: "agent-empty",
     agentName: "Bright Abuja"
@@ -50,4 +51,25 @@ test("demand below the minimum does not create noisy background alerts", () => {
   });
 
   assert.deepEqual(rows, []);
+});
+
+test("larger packages and a recent unit surge shorten cover immediately", () => {
+  const rows = buildSmartStockAlertCandidates({
+    stateSupply: [{ productId: "edge", state: "Abuja", stock: 20 }],
+    agentSupply: [],
+    demand: [{
+      productId: "edge",
+      state: "Abuja",
+      recentOrders: 3,
+      recentUnits: 19,
+      forecastUnitsPerDay: 10 / 3
+    }],
+    daysThreshold: 7
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.recentOrders, 3);
+  assert.equal(rows[0]?.recentUnits, 19);
+  assert.equal(rows[0]?.forecastUnitsPerDay, 10 / 3);
+  assert.equal(rows[0]?.daysOfStock, 6);
 });
