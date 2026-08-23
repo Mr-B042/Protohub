@@ -217,6 +217,7 @@ import AgentAccessPage from "./pages/AgentAccessPage";
 import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalanceRow } from "./pages/CashFlowPage";
 import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
 import DraftTextarea from "./components/DraftTextarea";
+import { STALE_TIER_STYLE, staleOrderVerdict } from "./lib/stale-orders";
 import {
   isMoneyHidden, maskFormattedMoney, maskMoneyText, naira, setMoneyHiddenGlobal, shortNaira, subscribeMoneyHidden
 } from "./lib/money-privacy";
@@ -15275,6 +15276,57 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     } catch (err: any) {
       showToast(err?.message ?? "Could not change that cost.");
     } finally { setCostChangeSaving(false); }
+  };
+
+  // ⚠️ An order past 7 days with no delivery and no future date is STUCK, not
+  // in progress. Bright's rule: make it impossible to miss, and push the rep to
+  // mark it Failed Delivery so the recovery rep can take it over. A stuck order
+  // ageing quietly in the pipeline helps nobody; a failed one reaches someone
+  // whose job is winning it back.
+  const renderStaleOrderFlag = (order: TrackedOrder, variant: "card" | "inline" = "card") => {
+    const verdict = staleOrderVerdict({
+      status: statusForOrder(order),
+      createdAt: order.createdAt ?? order.date ?? null,
+      scheduledAt: order.scheduledAt ?? null
+    });
+    if (verdict.tier === "none" || verdict.tier === "due") return null;
+    const style = STALE_TIER_STYLE[verdict.tier];
+    const critical = verdict.tier === "critical";
+
+    if (variant === "inline") {
+      return (
+        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-black ${style.chip}`}
+          title={verdict.reason}>
+          <span className="relative flex h-2 w-2">
+            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${style.dot}`} />
+            <span className={`relative inline-flex h-2 w-2 rounded-full ${style.dot}`} />
+          </span>
+          {verdict.ageDays}d · {style.label}
+        </span>
+      );
+    }
+
+    return (
+      <div className={`mt-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border px-3 py-2.5 ${style.chip}`}>
+        <span className="flex min-w-0 items-start gap-2">
+          <span className="relative mt-1 flex h-2.5 w-2.5 shrink-0">
+            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${style.dot}`} />
+            <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${style.dot}`} />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[12px] font-black">
+              {critical ? "Abandoned" : "Stuck"} · {verdict.ageDays} days old
+            </span>
+            <span className="block text-[11px] font-semibold leading-4 opacity-90">{verdict.reason}</span>
+          </span>
+        </span>
+        <button type="button"
+          onClick={() => openAdminOrderStatusRoute(order.id, "Failed")}
+          className="!min-h-0 shrink-0 rounded-lg bg-white/80 px-2.5 py-1.5 text-[11px] font-black hover:bg-white">
+          Mark Failed Delivery
+        </button>
+      </div>
+    );
   };
 
   const quantityForOrder = (order: TrackedOrder) => {
@@ -42399,6 +42451,8 @@ ${waybillLineItems(w).length > 1
                       maxWidth: "max-w-none"
                     })
                   : null}
+
+                {renderStaleOrderFlag(order)}
 
                 <div className="mt-4 flex flex-wrap gap-2">
                   <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
@@ -71428,6 +71482,8 @@ ${waybillLineItems(w).length > 1
                                 maxWidth: "max-w-none"
                               })
                             : null}
+
+                          {renderStaleOrderFlag(order)}
 
                           {scheduleMarker && (
                             <section className="relative mt-4 rounded-[24px] border border-blue-100 bg-blue-50/80 px-4 py-3 shadow-[0_14px_32px_rgba(37,99,235,0.10)] dark:border-sky-400/20 dark:bg-sky-400/10">
