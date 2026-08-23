@@ -1,8 +1,8 @@
 // Smart low-stock alerts at the agent-hub-state level.
 //
-// Instead of a fixed numeric threshold (which is wrong for both ends — too
+// Instead of a fixed numeric threshold (which is wrong for both ends - too
 // noisy for slow-moving SKUs, too quiet for hot states), this fires when:
-//   - component demand in that state was meaningful last week (>= MIN_RECENT_UNITS)
+//   - delivered physical-unit demand in that state was meaningful recently
 //   - and current state stock would run out in < DAYS_OF_STOCK_THRESHOLD days
 //     at that sell rate.
 //
@@ -16,7 +16,11 @@ import { logger } from "./logger.js";
 import { getOrgPushBranding } from "./push-branding.js";
 import { orderInventoryLinesFromRow } from "./order-inventory.js";
 import { sendPushToUsers } from "./push.js";
-import { buildSmartStockAlertCandidates, type SmartStockCandidate } from "./smart-stock-candidates.js";
+import {
+  buildSmartStockAlertCandidates,
+  conservativeDeliveredForecast,
+  type SmartStockCandidate
+} from "./smart-stock-candidates.js";
 import { REPORT_ROW_CEILING } from "./query-limits.js";
 
 const DAYS_OF_STOCK_THRESHOLD = 3;
@@ -47,6 +51,7 @@ type OrderRow = {
   state: string | null;
   status: string | null;
   created_at: string | null;
+  delivered_date: string | null;
   agent_id: string | null;
   agent_location_id: string | null;
   package_components_snapshot?: unknown;
@@ -82,9 +87,11 @@ function dedupeLinkFor(candidate: Pick<SmartStockCandidate, "scope" | "productId
  * Returns the number of alerts fired.
  */
 async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
-  const since = new Date(Date.now() - RECENT_DAYS_WINDOW * 86_400_000);
-  const sinceIso = since.toISOString();
-  const surgeSinceMs = Date.now() - SURGE_DAYS_WINDOW * 86_400_000;
+  const today = new Date();
+  const deliveredSince = new Date(today.getTime() - (RECENT_DAYS_WINDOW - 1) * 86_400_000);
+  const surgeSince = new Date(today.getTime() - (SURGE_DAYS_WINDOW - 1) * 86_400_000);
+  const deliveredSinceKey = deliveredSince.toISOString().slice(0, 10);
+  const surgeSinceKey = surgeSince.toISOString().slice(0, 10);
 
   // 1. Active agents in this org with a base state
   const { data: agentsRaw, error: agentsErr } = await supabase
@@ -198,19 +205,33 @@ async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
     });
   }
 
-  // 3. Non-cancelled placed demand in the last window. Waiting for delivery
-  // makes replenishment alerts arrive after the stock has already left. A
-  // 10-piece package is ten units, and every combo/add-on/gift component counts
-  // against its real SKU. The stronger of the 7-day baseline and 3-day surge
-  // becomes the forecast so a run of larger packages is visible immediately.
-  const { data: ordersRaw, error: ordersErr } = await supabase
-    .from("orders")
-    .select("id, product_id, product_name, quantity, state, status, created_at, agent_id, agent_location_id, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines")
-    .limit(REPORT_ROW_CEILING)
-    .eq("org_id", orgId)
-    .gte("created_at", sinceIso);
-  if (ordersErr) {
-    logger.warn("smart-stock-alerts: orders fetch failed", { orgId, error: ordersErr.message });
+  // 3. Delivered physical units determine velocity. Open fulfillment orders do
+  // not inflate that rate; they are fetched separately and reserve stock. A
+  // delivered 10-piece package is ten units, while combos, add-ons and gifts
+  // consume their own real SKUs through orderInventoryLinesFromRow.
+  const orderFields = "id, product_id, product_name, quantity, state, status, created_at, delivered_date, agent_id, agent_location_id, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines";
+  const [deliveredResult, committedResult] = await Promise.all([
+    supabase
+      .from("orders")
+      .select(orderFields)
+      .eq("org_id", orgId)
+      .eq("status", "Delivered")
+      .gte("delivered_date", deliveredSinceKey)
+      .lte("delivered_date", today.toISOString().slice(0, 10))
+      .limit(REPORT_ROW_CEILING),
+    supabase
+      .from("orders")
+      .select(orderFields)
+      .eq("org_id", orgId)
+      .in("status", ["Confirmed", "In Process", "Dispatched"])
+      .limit(REPORT_ROW_CEILING)
+  ]);
+  if (deliveredResult.error || committedResult.error) {
+    logger.warn("smart-stock-alerts: order flow fetch failed", {
+      orgId,
+      deliveredError: deliveredResult.error?.message,
+      committedError: committedResult.error?.message
+    });
     return 0;
   }
   const recentByProductState = new Map<string, {
@@ -219,20 +240,22 @@ async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
     recentUnits: number;
     surgeUnits: number;
     orderIds: Set<string>;
+    deliveredUnitsByDay: Map<string, number>;
   }>();
-  const committedStatuses = new Set(["Confirmed", "In Process", "Dispatched"]);
   const committedByProductState = new Map<string, number>();
   const committedByAgentLocationProduct = new Map<string, number>();
-  const primaryLocationByAgent = new Map<string, string>();
+  const activeLocationIdsByAgent = new Map<string, string[]>();
   for (const location of (locationsRaw ?? []) as AgentLocationRow[]) {
-    if (location.is_primary && location.active) primaryLocationByAgent.set(location.agent_id, location.id);
+    if (!location.active) continue;
+    const ids = activeLocationIdsByAgent.get(location.agent_id) ?? [];
+    ids.push(location.id);
+    activeLocationIdsByAgent.set(location.agent_id, ids);
   }
-  for (const row of (ordersRaw ?? []) as OrderRow[]) {
-    if (["Cancelled", "Failed"].includes(row.status ?? "")) continue;
+  for (const row of (deliveredResult.data ?? []) as OrderRow[]) {
     const state = titleCaseState(row.state ?? "");
-    if (!state || !row.product_id) continue;
-    const createdMs = row.created_at ? new Date(row.created_at).getTime() : 0;
-    const isSurge = Number.isFinite(createdMs) && createdMs >= surgeSinceMs;
+    const deliveredKey = row.delivered_date?.slice(0, 10) ?? "";
+    if (!state || !row.product_id || !deliveredKey) continue;
+    const isSurge = deliveredKey >= surgeSinceKey;
     for (const line of orderInventoryLinesFromRow(row)) {
       const key = `${line.productId}::${state}`;
       const bucket = recentByProductState.get(key) ?? {
@@ -240,26 +263,61 @@ async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
         state,
         recentUnits: 0,
         surgeUnits: 0,
-        orderIds: new Set<string>()
+        orderIds: new Set<string>(),
+        deliveredUnitsByDay: new Map<string, number>()
       };
       const quantity = Math.max(0, Number(line.quantity ?? 0));
       bucket.recentUnits += quantity;
       if (isSurge) bucket.surgeUnits += quantity;
       bucket.orderIds.add(row.id);
+      bucket.deliveredUnitsByDay.set(
+        deliveredKey,
+        (bucket.deliveredUnitsByDay.get(deliveredKey) ?? 0) + quantity
+      );
       recentByProductState.set(key, bucket);
-      if (committedStatuses.has(row.status ?? "")) {
-        committedByProductState.set(key, (committedByProductState.get(key) ?? 0) + quantity);
-        if (row.agent_id) {
-          const locationId = row.agent_location_id || primaryLocationByAgent.get(row.agent_id) || "";
-          const agentKey = `${row.agent_id}::${locationId}::${line.productId}`;
-          committedByAgentLocationProduct.set(
-            agentKey,
-            (committedByAgentLocationProduct.get(agentKey) ?? 0) + quantity
-          );
-        }
-      }
     }
   }
+  for (const row of (committedResult.data ?? []) as OrderRow[]) {
+    const state = titleCaseState(row.state ?? "");
+    if (!state || !row.product_id) continue;
+    for (const line of orderInventoryLinesFromRow(row)) {
+      const quantity = Math.max(0, Number(line.quantity ?? 0));
+      const stateKey = `${line.productId}::${state}`;
+      committedByProductState.set(stateKey, (committedByProductState.get(stateKey) ?? 0) + quantity);
+      if (!row.agent_id) continue;
+      const activeLocationIds = activeLocationIdsByAgent.get(row.agent_id) ?? [];
+      const explicitLocationId = row.agent_location_id && activeLocationIds.includes(row.agent_location_id)
+        ? row.agent_location_id
+        : "";
+      // A missing location on a multi-hub agent is not guessed. The commitment
+      // still reduces state stock, but assigning it to an arbitrary hub would
+      // manufacture a confidently wrong agent-level cover figure.
+      const locationId = explicitLocationId || (activeLocationIds.length === 1 ? activeLocationIds[0] : "");
+      if (activeLocationIds.length > 1 && !locationId) continue;
+      const agentKey = `${row.agent_id}::${locationId}::${line.productId}`;
+      committedByAgentLocationProduct.set(
+        agentKey,
+        (committedByAgentLocationProduct.get(agentKey) ?? 0) + quantity
+      );
+    }
+  }
+
+  const demandRows = Array.from(recentByProductState.values()).map((row) => {
+    const rate = conservativeDeliveredForecast({
+      recentUnits: row.recentUnits,
+      surgeUnits: row.surgeUnits,
+      deliveredUnitsByDay: row.deliveredUnitsByDay.values(),
+      recentDaysWindow: RECENT_DAYS_WINDOW,
+      surgeDaysWindow: SURGE_DAYS_WINDOW
+    });
+    return {
+      productId: row.productId,
+      state: row.state,
+      recentOrders: row.orderIds.size,
+      recentUnits: row.recentUnits,
+      forecastUnitsPerDay: rate.forecastPerDay
+    };
+  });
 
   // 4. Find state-wide risks, then agent-specific risks that the pooled state
   // total would otherwise hide.
@@ -269,20 +327,11 @@ async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
       return { productId, state, stock: Math.max(0, stock - (committedByProductState.get(key) ?? 0)) };
     }),
     agentSupply: agentSupply.map((row) => {
-      const locationId = row.locationId || primaryLocationByAgent.get(row.agentId) || "";
+      const locationId = row.locationId || "";
       const committed = committedByAgentLocationProduct.get(`${row.agentId}::${locationId}::${row.productId}`) ?? 0;
       return { ...row, stock: Math.max(0, row.stock - committed) };
     }),
-    demand: Array.from(recentByProductState.values()).map((row) => ({
-      productId: row.productId,
-      state: row.state,
-      recentOrders: row.orderIds.size,
-      recentUnits: row.recentUnits,
-      forecastUnitsPerDay: Math.max(
-        row.recentUnits / RECENT_DAYS_WINDOW,
-        row.surgeUnits / SURGE_DAYS_WINDOW
-      )
-    })),
+    demand: demandRows,
     minimumRecentUnits: MIN_RECENT_UNITS,
     daysThreshold: DAYS_OF_STOCK_THRESHOLD,
     recentDaysWindow: RECENT_DAYS_WINDOW
@@ -359,7 +408,7 @@ async function scanOrgForSmartStockAlerts(orgId: string): Promise<number> {
       : `${productName} low in ${c.state}`;
     const subject = c.scope === "agent" ? `${agentLabel} has` : "State hubs have";
     const averageUnits = c.recentOrders > 0 ? c.recentUnits / c.recentOrders : 0;
-    const message = `${subject} ${c.stock} usable unit${c.stock === 1 ? "" : "s"} after commitments, ${daysLabel} at ${c.forecastUnitsPerDay.toFixed(1)} forecast units/day. ${c.recentUnits} unit${c.recentUnits === 1 ? "" : "s"} across ${c.recentOrders} placed order${c.recentOrders === 1 ? "" : "s"} in ${c.state} this week (${averageUnits.toFixed(1)} units/order).`;
+    const message = `${subject} ${c.stock} usable unit${c.stock === 1 ? "" : "s"} after commitments, ${daysLabel} at ${c.forecastUnitsPerDay.toFixed(1)} forecast units/day. ${c.recentUnits} physical unit${c.recentUnits === 1 ? "" : "s"} across ${c.recentOrders} delivered order${c.recentOrders === 1 ? "" : "s"} in ${c.state} this week (${averageUnits.toFixed(1)} units/order).`;
     const link = dedupeLinkFor(c);
     for (const recipientId of recipientIds) {
       rows.push({

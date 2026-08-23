@@ -15842,43 +15842,63 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   type ManagerInventoryDemandRate = {
     baselinePerDay: number;
     surgePerDay: number;
+    peakDeliveredPerDay: number;
     forecastPerDay: number;
+    coveragePerDay: number;
     allocatedPerDay: number;
     recentUnits: number;
     surgeUnits: number;
     recentOrders: number;
+    deliveryDays: number;
+    dailyDeliveredUnits: Array<{ date: string; units: number }>;
   };
   type ManagerInventoryHubProductDemand = {
     recentUnits: number;
     surgeUnits: number;
     committedUnits: number;
     recentOrderIds: Set<string>;
+    deliveredUnitsByDay: Map<string, number>;
   };
 
   const emptyManagerInventoryDemandRate = (): ManagerInventoryDemandRate => ({
     baselinePerDay: 0,
     surgePerDay: 0,
+    peakDeliveredPerDay: 0,
     forecastPerDay: 0,
+    coveragePerDay: 0,
     allocatedPerDay: 0,
     recentUnits: 0,
     surgeUnits: 0,
-    recentOrders: 0
+    recentOrders: 0,
+    deliveryDays: 0,
+    dailyDeliveredUnits: []
   });
   const managerInventoryDemandRate = (
     recentUnits: number,
     surgeUnits: number,
-    recentOrders = 0
+    recentOrders = 0,
+    deliveredUnitsByDay: Map<string, number> = new Map()
   ): ManagerInventoryDemandRate => {
     const baselinePerDay = recentUnits / Math.max(1, smartStockLookbackDays);
     const surgePerDay = surgeUnits / managerInventorySurgeDays;
+    const peakDeliveredPerDay = Math.max(0, ...deliveredUnitsByDay.values());
+    // A rolling average alone can hide a sharp current run-rate. Use only real
+    // delivered physical units, but retain the highest recent delivered day so
+    // replenishment warnings react before a short surge empties the hub.
+    const forecastPerDay = Math.max(baselinePerDay, surgePerDay, peakDeliveredPerDay);
     return {
       baselinePerDay,
       surgePerDay,
-      forecastPerDay: Math.max(baselinePerDay, surgePerDay),
+      peakDeliveredPerDay,
+      forecastPerDay,
+      coveragePerDay: forecastPerDay,
       allocatedPerDay: 0,
       recentUnits,
       surgeUnits,
-      recentOrders
+      recentOrders,
+      deliveryDays: deliveredUnitsByDay.size,
+      dailyDeliveredUnits: Array.from(deliveredUnitsByDay, ([date, units]) => ({ date, units }))
+        .sort((a, b) => b.date.localeCompare(a.date))
     };
   };
   const managerInventoryRoundRate = (value: number) => Math.round(value * 10) / 10;
@@ -15889,7 +15909,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // fallback applied an order with no location id to every location belonging to
   // the agent, duplicating both demand and commitments for multi-hub agents.
   const managerInventoryHubProductDemand = new Map<string, Map<string, ManagerInventoryHubProductDemand>>();
-  const managerInventoryStateSurgeUnits = new Map<string, number>();
+  const managerInventoryStateDeliveredDemand = new Map<string, ManagerInventoryHubProductDemand>();
   const managerInventoryUnassignedCommittedByStateProduct = new Map<string, number>();
   const managerInventoryKnownHubKeys = new Set(
     inventoryStateHubRows.map(({ agent, location }) => `${agent.id}::${location.id}`)
@@ -15898,27 +15918,43 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   trackedOrders.forEach((order) => {
     if (order.reviewHold || ["Cancelled", "Failed"].includes(order.status ?? "New")) return;
     const orderState = normalizeAgentState(order.state);
-    const createdKey = orderCreatedKey(order);
-    const isStateSurge = Boolean(orderState)
-      && createdKey >= managerInventorySurgeStartKey
-      && createdKey <= smartStockTodayKey;
-    const isRecentOrder = createdKey >= smartStockRecentStartKey && createdKey <= smartStockTodayKey;
-    const isSurgeOrder = createdKey >= managerInventorySurgeStartKey && createdKey <= smartStockTodayKey;
+    const isDelivered = (order.status ?? "New") === "Delivered";
+    const deliveredKey = isDelivered ? orderDeliveredKey(order) : "";
+    const isRecentDelivery = Boolean(deliveredKey)
+      && deliveredKey >= smartStockRecentStartKey
+      && deliveredKey <= smartStockTodayKey;
+    const isSurgeDelivery = Boolean(deliveredKey)
+      && deliveredKey >= managerInventorySurgeStartKey
+      && deliveredKey <= smartStockTodayKey;
     const agent = order.agentId ? agents.find((candidate) => candidate.id === order.agentId) : null;
-    const resolvedLocation = agent
-      ? (findAgentLocation(agent, order.agentLocationId) ?? primaryAgentLocation(agent))
-      : null;
+    const activeLocations = agent ? activeAgentLocationRows(agent) : [];
+    const explicitLocation = agent ? findAgentLocation(agent, order.agentLocationId) : null;
+    // Never guess the hub for a multi-hub agent. Older orders without an exact
+    // location still count in the state forecast, but attributing them to a
+    // primary hub would produce a confidently wrong agent-level run rate.
+    const resolvedLocation = explicitLocation ?? (activeLocations.length === 1 ? activeLocations[0] : null);
     const candidateHubKey = order.agentId ? `${order.agentId}::${resolvedLocation?.id ?? order.agentLocationId ?? ""}` : "";
     const hubKey = managerInventoryKnownHubKeys.has(candidateHubKey) ? candidateHubKey : "";
     const isCommitted = MANAGER_INVENTORY_COMMITTED_STATUSES.has(order.status ?? "New");
 
     demandLinesForOrder(order).forEach((line) => {
-      if (isStateSurge && orderState) {
+      if (isRecentDelivery && orderState) {
         const stateKey = smartStockKey(line.productId, orderState);
-        managerInventoryStateSurgeUnits.set(
-          stateKey,
-          (managerInventoryStateSurgeUnits.get(stateKey) ?? 0) + line.quantity
+        const stateBucket = managerInventoryStateDeliveredDemand.get(stateKey) ?? {
+          recentUnits: 0,
+          surgeUnits: 0,
+          committedUnits: 0,
+          recentOrderIds: new Set<string>(),
+          deliveredUnitsByDay: new Map<string, number>()
+        };
+        stateBucket.recentUnits += line.quantity;
+        stateBucket.recentOrderIds.add(order.id);
+        stateBucket.deliveredUnitsByDay.set(
+          deliveredKey,
+          (stateBucket.deliveredUnitsByDay.get(deliveredKey) ?? 0) + line.quantity
         );
+        if (isSurgeDelivery) stateBucket.surgeUnits += line.quantity;
+        managerInventoryStateDeliveredDemand.set(stateKey, stateBucket);
       }
       if (isCommitted && orderState && !hubKey) {
         const stateKey = smartStockKey(line.productId, orderState);
@@ -15933,13 +15969,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         recentUnits: 0,
         surgeUnits: 0,
         committedUnits: 0,
-        recentOrderIds: new Set<string>()
+        recentOrderIds: new Set<string>(),
+        deliveredUnitsByDay: new Map<string, number>()
       };
-      if (isRecentOrder) {
+      if (isRecentDelivery) {
         bucket.recentUnits += line.quantity;
         bucket.recentOrderIds.add(order.id);
+        bucket.deliveredUnitsByDay.set(
+          deliveredKey,
+          (bucket.deliveredUnitsByDay.get(deliveredKey) ?? 0) + line.quantity
+        );
       }
-      if (isSurgeOrder) bucket.surgeUnits += line.quantity;
+      if (isSurgeDelivery) bucket.surgeUnits += line.quantity;
       if (isCommitted) {
         bucket.committedUnits += line.quantity;
       }
@@ -16039,11 +16080,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const inTransitByProductId = new Map<string, number>();
       catalogProducts.forEach((product) => {
         const key = smartStockKey(product.id, state);
-        const demand = smartStockDemandByKey.get(key);
+        const demand = managerInventoryStateDeliveredDemand.get(key);
         const rate = managerInventoryDemandRate(
           demand?.recentUnits ?? 0,
-          managerInventoryStateSurgeUnits.get(key) ?? 0,
-          demand?.recentOrderIds.size ?? 0
+          demand?.surgeUnits ?? 0,
+          demand?.recentOrderIds.size ?? 0,
+          demand?.deliveredUnitsByDay ?? new Map()
         );
         if (rate.forecastPerDay > 0) stateDemandByProductId.set(product.id, rate);
         const inTransitForProduct = managerInventoryUnitsInTransitByStateProduct.get(key) ?? 0;
@@ -16051,10 +16093,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       });
       const inTransit = managerInventoryUnitsInTransitByState.get(state) ?? 0;
 
-      // Start with this hub's observed placed-order rate. The higher of the full
-      // lookback and the last three days wins, so a demand surge cannot be hidden
-      // by a quiet earlier week. Delivered-only velocity reacts too late for
-      // replenishment because the stock has already left by then.
+      // Start with each hub's observed delivered physical-unit rate. Package and
+      // combo contents are expanded by demandLinesForOrder, so a 3-piece order
+      // consumes three units and every add-on/gift consumes its own real SKU.
       hubs.forEach((hub) => {
         const byProduct = managerInventoryHubProductDemand.get(`${hub.agentId}::${hub.locationId}`) ?? new Map();
         byProduct.forEach((demand, productId) => {
@@ -16062,37 +16103,53 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           hub.committedByProductId.set(productId, demand.committedUnits);
           hub.demandByProductId.set(
             productId,
-            managerInventoryDemandRate(demand.recentUnits, demand.surgeUnits, demand.recentOrderIds.size)
+            managerInventoryDemandRate(
+              demand.recentUnits,
+              demand.surgeUnits,
+              demand.recentOrderIds.size,
+              demand.deliveredUnitsByDay
+            )
           );
         });
       });
 
-      // State-level placed demand also includes orders with no delivery-agent
-      // attribution. Allocate only the unassigned remainder. Historical demand
-      // share is preferred; stock share is merely the last-resort fallback.
+      // State-level delivered demand can include historical deliveries without
+      // a resolvable hub. Allocate only that remainder for observed hub rate.
+      // Stock cover also stress-tests every hub against the full delivered state
+      // rate because the strongest hub inherits demand when another hub empties.
       stateDemandByProductId.forEach((stateRate, productId) => {
         const attributedRate = hubs.reduce(
           (sum, hub) => sum + (hub.demandByProductId.get(productId)?.forecastPerDay ?? 0),
           0
         );
         const remainder = Math.max(0, stateRate.forecastPerDay - attributedRate);
-        if (remainder <= 0 || hubs.length === 0) return;
-        const historicalWeight = hubs.reduce(
-          (sum, hub) => sum + (hub.demandByProductId.get(productId)?.recentUnits ?? 0),
-          0
-        );
-        const stockWeight = hubs.reduce((sum, hub) => sum + (hub.unitsByProductId.get(productId) ?? 0), 0);
+        if (hubs.length === 0) return;
+        if (remainder > 0) {
+          const historicalWeight = hubs.reduce(
+            (sum, hub) => sum + (hub.demandByProductId.get(productId)?.recentUnits ?? 0),
+            0
+          );
+          const stockWeight = hubs.reduce((sum, hub) => sum + (hub.unitsByProductId.get(productId) ?? 0), 0);
+          hubs.forEach((hub) => {
+            const current = hub.demandByProductId.get(productId) ?? emptyManagerInventoryDemandRate();
+            const weight = historicalWeight > 0
+              ? current.recentUnits / historicalWeight
+              : stockWeight > 0
+                ? (hub.unitsByProductId.get(productId) ?? 0) / stockWeight
+                : 1 / hubs.length;
+            hub.demandByProductId.set(productId, {
+              ...current,
+              forecastPerDay: current.forecastPerDay + remainder * weight,
+              allocatedPerDay: current.allocatedPerDay + remainder * weight
+            });
+          });
+        }
+
         hubs.forEach((hub) => {
           const current = hub.demandByProductId.get(productId) ?? emptyManagerInventoryDemandRate();
-          const weight = historicalWeight > 0
-            ? current.recentUnits / historicalWeight
-            : stockWeight > 0
-              ? (hub.unitsByProductId.get(productId) ?? 0) / stockWeight
-              : 1 / hubs.length;
           hub.demandByProductId.set(productId, {
             ...current,
-            forecastPerDay: current.forecastPerDay + remainder * weight,
-            allocatedPerDay: current.allocatedPerDay + remainder * weight
+            coveragePerDay: Math.max(current.forecastPerDay, stateRate.forecastPerDay)
           });
         });
       });
@@ -16138,14 +16195,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         productIds.forEach((productId) => {
           const units = hub.unitsByProductId.get(productId) ?? 0;
           const committed = hub.committedByProductId.get(productId) ?? 0;
-          const rate = hub.demandByProductId.get(productId)?.forecastPerDay ?? 0;
+          const rate = hub.demandByProductId.get(productId)?.coveragePerDay ?? 0;
           hub.coverByProductId.set(productId, managerInventoryProductCover(units, committed, rate));
         });
         hub.ordersPerDay = managerInventoryRoundRate(Array.from(hub.demandByProductId.values())
-          .reduce((sum, rate) => sum + rate.forecastPerDay, 0));
+          .reduce((sum, rate) => sum + rate.coveragePerDay, 0));
         hub.committedUnits = Array.from(hub.committedByProductId.values()).reduce((sum, units) => sum + units, 0);
         const demandedCovers = Array.from(hub.demandByProductId.entries())
-          .filter(([, rate]) => rate.forecastPerDay > 0)
+          .filter(([, rate]) => rate.coveragePerDay > 0)
           .map(([productId]) => hub.coverByProductId.get(productId) ?? 0);
         hub.daysCover = demandedCovers.length > 0 ? Math.min(...demandedCovers) : Number.POSITIVE_INFINITY;
       });
@@ -16339,14 +16396,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         if (!product) return;
         const needy = row.hubs
           .filter((hub) => {
-            const rate = hub.demandByProductId.get(productId)?.forecastPerDay ?? 0;
+            const rate = hub.demandByProductId.get(productId)?.coveragePerDay ?? 0;
             const cover = hub.coverByProductId.get(productId) ?? Number.POSITIVE_INFINITY;
             return rate > 0 && cover <= smartStockWatchDaysCover;
           })
           .sort((a, b) => (a.coverByProductId.get(productId) ?? 0) - (b.coverByProductId.get(productId) ?? 0));
 
         needy.forEach((short) => {
-          const shortRate = short.demandByProductId.get(productId)?.forecastPerDay ?? 0;
+          const shortRate = short.demandByProductId.get(productId)?.coveragePerDay ?? 0;
           const shortRaw = short.unitsByProductId.get(productId) ?? 0;
           const shortCommitted = short.committedByProductId.get(productId) ?? 0;
           const shortAvailable = Math.max(0, shortRaw - shortCommitted);
@@ -16356,7 +16413,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           const donorOptions = row.hubs
             .filter((hub) => hub.locationId !== short.locationId)
             .map((hub) => {
-              const rate = hub.demandByProductId.get(productId)?.forecastPerDay ?? 0;
+              const rate = hub.demandByProductId.get(productId)?.coveragePerDay ?? 0;
               const raw = hub.unitsByProductId.get(productId) ?? 0;
               const committed = hub.committedByProductId.get(productId) ?? 0;
               const available = Math.max(0, raw - committed);
@@ -30034,7 +30091,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       Math.max(0, scopedRawUnits(row) - scopedCommittedUnits(row));
     const scopedPerDay = (row: ManagerInventoryScopedRow, allProductsPerDay: number) =>
       managerInventoryRoundRate(filterProductId
-        ? (row.demandByProductId.get(filterProductId)?.forecastPerDay ?? 0)
+        ? (row.demandByProductId.get(filterProductId)?.coveragePerDay ?? 0)
         : allProductsPerDay);
     const scopedCoverForRow = (row: ManagerInventoryScopedRow, allProductsCover: number) =>
       filterProductId ? (row.coverByProductId.get(filterProductId) ?? Number.POSITIVE_INFINITY) : allProductsCover;
@@ -30057,7 +30114,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const demandConfidence = (rate?: ManagerInventoryDemandRate) => {
       if (!rate || rate.forecastPerDay <= 0) return { label: "No evidence", tone: "bg-gray-100 text-gray-600" };
       const allocatedShare = rate.forecastPerDay > 0 ? rate.allocatedPerDay / rate.forecastPerDay : 1;
-      if (rate.recentOrders >= 3 && allocatedShare <= 0.25) return { label: "High confidence", tone: "bg-emerald-50 text-emerald-700" };
+      if (rate.recentOrders >= 3 && rate.deliveryDays >= 2 && allocatedShare <= 0.25) return { label: "High confidence", tone: "bg-emerald-50 text-emerald-700" };
       if (rate.recentOrders >= 1 && allocatedShare <= 0.5) return { label: "Medium confidence", tone: "bg-amber-50 text-amber-700" };
       return { label: "Estimated", tone: "bg-orange-50 text-orange-700" };
     };
@@ -30107,7 +30164,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               State Inventory Overview
               <span title="Usable stock is counted stock minus defective, missing and committed units. Incoming transfers are excluded until received."><Info className="h-4 w-4 text-gray-300" /></span>
             </h3>
-            <p className="m-0 mt-0.5 text-[12px] text-gray-500">Cover uses usable stock and the higher of the {smartStockLookbackDays}-day baseline or {managerInventorySurgeDays}-day demand surge. Incoming transfers are not counted until received.</p>
+            <p className="m-0 mt-0.5 text-[12px] text-gray-500">Cover uses usable stock against actual delivered physical units. The safest of the {smartStockLookbackDays}-day average, {managerInventorySurgeDays}-day rate, or highest delivered day is applied. Incoming transfers are excluded until received.</p>
             {rows.length === 0 ? (
               <p className="m-0 py-10 text-center text-sm italic text-gray-400">No agent hub is holding stock yet.</p>
             ) : (
@@ -30198,7 +30255,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           </td>
                           <td className="py-3 pr-3 text-gray-700">
                             <span className="block font-semibold">{row.avgDailySales} / day</span>
-                            <span className="block text-[10px] text-gray-400">conservative forecast</span>
+                            <span className="block text-[10px] text-gray-400">delivered-unit safety rate</span>
                           </td>
                           <td className={`py-3 pr-3 font-bold ${coverTone(row.status)}`}>
                             {coverText(row.daysCover)}
@@ -30289,14 +30346,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </div>
                   {filterProductId && selectedScopedDemand ? (
                     <p className="m-0 mt-2 border-t border-blue-100 pt-2 text-[10px] leading-4 text-blue-900">
-                      Evidence: {selectedScopedDemand.recentUnits} units across {selectedScopedDemand.recentOrders} placed order{selectedScopedDemand.recentOrders === 1 ? "" : "s"} in {smartStockLookbackDays} days
+                      Evidence: {selectedScopedDemand.recentUnits} physical units across {selectedScopedDemand.recentOrders} delivered order{selectedScopedDemand.recentOrders === 1 ? "" : "s"} on {selectedScopedDemand.deliveryDays} delivery day{selectedScopedDemand.deliveryDays === 1 ? "" : "s"} in the last {smartStockLookbackDays} days
                       {selectedScopedDemand.recentOrders > 0 && <> · {managerInventoryRoundRate(selectedScopedDemand.recentUnits / selectedScopedDemand.recentOrders)} units/order</>}
-                      {" · "}{managerInventoryRoundRate(selectedScopedDemand.baselinePerDay)}/day baseline
-                      {" · "}{managerInventoryRoundRate(selectedScopedDemand.surgePerDay)}/day recent surge
-                      {selectedScopedDemand.allocatedPerDay > 0 && <> · {managerInventoryRoundRate(selectedScopedDemand.allocatedPerDay)}/day allocated from unassigned state demand</>}.
+                      {" · "}{managerInventoryRoundRate(selectedScopedDemand.baselinePerDay)}/day rolling average
+                      {" · "}{managerInventoryRoundRate(selectedScopedDemand.surgePerDay)}/day recent rate
+                      {" · "}{managerInventoryRoundRate(selectedScopedDemand.peakDeliveredPerDay)}/day highest delivered day
+                      {selectedScopedDemand.allocatedPerDay > 0 && <> · {managerInventoryRoundRate(selectedScopedDemand.allocatedPerDay)}/day allocated from delivered state demand</>}.
+                      {selectedScopedDemand.dailyDeliveredUnits.length > 0 && (
+                        <> Daily units: {selectedScopedDemand.dailyDeliveredUnits.map((row) => `${displayDateFromKey(row.date)}: ${row.units}`).join(" · ")}.</>
+                      )}
                     </p>
                   ) : (
-                    <p className="m-0 mt-2 border-t border-blue-100 pt-2 text-[10px] leading-4 text-blue-900">Select one product to audit its exact baseline, recent surge, commitments and confidence. The all-products cover below is the weakest demanded product, never a pooled average.</p>
+                    <p className="m-0 mt-2 border-t border-blue-100 pt-2 text-[10px] leading-4 text-blue-900">Select one product to audit its delivered units, package/component quantities, daily rates, commitments and confidence. The all-products cover below is the weakest demanded product, never a pooled average.</p>
                   )}
                 </div>
                 <div className="mt-3 overflow-x-auto">
@@ -30315,6 +30376,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     </thead>
                     <tbody>
                       {selected.hubs.map((hub) => {
+                        const hubDemand = filterProductId ? hub.demandByProductId.get(filterProductId) : undefined;
                         const hubPerDay = scopedPerDay(hub, hub.ordersPerDay);
                         const hubCommittedUnits = scopedCommittedUnits(hub);
                         const hubUnits = scopedAvailableUnits(hub);
@@ -30338,8 +30400,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             })}
                             <td className="py-3 pr-3 text-gray-700">
                               <span className="block font-semibold">{hubPerDay}</span>
-                              {filterProductId && hub.demandByProductId.get(filterProductId)?.allocatedPerDay ? (
-                                <span className="block text-[10px] text-orange-500">includes allocation</span>
+                              {hubDemand && hubDemand.coveragePerDay > hubDemand.forecastPerDay ? (
+                                <span className="block text-[10px] text-blue-500">state safety · hub delivered {managerInventoryRoundRate(hubDemand.forecastPerDay)}/day</span>
+                              ) : hubDemand ? (
+                                <span className="block text-[10px] text-gray-400">from delivered physical units</span>
                               ) : null}
                             </td>
                             <td className={`py-3 pr-3 font-bold ${coverTone(hubStatus)}`}>
@@ -30454,7 +30518,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
                       <span>
                         {selectedScopedPerDay <= 0
-                          ? <><strong>Insufficient demand evidence.</strong> Stock is visible, but Protohub will not call it covered until qualifying placed orders establish a product-level rate.</>
+                          ? <><strong>Insufficient delivered-flow evidence.</strong> Stock is visible, but Protohub will not call it covered until delivered orders establish a physical-unit rate.</>
                           : !short
                           ? <><strong>{selected.state} is covered for this scope.</strong> No agent hub is below {smartStockWatchDaysCover} days after commitments.</>
                           : donor
@@ -30608,7 +30672,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 Recommended Actions <Sparkles className="h-4 w-4 text-violet-500" />
                 <span className="text-[11px] font-semibold text-gray-400">(conservative rules)</span>
               </h3>
-              <p className="m-0 mt-0.5 text-[12px] text-gray-500">Product-level actions based on usable stock, commitments and the current demand surge.</p>
+              <p className="m-0 mt-0.5 text-[12px] text-gray-500">Product-level actions based on usable stock, open commitments and actual delivered physical-unit flow.</p>
             </div>
             <span className="flex items-center gap-2 text-[11px] font-semibold text-gray-400">
               Auto-calculated
@@ -30735,7 +30799,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         <section className="flex flex-wrap items-center gap-x-8 gap-y-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 text-[12px] text-gray-500">
           <span className="inline-flex items-center gap-1.5 font-bold text-gray-700"><Info className="h-4 w-4 text-gray-400" />How it works</span>
           <span>Usable stock = counted stock - defective - missing - committed units</span>
-          <span>Stock cover = usable stock ÷ the higher of the {smartStockLookbackDays}-day baseline or {managerInventorySurgeDays}-day surge</span>
+          <span>Stock cover = usable stock ÷ the safest of the delivered {smartStockLookbackDays}-day average, {managerInventorySurgeDays}-day rate, or highest delivered day</span>
           <span>Incoming stock is excluded until the receiving hub confirms it</span>
           <span>Safety buffer: {smartStockCriticalDaysCover}-{smartStockWatchDaysCover} days</span>
         </section>

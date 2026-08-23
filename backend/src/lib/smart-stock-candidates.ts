@@ -13,6 +13,30 @@ export type SmartStockCandidate = {
   locationName?: string;
 };
 
+export function conservativeDeliveredForecast(args: {
+  recentUnits: number;
+  surgeUnits: number;
+  deliveredUnitsByDay: Iterable<number>;
+  recentDaysWindow?: number;
+  surgeDaysWindow?: number;
+}) {
+  const recentDaysWindow = Math.max(1, args.recentDaysWindow ?? 7);
+  const surgeDaysWindow = Math.max(1, args.surgeDaysWindow ?? 3);
+  const baselinePerDay = Math.max(0, args.recentUnits) / recentDaysWindow;
+  const surgePerDay = Math.max(0, args.surgeUnits) / surgeDaysWindow;
+  const peakDeliveredPerDay = Math.max(
+    0,
+    ...Array.from(args.deliveredUnitsByDay, (value) => Math.max(0, Number(value) || 0))
+  );
+
+  return {
+    baselinePerDay,
+    surgePerDay,
+    peakDeliveredPerDay,
+    forecastPerDay: Math.max(baselinePerDay, surgePerDay, peakDeliveredPerDay)
+  };
+}
+
 export function buildSmartStockAlertCandidates(args: {
   stateSupply: Array<{ productId: string; state: string; stock: number }>;
   agentSupply: Array<{ agentId: string; agentName: string; locationId?: string; locationName?: string; productId: string; state: string; stock: number }>;

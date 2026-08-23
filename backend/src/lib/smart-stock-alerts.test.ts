@@ -1,6 +1,26 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildSmartStockAlertCandidates } from "./smart-stock-candidates.js";
+import { buildSmartStockAlertCandidates, conservativeDeliveredForecast } from "./smart-stock-candidates.js";
+
+test("delivered package flow forecasts from physical 3, 6 and 10-piece quantities", () => {
+  const deliveredUnitsByDay = new Map([
+    ["2026-08-20", 3],
+    ["2026-08-21", 6],
+    ["2026-08-22", 10]
+  ]);
+  const rate = conservativeDeliveredForecast({
+    recentUnits: 19,
+    surgeUnits: 19,
+    deliveredUnitsByDay: deliveredUnitsByDay.values(),
+    recentDaysWindow: 7,
+    surgeDaysWindow: 3
+  });
+
+  assert.equal(rate.baselinePerDay, 19 / 7);
+  assert.equal(rate.surgePerDay, 19 / 3);
+  assert.equal(rate.peakDeliveredPerDay, 10);
+  assert.equal(rate.forecastPerDay, 10);
+});
 
 test("an empty agent is flagged even when another agent makes the state total look healthy", () => {
   const rows = buildSmartStockAlertCandidates({
