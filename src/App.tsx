@@ -43467,7 +43467,10 @@ ${waybillLineItems(w).length > 1
                   {!isDelivered && <span className="text-xs text-gray-400">Estimated if order is delivered</span>}
                 </div>
                 <span className={`text-lg font-extrabold ${isDelivered ? "text-emerald-700" : "text-gray-500"}`}>
-                  {formatProductMoney(headlineTotal, order.currency)}
+                  {/* ⚠️ Never render ₦0 at this weight - the naira sign against
+                      a zero reads as the word "NO". Same collision already fixed
+                      in the opening-cash wizard. */}
+                  {headlineTotal === 0 ? <span className="text-gray-400">None</span> : formatProductMoney(headlineTotal, order.currency)}
                 </span>
               </div>
               {components.length > 0 && (
@@ -43478,7 +43481,16 @@ ${waybillLineItems(w).length > 1
                 </ul>
               )}
               {headlineTotal === 0 && (
-                <p className="text-xs text-gray-400">No bonus rules matched - check product bonus settings.</p>
+                // ⚠️ Says what this panel actually KNOWS. It reads the product's
+                // own bonus rules and this order's engine attribution - it has
+                // no view of week-level rules like the delivery-rate boost,
+                // paid per rep across the week. Claiming "no bonus rules
+                // matched" sent people to check product settings for money that
+                // was never going to appear here.
+                <p className="text-xs text-gray-400">
+                  No per-order bonus on this one. Weekly rules paid across all a rep&rsquo;s deliveries
+                  (like the delivery-rate boost) show in their Bonus Breakdown, not here.
+                </p>
               )}
               {order.bonusManuallyAdjusted && (
                 <p className="text-xs text-amber-700">Manual override active: {formatProductMoney(order.manualBonusOverride ?? 0, order.currency)}{order.manualBonusReason ? ` - ${order.manualBonusReason}` : ""}</p>
@@ -96405,7 +96417,7 @@ ${waybillLineItems(w).length > 1
 	                            <strong className="text-sm text-gray-900">{isDeliveredSO ? "Earned Bonus" : "Projected Bonus"}</strong>
 	                            {!isDeliveredSO && <p className="text-xs text-gray-400">Estimated if order is delivered</p>}
 	                          </div>
-	                          <span className={`text-lg font-extrabold ${isDeliveredSO ? "text-emerald-700" : "text-gray-500"}`}>{formatProductMoney(headlineTotalSO, selectedOrder.currency)}</span>
+	                          <span className={`text-lg font-extrabold ${isDeliveredSO ? "text-emerald-700" : "text-gray-500"}`}>{headlineTotalSO === 0 ? <span className="text-gray-400">None</span> : formatProductMoney(headlineTotalSO, selectedOrder.currency)}</span>
 	                        </div>
 	                        {displaySO.components.length > 0 && (
 	                          <ul className="text-xs text-gray-600 list-disc pl-5">
@@ -96413,7 +96425,7 @@ ${waybillLineItems(w).length > 1
 	                          </ul>
 	                        )}
 	                        {headlineTotalSO === 0 && (
-	                          <p className="text-xs text-gray-400">No bonus rules matched - check product bonus settings.</p>
+	                          <p className="text-xs text-gray-400">No per-order bonus on this one. Weekly rules paid across all a rep&rsquo;s deliveries (like the delivery-rate boost) show in their Bonus Breakdown, not here.</p>
 	                        )}
 	                        {selectedOrder.bonusManuallyAdjusted && (
 	                          <p className="text-xs text-amber-700">Manual override: {formatProductMoney(selectedOrder.manualBonusOverride ?? 0, selectedOrder.currency)}{selectedOrder.manualBonusReason ? ` - ${selectedOrder.manualBonusReason}` : ""}</p>
