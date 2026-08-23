@@ -9,6 +9,7 @@ import { cancelActiveFollowUpTasksForOrder, recordContactAttemptAndNextAction, r
 import { classifyFollowUpOutcome, FOLLOW_UP_RECOVERY_BUCKETS } from "../lib/follow-up-outcomes.js";
 import { buildPackageComponentSnapshot, orderInventoryLinesFromRow, primaryInventoryProductId, type OrderInventoryLine } from "../lib/order-inventory.js";
 import { describeOrderItemChanges } from "../lib/order-item-audit.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { formatOrderForWhatsAppDispatch, type WhatsAppDispatchOrderRow } from "../lib/order-whatsapp-dispatch.js";
 import { isPerUserWhatsAppDispatch } from "../lib/whatsapp-dispatch-mode.js";
 import { logger } from "../lib/logger.js";
@@ -1632,6 +1633,24 @@ router.patch("/:id/status", requireRole("Owner", "Admin", "Manager", "Sales Rep"
     }
     if (!isDeliveredDateCorrection) {
       updates.stock_deducted = true;
+      // ⚠️ Freeze what this order cost us at the SAME moment its stock comes
+      // off the shelf. Without this a newly delivered order floats on live
+      // pricing until some later cost change happens to catch it - and if the
+      // Owner ever unticked "freeze first", it would be restated instead.
+      // Snapshotting here makes the cost a fact of the delivery, not something
+      // that depends on remembering a checkbox weeks later.
+      try {
+        const costs = await loadDeliveryCostMap();
+        const cogs = orderInventoryLinesFromRow({ ...existing, ...updates })
+          .reduce((sum, line) => sum + line.quantity * deliveryUnitCost(costs, line.productId, existing?.currency), 0);
+        updates.cogs_snapshot = cogs;
+        updates.cogs_snapshot_at = new Date().toISOString();
+        updates.cogs_snapshot_source = "delivery";
+      } catch (costError: any) {
+        // A pricing hiccup must never block a delivery. The order simply stays
+        // unfrozen and the next cost change picks it up, exactly as before.
+        logger.warn?.("cogs snapshot on delivery failed", { orderId: existing?.id, error: costError?.message });
+      }
     }
     if (isDeliveredDateCorrection && typeof updates.delivered_date === "string") {
       Object.assign(
@@ -2281,6 +2300,31 @@ function sameFieldValue(next: unknown, before: unknown): boolean {
   if (Number.isFinite(asNumber) && Number.isFinite(beforeNumber)) return asNumber === beforeNumber;
   return String(next) === String(before);
 }
+
+/** Unit costs for freezing a delivery. Same precedence as every other reader. */
+type DeliveryCostMap = Map<string, { byCurrency: Map<string, number>; primary: number; hasPrimary: boolean }>;
+async function loadDeliveryCostMap(): Promise<DeliveryCostMap> {
+  const map: DeliveryCostMap = new Map();
+  const { data } = await supabase.from("product_pricings")
+    .select("product_id, currency, unit_cost, is_primary").limit(REPORT_ROW_CEILING);
+  for (const row of (data ?? []) as any[]) {
+    let entry = map.get(row.product_id);
+    if (!entry) { entry = { byCurrency: new Map(), primary: 0, hasPrimary: false }; map.set(row.product_id, entry); }
+    const cost = Number(row.unit_cost ?? 0) || 0;
+    if (row.currency) entry.byCurrency.set(row.currency, cost);
+    if (row.is_primary) { entry.primary = cost; entry.hasPrimary = true; }
+  }
+  return map;
+}
+const deliveryUnitCost = (map: DeliveryCostMap, productId?: string | null, currency?: string | null) => {
+  if (!productId) return 0;
+  const entry = map.get(productId);
+  if (!entry) return 0;
+  if (currency && entry.byCurrency.has(currency)) return entry.byCurrency.get(currency) ?? 0;
+  if (entry.hasPrimary) return entry.primary;
+  const first = entry.byCurrency.values().next();
+  return first.done ? 0 : first.value;
+};
 
 const POST_TERMINAL_FIELDS = new Set([
   "response",
