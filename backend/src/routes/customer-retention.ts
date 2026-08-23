@@ -3,6 +3,7 @@ import { humanFieldErrors } from "../lib/validation-message.js";
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
+import { resolveOrderCogs } from "../lib/order-cogs.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
 import { resolveDateBounds } from "../lib/date-bounds.js";
@@ -134,8 +135,12 @@ const unitCostFor = (pricingMap: PricingMap, productId?: string | null, currency
   const first = entry.byCurrency.values().next();
   return first.done ? 0 : first.value;
 };
+// ⚠️ A FROZEN snapshot wins over live pricing. Without this, editing a
+// product's unit cost restates every order ever sold containing it.
 const cogsForOrder = (order: any, pricingMap: PricingMap) =>
-  orderInventoryLinesFromRow(order).reduce((sum, line) => sum + line.quantity * unitCostFor(pricingMap, line.productId, order.currency), 0);
+  resolveOrderCogs(order,
+    orderInventoryLinesFromRow(order).reduce((sum, line) => sum + line.quantity * unitCostFor(pricingMap, line.productId, order.currency), 0)
+  ).amount;
 
 // Bright's rule: pay for SALES, not activity. Logging a satisfaction check,
 // collecting a review or taking a referral contact are all things a rep should
@@ -854,7 +859,7 @@ router.get("/customer/:phone", requireRole(...RETENTION_ROLES), async (req, res)
 
     const { data: allOrders, error } = await fetchAllRows<any>((from, to) => supabase
       .from("orders")
-      .select("id, customer, phone, address, city, state, product_id, product_name, package_name, quantity, amount, currency, status, delivered_date, created_at, cross_sell_lines, free_gift_lines, package_components_snapshot, upsell_from_qty, upsell_to_qty, upsell_note")
+      .select("id, customer, phone, address, city, state, product_id, product_name, package_name, quantity, amount, currency, status, delivered_date, created_at, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at, package_components_snapshot, upsell_from_qty, upsell_to_qty, upsell_note")
       .eq("org_id", orgId)
       .order("id", { ascending: true })
       .range(from, to));
@@ -1478,7 +1483,7 @@ router.get("/dashboard-summary", requireRole(...RETENTION_ROLES), async (req, re
     if (resultingIds.length > 0) {
       const { data: resultOrdersFull } = await supabase
         .from("orders")
-        .select("id, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines")
+        .select("id, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at")
         .limit(REPORT_ROW_CEILING)
         .in("id", resultingIds);
       const productIds = [...new Set((resultOrdersFull ?? []).flatMap((o) => orderInventoryLinesFromRow(o).map((l) => l.productId)))];

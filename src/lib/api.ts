@@ -3198,6 +3198,25 @@ export const ordersExtraApi = {
   }>(`/api/orders/${orderId}/additional-lines`, body)
 };
 
+export type CostChangeImpact = {
+  previousUnitCost: number; newUnitCost: number; delta: number;
+  ordersAffected: number; unitsAffected: number;
+  /** How much reported profit would move if history were not frozen. */
+  reportedProfitShift: number;
+  alreadyFrozen: number;
+};
+
+export const productCostApi = {
+  /** Freeze every delivered order's COGS at today's costs. Idempotent. */
+  freezeAll: () => post<{ frozen: number; units: number; message: string }>("/api/products/freeze-cogs", {}),
+  preview: (productId: string, newUnitCost: number) =>
+    get<{ productId: string; productName: string; currency: string; impact: CostChangeImpact }>(
+      `/api/products/${productId}/cost-change-preview?newUnitCost=${encodeURIComponent(String(newUnitCost))}`),
+  changeCost: (productId: string, body: { newUnitCost: number; reason: string; freezeHistory: boolean }) =>
+    post<{ productId: string; previousUnitCost: number; newUnitCost: number; ordersFrozen: number; unitsFrozen: number }>(
+      `/api/products/${productId}/change-cost`, body)
+};
+
 export const cartsApi = {
   logPenalties: (params?: { range?: CartLogRangePreset; repId?: string }) => {
     const qs = new URLSearchParams();
