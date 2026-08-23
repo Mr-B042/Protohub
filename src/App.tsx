@@ -217,7 +217,7 @@ import AgentAccessPage from "./pages/AgentAccessPage";
 import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalanceRow } from "./pages/CashFlowPage";
 import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
 import DraftTextarea from "./components/DraftTextarea";
-import { STALE_TIER_STYLE, staleOrderVerdict } from "./lib/stale-orders";
+import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import {
   isMoneyHidden, maskFormattedMoney, maskMoneyText, naira, setMoneyHiddenGlobal, shortNaira, subscribeMoneyHidden
 } from "./lib/money-privacy";
@@ -42379,8 +42379,42 @@ ${waybillLineItems(w).length > 1
     );
   };
 
+  // Counts ORDERS and names the worst age. "9 stuck, oldest 23 days" says more
+  // in a line than an average ever could, and it sits above the list so the
+  // scale is visible without scrolling to find the pulsing rows.
+  const renderStaleOrderSummary = (orders: TrackedOrder[]) => {
+    const summary = summariseStaleOrders(orders.map((order) => ({
+      status: statusForOrder(order),
+      createdAt: order.createdAt ?? order.date ?? null,
+      scheduledAt: order.scheduledAt ?? null
+    })));
+    if (summary.total === 0) return null;
+    return (
+      <div className={`mx-3 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 sm:mx-0 ${
+        summary.critical > 0 ? "border-rose-300 bg-rose-50" : "border-amber-300 bg-amber-50"}`}>
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${summary.critical > 0 ? "bg-rose-500" : "bg-amber-500"}`} />
+            <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${summary.critical > 0 ? "bg-rose-500" : "bg-amber-500"}`} />
+          </span>
+          <span className={`text-[12px] font-black ${summary.critical > 0 ? "text-rose-900" : "text-amber-900"}`}>
+            {summary.total} stuck order{summary.total === 1 ? "" : "s"}
+            <span className="ml-1 font-semibold opacity-90">
+              · oldest {summary.oldestDays} days
+              {summary.critical > 0 && ` · ${summary.critical} abandoned`}
+            </span>
+          </span>
+        </span>
+        <span className={`text-[11px] font-semibold ${summary.critical > 0 ? "text-rose-800" : "text-amber-800"}`}>
+          Mark them Failed Delivery so recovery can take them.
+        </span>
+      </div>
+    );
+  };
+
   const renderRepOrderTable = (orders: TrackedOrder[], emptyLabel = "No orders found") => (
     <>
+      {renderStaleOrderSummary(orders)}
       {orders.length === 0 ? (
         <div className="sm:hidden px-4 py-12 text-center text-gray-400 font-medium italic">{emptyLabel}</div>
       ) : (
