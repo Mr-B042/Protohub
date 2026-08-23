@@ -15808,46 +15808,140 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         || a.productName.localeCompare(b.productName);
     });
   // ── Manager Dashboard · Inventory ────────────────────
-  // A state-level read of the SAME numbers the Smart Stock engine above already
-  // derives, rolled up per state and per agent hub. Nothing is refetched and no
-  // second definition of "cover" is introduced: velocity comes from
-  // smartStockDemandByKey (units in the last smartStockLookbackDays), supply
-  // from the agent hub rows, and the Critical/Restock thresholds are the
-  // Owner's own smartStockRules - so this tab and the Smart Stock banner can
-  // never disagree about which state is in trouble.
+  // Cover is calculated per real stock item. It never pools one product's excess
+  // with another product's shortage, and stock in transit stays separate until
+  // the receiving hub confirms it.
+  const managerInventorySurgeDays = Math.max(1, Math.min(3, smartStockLookbackDays));
+  const managerInventorySurgeStartKey = stockDemandDateKeyDaysAgo(managerInventorySurgeDays - 1);
   const managerInventoryUnitsInTransitByState = new Map<string, number>();
+  const managerInventoryUnitsInTransitByStateProduct = new Map<string, number>();
   waybillRecords.forEach((waybill) => {
     if (waybill.status !== "In Transit") return;
     const state = normalizeAgentState(waybill.receivingState);
     if (!state) return;
-    const units = waybill.items?.length
-      ? waybill.items.reduce((sum, item) => sum + Math.max(0, Number(item.quantity ?? 0)), 0)
-      : Math.max(0, Number(waybill.quantity ?? 0));
+    const items = waybill.items?.length
+      ? waybill.items
+      : [{ productId: waybill.productId, productName: waybill.productName, quantity: waybill.quantity }];
+    const units = items.reduce((sum, item) => sum + Math.max(0, Number(item.quantity ?? 0)), 0);
     managerInventoryUnitsInTransitByState.set(state, (managerInventoryUnitsInTransitByState.get(state) ?? 0) + units);
+    items.forEach((item) => {
+      if (!item.productId || !smartStockProductIds.has(item.productId)) return;
+      const key = smartStockKey(item.productId, state);
+      const quantity = Math.max(0, Number(item.quantity ?? 0));
+      managerInventoryUnitsInTransitByStateProduct.set(
+        key,
+        (managerInventoryUnitsInTransitByStateProduct.get(key) ?? 0) + quantity
+      );
+    });
   });
 
-  // Real demand per agent hub over the same lookback window the Smart Stock
-  // rules use, plus what is already promised to a confirmed-but-undelivered
-  // order. Committed units are held stock, not cover - counting them would tell
-  // a rep an agent can serve orders whose stock is already spoken for.
-  const managerInventoryHubDemand = new Map<string, { units: number; committed: number }>();
+  type ManagerInventoryDemandRate = {
+    baselinePerDay: number;
+    surgePerDay: number;
+    forecastPerDay: number;
+    allocatedPerDay: number;
+    recentUnits: number;
+    surgeUnits: number;
+    recentOrders: number;
+  };
+  type ManagerInventoryHubProductDemand = {
+    recentUnits: number;
+    surgeUnits: number;
+    committedUnits: number;
+    recentOrderIds: Set<string>;
+  };
+
+  const emptyManagerInventoryDemandRate = (): ManagerInventoryDemandRate => ({
+    baselinePerDay: 0,
+    surgePerDay: 0,
+    forecastPerDay: 0,
+    allocatedPerDay: 0,
+    recentUnits: 0,
+    surgeUnits: 0,
+    recentOrders: 0
+  });
+  const managerInventoryDemandRate = (
+    recentUnits: number,
+    surgeUnits: number,
+    recentOrders = 0
+  ): ManagerInventoryDemandRate => {
+    const baselinePerDay = recentUnits / Math.max(1, smartStockLookbackDays);
+    const surgePerDay = surgeUnits / managerInventorySurgeDays;
+    return {
+      baselinePerDay,
+      surgePerDay,
+      forecastPerDay: Math.max(baselinePerDay, surgePerDay),
+      allocatedPerDay: 0,
+      recentUnits,
+      surgeUnits,
+      recentOrders
+    };
+  };
+  const managerInventoryRoundRate = (value: number) => Math.round(value * 10) / 10;
+  const managerInventoryProductCover = (units: number, committed: number, rate: number) =>
+    rate > 0 ? Math.max(0, units - committed) / rate : Number.POSITIVE_INFINITY;
+
+  // Demand is keyed to one resolved hub and one real product component. The old
+  // fallback applied an order with no location id to every location belonging to
+  // the agent, duplicating both demand and commitments for multi-hub agents.
+  const managerInventoryHubProductDemand = new Map<string, Map<string, ManagerInventoryHubProductDemand>>();
+  const managerInventoryStateSurgeUnits = new Map<string, number>();
+  const managerInventoryUnassignedCommittedByStateProduct = new Map<string, number>();
+  const managerInventoryKnownHubKeys = new Set(
+    inventoryStateHubRows.map(({ agent, location }) => `${agent.id}::${location.id}`)
+  );
   const MANAGER_INVENTORY_COMMITTED_STATUSES = new Set(["Confirmed", "In Process", "Dispatched"]);
   trackedOrders.forEach((order) => {
-    if (order.reviewHold || !order.agentId) return;
-    const key = `${order.agentId}::${order.agentLocationId ?? ""}`;
-    const bucket = managerInventoryHubDemand.get(key) ?? { units: 0, committed: 0 };
-    // demandLinesForOrder already filters to catalogue products.
-    const units = demandLinesForOrder(order).reduce((sum, line) => sum + line.quantity, 0);
-    if (units <= 0) return;
-    // Demand = what this hub actually shipped in the window.
-    const deliveredKey = orderDeliveredKey(order);
-    if ((order.status ?? "New") === "Delivered" && deliveredKey >= smartStockRecentStartKey && deliveredKey <= smartStockTodayKey) {
-      bucket.units += units;
-    }
-    if (MANAGER_INVENTORY_COMMITTED_STATUSES.has(order.status ?? "New")) {
-      bucket.committed += units;
-    }
-    managerInventoryHubDemand.set(key, bucket);
+    if (order.reviewHold || ["Cancelled", "Failed"].includes(order.status ?? "New")) return;
+    const orderState = normalizeAgentState(order.state);
+    const createdKey = orderCreatedKey(order);
+    const isStateSurge = Boolean(orderState)
+      && createdKey >= managerInventorySurgeStartKey
+      && createdKey <= smartStockTodayKey;
+    const isRecentOrder = createdKey >= smartStockRecentStartKey && createdKey <= smartStockTodayKey;
+    const isSurgeOrder = createdKey >= managerInventorySurgeStartKey && createdKey <= smartStockTodayKey;
+    const agent = order.agentId ? agents.find((candidate) => candidate.id === order.agentId) : null;
+    const resolvedLocation = agent
+      ? (findAgentLocation(agent, order.agentLocationId) ?? primaryAgentLocation(agent))
+      : null;
+    const candidateHubKey = order.agentId ? `${order.agentId}::${resolvedLocation?.id ?? order.agentLocationId ?? ""}` : "";
+    const hubKey = managerInventoryKnownHubKeys.has(candidateHubKey) ? candidateHubKey : "";
+    const isCommitted = MANAGER_INVENTORY_COMMITTED_STATUSES.has(order.status ?? "New");
+
+    demandLinesForOrder(order).forEach((line) => {
+      if (isStateSurge && orderState) {
+        const stateKey = smartStockKey(line.productId, orderState);
+        managerInventoryStateSurgeUnits.set(
+          stateKey,
+          (managerInventoryStateSurgeUnits.get(stateKey) ?? 0) + line.quantity
+        );
+      }
+      if (isCommitted && orderState && !hubKey) {
+        const stateKey = smartStockKey(line.productId, orderState);
+        managerInventoryUnassignedCommittedByStateProduct.set(
+          stateKey,
+          (managerInventoryUnassignedCommittedByStateProduct.get(stateKey) ?? 0) + line.quantity
+        );
+      }
+      if (!hubKey) return;
+      const byProduct = managerInventoryHubProductDemand.get(hubKey) ?? new Map<string, ManagerInventoryHubProductDemand>();
+      const bucket = byProduct.get(line.productId) ?? {
+        recentUnits: 0,
+        surgeUnits: 0,
+        committedUnits: 0,
+        recentOrderIds: new Set<string>()
+      };
+      if (isRecentOrder) {
+        bucket.recentUnits += line.quantity;
+        bucket.recentOrderIds.add(order.id);
+      }
+      if (isSurgeOrder) bucket.surgeUnits += line.quantity;
+      if (isCommitted) {
+        bucket.committedUnits += line.quantity;
+      }
+      byProduct.set(line.productId, bucket);
+      managerInventoryHubProductDemand.set(hubKey, byProduct);
+    });
   });
 
   type ManagerInventoryHubRow = {
@@ -15856,6 +15950,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     locationId: string;
     locationLabel: string;
     unitsByProductId: Map<string, number>;
+    committedByProductId: Map<string, number>;
+    demandByProductId: Map<string, ManagerInventoryDemandRate>;
+    coverByProductId: Map<string, number>;
     totalUnits: number;
     committedUnits: number;
     ordersPerDay: number;
@@ -15869,14 +15966,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     totalUnits: number;
     productCount: number;
     unitsByProductId: Map<string, number>;
+    committedByProductId: Map<string, number>;
+    demandByProductId: Map<string, ManagerInventoryDemandRate>;
+    coverByProductId: Map<string, number>;
+    inTransitByProductId: Map<string, number>;
     avgDailySales: number;
     inTransit: number;
     daysCover: number;
-    status: "Critical" | "Restock Soon" | "Watch" | "Healthy";
+    status: "Critical" | "Restock Soon" | "Watch" | "Healthy" | "Insufficient Data";
   };
 
   const managerInventoryCoverStatus = (daysCover: number, hasDemand: boolean): ManagerInventoryStateRow["status"] => {
-    if (!hasDemand) return "Healthy";
+    if (!hasDemand) return "Insufficient Data";
     if (daysCover <= smartStockCriticalDaysCover) return "Critical";
     if (daysCover <= smartStockWatchDaysCover) return "Restock Soon";
     // "Watch" is the band just above the Owner's restock threshold - still fine
@@ -15899,6 +16000,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         locationId: location.id,
         locationLabel: agentLocationLabel(location) || state,
         unitsByProductId: new Map<string, number>(),
+        committedByProductId: new Map<string, number>(),
+        demandByProductId: new Map<string, ManagerInventoryDemandRate>(),
+        coverByProductId: new Map<string, number>(),
         totalUnits: 0,
         committedUnits: 0,
         ordersPerDay: 0,
@@ -15927,55 +16031,142 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         });
       });
       const totalUnits = hubs.reduce((sum, hub) => sum + hub.totalUnits, 0);
-      // Daily demand for the state = every product's recent units over the same
-      // lookback window the Smart Stock rules use.
-      let avgDailySales = 0;
+      const stateDemandByProductId = new Map<string, ManagerInventoryDemandRate>();
+      const inTransitByProductId = new Map<string, number>();
       catalogProducts.forEach((product) => {
-        const demand = smartStockDemandByKey.get(smartStockKey(product.id, state));
-        if (demand) avgDailySales += (demand.recentUnits ?? 0) / Math.max(1, smartStockLookbackDays);
+        const key = smartStockKey(product.id, state);
+        const demand = smartStockDemandByKey.get(key);
+        const rate = managerInventoryDemandRate(
+          demand?.recentUnits ?? 0,
+          managerInventoryStateSurgeUnits.get(key) ?? 0,
+          demand?.recentOrderIds.size ?? 0
+        );
+        if (rate.forecastPerDay > 0) stateDemandByProductId.set(product.id, rate);
+        const inTransitForProduct = managerInventoryUnitsInTransitByStateProduct.get(key) ?? 0;
+        if (inTransitForProduct > 0) inTransitByProductId.set(product.id, inTransitForProduct);
       });
-      avgDailySales = Math.round(avgDailySales * 10) / 10;
       const inTransit = managerInventoryUnitsInTransitByState.get(state) ?? 0;
-      // Per-hub demand comes from the orders that hub actually took, NOT from
-      // its share of the state's stock.
-      //
-      // Deriving it from stock share was silently useless: with
-      //   ordersPerDay = avgDailySales x (hubUnits / stateUnits)
-      //   daysCover    = hubUnits / ordersPerDay
-      // the hubUnits cancel and every hub reports stateUnits / avgDailySales -
-      // the STATE's cover, identical for all of them. "Agent A is low" could
-      // never appear, and the transfer recommendation (one hub at or below the
-      // watch threshold, another above twice it) could never fire, so the panel
-      // only ever suggested warehouse restocks.
+
+      // Start with this hub's observed placed-order rate. The higher of the full
+      // lookback and the last three days wins, so a demand surge cannot be hidden
+      // by a quiet earlier week. Delivered-only velocity reacts too late for
+      // replenishment because the stock has already left by then.
       hubs.forEach((hub) => {
-        const demand = managerInventoryHubDemand.get(`${hub.agentId}::${hub.locationId}`)
-          ?? managerInventoryHubDemand.get(`${hub.agentId}::`)
-          ?? { units: 0, committed: 0 };
-        hub.ordersPerDay = Math.round((demand.units / Math.max(1, smartStockLookbackDays)) * 10) / 10;
-        hub.committedUnits = demand.committed;
-        // Stock already promised to a confirmed order is not cover.
-        const available = Math.max(0, hub.totalUnits - hub.committedUnits);
-        hub.daysCover = hub.ordersPerDay > 0 ? available / hub.ordersPerDay : Number.POSITIVE_INFINITY;
-      });
-      // A state with hubs that took no orders at all still has demand recorded
-      // against the state (an order can be delivered without an agent). Spread
-      // only that unattributed remainder by stock share, so the state total and
-      // the sum of its hubs agree.
-      const attributed = hubs.reduce((sum, hub) => sum + hub.ordersPerDay, 0);
-      const unattributed = Math.max(0, avgDailySales - attributed);
-      if (unattributed > 0 && totalUnits > 0) {
-        hubs.forEach((hub) => {
-          hub.ordersPerDay = Math.round((hub.ordersPerDay + unattributed * (hub.totalUnits / totalUnits)) * 10) / 10;
-          const available = Math.max(0, hub.totalUnits - hub.committedUnits);
-          hub.daysCover = hub.ordersPerDay > 0 ? available / hub.ordersPerDay : Number.POSITIVE_INFINITY;
+        const byProduct = managerInventoryHubProductDemand.get(`${hub.agentId}::${hub.locationId}`) ?? new Map();
+        byProduct.forEach((demand, productId) => {
+          hub.unitsByProductId.set(productId, hub.unitsByProductId.get(productId) ?? 0);
+          hub.committedByProductId.set(productId, demand.committedUnits);
+          hub.demandByProductId.set(
+            productId,
+            managerInventoryDemandRate(demand.recentUnits, demand.surgeUnits, demand.recentOrderIds.size)
+          );
         });
-      }
-      // Only now that every hub carries its committed units can the state net
-      // them off. Matches the panel's own caption and the hub rows below it:
-      // stock already promised to a confirmed order is held, not cover.
+      });
+
+      // State-level placed demand also includes orders with no delivery-agent
+      // attribution. Allocate only the unassigned remainder. Historical demand
+      // share is preferred; stock share is merely the last-resort fallback.
+      stateDemandByProductId.forEach((stateRate, productId) => {
+        const attributedRate = hubs.reduce(
+          (sum, hub) => sum + (hub.demandByProductId.get(productId)?.forecastPerDay ?? 0),
+          0
+        );
+        const remainder = Math.max(0, stateRate.forecastPerDay - attributedRate);
+        if (remainder <= 0 || hubs.length === 0) return;
+        const historicalWeight = hubs.reduce(
+          (sum, hub) => sum + (hub.demandByProductId.get(productId)?.recentUnits ?? 0),
+          0
+        );
+        const stockWeight = hubs.reduce((sum, hub) => sum + (hub.unitsByProductId.get(productId) ?? 0), 0);
+        hubs.forEach((hub) => {
+          const current = hub.demandByProductId.get(productId) ?? emptyManagerInventoryDemandRate();
+          const weight = historicalWeight > 0
+            ? current.recentUnits / historicalWeight
+            : stockWeight > 0
+              ? (hub.unitsByProductId.get(productId) ?? 0) / stockWeight
+              : 1 / hubs.length;
+          hub.demandByProductId.set(productId, {
+            ...current,
+            forecastPerDay: current.forecastPerDay + remainder * weight,
+            allocatedPerDay: current.allocatedPerDay + remainder * weight
+          });
+        });
+      });
+
+      // Confirmed demand that has no resolvable delivery hub still has to reserve
+      // stock. Allocate that commitment once across the state's hubs, preferring
+      // the same demand weights used by the forecast. This closes the old gap
+      // where unassigned orders appeared in velocity but left all stock "usable".
+      catalogProducts.forEach((product) => {
+        const unassignedCommitted = managerInventoryUnassignedCommittedByStateProduct.get(
+          smartStockKey(product.id, state)
+        ) ?? 0;
+        if (unassignedCommitted <= 0 || hubs.length === 0) return;
+        const demandWeight = hubs.reduce(
+          (sum, hub) => sum + (hub.demandByProductId.get(product.id)?.forecastPerDay ?? 0),
+          0
+        );
+        const stockWeight = hubs.reduce((sum, hub) => sum + (hub.unitsByProductId.get(product.id) ?? 0), 0);
+        let allocated = 0;
+        hubs.forEach((hub, index) => {
+          const weight = demandWeight > 0
+            ? (hub.demandByProductId.get(product.id)?.forecastPerDay ?? 0) / demandWeight
+            : stockWeight > 0
+              ? (hub.unitsByProductId.get(product.id) ?? 0) / stockWeight
+              : 1 / hubs.length;
+          const units = index === hubs.length - 1
+            ? Math.max(0, unassignedCommitted - allocated)
+            : Math.max(0, Math.floor(unassignedCommitted * weight));
+          allocated += units;
+          hub.committedByProductId.set(
+            product.id,
+            (hub.committedByProductId.get(product.id) ?? 0) + units
+          );
+        });
+      });
+
+      hubs.forEach((hub) => {
+        const productIds = new Set([
+          ...hub.unitsByProductId.keys(),
+          ...hub.committedByProductId.keys(),
+          ...hub.demandByProductId.keys()
+        ]);
+        productIds.forEach((productId) => {
+          const units = hub.unitsByProductId.get(productId) ?? 0;
+          const committed = hub.committedByProductId.get(productId) ?? 0;
+          const rate = hub.demandByProductId.get(productId)?.forecastPerDay ?? 0;
+          hub.coverByProductId.set(productId, managerInventoryProductCover(units, committed, rate));
+        });
+        hub.ordersPerDay = managerInventoryRoundRate(Array.from(hub.demandByProductId.values())
+          .reduce((sum, rate) => sum + rate.forecastPerDay, 0));
+        hub.committedUnits = Array.from(hub.committedByProductId.values()).reduce((sum, units) => sum + units, 0);
+        const demandedCovers = Array.from(hub.demandByProductId.entries())
+          .filter(([, rate]) => rate.forecastPerDay > 0)
+          .map(([productId]) => hub.coverByProductId.get(productId) ?? 0);
+        hub.daysCover = demandedCovers.length > 0 ? Math.min(...demandedCovers) : Number.POSITIVE_INFINITY;
+      });
+
+      const committedByProductId = new Map<string, number>();
+      hubs.forEach((hub) => hub.committedByProductId.forEach((units, productId) => {
+        committedByProductId.set(productId, (committedByProductId.get(productId) ?? 0) + units);
+      }));
       const committedUnits = hubs.reduce((sum, hub) => sum + hub.committedUnits, 0);
-      const availableUnits = Math.max(0, totalUnits + inTransit - committedUnits);
-      const daysCover = avgDailySales > 0 ? availableUnits / avgDailySales : Number.POSITIVE_INFINITY;
+      const coverByProductId = new Map<string, number>();
+      stateDemandByProductId.forEach((rate, productId) => {
+        coverByProductId.set(
+          productId,
+          managerInventoryProductCover(
+            unitsByProductId.get(productId) ?? 0,
+            committedByProductId.get(productId) ?? 0,
+            rate.forecastPerDay
+          )
+        );
+      });
+      const avgDailySales = managerInventoryRoundRate(Array.from(stateDemandByProductId.values())
+        .reduce((sum, rate) => sum + rate.forecastPerDay, 0));
+      const demandedCovers = Array.from(stateDemandByProductId.keys())
+        .map((productId) => coverByProductId.get(productId) ?? 0);
+      const daysCover = demandedCovers.length > 0 ? Math.min(...demandedCovers) : Number.POSITIVE_INFINITY;
       hubs.sort((a, b) => a.daysCover - b.daysCover || b.totalUnits - a.totalUnits);
       return {
         state,
@@ -15985,6 +16176,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         totalUnits,
         productCount: unitsByProductId.size,
         unitsByProductId,
+        committedByProductId,
+        demandByProductId: stateDemandByProductId,
+        coverByProductId,
+        inTransitByProductId,
         avgDailySales,
         inTransit,
         daysCover,
@@ -16036,7 +16231,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       });
     });
     const stockByState = new Map<string, Map<string, number>>();
-    managerInventoryStateRows.forEach((row) => stockByState.set(row.state, row.unitsByProductId));
+    managerInventoryStateRows.forEach((row) => {
+      const available = new Map<string, number>();
+      const productIds = new Set([
+        ...row.unitsByProductId.keys(),
+        ...row.committedByProductId.keys()
+      ]);
+      productIds.forEach((productId) => {
+        available.set(
+          productId,
+          Math.max(
+            0,
+            (row.unitsByProductId.get(productId) ?? 0) - (row.committedByProductId.get(productId) ?? 0)
+          )
+        );
+      });
+      stockByState.set(row.state, available);
+    });
 
     const embedProductIds = new Set(readyEmbedProducts.map((product) => product.id));
     return Array.from(needByProduct.entries()).map(([productId, byState]) => {
@@ -16079,20 +16290,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     managerInventoryUnitsInTransitByState.forEach((units) => { inTransit += units; });
     const critical = managerInventoryStateRows.filter((row) => row.status === "Critical").length;
     const restockSoon = managerInventoryStateRows.filter((row) => row.status === "Restock Soon").length;
-    // Health = the share of states that are not asking for anything. Stated as a
-    // count-of-states percentage rather than a weighted score, because a made-up
-    // composite would be impossible to check against the table below it.
-    const health = managerInventoryStateRows.length === 0
-      ? 100
-      : Math.round(((managerInventoryStateRows.length - critical - restockSoon) / managerInventoryStateRows.length) * 100);
-    return { agentCount: agentIds.size, stateCount: managerInventoryStateRows.length, totalUnits, inTransit, critical, restockSoon, health };
+    // Never award a healthy score to a state with no demand evidence. Unknown
+    // states are reported separately instead of silently improving the score.
+    const evaluatedRows = managerInventoryStateRows.filter((row) => row.status !== "Insufficient Data");
+    const unknown = managerInventoryStateRows.length - evaluatedRows.length;
+    const health = evaluatedRows.length === 0
+      ? 0
+      : Math.round((evaluatedRows.filter((row) => row.status === "Healthy").length / evaluatedRows.length) * 100);
+    return {
+      agentCount: agentIds.size,
+      stateCount: managerInventoryStateRows.length,
+      totalUnits,
+      inTransit,
+      critical,
+      restockSoon,
+      health,
+      evaluated: evaluatedRows.length,
+      unknown
+    };
   })();
 
   // Transfers first: moving stock that is already in the state is same-day and
   // free, so it should always be offered before a warehouse run.
   const managerInventoryRecommendations = (() => {
     const out: Array<{
-      kind: "transfer" | "restock";
+      kind: "transfer" | "restock" | "procure";
       state: string;
       fromLabel: string;
       toLabel: string;
@@ -16107,67 +16329,111 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       toLocationId?: string;
     }> = [];
     managerInventoryStateRows.forEach((row) => {
-      if (row.avgDailySales <= 0) return;
-      const needy = row.hubs.filter((hub) => hub.daysCover <= smartStockWatchDaysCover);
-      needy.forEach((short) => {
-        const donor = row.hubs
-          .filter((hub) => hub.locationId !== short.locationId && hub.daysCover > smartStockWatchDaysCover * 2)
-          .sort((a, b) => b.daysCover - a.daysCover)[0];
-        // Biggest line the short hub is thinnest on.
-        const productId = Array.from(short.unitsByProductId.entries()).sort((a, b) => a[1] - b[1])[0]?.[0]
-          ?? Array.from(row.unitsByProductId.keys())[0];
-        const product = smartStockProductById.get(productId ?? "");
+      row.demandByProductId.forEach((stateDemand, productId) => {
+        if (stateDemand.forecastPerDay <= 0) return;
+        const product = smartStockProductById.get(productId);
         if (!product) return;
-        if (donor) {
-          // Move enough to bring the short hub to the Owner's watch threshold,
-          // without dragging the donor below it.
-          const target = Math.ceil(Math.max(0, smartStockWatchDaysCover - short.daysCover) * short.ordersPerDay);
-          const spare = Math.max(0, donor.totalUnits - Math.ceil(smartStockWatchDaysCover * donor.ordersPerDay));
-          const units = Math.max(0, Math.min(target, spare, donor.unitsByProductId.get(productId) ?? 0));
-          if (units > 0) {
+        const needy = row.hubs
+          .filter((hub) => {
+            const rate = hub.demandByProductId.get(productId)?.forecastPerDay ?? 0;
+            const cover = hub.coverByProductId.get(productId) ?? Number.POSITIVE_INFINITY;
+            return rate > 0 && cover <= smartStockWatchDaysCover;
+          })
+          .sort((a, b) => (a.coverByProductId.get(productId) ?? 0) - (b.coverByProductId.get(productId) ?? 0));
+
+        needy.forEach((short) => {
+          const shortRate = short.demandByProductId.get(productId)?.forecastPerDay ?? 0;
+          const shortRaw = short.unitsByProductId.get(productId) ?? 0;
+          const shortCommitted = short.committedByProductId.get(productId) ?? 0;
+          const shortAvailable = Math.max(0, shortRaw - shortCommitted);
+          const shortCover = short.coverByProductId.get(productId) ?? Number.POSITIVE_INFINITY;
+          const target = Math.max(1, Math.ceil(Math.max(0, smartStockWatchDaysCover - shortCover) * shortRate));
+
+          const donorOptions = row.hubs
+            .filter((hub) => hub.locationId !== short.locationId)
+            .map((hub) => {
+              const rate = hub.demandByProductId.get(productId)?.forecastPerDay ?? 0;
+              const raw = hub.unitsByProductId.get(productId) ?? 0;
+              const committed = hub.committedByProductId.get(productId) ?? 0;
+              const available = Math.max(0, raw - committed);
+              // A donor keeps twice the configured watch threshold. This
+              // prevents a recommendation from solving one shortage by making
+              // another hub the next emergency.
+              const reserve = Math.ceil(smartStockWatchDaysCover * 2 * rate);
+              const spare = rate > 0 ? Math.max(0, available - reserve) : available;
+              return { hub, rate, available, spare };
+            })
+            .filter(({ spare }) => spare > 0)
+            .sort((a, b) => b.spare - a.spare);
+          const donor = donorOptions[0];
+
+          if (donor) {
+            const units = Math.min(target, donor.spare);
             out.push({
               kind: "transfer",
               state: row.state,
-              fromLabel: donor.agentName,
+              fromLabel: donor.hub.agentName,
               toLabel: `${short.agentName} (${row.state})`,
               productId,
               productName: product.name,
               units,
-              coverFrom: short.daysCover,
-              coverTo: short.ordersPerDay > 0 ? (short.totalUnits + units) / short.ordersPerDay : Number.POSITIVE_INFINITY,
-              fromAgentId: donor.agentId,
-              fromLocationId: donor.locationId,
+              coverFrom: shortCover,
+              coverTo: (shortAvailable + units) / shortRate,
+              fromAgentId: donor.hub.agentId,
+              fromLocationId: donor.hub.locationId,
               toAgentId: short.agentId,
               toLocationId: short.locationId
             });
             return;
           }
-        }
-        // Nothing spare in the state - it has to come from the warehouse.
-        const units = Math.max(1, Math.ceil(Math.max(0, smartStockWatchDaysCover - row.daysCover) * row.avgDailySales));
-        if (Number.isFinite(row.daysCover) && row.daysCover <= smartStockWatchDaysCover) {
-          out.push({
-            kind: "restock",
-            state: row.state,
-            fromLabel: "Warehouse",
-            toLabel: row.state,
-            productId,
-            productName: product.name,
-            units: Math.min(units, Math.max(0, Number(product.warehouseStock ?? 0))) || units,
-            coverFrom: row.daysCover,
-            coverTo: row.avgDailySales > 0 ? (row.totalUnits + row.inTransit + units) / row.avgDailySales : Number.POSITIVE_INFINITY,
-            toAgentId: short.agentId,
-            toLocationId: short.locationId
-          });
-        }
+
+          // Incoming waybills remain excluded here. The projected cover only
+          // changes after a new waybill is created and later received.
+          const warehouseAvailable = Math.max(0, Number(product.warehouseStock ?? 0));
+          const sendable = Math.min(target, warehouseAvailable);
+          if (sendable > 0) {
+            out.push({
+              kind: "restock",
+              state: row.state,
+              fromLabel: "Warehouse",
+              toLabel: `${short.agentName} (${row.state})`,
+              productId,
+              productName: product.name,
+              units: sendable,
+              coverFrom: shortCover,
+              coverTo: (shortAvailable + sendable) / shortRate,
+              toAgentId: short.agentId,
+              toLocationId: short.locationId
+            });
+          }
+          if (sendable < target) {
+            out.push({
+              kind: "procure",
+              state: row.state,
+              fromLabel: "Procurement",
+              toLabel: `${short.agentName} (${row.state})`,
+              productId,
+              productName: product.name,
+              units: target - sendable,
+              coverFrom: (shortAvailable + sendable) / shortRate,
+              coverTo: (shortAvailable + target) / shortRate,
+              toAgentId: short.agentId,
+              toLocationId: short.locationId
+            });
+          }
+        });
       });
     });
-    // One recommendation per state+product, transfers ranked first.
+    // Keep one action per destination and product. A partial warehouse restock
+    // and its remaining procurement gap are intentionally separate actions.
     const seen = new Set<string>();
     return out
-      .sort((a, b) => Number(a.kind === "restock") - Number(b.kind === "restock") || a.coverFrom - b.coverFrom)
+      .sort((a, b) => {
+        const rank = (kind: "transfer" | "restock" | "procure") => kind === "transfer" ? 0 : kind === "restock" ? 1 : 2;
+        return rank(a.kind) - rank(b.kind) || a.coverFrom - b.coverFrom;
+      })
       .filter((row) => {
-        const key = `${row.kind}::${row.state}::${row.productId}`;
+        const key = `${row.kind}::${row.state}::${row.productId}::${row.toAgentId ?? "state"}::${row.toLocationId ?? "all"}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -29719,44 +29985,78 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const stateSortIndicator = (key: "avgDailySales" | "daysCover") =>
       managerInventoryStateSortKey !== key ? "↕" : managerInventoryStateSortDir === "desc" ? "▼" : "▲";
     const visibleRows = managerInventoryShowAllStates || managerInventoryStateFiltering ? sortedStateRows : sortedStateRows.slice(0, 5);
-    const coverText = (days: number) => (Number.isFinite(days) ? `${Math.round(days * 10) / 10} days` : "No demand");
+    const coverText = (days: number) => (Number.isFinite(days) ? `${Math.round(days * 10) / 10} days` : "No demand data");
     const coverTone = (status: ManagerInventoryStateRow["status"]) =>
-      status === "Critical" ? "text-rose-600" : status === "Restock Soon" ? "text-orange-600" : status === "Watch" ? "text-amber-600" : "text-emerald-600";
+      status === "Critical" ? "text-rose-600"
+        : status === "Restock Soon" ? "text-orange-600"
+          : status === "Watch" ? "text-amber-600"
+            : status === "Insufficient Data" ? "text-gray-500"
+              : "text-emerald-600";
     const statusChip = (status: ManagerInventoryStateRow["status"]) =>
       status === "Critical" ? "bg-rose-50 text-rose-700 border-rose-200"
         : status === "Restock Soon" ? "bg-orange-50 text-orange-700 border-orange-200"
           : status === "Watch" ? "bg-amber-50 text-amber-700 border-amber-200"
-            : "bg-emerald-50 text-emerald-700 border-emerald-200";
+            : status === "Insufficient Data" ? "bg-gray-50 text-gray-600 border-gray-200"
+              : "bg-emerald-50 text-emerald-700 border-emerald-200";
     // The breakdown's product columns follow whatever the selected state
     // actually holds, so this works for two products or ten.
     const breakdownProductIds = selected
-      ? Array.from(selected.unitsByProductId.entries())
-          .filter(([productId]) => managerInventoryProductFilter === "all" || productId === managerInventoryProductFilter)
-          .sort((a, b) => b[1] - a[1])
+      ? Array.from(new Set([
+          ...selected.unitsByProductId.keys(),
+          ...selected.committedByProductId.keys(),
+          ...selected.demandByProductId.keys()
+        ]))
+          .filter((productId) => managerInventoryProductFilter === "all" || productId === managerInventoryProductFilter)
+          .sort((a, b) => (selected.unitsByProductId.get(b) ?? 0) - (selected.unitsByProductId.get(a) ?? 0))
           .slice(0, 4)
-          .map(([productId]) => productId)
       : [];
     // With a product chosen, the units, orders/day and cover beside it have to
     // narrow to that product too. Showing one product's units against the whole
     // state's demand read as if that product carried every order.
     const filterProductId = managerInventoryProductFilter === "all" ? null : managerInventoryProductFilter;
-    const filterShare = (row: { unitsByProductId: Map<string, number>; totalUnits: number }) =>
-      !filterProductId || row.totalUnits <= 0
-        ? 1
-        : (row.unitsByProductId.get(filterProductId) ?? 0) / row.totalUnits;
-    const scopedUnits = (row: { unitsByProductId: Map<string, number>; totalUnits: number }) =>
+    type ManagerInventoryScopedRow = {
+      unitsByProductId: Map<string, number>;
+      committedByProductId: Map<string, number>;
+      demandByProductId: Map<string, ManagerInventoryDemandRate>;
+      coverByProductId: Map<string, number>;
+      totalUnits: number;
+      committedUnits: number;
+    };
+    const scopedRawUnits = (row: ManagerInventoryScopedRow) =>
       filterProductId ? (row.unitsByProductId.get(filterProductId) ?? 0) : row.totalUnits;
-    const scopedPerDay = (row: { unitsByProductId: Map<string, number>; totalUnits: number }, perDay: number) =>
-      Math.round(perDay * filterShare(row) * 10) / 10;
-    const scopedCover = (units: number, perDay: number) => (perDay > 0 ? units / perDay : Number.POSITIVE_INFINITY);
+    const scopedCommittedUnits = (row: ManagerInventoryScopedRow) =>
+      filterProductId ? (row.committedByProductId.get(filterProductId) ?? 0) : row.committedUnits;
+    const scopedAvailableUnits = (row: ManagerInventoryScopedRow) =>
+      Math.max(0, scopedRawUnits(row) - scopedCommittedUnits(row));
+    const scopedPerDay = (row: ManagerInventoryScopedRow, allProductsPerDay: number) =>
+      managerInventoryRoundRate(filterProductId
+        ? (row.demandByProductId.get(filterProductId)?.forecastPerDay ?? 0)
+        : allProductsPerDay);
+    const scopedCoverForRow = (row: ManagerInventoryScopedRow, allProductsCover: number) =>
+      filterProductId ? (row.coverByProductId.get(filterProductId) ?? Number.POSITIVE_INFINITY) : allProductsCover;
     const selectedScopedPerDay = selected ? scopedPerDay(selected, selected.avgDailySales) : 0;
-    const selectedScopedUnits = selected ? scopedUnits(selected) : 0;
+    const selectedScopedRawUnits = selected ? scopedRawUnits(selected) : 0;
+    const selectedScopedCommittedUnits = selected ? scopedCommittedUnits(selected) : 0;
+    const selectedScopedAvailableUnits = selected ? scopedAvailableUnits(selected) : 0;
     const selectedScopedCover = !selected
       ? Number.POSITIVE_INFINITY
-      : filterProductId
-        ? scopedCover(selectedScopedUnits, selectedScopedPerDay)
-        : selected.daysCover;
+      : scopedCoverForRow(selected, selected.daysCover);
     const selectedScopedStatus = managerInventoryCoverStatus(selectedScopedCover, selectedScopedPerDay > 0);
+    const selectedScopedDemand = selected && filterProductId
+      ? selected.demandByProductId.get(filterProductId)
+      : undefined;
+    const selectedScopedInTransit = selected
+      ? filterProductId
+        ? (selected.inTransitByProductId.get(filterProductId) ?? 0)
+        : selected.inTransit
+      : 0;
+    const demandConfidence = (rate?: ManagerInventoryDemandRate) => {
+      if (!rate || rate.forecastPerDay <= 0) return { label: "No evidence", tone: "bg-gray-100 text-gray-600" };
+      const allocatedShare = rate.forecastPerDay > 0 ? rate.allocatedPerDay / rate.forecastPerDay : 1;
+      if (rate.recentOrders >= 3 && allocatedShare <= 0.25) return { label: "High confidence", tone: "bg-emerald-50 text-emerald-700" };
+      if (rate.recentOrders >= 1 && allocatedShare <= 0.5) return { label: "Medium confidence", tone: "bg-amber-50 text-amber-700" };
+      return { label: "Estimated", tone: "bg-orange-50 text-orange-700" };
+    };
     const stat = (value: string, label: string, helper: string, icon: ReactNode, tone: string) => (
       <article className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-4">
         <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tone}`}>{icon}</span>
@@ -29793,7 +30093,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             {stat(String(totals.restockSoon), "States Need Restock Soon", `${smartStockCriticalDaysCover}-${smartStockWatchDaysCover} days of stock left`, <AlertTriangle className="h-5 w-5 text-amber-600" />, "bg-amber-50")}
             {stat(String(totals.critical), totals.critical === 1 ? "State Critical" : "States Critical", `Under ${smartStockCriticalDaysCover} days of stock`, <AlertTriangle className="h-5 w-5 text-rose-600" />, "bg-rose-50")}
             {stat(totals.inTransit.toLocaleString(), "Units in Transit", "Incoming transfers", <Truck className="h-5 w-5 text-violet-600" />, "bg-violet-50")}
-            {stat(`${totals.health}%`, "Inventory Health", "Overall stock stability", <ShieldCheck className="h-5 w-5 text-emerald-600" />, "bg-emerald-50")}
+            {stat(`${totals.health}%`, "Inventory Health", `${totals.evaluated} states measured · ${totals.unknown} unknown`, <ShieldCheck className="h-5 w-5 text-emerald-600" />, "bg-emerald-50")}
           </div>
         </section>
 
@@ -29801,9 +30101,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
           <section className="rounded-2xl border border-gray-200 bg-white p-5">
             <h3 className="m-0 flex items-center gap-1.5 text-base font-black text-gray-900">
               State Inventory Overview
-              <span title="Stock cover is calculated using avg. daily sales, confirmed orders and incoming transfers."><Info className="h-4 w-4 text-gray-300" /></span>
+              <span title="Usable stock is counted stock minus defective, missing and committed units. Incoming transfers are excluded until received."><Info className="h-4 w-4 text-gray-300" /></span>
             </h3>
-            <p className="m-0 mt-0.5 text-[12px] text-gray-500">Stock cover is calculated using avg. daily sales + confirmed orders + incoming transfers.</p>
+            <p className="m-0 mt-0.5 text-[12px] text-gray-500">Cover uses usable stock and the higher of the {smartStockLookbackDays}-day baseline or {managerInventorySurgeDays}-day demand surge. Incoming transfers are not counted until received.</p>
             {rows.length === 0 ? (
               <p className="m-0 py-10 text-center text-sm italic text-gray-400">No agent hub is holding stock yet.</p>
             ) : (
@@ -29824,7 +30124,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     onChange={(event) => setManagerInventoryStateStatusFilter(event.target.value)}
                   >
                     <option value="All">Status: All</option>
-                    {["Critical", "Restock Soon", "Watch", "Healthy"].map((status) => (
+                    {["Critical", "Restock Soon", "Watch", "Healthy", "Insufficient Data"].map((status) => (
                       <option key={status} value={status}>{status}</option>
                     ))}
                   </select>
@@ -29852,7 +30152,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           <button type="button" onClick={() => toggleManagerInventoryStateSort("avgDailySales")}
                             title="Click to sort by average daily sales - highest first, then lowest first, then off"
                             className={`!min-h-0 inline-flex items-center gap-1 font-semibold uppercase text-[11px] tracking-wider transition-colors ${managerInventoryStateSortKey === "avgDailySales" ? "text-[#1F8FE0]" : "text-gray-400 hover:text-gray-700"}`}>
-                            Avg. Daily Sales<span className="text-[9px] leading-none">{stateSortIndicator("avgDailySales")}</span>
+                            Forecast Units / Day<span className="text-[9px] leading-none">{stateSortIndicator("avgDailySales")}</span>
                           </button>
                         </th>
                         <th className="py-2 pr-3 font-semibold">
@@ -29888,11 +30188,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                             </span>
                           </td>
                           <td className="py-3 pr-3">
-                            <span className="block font-semibold text-gray-900">{row.totalUnits.toLocaleString()} units</span>
-                            <span className="block text-[11px] text-gray-400">Across {row.productCount} product{row.productCount === 1 ? "" : "s"}</span>
+                            <span className="block font-semibold text-gray-900">{row.totalUnits.toLocaleString()} counted</span>
+                            <span className="block text-[11px] text-gray-500">{Math.max(0, row.totalUnits - row.committedUnits).toLocaleString()} usable · {row.committedUnits.toLocaleString()} committed</span>
+                            <span className="block text-[11px] text-violet-500">{row.inTransit.toLocaleString()} incoming, not counted</span>
                           </td>
-                          <td className="py-3 pr-3 text-gray-700">{row.avgDailySales} / day</td>
-                          <td className={`py-3 pr-3 font-bold ${coverTone(row.status)}`}>{coverText(row.daysCover)}</td>
+                          <td className="py-3 pr-3 text-gray-700">
+                            <span className="block font-semibold">{row.avgDailySales} / day</span>
+                            <span className="block text-[10px] text-gray-400">conservative forecast</span>
+                          </td>
+                          <td className={`py-3 pr-3 font-bold ${coverTone(row.status)}`}>
+                            {coverText(row.daysCover)}
+                            {Number.isFinite(row.daysCover) && <span className="block text-[10px] font-normal text-gray-400">weakest demanded product</span>}
+                          </td>
                           <td className="py-3 pr-3">
                             <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold ${statusChip(row.status)}`}>{row.status}</span>
                           </td>
@@ -29940,7 +30247,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                 aria-label="Filter agent breakdown by product"
               >
                 <option value="all">All Products</option>
-                {selected && Array.from(selected.unitsByProductId.keys()).map((productId) => (
+                {selected && Array.from(new Set([
+                  ...selected.unitsByProductId.keys(),
+                  ...selected.committedByProductId.keys(),
+                  ...selected.demandByProductId.keys()
+                ])).map((productId) => (
                   <option key={productId} value={productId}>{smartStockProductById.get(productId)?.name ?? productId}</option>
                 ))}
               </select>
@@ -29957,6 +30268,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
               <p className="m-0 py-10 text-center text-sm italic text-gray-400">No state selected.</p>
             ) : (
               <>
+                <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/60 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-blue-800">Forecast evidence</span>
+                    {filterProductId && selectedScopedDemand && (() => {
+                      const confidence = demandConfidence(selectedScopedDemand);
+                      return <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${confidence.tone}`}>{confidence.label}</span>;
+                    })()}
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-5">
+                    <span><strong className="block text-sm text-gray-900">{selectedScopedRawUnits.toLocaleString()}</strong>counted stock</span>
+                    <span><strong className="block text-sm text-amber-700">{selectedScopedCommittedUnits.toLocaleString()}</strong>committed</span>
+                    <span><strong className="block text-sm text-emerald-700">{selectedScopedAvailableUnits.toLocaleString()}</strong>usable now</span>
+                    <span><strong className="block text-sm text-violet-700">{selectedScopedInTransit.toLocaleString()}</strong>incoming, excluded</span>
+                    <span><strong className="block text-sm text-blue-700">{selectedScopedPerDay}</strong>forecast units/day</span>
+                  </div>
+                  {filterProductId && selectedScopedDemand ? (
+                    <p className="m-0 mt-2 border-t border-blue-100 pt-2 text-[10px] leading-4 text-blue-900">
+                      Evidence: {selectedScopedDemand.recentUnits} units across {selectedScopedDemand.recentOrders} placed order{selectedScopedDemand.recentOrders === 1 ? "" : "s"} in {smartStockLookbackDays} days
+                      {" · "}{managerInventoryRoundRate(selectedScopedDemand.baselinePerDay)}/day baseline
+                      {" · "}{managerInventoryRoundRate(selectedScopedDemand.surgePerDay)}/day recent surge
+                      {selectedScopedDemand.allocatedPerDay > 0 && <> · {managerInventoryRoundRate(selectedScopedDemand.allocatedPerDay)}/day allocated from unassigned state demand</>}.
+                    </p>
+                  ) : (
+                    <p className="m-0 mt-2 border-t border-blue-100 pt-2 text-[10px] leading-4 text-blue-900">Select one product to audit its exact baseline, recent surge, commitments and confidence. The all-products cover below is the weakest demanded product, never a pooled average.</p>
+                  )}
+                </div>
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full min-w-[620px] text-left text-sm">
                     <thead>
@@ -29965,7 +30302,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                         {breakdownProductIds.map((productId) => (
                           <th key={productId} className="py-2 pr-3 font-semibold">{smartStockProductById.get(productId)?.name ?? "Product"} <span className="normal-case text-gray-300">(Units)</span></th>
                         ))}
-                        <th className="py-2 pr-3 font-semibold">Orders / Day</th>
+                        <th className="py-2 pr-3 font-semibold">Forecast Units / Day</th>
                         <th className="py-2 pr-3 font-semibold">Stock Cover</th>
                         <th className="py-2 pr-3 font-semibold">Status</th>
                         <th className="py-2 font-semibold">Action</th>
@@ -29974,22 +30311,36 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                     <tbody>
                       {selected.hubs.map((hub) => {
                         const hubPerDay = scopedPerDay(hub, hub.ordersPerDay);
-                        const hubUnits = Math.max(0, scopedUnits(hub) - (filterProductId ? 0 : hub.committedUnits));
-                        const hubCover = filterProductId ? scopedCover(hubUnits, hubPerDay) : hub.daysCover;
+                        const hubCommittedUnits = scopedCommittedUnits(hub);
+                        const hubUnits = scopedAvailableUnits(hub);
+                        const hubCover = scopedCoverForRow(hub, hub.daysCover);
                         const hubStatus = managerInventoryCoverStatus(hubCover, hubPerDay > 0);
-                        const canSupply = hubCover > smartStockWatchDaysCover * 2 && hubUnits > 0;
+                        const donorReserve = Math.ceil(smartStockWatchDaysCover * 2 * hubPerDay);
+                        const canSupply = Boolean(filterProductId) && hubPerDay > 0 && hubCover > smartStockWatchDaysCover * 2 && hubUnits > donorReserve;
                         return (
                           <tr key={`${hub.agentId}-${hub.locationId}`} className="border-b border-gray-50">
                             <td className="py-3 pr-3 font-bold text-gray-900">{hub.agentName}</td>
                             {breakdownProductIds.map((productId) => {
                               const qty = hub.unitsByProductId.get(productId) ?? 0;
-                              return <td key={productId} className={`py-3 pr-3 font-semibold ${qty <= 0 ? "text-rose-600" : qty < 10 ? "text-orange-600" : "text-emerald-700"}`}>{qty}</td>;
+                              const committed = hub.committedByProductId.get(productId) ?? 0;
+                              const usable = Math.max(0, qty - committed);
+                              return (
+                                <td key={productId} className={`py-3 pr-3 font-semibold ${usable <= 0 ? "text-rose-600" : usable < 10 ? "text-orange-600" : "text-emerald-700"}`}>
+                                  <span className="block">{usable} usable</span>
+                                  <span className="block text-[10px] font-normal text-gray-400">{qty} counted · {committed} committed</span>
+                                </td>
+                              );
                             })}
-                            <td className="py-3 pr-3 text-gray-700">{hubPerDay}</td>
+                            <td className="py-3 pr-3 text-gray-700">
+                              <span className="block font-semibold">{hubPerDay}</span>
+                              {filterProductId && hub.demandByProductId.get(filterProductId)?.allocatedPerDay ? (
+                                <span className="block text-[10px] text-orange-500">includes allocation</span>
+                              ) : null}
+                            </td>
                             <td className={`py-3 pr-3 font-bold ${coverTone(hubStatus)}`}>
                               {coverText(hubCover)}
-                              {hub.committedUnits > 0 && !filterProductId && (
-                                <span className="block text-[10px] font-normal text-gray-400">{hub.committedUnits} committed</span>
+                              {hubCommittedUnits > 0 && (
+                                <span className="block text-[10px] font-normal text-gray-400">after {hubCommittedUnits} committed</span>
                               )}
                             </td>
                             <td className="py-3 pr-3">
@@ -30002,7 +30353,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                                   anything has nothing to move, so it gets the
                                   overflow menu rather than an action that would
                                   open a transfer with nothing to put in it. */}
-                              {hubStatus === "Healthy" && !canSupply ? (
+                              {!filterProductId ? (
+                                <button
+                                  className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-500"
+                                  onClick={() => setManagerInventoryProductFilter(breakdownProductIds[0] ?? "all")}
+                                  disabled={breakdownProductIds.length === 0}
+                                >
+                                  Choose product
+                                </button>
+                              ) : hubStatus === "Healthy" && !canSupply ? (
                                 <span className="relative inline-block">
                                   <button
                                     className="!min-h-0 rounded-lg border border-gray-200 px-2 py-1.5 text-gray-500 transition-colors hover:bg-gray-50"
@@ -30053,10 +30412,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                       })}
                       <tr className="bg-gray-50/60">
                         <td className="py-3 pr-3 font-black text-gray-900">{selected.state} Total</td>
-                        {breakdownProductIds.map((productId) => (
-                          <td key={productId} className="py-3 pr-3 font-black text-gray-900">{selected.unitsByProductId.get(productId) ?? 0}</td>
-                        ))}
-                        <td className="py-3 pr-3 font-black text-gray-900">{scopedPerDay(selected, selected.avgDailySales)}</td>
+                        {breakdownProductIds.map((productId) => {
+                          const counted = selected.unitsByProductId.get(productId) ?? 0;
+                          const committed = selected.committedByProductId.get(productId) ?? 0;
+                          return (
+                            <td key={productId} className="py-3 pr-3 font-black text-gray-900">
+                              <span className="block">{Math.max(0, counted - committed)} usable</span>
+                              <span className="block text-[10px] font-normal text-gray-400">{counted} counted · {committed} committed</span>
+                            </td>
+                          );
+                        })}
+                        <td className="py-3 pr-3 font-black text-gray-900">{selectedScopedPerDay}</td>
                         <td className={`py-3 pr-3 font-black ${coverTone(selectedScopedStatus)}`}>{coverText(selectedScopedCover)}</td>
                         <td className="py-3 pr-3">
                           <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold ${statusChip(selectedScopedStatus)}`}>{selectedScopedStatus}</span>
@@ -30067,14 +30433,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </table>
                 </div>
                 {(() => {
-                  const short = selected.hubs.find((hub) => hub.daysCover <= smartStockWatchDaysCover);
-                  const donor = selected.hubs.find((hub) => hub.daysCover > smartStockWatchDaysCover * 2);
+                  const short = selected.hubs.find((hub) => {
+                    const rate = scopedPerDay(hub, hub.ordersPerDay);
+                    return rate > 0 && scopedCoverForRow(hub, hub.daysCover) <= smartStockWatchDaysCover;
+                  });
+                  const donor = selected.hubs.find((hub) => {
+                    const rate = scopedPerDay(hub, hub.ordersPerDay);
+                    const available = scopedAvailableUnits(hub);
+                    return rate > 0
+                      && scopedCoverForRow(hub, hub.daysCover) > smartStockWatchDaysCover * 2
+                      && available > Math.ceil(smartStockWatchDaysCover * 2 * rate);
+                  });
                   return (
                     <div className="mt-3 flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2.5 text-[12px] text-blue-900">
                       <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
                       <span>
-                        {!short
-                          ? <><strong>{selected.state} is covered.</strong> No agent hub here is below {smartStockWatchDaysCover} days.</>
+                        {selectedScopedPerDay <= 0
+                          ? <><strong>Insufficient demand evidence.</strong> Stock is visible, but Protohub will not call it covered until qualifying placed orders establish a product-level rate.</>
+                          : !short
+                          ? <><strong>{selected.state} is covered for this scope.</strong> No agent hub is below {smartStockWatchDaysCover} days after commitments.</>
                           : donor
                             ? <><strong>{selected.state} has enough stock overall, but {short.agentName} is low.</strong><br />Best action: transfer from {donor.agentName} to {short.agentName} before restocking from warehouse.</>
                             : <><strong>{selected.state} is short across every hub.</strong><br />Best action: restock from the warehouse - no agent here has spare cover to give.</>}
@@ -30224,9 +30601,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div>
               <h3 className="m-0 flex items-center gap-1.5 text-base font-black text-gray-900">
                 Recommended Actions <Sparkles className="h-4 w-4 text-violet-500" />
-                <span className="text-[11px] font-semibold text-gray-400">(AI powered)</span>
+                <span className="text-[11px] font-semibold text-gray-400">(conservative rules)</span>
               </h3>
-              <p className="m-0 mt-0.5 text-[12px] text-gray-500">Smart recommendations to prevent stockouts and reduce emergency restocking.</p>
+              <p className="m-0 mt-0.5 text-[12px] text-gray-500">Product-level actions based on usable stock, commitments and the current demand surge.</p>
             </div>
             <span className="flex items-center gap-2 text-[11px] font-semibold text-gray-400">
               Auto-calculated
@@ -30246,8 +30623,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
               {managerInventoryRecommendations.slice(0, 3).map((row, index) => (
                 <article key={`${row.kind}-${row.state}-${row.productId}-${index}`} className="rounded-2xl border border-gray-200 p-4">
-                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${row.kind === "transfer" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                    <ArrowLeftRight className="h-3 w-3" />{row.kind === "transfer" ? "Internal Transfer" : "State Restock"}
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${row.kind === "transfer" ? "bg-emerald-50 text-emerald-700" : row.kind === "restock" ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"}`}>
+                    {row.kind === "procure" ? <AlertTriangle className="h-3 w-3" /> : <ArrowLeftRight className="h-3 w-3" />}
+                    {row.kind === "transfer" ? "Internal Transfer" : row.kind === "restock" ? "Warehouse Restock" : "Procurement Required"}
                   </span>
                   <p className="m-0 mt-2 text-[13px] font-black text-gray-900">{row.fromLabel} → {row.toLabel}</p>
                   <div className="mt-2 flex items-center gap-2.5">
@@ -30278,12 +30656,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   </p>
                   <div className="mt-3 flex items-center justify-between gap-2 border-t border-gray-100 pt-3">
                     <span className="inline-flex items-center gap-1 text-[11px] text-gray-400">
-                      <Clock className="h-3.5 w-3.5" />Est. arrival: {row.kind === "transfer" ? "Same day" : "2 days"}
+                      <Clock className="h-3.5 w-3.5" />{row.kind === "procure" ? "Warehouse cannot cover this gap" : `Est. arrival: ${row.kind === "transfer" ? "Same day" : "2 days"}`}
                     </span>
                     <span className="flex items-center gap-1.5">
                       <button
-                        className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-[#1560a8]"
+                        className={`!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold text-white transition-colors ${row.kind === "procure" ? "bg-rose-600 hover:bg-rose-700" : "bg-[#1F8FE0] hover:bg-[#1560a8]"}`}
                         onClick={() => {
+                          if (row.kind === "procure") {
+                            setActivePage("Inventory");
+                            syncHashRoute("#/dashboard/admin/inventory");
+                            return;
+                          }
                           openCreateWaybill();
                           setWaybillItems([{ productId: row.productId, quantity: String(row.units) }]);
                           setWaybillToState(row.state);
@@ -30296,7 +30679,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                           }
                         }}
                       >
-                        {row.kind === "transfer" ? "Create Transfer" : "Create Waybill"}
+                        {row.kind === "transfer" ? "Create Transfer" : row.kind === "restock" ? "Create Waybill" : "Review Stock"}
                       </button>
                       <span className="relative inline-block">
                         <button
@@ -30337,7 +30720,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
                   >
                     <ArrowRight className="h-4 w-4" />
                   </button>
-                  <p className="m-0 text-[11px] text-gray-400">{managerInventoryRecommendations.length - 3} more suggested transfers and restock plans.</p>
+                  <p className="m-0 text-[11px] text-gray-400">{managerInventoryRecommendations.length - 3} more stock actions.</p>
                 </article>
               )}
             </div>
@@ -30346,8 +30729,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
         <section className="flex flex-wrap items-center gap-x-8 gap-y-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 text-[12px] text-gray-500">
           <span className="inline-flex items-center gap-1.5 font-bold text-gray-700"><Info className="h-4 w-4 text-gray-400" />How it works</span>
-          <span>Stock cover = (Current Stock + Incoming) ÷ (Avg. Daily Sales + Confirmed Orders)</span>
-          <span>Lead time to states: 1-2 days (avg.)</span>
+          <span>Usable stock = counted stock - defective - missing - committed units</span>
+          <span>Stock cover = usable stock ÷ the higher of the {smartStockLookbackDays}-day baseline or {managerInventorySurgeDays}-day surge</span>
+          <span>Incoming stock is excluded until the receiving hub confirms it</span>
           <span>Safety buffer: {smartStockCriticalDaysCover}-{smartStockWatchDaysCover} days</span>
         </section>
       </div>
