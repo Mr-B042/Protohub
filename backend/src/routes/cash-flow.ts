@@ -20,6 +20,7 @@ import {
 } from "../lib/cash-flow.js";
 import { summariseReceivables } from "../lib/agent-receivables.js";
 import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
+import { resolveOrderCogs } from "../lib/order-cogs.js";
 import {
   financialHighlights,
   healthChecks,
@@ -2294,7 +2295,7 @@ router.get("/period-close", async (req, res) => {
       supabase.from("inventory_valuation_snapshots").select("id, status, total_value").eq("org_id", orgId).eq("week_start", weekStart).maybeSingle(),
       supabase.from("cash_reserves").select("amount, released_amount, status, category").eq("org_id", orgId).limit(REPORT_ROW_CEILING),
       supabase.from("orders")
-        .select("id, amount, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines, status")
+        .select("id, amount, currency, logistics_cost, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at, status")
         .eq("org_id", orgId).eq("status", "Delivered").neq("review_hold", true)
         .gte("updated_at", fromIso).lt("updated_at", toIso).limit(REPORT_ROW_CEILING),
       resolveOpeningCash(orgId, fromIso),
@@ -2316,9 +2317,11 @@ router.get("/period-close", async (req, res) => {
       .filter(Boolean) as string[];
     const pricingMap = await loadClosePricingMap(productIds);
     const totalRevenue = orders.reduce((sum, order) => sum + (Number(order.amount ?? 0) || 0), 0);
+    // ⚠️ Frozen snapshot wins over live pricing, so a cost edit cannot restate
+    // a week that has already been reported on or closed.
     const totalCogs = orders.reduce((sum, order) =>
-      sum + orderInventoryLinesFromRow(order).reduce(
-        (lineSum, line) => lineSum + line.quantity * closeUnitCost(pricingMap, line.productId, order.currency), 0), 0);
+      sum + resolveOrderCogs(order, orderInventoryLinesFromRow(order).reduce(
+        (lineSum, line) => lineSum + line.quantity * closeUnitCost(pricingMap, line.productId, order.currency), 0)).amount, 0);
     const ordersMissingCost = orders.filter((order) =>
       orderInventoryLinesFromRow(order).some((line) => closeUnitCost(pricingMap, line.productId, order.currency) <= 0)).length;
     const profit = summariseProfit({ totalRevenue, totalCogs, operatingExpenses: cashOut });
@@ -2640,7 +2643,7 @@ async function weekShape(orgId: string, weekStart: string) {
     loadRemittances(orgId, fromIso, toIso),
     loadExpenses(orgId, weekStart, weekEnd),
     supabase.from("orders")
-      .select("id, amount, currency, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, free_gift_lines")
+      .select("id, amount, currency, product_id, product_name, quantity, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at")
       .eq("org_id", orgId).eq("status", "Delivered").neq("review_hold", true)
       .gte("updated_at", fromIso).lt("updated_at", toIso).limit(REPORT_ROW_CEILING),
     supabase.from("weekly_cash_verifications")
@@ -2656,8 +2659,8 @@ async function weekShape(orgId: string, weekStart: string) {
   const cashOut = spends.reduce((sum, row) => sum + row.cashOut, 0);
   const revenue = orders.reduce((sum, order) => sum + (Number(order.amount ?? 0) || 0), 0);
   const cogs = orders.reduce((sum, order) =>
-    sum + orderInventoryLinesFromRow(order).reduce(
-      (lineSum, line) => lineSum + line.quantity * closeUnitCost(pricingMap, line.productId, order.currency), 0), 0);
+    sum + resolveOrderCogs(order, orderInventoryLinesFromRow(order).reduce(
+      (lineSum, line) => lineSum + line.quantity * closeUnitCost(pricingMap, line.productId, order.currency), 0)).amount, 0);
 
   const inByCategory = new Map<string, number>();
   remits.forEach((row) => inByCategory.set(row.source, (inByCategory.get(row.source) ?? 0) + row.cashIn));

@@ -149,14 +149,14 @@ import {
 } from "./lib/push-client";
 import {
   productsApi, ordersApi, publicOrdersApi, agentsApi, deliveryDistanceAuditsApi, weekendStockSummaryApi, weeklyAccountingApi, financeSummaryApi, remittanceTransactionsApi, stockApi, batchesApi,
-  expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, stockApi as _stockApi,
+  expensesApi, waybillsApi, notificationsApi, customersApi, teamApi, authApi, cartsApi, ordersExtraApi, productCostApi, stockApi as _stockApi,
   embedSettingsApi, marketingLinkVariantsApi, marketingSpendApi, metaCapiSettingsApi, emailReportsApi, emailSettingsApi, smsSettingsApi, usersApi, salesTeamsApi, payStructuresApi, payrollApi, penaltiesApi, bonusCoachApi, managerBonusApi, managerProductChallengesApi, upsellBonusApi, repWeeklyTargetsApi, managerDashboardAlertsApi, salesBonusesApi, salesExpansionApi, whatsappSettingsApi, whatsappUserAccountApi, whatsappDestinationsApi, whatsappOrderDispatchApi, ordersWhatsAppResendApi, followUpKpiApi, recoveryRepKpiApi, recoveryTemplatesApi, customerOptOutApi, customerRetentionApi, personalDeliveryAgentsApi, deliveryGoalsApi, cashFlowApi, headOfSalesApi, salesLeadsApi,
   setApiSpyUserId,
   setApiPreviewReadOnly,
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -15226,6 +15226,55 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // product that is short, so the message is shown as-is.
       setExtraItemsError(err?.message ?? "Could not save those items.");
     } finally { setExtraItemsSaving(false); }
+  };
+
+  // ── Changing a product's unit cost without restating history ──
+  // ⚠️ COGS used to be recomputed from TODAY'S cost on every report, so editing
+  // a cost silently moved profit on every order ever sold containing it. The
+  // impact is shown BEFORE the change, and history is frozen first by default.
+  const [costImpact, setCostImpact] = useState<CostChangeImpact | null>(null);
+  const [costFreezeFirst, setCostFreezeFirst] = useState(true);
+  const [costChangeSaving, setCostChangeSaving] = useState(false);
+
+  useEffect(() => {
+    if (modal !== "editPricing" || !selectedProduct) { setCostImpact(null); return; }
+    const next = Number(pricingCost);
+    const current = Number(selectedPricing?.unitCost ?? NaN);
+    if (!Number.isFinite(next) || !Number.isFinite(current) || next === current) { setCostImpact(null); return; }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      productCostApi.preview(selectedProduct.id, next)
+        .then((result) => { if (!cancelled) setCostImpact(result.impact); })
+        .catch(() => { if (!cancelled) setCostImpact(null); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [modal, selectedProduct, pricingCost, selectedPricing]);
+
+  const saveCostChange = async () => {
+    if (!selectedProduct) return;
+    setCostChangeSaving(true);
+    try {
+      const result = await productCostApi.changeCost(selectedProduct.id, {
+        newUnitCost: Number(pricingCost) || 0,
+        reason: "",
+        freezeHistory: costFreezeFirst
+      });
+      showToast(result.ordersFrozen > 0
+        ? `Cost updated. ${result.ordersFrozen} past order${result.ordersFrozen === 1 ? "" : "s"} frozen at ${naira(result.previousUnitCost)} - their profit will not move.`
+        : "Cost updated. No past orders needed freezing.");
+      // Same optimistic update savePricing uses; there is no products reload.
+      setProducts((value) => value.map((product) => product.id === selectedProduct.id
+        ? {
+          ...product,
+          pricings: product.pricings.map((pricing) => pricing.currency === (selectedPricing?.currency ?? pricing.currency)
+            ? { ...pricing, unitCost: result.newUnitCost }
+            : pricing)
+        }
+        : product));
+      closeModal();
+    } catch (err: any) {
+      showToast(err?.message ?? "Could not change that cost.");
+    } finally { setCostChangeSaving(false); }
   };
 
   const quantityForOrder = (order: TrackedOrder) => {
@@ -98552,7 +98601,54 @@ ${waybillLineItems(w).length > 1
                 <label><span>Selling Price</span><input value={pricingSellingPrice} onChange={(event) => setPricingSellingPrice(event.target.value)} inputMode="decimal" /></label>
                 <label><span>Cost per Unit</span><input value={pricingCost} onChange={(event) => setPricingCost(event.target.value)} inputMode="decimal" /></label>
                 <p>Margin: <strong>{Number(pricingSellingPrice) > 0 ? Math.round(((Number(pricingSellingPrice) - Number(pricingCost)) / Number(pricingSellingPrice)) * 100) : 0}%</strong></p>
-                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={savePricing}>Save Pricing</button></div>
+
+                {/* ⚠️ Changing a cost used to silently restate every order ever
+                    sold containing this product. The size of that restatement
+                    is shown here BEFORE it happens, and history is frozen
+                    first by default so it happens at all. */}
+                {costImpact && (
+                  <div className={`rounded-lg border px-3 py-3 ${costImpact.ordersAffected > 0 ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+                    {costImpact.ordersAffected > 0 ? (
+                      <>
+                        <p className="m-0 text-[13px] font-black text-amber-900">
+                          This affects {costImpact.ordersAffected} past order{costImpact.ordersAffected === 1 ? "" : "s"}
+                        </p>
+                        <p className="m-0 mt-1 text-[12px] font-medium leading-4 text-amber-800">
+                          {costImpact.unitsAffected} unit{costImpact.unitsAffected === 1 ? "" : "s"} already sold at{" "}
+                          {naira(costImpact.previousUnitCost)}. Left unfrozen, reported profit on those orders would
+                          {costImpact.reportedProfitShift < 0 ? " fall by " : " rise by "}
+                          <strong className="font-black">{naira(Math.abs(costImpact.reportedProfitShift))}</strong>.
+                        </p>
+                        <label className="m-0 mt-2.5 flex items-start gap-2.5 rounded-lg bg-white px-3 py-2.5">
+                          <input type="checkbox" checked={costFreezeFirst} className="mt-0.5 h-4 w-4"
+                            onChange={(event) => setCostFreezeFirst(event.target.checked)} />
+                          <span>
+                            <span className="block text-[13px] font-bold text-gray-900">
+                              Freeze those orders at {naira(costImpact.previousUnitCost)} first
+                            </span>
+                            <span className="block text-[11px] font-medium text-gray-500">
+                              Recommended. Past profit stays exactly as reported; only orders delivered from now on use
+                              the new cost.
+                            </span>
+                          </span>
+                        </label>
+                        {!costFreezeFirst && (
+                          <p className="m-0 mt-2 text-[11px] font-black text-rose-700">
+                            Unticked, this rewrites profit on {costImpact.ordersAffected} order
+                            {costImpact.ordersAffected === 1 ? "" : "s"} going back through weeks you have already reported on.
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="m-0 text-[12px] font-bold text-emerald-800">
+                        No past orders are affected
+                        {costImpact.alreadyFrozen > 0 && ` — ${costImpact.alreadyFrozen} already frozen`}. Safe to change.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2"><button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button><button disabled={costChangeSaving} className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors disabled:opacity-50" onClick={() => costImpact ? void saveCostChange() : savePricing()}>{costChangeSaving ? "Saving…" : costImpact && costImpact.ordersAffected > 0 && costFreezeFirst ? "Freeze & Save Cost" : "Save Pricing"}</button></div>
               </div>
             )}
 

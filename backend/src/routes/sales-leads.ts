@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
+import { resolveOrderCogs } from "../lib/order-cogs.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { requireAuth, requireRole, scopeOf } from "../middleware/auth.js";
 import { addDaysToDateKey, lagosDateKey } from "../lib/sales-bonus-engine.js";
@@ -894,8 +895,12 @@ const unitCostFor = (pricingMap: PricingMap, productId?: string | null, currency
   const first = entry.byCurrency.values().next();
   return first.done ? 0 : first.value;
 };
+// ⚠️ A FROZEN snapshot wins over live pricing. Without this, editing a
+// product's unit cost restates every order ever sold containing it.
 const cogsForOrder = (order: any, pricingMap: PricingMap) =>
-  orderInventoryLinesFromRow(order).reduce((sum, line) => sum + line.quantity * unitCostFor(pricingMap, line.productId, order.currency), 0);
+  resolveOrderCogs(order,
+    orderInventoryLinesFromRow(order).reduce((sum, line) => sum + line.quantity * unitCostFor(pricingMap, line.productId, order.currency), 0)
+  ).amount;
 
 // Owner/Admin only - never visible on the closer's own pages. Advertising
 // is deliberately NOT included: ad spend is logged by the Marketer role
@@ -922,7 +927,7 @@ router.get("/cost-profitability", requireRole("Owner", "Admin"), async (req, res
 
     const { data: orderRows, error: orderError } = await supabase
       .from("orders")
-      .select("id, status, amount, original_amount, quantity, currency, logistics_cost, created_at, product_id, package_id, package_components_snapshot, cross_sell_lines, free_gift_lines")
+      .select("id, status, amount, original_amount, quantity, currency, logistics_cost, created_at, product_id, package_id, package_components_snapshot, cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot, cogs_snapshot_at")
       .eq("org_id", orgId).eq("closed_by_closer_id", parsed.data.closerId);
     if (orderError) throw orderError;
     const orders = (orderRows ?? []).filter((order) => order.created_at && lagosDateKey(order.created_at) >= monthStart && lagosDateKey(order.created_at) < nextMonth);

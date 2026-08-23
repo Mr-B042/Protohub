@@ -5,6 +5,9 @@ import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { logger } from "../lib/logger.js";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { orderInventoryLinesFromRow } from "../lib/order-inventory.js";
+import { costChangeImpact, needsFreezing } from "../lib/order-cogs.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -761,5 +764,200 @@ router.delete("/:id/pricings/:currency",
     res.status(204).send();
   }
 );
+
+// ══ Freezing what an order cost us ════════════════════════
+//
+// ⚠️ Nothing used to store the cost that applied when an order was sold, so
+// every report recomputed COGS from TODAY'S unit_cost. Editing one product's
+// cost therefore restated every order ever sold containing it - raising the
+// Multi Corner Storage Shelf by ₦500 would have erased ₦48,500 of reported
+// profit going back to July, from weeks already reported on.
+//
+// A delivered order's cost is now settled, like a closed week.
+
+type CostMap = Map<string, { byCurrency: Map<string, number>; primary: number; hasPrimary: boolean }>;
+
+async function loadCostMap(): Promise<CostMap> {
+  const map: CostMap = new Map();
+  const { data } = await supabase.from("product_pricings")
+    .select("product_id, currency, unit_cost, is_primary").limit(REPORT_ROW_CEILING);
+  for (const row of (data ?? []) as any[]) {
+    let entry = map.get(row.product_id);
+    if (!entry) { entry = { byCurrency: new Map(), primary: 0, hasPrimary: false }; map.set(row.product_id, entry); }
+    const cost = Number(row.unit_cost ?? 0) || 0;
+    if (row.currency) entry.byCurrency.set(row.currency, cost);
+    if (row.is_primary) { entry.primary = cost; entry.hasPrimary = true; }
+  }
+  return map;
+}
+
+const unitCostFrom = (map: CostMap, productId?: string | null, currency?: string | null) => {
+  if (!productId) return 0;
+  const entry = map.get(productId);
+  if (!entry) return 0;
+  if (currency && entry.byCurrency.has(currency)) return entry.byCurrency.get(currency) ?? 0;
+  if (entry.hasPrimary) return entry.primary;
+  const first = entry.byCurrency.values().next();
+  return first.done ? 0 : first.value;
+};
+
+const ORDER_COGS_COLUMNS =
+  "id, status, currency, quantity, product_id, product_name, package_components_snapshot, "
+  + "cross_sell_lines, additional_lines, free_gift_lines, cogs_snapshot";
+
+/** Freeze every delivered order that has no snapshot yet. Idempotent. */
+async function freezeDeliveredCogs(orgId: string, onlyProductId?: string) {
+  const { data } = await supabase.from("orders")
+    .select(ORDER_COGS_COLUMNS)
+    .eq("org_id", orgId).eq("status", "Delivered")
+    .is("cogs_snapshot", null)
+    .limit(REPORT_ROW_CEILING);
+  const rows = ((data ?? []) as any[]).filter((row) => needsFreezing(row));
+  if (rows.length === 0) return { frozen: 0, units: 0 };
+
+  const costs = await loadCostMap();
+  const now = new Date().toISOString();
+  let frozen = 0;
+  let units = 0;
+
+  for (const row of rows) {
+    const lines = orderInventoryLinesFromRow(row);
+    // Freezing only orders containing one product still freezes the WHOLE
+    // order's cost - a partial snapshot would be worse than none, because the
+    // rest of the order would keep drifting with future price edits.
+    if (onlyProductId && !lines.some((line) => line.productId === onlyProductId)) continue;
+    const cogs = lines.reduce(
+      (sum, line) => sum + line.quantity * unitCostFrom(costs, line.productId, row.currency), 0);
+    const { error } = await supabase.from("orders")
+      .update({ cogs_snapshot: cogs, cogs_snapshot_at: now, cogs_snapshot_source: "freeze" })
+      .eq("id", row.id).eq("org_id", orgId).is("cogs_snapshot", null);
+    if (!error) {
+      frozen += 1;
+      units += lines
+        .filter((line) => !onlyProductId || line.productId === onlyProductId)
+        .reduce((sum, line) => sum + line.quantity, 0);
+    }
+  }
+  return { frozen, units };
+}
+
+// ── POST /api/products/freeze-cogs ────────────────────────
+router.post("/freeze-cogs", requireRole("Owner"), async (req, res) => {
+  try {
+    const result = await freezeDeliveredCogs(req.user!.orgId);
+    res.json({
+      ...result,
+      message: result.frozen === 0
+        ? "Every delivered order was already frozen."
+        : `Froze ${result.frozen} delivered order${result.frozen === 1 ? "" : "s"} at today's costs. Future cost changes will not move them.`
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not freeze order costs." });
+  }
+});
+
+// ── GET /api/products/:id/cost-change-preview?newUnitCost= ──
+router.get("/:id/cost-change-preview", requireRole("Owner", "Admin"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const newUnitCost = Number(req.query.newUnitCost);
+    const { data: product } = await supabase.from("products")
+      .select("id, name").eq("id", req.params.id).eq("org_id", orgId).maybeSingle();
+    if (!product) { res.status(404).json({ error: "That product no longer exists." }); return; }
+
+    const { data: pricing } = await supabase.from("product_pricings")
+      .select("currency, unit_cost, is_primary").eq("product_id", product.id);
+    const primary = ((pricing ?? []) as any[]).find((row) => row.is_primary) ?? (pricing ?? [])[0];
+
+    const { data: orders } = await supabase.from("orders")
+      .select(ORDER_COGS_COLUMNS)
+      .eq("org_id", orgId).eq("status", "Delivered").limit(REPORT_ROW_CEILING);
+
+    const delivered = ((orders ?? []) as any[])
+      .map((row) => ({ row, lines: orderInventoryLinesFromRow(row) }))
+      .filter((entry) => entry.lines.some((line) => line.productId === product.id))
+      .map((entry) => ({
+        units: entry.lines.filter((line) => line.productId === product.id)
+          .reduce((sum, line) => sum + line.quantity, 0),
+        frozen: entry.row.cogs_snapshot !== null && entry.row.cogs_snapshot !== undefined
+      }));
+
+    res.json({
+      productId: product.id,
+      productName: product.name,
+      currency: primary?.currency ?? "NGN",
+      impact: costChangeImpact({
+        previousUnitCost: Number(primary?.unit_cost ?? 0),
+        newUnitCost: Number.isFinite(newUnitCost) ? newUnitCost : Number(primary?.unit_cost ?? 0),
+        deliveredOrders: delivered
+      })
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not work out the impact." });
+  }
+});
+
+const CostChangeSchema = z.object({
+  newUnitCost: z.coerce.number().min(0).max(1_000_000_000),
+  reason: z.string().trim().max(250).default(""),
+  /** Freeze history first. Off is allowed but has to be chosen deliberately. */
+  freezeHistory: z.boolean().default(true)
+}).strict();
+
+// ── POST /api/products/:id/change-cost ────────────────────
+router.post("/:id/change-cost", requireRole("Owner"), async (req, res) => {
+  try {
+    const parsed = CostChangeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: humanFieldErrors(parsed.error) }); return; }
+    const orgId = req.user!.orgId;
+    const body = parsed.data;
+
+    const { data: product } = await supabase.from("products")
+      .select("id, name").eq("id", req.params.id).eq("org_id", orgId).maybeSingle();
+    if (!product) { res.status(404).json({ error: "That product no longer exists." }); return; }
+
+    const { data: pricingRows } = await supabase.from("product_pricings")
+      .select("id, currency, unit_cost, is_primary").eq("product_id", product.id);
+    const primary = ((pricingRows ?? []) as any[]).find((row) => row.is_primary) ?? (pricingRows ?? [])[0];
+    if (!primary) { res.status(400).json({ error: "This product has no pricing to change." }); return; }
+    const previousUnitCost = Number(primary.unit_cost ?? 0);
+
+    // ⚠️ Freeze BEFORE the price moves. Doing it after would snapshot every
+    // historical order at the NEW cost, permanently baking in the restatement
+    // this whole mechanism exists to prevent. Order matters absolutely.
+    const frozen = body.freezeHistory
+      ? await freezeDeliveredCogs(orgId, product.id)
+      : { frozen: 0, units: 0 };
+
+    const { error: priceError } = await supabase.from("product_pricings")
+      .update({ unit_cost: body.newUnitCost }).eq("id", primary.id);
+    if (priceError) { res.status(500).json({ error: priceError.message }); return; }
+
+    const { data: actor } = await supabase.from("users").select("name").eq("id", req.user!.id).maybeSingle();
+    await supabase.from("product_cost_changes").insert({
+      org_id: orgId,
+      product_id: product.id,
+      product_name: product.name,
+      currency: primary.currency ?? "NGN",
+      previous_unit_cost: previousUnitCost,
+      new_unit_cost: body.newUnitCost,
+      orders_frozen: frozen.frozen,
+      units_frozen: frozen.units,
+      reason: body.reason,
+      changed_by: req.user!.id,
+      changed_by_name: String(actor?.name ?? "").trim() || "Unknown"
+    });
+
+    res.json({
+      productId: product.id,
+      previousUnitCost,
+      newUnitCost: body.newUnitCost,
+      ordersFrozen: frozen.frozen,
+      unitsFrozen: frozen.units
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not change that cost." });
+  }
+});
 
 export default router;
