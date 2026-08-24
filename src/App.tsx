@@ -65947,9 +65947,9 @@ ${waybillLineItems(w).length > 1
                       {([
                         // Daily picks first - they are the thing a rep can act
                         // on right now; the week/month totals are the result.
-                        ["Picked today · follow-up", rec.followUpPicksToday ?? 0, rec.dailyFollowUpTarget ?? 0,
+                        [`Picked · ${bonusRangeLabel} · follow-up`, rec.followUpPicksToday ?? 0, rec.dailyFollowUpTarget ?? 0,
                           (rec.dailyFollowUpTarget ?? 0) > 0 ? Math.min(100, ((rec.followUpPicksToday ?? 0) / rec.dailyFollowUpTarget) * 100) : 0],
-                        ["Picked today · retention", rec.retentionPicksToday ?? 0, rec.dailyRetentionTarget ?? 0,
+                        [`Picked · ${bonusRangeLabel} · retention`, rec.retentionPicksToday ?? 0, rec.dailyRetentionTarget ?? 0,
                           (rec.dailyRetentionTarget ?? 0) > 0 ? Math.min(100, ((rec.retentionPicksToday ?? 0) / rec.dailyRetentionTarget) * 100) : 0],
                         // ⚠️ "This week" really is the current week - the server
                         // computes it on its own window and ignores the range.
@@ -65969,8 +65969,13 @@ ${waybillLineItems(w).length > 1
                               <div className={`h-full rounded-full ${hit ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
                             </div>
                             <p className={`m-0 mt-1 text-[11px] font-bold ${hit ? "text-emerald-700" : "text-gray-500"}`}>
+                              {/* A daily target over a week or a month is the
+                                  wrong denominator, not a missed target, so the
+                                  server sends 0 and no comparison is drawn. */}
                               {target === 0
-                                ? (label.startsWith("Picked today") && rec.isWorkingDayToday === false ? "Sunday - rest day" : "No target set")
+                                ? (label.startsWith("Picked") && rec.rangeIsSingleDay === false ? "Counted over the selected range"
+                                  : label.startsWith("Picked") && rec.isWorkingDayToday === false ? "Sunday - rest day"
+                                    : "No target set")
                                 : hit ? "Target reached" : `${Math.max(0, target - done)} more to hit target`}
                             </p>
                           </div>
@@ -65982,29 +65987,42 @@ ${waybillLineItems(w).length > 1
                         Grouped with the company financials before, so it never
                         reached them - the surrounding cost breakdown is still
                         stripped server-side, this is the single figure. */}
-                    {summary.weeklyPace && (() => {
-                      const wp = summary.weeklyPace;
-                      const hit = wp.value >= wp.target;
-                      const pct = wp.target > 0 ? Math.min(100, (wp.value / wp.target) * 100) : 0;
+                    {(recoveryBonusSummary?.weeklyPace ?? summary.weeklyPace) && (() => {
+                      const wp = (recoveryBonusSummary?.weeklyPace ?? summary.weeklyPace);
+                      // Follows the panel's period like everything else here.
+                      // ⚠️ The ₦ target is a WEEKLY one, so it is only drawn
+                      // when the range is exactly one week - comparing a month's
+                      // earnings against a week's target would read as a runaway
+                      // win, and a single day's against it as a failure.
+                      const showTarget = wp.rangeIsSingleWeek !== false && wp.target > 0;
+                      const value = wp.rangeValue ?? wp.value;
+                      const hit = showTarget && value >= wp.target;
+                      const pct = showTarget && wp.target > 0 ? Math.min(100, (value / wp.target) * 100) : 100;
                       return (
                         <div className={`mt-3 rounded-xl border p-4 ${hit ? "border-emerald-200 bg-emerald-50/70" : "border-sky-200 bg-sky-50/70"}`}>
                           <div className="flex flex-wrap items-end justify-between gap-2">
                             <div>
-                              <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-500">This week in naira</p>
+                              <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-500">Earned · {bonusRangeLabel}</p>
                               <p className="m-0 mt-0.5 text-2xl font-black text-gray-900">
-                                {formatMoney(wp.value)}
-                                <span className="text-base font-bold text-gray-400"> / {formatMoney(wp.target)}</span>
+                                {formatMoney(value)}
+                                {showTarget && <span className="text-base font-bold text-gray-400"> / {formatMoney(wp.target)}</span>}
                               </p>
                             </div>
-                            <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${hit ? "bg-emerald-100 text-emerald-800" : "bg-sky-100 text-sky-800"}`}>
-                              {hit ? "Target reached" : `${formatMoney(Math.max(0, wp.target - wp.value))} to go`}
-                            </span>
+                            {showTarget && (
+                              <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${hit ? "bg-emerald-100 text-emerald-800" : "bg-sky-100 text-sky-800"}`}>
+                                {hit ? "Target reached" : `${formatMoney(Math.max(0, wp.target - value))} to go`}
+                              </span>
+                            )}
                           </div>
-                          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/70">
-                            <div className={`h-full rounded-full ${hit ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
-                          </div>
+                          {showTarget && (
+                            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/70">
+                              <div className={`h-full rounded-full ${hit ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
+                            </div>
+                          )}
                           <p className="m-0 mt-1.5 text-[11px] text-gray-500">
-                            Week from {wp.weekStart}. Always the current week - it does not follow the period filter above.
+                            {showTarget
+                              ? `Net contribution for the selected week, against the ${formatMoney(wp.target)} weekly target.`
+                              : `Net contribution for the selected range. The ${formatMoney(wp.target)} target is weekly, so it is not shown against a range of a different length.`}
                           </p>
                         </div>
                       );
