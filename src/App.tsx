@@ -73019,7 +73019,6 @@ ${waybillLineItems(w).length > 1
 
                       {(() => {
                         const bonusRows = buildManagerBonusRepRows(salesBonusWeekStart);
-                        const bonusWeekEndKey = weekEndFromStartKey(salesBonusWeekStart);
                         const totalTeamBonus = bonusRows.reduce((sum, r) => sum + r.total, 0);
                         return (
                       <section className="space-y-3">
