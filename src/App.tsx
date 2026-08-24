@@ -156,7 +156,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -218,6 +218,7 @@ import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalan
 import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
 import DraftTextarea from "./components/DraftTextarea";
 import ChargeRiskBanner from "./components/ChargeRiskBanner";
+import RecoveryBonusCalendar from "./components/RecoveryBonusCalendar";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
 import { spaceNaira } from "./lib/naira-glyph";
@@ -12365,6 +12366,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // requests that can land out of order, and a slow early one overwriting a
   // fast late one shows the wrong dates' figures under the right dates' label.
   const recoveryBonusRequestId = useRef(0);
+  const [recoveryCalendar, setRecoveryCalendar] = useState<RecoveryCalendarView | null>(null);
+  const recoveryCalendarCache = useRef(new Map<string, RecoveryCalendarView>());
+  const recoveryCalendarRequestId = useRef(0);
   // When each dead order actually died, keyed by order id. Derived from
   // order_audit server-side because orders.updated_at is not the closure date.
   const [orderClosureDates, setOrderClosureDates] = useState<Record<string, string>>({});
@@ -32452,6 +32456,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
+  /**
+   * The per-day calendar behind the panel.
+   *
+   * Separate from the summary call because it is far cheaper - three counts a
+   * day, no COGS - so it can load and cache on its own schedule rather than
+   * waiting behind the heavy query.
+   */
+  const loadRecoveryCalendar = async () => {
+    if (!recoveryRepViewingId) { setRecoveryCalendar(null); return; }
+    const bounds = periodBoundsForQuery(recoveryBonusPeriod, recoveryBonusDateRange);
+    if (!bounds) { setRecoveryCalendar(null); return; }
+    const key = `${recoveryRepViewingId}|${bounds.dateFrom}|${bounds.dateTo}`;
+    const cached = recoveryCalendarCache.current.get(key);
+    if (cached) { setRecoveryCalendar(cached); return; }
+    const requestId = ++recoveryCalendarRequestId.current;
+    try {
+      const result = await recoveryRepKpiApi.calendar({
+        repId: recoveryRepViewingId, dateFrom: bounds.dateFrom, dateTo: bounds.dateTo
+      });
+      recoveryCalendarCache.current.set(key, result);
+      if (requestId !== recoveryCalendarRequestId.current) return;
+      setRecoveryCalendar(result);
+    } catch {
+      if (requestId !== recoveryCalendarRequestId.current) return;
+      setRecoveryCalendar(null);
+    }
+  };
+
   const handleRecoveryBonusPeriodChange = (nextPeriod: Period) => {
     setRecoveryBonusPeriod(nextPeriod);
     setShowRecoveryBonusDateRange(false);
@@ -46534,7 +46566,10 @@ ${waybillLineItems(w).length > 1
     // Debounced: holding the arrow down walked four periods and fired four
     // full-cost queries, three of which nobody would ever read. Settling first
     // means one request for wherever the rep actually stopped.
-    const timer = window.setTimeout(() => { void loadRecoveryBonusSummary(); }, 250);
+    const timer = window.setTimeout(() => {
+      void loadRecoveryBonusSummary();
+      void loadRecoveryCalendar();
+    }, 250);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recoveryRepViewingId, recoveryBonusPeriod, recoveryBonusDateRange.start, recoveryBonusDateRange.end,
@@ -65999,67 +66034,18 @@ ${waybillLineItems(w).length > 1
                         </p>
                       </div>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                      {([
-                        // Daily picks first - they are the thing a rep can act
-                        // on right now; the week/month totals are the result.
-                        [`Picked · ${bonusRangeLabel} · follow-up`, rec.followUpPicksToday ?? 0, rec.dailyFollowUpTarget ?? 0,
-                          (rec.dailyFollowUpTarget ?? 0) > 0 ? Math.min(100, ((rec.followUpPicksToday ?? 0) / rec.dailyFollowUpTarget) * 100) : 0],
-                        [`Picked · ${bonusRangeLabel} · retention`, rec.retentionPicksToday ?? 0, rec.dailyRetentionTarget ?? 0,
-                          (rec.dailyRetentionTarget ?? 0) > 0 ? Math.min(100, ((rec.retentionPicksToday ?? 0) / rec.dailyRetentionTarget) * 100) : 0],
-                        // ⚠️ "This week" really is the current week - the server
-                        // computes it on its own window and ignores the range.
-                        // The next card is the one that follows the filter, so
-                        // they must not both claim a fixed period.
-                        ["This week", rec.recoveredThisWeek, rec.weeklyTarget, weekPct],
-                        [`Recovered · ${bonusRangeLabel}`, rec.recoveredThisMonth, rec.monthlyTarget, monthPct]
-                      ] as Array<[string, number, number, number]>).map(([label, done, target, pct]) => {
-                        const hit = done >= target;
-                        return (
-                          <div key={label} className="rounded-xl border border-gray-200 bg-white/80 p-3">
-                            <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-500">{label}</p>
-                            <p className="m-0 mt-0.5 text-2xl font-black text-gray-900">
-                              {/* No denominator when there is no applicable
-                                  target - "11 / 0" reads as a broken card, and
-                                  as an infinite overshoot rather than "this
-                                  target does not apply to this range". */}
-                              {done}{target > 0 && <span className="text-base font-bold text-gray-400"> / {target}</span>}
-                            </p>
-                            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-                              <div className={`h-full rounded-full ${hit ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
-                            </div>
-                            <p className={`m-0 mt-1 text-[11px] font-bold ${hit ? "text-emerald-700" : "text-gray-500"}`}>
-                              {/* A daily target over a week or a month is the
-                                  wrong denominator, not a missed target, so the
-                                  server sends 0 and no comparison is drawn. */}
-                              {target === 0
-                                ? (label.startsWith("Picked") && rec.rangeIsSingleDay === false ? "Counted over the selected range"
-                                  : label.startsWith("Picked") && rec.isWorkingDayToday === false ? "Sunday - rest day"
-                                    : "No target set")
-                                : hit ? "Target reached" : `${Math.max(0, target - done)} more to hit target`}
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* The naira weekly target, on the rep's own dashboard.
-                        Grouped with the company financials before, so it never
-                        reached them - the surrounding cost breakdown is still
-                        stripped server-side, this is the single figure. */}
                     {(recoveryBonusSummary?.weeklyPace ?? summary.weeklyPace) && (() => {
                       const wp = (recoveryBonusSummary?.weeklyPace ?? summary.weeklyPace);
-                      // Follows the panel's period like everything else here.
                       // ⚠️ The ₦ target is a WEEKLY one, so it is only drawn
-                      // when the range is exactly one week - comparing a month's
-                      // earnings against a week's target would read as a runaway
-                      // win, and a single day's against it as a failure.
+                      // when the range is exactly one week - comparing a
+                      // month's earnings against a week's target would read as
+                      // a runaway win, and a single day's as a failure.
                       const showTarget = wp.rangeIsSingleWeek !== false && wp.target > 0;
                       const value = wp.rangeValue ?? wp.value;
                       const hit = showTarget && value >= wp.target;
                       const pct = showTarget && wp.target > 0 ? Math.min(100, (value / wp.target) * 100) : 100;
                       return (
-                        <div className={`mt-3 rounded-xl border p-4 ${hit ? "border-emerald-200 bg-emerald-50/70" : "border-sky-200 bg-sky-50/70"}`}>
+                        <div className={`rounded-xl border p-4 ${hit ? "border-emerald-200 bg-emerald-50/70" : "border-sky-200 bg-sky-50/70"}`}>
                           <div className="flex flex-wrap items-end justify-between gap-2">
                             <div>
                               <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-500">Earned · {bonusRangeLabel}</p>
@@ -66087,6 +66073,26 @@ ${waybillLineItems(w).length > 1
                         </div>
                       );
                     })()}
+                  </div>
+
+                  {/* ⚠️ The old four cards are gone. They reported DISTINCT
+                      ORDERS across the range while the daily target beside them
+                      is per day - 91 orders judged against "10 a day" is not a
+                      comparison, it is two different measures printed side by
+                      side. The calendar counts pick-DAYS, which is what a daily
+                      target actually measures. */}
+                  <div className={`mt-4 min-w-0 transition-opacity ${recoveryBonusLoading ? "opacity-50" : "opacity-100"}`}>
+                    {recoveryCalendar ? (
+                      <RecoveryBonusCalendar
+                        view={recoveryCalendar}
+                        loading={recoveryBonusLoading}
+                        formatMoney={formatMoney}
+                      />
+                    ) : (
+                      <p className="m-0 rounded-xl border border-gray-200 bg-white px-3 py-6 text-center text-[12px] font-semibold text-gray-500">
+                        {recoveryBonusLoading ? "Loading the day-by-day breakdown…" : "No day-by-day data for this range."}
+                      </p>
+                    )}
                   </div>
                 </section>
               );

@@ -2086,7 +2086,39 @@ export type RecoveryCandidatesView = {
   cap: number; held: number; remaining: number; canClaim: boolean;
 };
 
+export type RecoveryCalendarDay = {
+  day: string;
+  followUp: number;
+  retention: number;
+  delivered: number;
+  status: "none" | "rest" | "critical" | "below" | "above";
+  attainment: number | null;
+};
+
+export type RecoveryCalendarView = {
+  from: string;
+  to: string;
+  targets: { followUp: number; retention: number; delivered: number } | null;
+  bonusPerRecoveredOrder: number;
+  monthlyRecoveredTarget: number;
+  days: RecoveryCalendarDay[];
+  followUpTotal: number;
+  retentionTotal: number;
+  deliveredTotal: number;
+  belowTargetDays: number;
+  aboveTargetDays: number;
+  restDays: number;
+};
+
 export const recoveryRepKpiApi = {
+  calendar: (params: { repId?: string; dateFrom?: string; dateTo?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.repId) qs.set("repId", params.repId);
+    if (params.dateFrom) qs.set("dateFrom", params.dateFrom);
+    if (params.dateTo) qs.set("dateTo", params.dateTo);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<RecoveryCalendarView>(`/api/recovery-rep-kpi/calendar${suffix}`);
+  },
   candidates: (repId?: string) =>
     get<RecoveryCandidatesView>(`/api/recovery-rep-kpi/candidates${repId ? `?repId=${encodeURIComponent(repId)}` : ""}`),
   worklist: (dormantDays?: number) =>

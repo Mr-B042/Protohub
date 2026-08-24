@@ -1,0 +1,135 @@
+// Per-day recovery activity for the bonus calendar.
+//
+// The panel's cards answer "how much across the range". The calendar answers
+// "which days were the bad ones", which is the question a supervisor actually
+// acts on - a month that lands on target can still hide a fortnight of nothing.
+
+export type RecoveryDayCounts = {
+  /** YYYY-MM-DD, Lagos. */
+  day: string;
+  followUp: number;
+  retention: number;
+  delivered: number;
+};
+
+export type RecoveryDayTargets = {
+  followUp: number;
+  retention: number;
+  delivered: number;
+};
+
+/**
+ * ⚠️ "rest" is a first-class status, not a kind of failure.
+ *
+ * Sundays are a rest day across this business - the order follow-up KPI skips
+ * them and so does the cart log penalty. Colouring a rep's Sunday red for
+ * missing a target they were never set would invent a failure, so a Sunday is
+ * neutral and is counted in neither the below nor the above tally.
+ *
+ * "none" means nothing is known yet: a future day, or a day before the rep
+ * started. Distinct from a zero day, which IS a miss.
+ */
+export type RecoveryDayStatus = "none" | "rest" | "critical" | "below" | "above";
+
+const num = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+};
+
+/** Sunday in Lagos. Dates are plain keys, so UTC parsing is exact here. */
+export function isRestDay(day: string): boolean {
+  const parsed = new Date(`${day}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.getUTCDay() === 0;
+}
+
+/**
+ * How close a day came to its targets, as a 0..1+ ratio.
+ *
+ * ⚠️ The WEAKEST metric decides. A rep who logs eighty follow-ups and no
+ * retention touches has not had a good day, and averaging the two would let a
+ * single big number bury an entire ignored duty.
+ *
+ * Targets set to zero are skipped rather than treated as instantly met.
+ */
+export function dayAttainment(counts: RecoveryDayCounts, targets: RecoveryDayTargets): number | null {
+  const ratios: number[] = [];
+  if (num(targets.followUp) > 0) ratios.push(num(counts.followUp) / num(targets.followUp));
+  if (num(targets.retention) > 0) ratios.push(num(counts.retention) / num(targets.retention));
+  if (num(targets.delivered) > 0) ratios.push(num(counts.delivered) / num(targets.delivered));
+  if (ratios.length === 0) return null;
+  return Math.min(...ratios);
+}
+
+/** Below half of target is called out separately - it is a different problem. */
+export const CRITICAL_ATTAINMENT = 0.5;
+
+export function dayStatus(
+  counts: RecoveryDayCounts,
+  targets: RecoveryDayTargets,
+  todayKey: string
+): RecoveryDayStatus {
+  if (counts.day > todayKey) return "none";
+  if (isRestDay(counts.day)) return "rest";
+  const attainment = dayAttainment(counts, targets);
+  if (attainment === null) return "none";
+  if (attainment >= 1) return "above";
+  return attainment < CRITICAL_ATTAINMENT ? "critical" : "below";
+}
+
+export type RecoveryCalendarDay = RecoveryDayCounts & {
+  status: RecoveryDayStatus;
+  attainment: number | null;
+};
+
+export type RecoveryCalendarSummary = {
+  days: RecoveryCalendarDay[];
+  followUpTotal: number;
+  retentionTotal: number;
+  deliveredTotal: number;
+  belowTargetDays: number;
+  aboveTargetDays: number;
+  restDays: number;
+};
+
+/** Every day in the range, including ones with no activity at all. */
+export function buildRecoveryCalendar(
+  dayKeys: string[],
+  countsByDay: Map<string, RecoveryDayCounts>,
+  targets: RecoveryDayTargets,
+  todayKey: string
+): RecoveryCalendarSummary {
+  const days = dayKeys.map((day) => {
+    const counts = countsByDay.get(day) ?? { day, followUp: 0, retention: 0, delivered: 0 };
+    const row: RecoveryDayCounts = {
+      day,
+      followUp: num(counts.followUp),
+      retention: num(counts.retention),
+      delivered: num(counts.delivered)
+    };
+    return { ...row, status: dayStatus(row, targets, todayKey), attainment: dayAttainment(row, targets) };
+  });
+  return {
+    days,
+    followUpTotal: days.reduce((sum, row) => sum + row.followUp, 0),
+    retentionTotal: days.reduce((sum, row) => sum + row.retention, 0),
+    deliveredTotal: days.reduce((sum, row) => sum + row.delivered, 0),
+    // ⚠️ "critical" counts as below target. It is a severity, not a separate
+    // outcome, and a supervisor reading "6 below target days" must not be
+    // shown a number that quietly excludes the very worst ones.
+    belowTargetDays: days.filter((row) => row.status === "below" || row.status === "critical").length,
+    aboveTargetDays: days.filter((row) => row.status === "above").length,
+    restDays: days.filter((row) => row.status === "rest").length
+  };
+}
+
+/** Every Lagos day from `from` to `to`, inclusive. */
+export function calendarDayKeys(from: string, to: string): string[] {
+  const out: string[] = [];
+  const start = new Date(`${from}T00:00:00Z`);
+  const end = new Date(`${to}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return out;
+  for (let cursor = start; cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    out.push(cursor.toISOString().slice(0, 10));
+  }
+  return out;
+}
