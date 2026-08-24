@@ -306,7 +306,13 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     // which is what made the filter look absent rather than partial.
     // A request with no range still resolves to a window (the month), so
     // "today" is now just the case where that window happens to be one day.
-    const rangeIsSingleDay = start === todayKey && exclusiveEnd === addDaysToDateKey(todayKey, 1);
+    // ⚠️ ANY single day, not just today. Requiring start === todayKey meant
+    // stepping back to a past day dropped the daily target to 0 and rendered
+    // "11 / 0" - a day in the past is still a day, and the rep still had a
+    // target on it.
+    const rangeIsSingleDay = exclusiveEnd === addDaysToDateKey(start, 1);
+    // Whether THAT day was a working day, not whether today is.
+    const isWorkingRangeDay = isWorkingDay(start);
     // Whether the window is exactly one Sunday-week, which is the only shape a
     // WEEKLY target legitimately applies to.
     const rangeIsSingleWeek = start === sundayWeekStartForDateKey(start)
@@ -350,8 +356,8 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
       // denominator entirely, and showing "4 / 10" against a month would invent
       // a shortfall that does not exist. Zero tells the client to render the
       // count with no target beside it.
-      dailyFollowUpTarget: rangeIsSingleDay && isWorkingToday ? settings.dailyFollowUpPickTarget : 0,
-      dailyRetentionTarget: rangeIsSingleDay && isWorkingToday ? settings.dailyRetentionPickTarget : 0,
+      dailyFollowUpTarget: rangeIsSingleDay && isWorkingRangeDay ? settings.dailyFollowUpPickTarget : 0,
+      dailyRetentionTarget: rangeIsSingleDay && isWorkingRangeDay ? settings.dailyRetentionPickTarget : 0,
       isWorkingDayToday: isWorkingToday,
       // Echoed back so the client can label what it is showing rather than
       // guessing, and can tell "today" from a one-day custom range.
