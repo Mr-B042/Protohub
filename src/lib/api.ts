@@ -3210,6 +3210,11 @@ export type CartLogPenaltiesView = {
   missAmount: number;
   chargeableDays: number;
   misses: CartLogMiss[];
+  /**
+   * Closed days in the CURRENT week, computed outside the range filter - so a
+   * rep browsing another period still sees what they already owe.
+   */
+  owedThisWeek: CartLogMiss[];
   byRep: Array<{ repId: string; repName: string; missedDays: string[]; missedCount: number; missedCarts: number; atRiskAmount: number; clearDays: number }>;
   totals: {
     pendingCount: number; pendingAmount: number;

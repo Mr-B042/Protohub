@@ -218,6 +218,7 @@ import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalan
 import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
 import DraftTextarea from "./components/DraftTextarea";
 import ChargeRiskBanner from "./components/ChargeRiskBanner";
+import CartLogOwedBanner from "./components/CartLogOwedBanner";
 import RecoveryBonusCalendar from "./components/RecoveryBonusCalendar";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
@@ -60350,6 +60351,16 @@ ${waybillLineItems(w).length > 1
                 </p>
               </div>
             )}
+
+            {/* ⚠️ Days that have CLOSED, stated plainly. The countdown above is
+                about a day that can still be rescued; this is about days that
+                cannot, which reps were only ever shown as a small grey chip
+                reading "1 day". */}
+            <CartLogOwedBanner
+              misses={penalties.owedThisWeek ?? penalties.misses}
+              todayKey={penalties.todayKey}
+              personal={Boolean(penalties.today)}
+            />
 
             {penalties.byRep.filter((rep) => rep.missedCount > 0).length > 0 && (
               <ul className="m-0 mt-2.5 flex list-none flex-wrap gap-2 p-0">
