@@ -11,7 +11,7 @@ import { lagosDateKey, lagosStartOfDayUtc, mondayOfWeek, addDays, dowOf } from "
 import {
   CART_LOG_MISS_AMOUNT, CART_LOG_PENALTY_START_DATE, chargeableDaysIn, dayPenaltyAmount,
   missedCartCount, penaltyPhase,
-  RANGE_PRESETS, repDayStatus, resolveRange, summariseRepPenalties, todayStanding,
+  mondayOf, RANGE_PRESETS, repDayStatus, resolveRange, summariseRepPenalties, todayStanding,
   type RangePreset, type RepDayInput
 } from "../lib/cart-log-penalty.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
@@ -2388,6 +2388,70 @@ router.get("/log-penalties",
         })
         .sort((left, right) => right.missDate.localeCompare(left.missDate));
 
+      // ⚠️ Closed days in the CURRENT week, computed OUTSIDE the range filter -
+      // the same reason `today` is. A rep who switches the filter to "Today"
+      // must not have Monday's debt disappear off their screen; that is exactly
+      // the figure Bright wants them unable to miss. Costs one extra attempts
+      // query over at most six days.
+      const weekStart = mondayOf(todayKey);
+      const owedDayKeys = chargeableDaysIn(weekStart, addDays(todayKey, -1))
+        .filter((key) => key >= CART_LOG_PENALTY_START_DATE);
+      let owedThisWeek: typeof misses = [];
+      if (owedDayKeys.length > 0) {
+        const { data: weekAttempts } = await supabase.from(CART_ATTEMPTS)
+          .select("cart_id, attempted_at, rep_id")
+          .eq("org_id", orgId)
+          .gte("attempted_at", lagosStartOfDayUtc(owedDayKeys[0]))
+          .lt("attempted_at", lagosStartOfDayUtc(todayKey))
+          .limit(REPORT_ROW_CEILING);
+        const weekLogged = new Map<string, Set<string>>();
+        ((weekAttempts ?? []) as any[]).forEach((row) => {
+          if (!row.rep_id || !row.cart_id) return;
+          const key = `${row.rep_id}|${lagosDateKey(row.attempted_at)}`;
+          const seen = weekLogged.get(key);
+          if (seen) seen.add(row.cart_id);
+          else weekLogged.set(key, new Set([row.cart_id]));
+        });
+        const weekInputs: RepDayInput[] = [];
+        repIds.forEach((repId) => {
+          const theirCarts = openCarts.filter((row) => row.assigned_rep_id === repId);
+          owedDayKeys.forEach((dateKey) => {
+            const dueIds = dueCartIdsFor(theirCarts, dateKey);
+            const touched = weekLogged.get(`${repId}|${dateKey}`);
+            let loggedDue = 0;
+            touched?.forEach((cartId) => { if (dueIds.has(cartId)) loggedDue += 1; });
+            weekInputs.push({
+              repId,
+              repName: repName.get(repId) ?? "Unknown",
+              dateKey,
+              cartsDue: dueIds.size,
+              logsMade: touched?.size ?? 0,
+              cartsLogged: loggedDue
+            });
+          });
+        });
+        owedThisWeek = weekInputs
+          .filter((input) => repDayStatus(input) === "missed")
+          .map((input) => {
+            const decision = decisions.get(`${input.repId}|${input.dateKey}`);
+            return {
+              id: decision?.id ?? null,
+              repId: input.repId,
+              repName: input.repName,
+              missDate: input.dateKey,
+              cartsDue: input.cartsDue,
+              cartsLogged: input.cartsLogged ?? 0,
+              cartsMissed: missedCartCount(input),
+              amount: Number(decision?.amount ?? dayPenaltyAmount(input)),
+              status: (decision?.status ?? "pending") as "pending" | "approved" | "waived",
+              reviewedByName: decision?.reviewed_by_name ?? "",
+              reviewedAt: decision?.reviewed_at ?? null,
+              reviewNote: decision?.review_note ?? ""
+            };
+          })
+          .sort((left, right) => right.missDate.localeCompare(left.missDate));
+      }
+
       const approved = misses.filter((row) => row.status === "approved");
       const pending = misses.filter((row) => row.status === "pending");
 
@@ -2443,6 +2507,7 @@ router.get("/log-penalties",
         missAmount: CART_LOG_MISS_AMOUNT,
         chargeableDays: days.length,
         misses,
+        owedThisWeek,
         byRep: summariseRepPenalties(inputs),
         /** Present tense, for the person reading. Null for a supervisor. */
         today: standing,
