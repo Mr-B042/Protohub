@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
-  countdownMessage, countdownParts, countdownTier, formatCountdown, msUntilEndOfLagosDay
+  countdownMessage, countdownParts, countdownTier, formatCountdown, formatCountdownWords,
+  msUntilEndOfLagosDay, msUntilLagosHour
 } from "../src/lib/cart-log-countdown";
 
 // 09:00 Lagos on 24 Aug 2026 is 08:00 UTC.
@@ -58,4 +59,25 @@ test("once the day is gone it says so, and that the Owner still decides", () => 
   expect(message).toMatch(/Day ended/);
   expect(message).toMatch(/₦20,000/);
   expect(message).toMatch(/Owner/);
+});
+
+// ── Shared with the follow-up charge banner ──
+
+test("a cutoff hour that has already passed reads as closed, not as tomorrow", () => {
+  // 22:30 Lagos is 21:30 UTC, half an hour past a 22:00 close.
+  expect(msUntilLagosHour(at("2026-08-24T21:30:00Z"), 22)).toBe(0);
+});
+
+test("the ten-o-clock close counts down through the working day", () => {
+  expect(formatCountdownWords(msUntilLagosHour(at("2026-08-24T10:15:41Z"), 22))).toBe("10h 44m 19s");
+});
+
+test("hour 24 is the end of the day, matching the plain day helper", () => {
+  const now = at("2026-08-24T08:00:00Z");
+  expect(msUntilLagosHour(now, 24)).toBe(msUntilEndOfLagosDay(now));
+});
+
+test("the words format drops a zero hours segment", () => {
+  expect(formatCountdownWords(44 * 60_000 + 19_000)).toBe("44m 19s");
+  expect(formatCountdownWords(0)).toBe("0m 0s");
 });
