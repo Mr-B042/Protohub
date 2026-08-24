@@ -23849,6 +23849,25 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const deliveryRateBoostRuleForProduct = (productId?: string) =>
     activeSalesBonusRules.find((rule) => rule.type === "delivery_rate_per_delivered" && rule.config?.scopeProductId === productId) ?? null;
 
+  const deliveryRateBoostEarnedForOrder = (
+    productId: string | undefined,
+    repDeliveryRate: number,
+    repOrderCount: number
+  ) => {
+    const rule = deliveryRateBoostRuleForProduct(productId);
+    if (!rule) return 0;
+
+    const config = rule.config ?? {};
+    const minOrders = Math.max(0, Math.round(Number(config.minOrders ?? 50)));
+    const targetRate = Math.max(0, Number(config.targetRatePercent ?? 70));
+    const fallbackPerDelivered = Math.max(0, Number(config.fallbackPerDelivered ?? 200));
+    const qualifiedPerDelivered = Math.max(0, Number(config.qualifiedPerDelivered ?? 400));
+
+    return repOrderCount >= minOrders && repDeliveryRate >= targetRate
+      ? qualifiedPerDelivered
+      : fallbackPerDelivered;
+  };
+
   const buildOrderBonusBreakdownLine = (
     order: TrackedOrder,
     repWeeklyDeliveryRate: number,
@@ -24114,35 +24133,42 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const orderComponents = orderLines.map((line, index) => {
         const order = deliveredThisWeek[index];
         const attributions = managerBonusAttributionByOrderId?.[order.id] ?? [];
+        const attributionEarned = (item: SalesBonusOrderAttribution) => Math.max(
+          0,
+          Number(item.earnedBeforeCompliance ?? item.amount ?? 0)
+        );
         const engineUpsell = attributions
           .filter((item) => item.ruleType === "upgrade_count")
-          .reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+          .reduce((sum, item) => sum + attributionEarned(item), 0);
         const engineCrossSell = attributions
           .filter((item) => item.ruleType === "cross_sell_count" || item.ruleType === "cross_sell_offer")
-          .reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
-        // Whatever the engine paid on this order that is NOT an upgrade or
-        // cross-sell attribution is delivery-rate (or another per-delivery)
-        // pay, which belongs in Base - floored so a rounding mismatch between
-        // the two data sources can never read negative.
-        const engineBase = Math.max(0, line.enginePayable - engineUpsell - engineCrossSell);
-        const orderBase = line.base + engineBase;
-        const orderUpsell = line.upgrade + engineUpsell;
+          .reduce((sum, item) => sum + attributionEarned(item), 0);
+        // The manager report is an earned view. A compliance/rate hold may
+        // lower what is currently payable, but it must not rewrite earnings to
+        // zero. The rule-derived fallback also covers fresh deliveries before
+        // the async settlement allocation has reached this screen.
+        const engineBase = Math.max(0, line.engineEarnedBeforeCompliance - engineUpsell - engineCrossSell);
+        const ruleDerivedBase = deliveryRateBoostEarnedForOrder(order.productId, repRate, repCount);
+        // Legacy and engine rules can overlap. Pick the authoritative/highest
+        // matching amount for each component instead of adding both systems.
+        const orderBase = Math.max(line.base, engineBase, ruleDerivedBase);
+        const orderUpsell = Math.max(line.upgrade, engineUpsell);
         const product = products.find((candidate) => candidate.id === order.productId);
         const sourceDetails = crossSellBonusDetails(order.crossSellLines, productBonusConfig(product));
         const legacyCrossSellPayable = Math.max(0, Number(line.crossSell) || 0);
-        let legacyRepCrossSell = 0;
-        let legacyCustomerAddOn = 0;
-        if (sourceDetails.total > 0) {
+        let legacyRepCrossSell = sourceDetails.repDrivenBonus;
+        let legacyCustomerAddOn = sourceDetails.customerSelectedBonus;
+        if (order.bonusManuallyAdjusted && sourceDetails.total > 0) {
           legacyRepCrossSell = Math.round(
             legacyCrossSellPayable * (sourceDetails.repDrivenBonus / sourceDetails.total)
           );
           legacyCustomerAddOn = legacyCrossSellPayable - legacyRepCrossSell;
-        } else if (sourceDetails.repDriven.length > 0) {
+        } else if (order.bonusManuallyAdjusted && sourceDetails.repDriven.length > 0) {
           legacyRepCrossSell = legacyCrossSellPayable;
-        } else {
+        } else if (order.bonusManuallyAdjusted) {
           legacyCustomerAddOn = legacyCrossSellPayable;
         }
-        const orderRepCrossSell = legacyRepCrossSell + engineCrossSell;
+        const orderRepCrossSell = Math.max(legacyRepCrossSell, engineCrossSell);
         const orderCustomerAddOn = legacyCustomerAddOn;
         const orderCrossSell = orderRepCrossSell + orderCustomerAddOn + line.freeGift;
         base += orderBase;
