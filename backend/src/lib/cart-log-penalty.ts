@@ -63,12 +63,21 @@ export type RepDayInput = {
   /** Attempts the rep logged that day, across any of their carts. */
   logsMade: number;
   /**
-   * DISTINCT carts the rep logged against that day.
+   * DISTINCT carts the rep logged against that day, counted ONLY over the
+   * carts in `cartsDue`.
    *
    * Separate from `logsMade` because the charge counts carts, not effort:
-   * five attempts on one cart clears one cart, not five. Omitted means "not
-   * known", and falls back to treating any activity as covering the board -
-   * which cannot over-charge a rep on data we do not have.
+   * five attempts on one cart clears one cart, not five.
+   *
+   * ⚠️ CALLERS MUST INTERSECT WITH THE DUE SET. A raw count of everything the
+   * rep touched is a different population - carts convert or close and drop
+   * out of "due" while staying in the attempts table - so a rep with a busy
+   * day on already-closed carts would clear a board they never opened. That
+   * bug hid a real debt in production before it was caught, and the clamp
+   * below silently absorbed it rather than surfacing it.
+   *
+   * Omitted means "not known", and falls back to treating any activity as
+   * covering the board - which cannot over-charge a rep on data we do not have.
    */
   cartsLogged?: number;
 };
@@ -80,6 +89,9 @@ export function missedCartCount(input: RepDayInput): number {
   const logged = input.cartsLogged == null
     ? ((Number(input.logsMade) || 0) > 0 ? due : 0)
     : Math.max(0, Number(input.cartsLogged) || 0);
+  // The clamp is a last-resort guard, NOT the place the population mismatch is
+  // meant to be handled - see the warning on cartsLogged. If it is ever doing
+  // real work, a caller is passing carts that were never due.
   return Math.max(0, due - Math.min(due, logged));
 }
 
