@@ -1,3 +1,4 @@
+import { spaceNaira } from "./naira-glyph";
 import { 
   Period, 
   DateRange, 
@@ -59,20 +60,20 @@ export const isInPeriod = (dateKey: string | undefined, activePeriod: Period, ra
 
 export const formatMoney = (amount: number, currency: CurrencyCode, currencies: any) => {
   const selectedCurrency = currencies[currency] || currencies.NGN;
-  return new Intl.NumberFormat(selectedCurrency.locale, {
+  return spaceNaira(new Intl.NumberFormat(selectedCurrency.locale, {
     style: "currency",
     currency: selectedCurrency.currency,
     maximumFractionDigits: 0
-  }).format(amount || 0);
+  }).format(amount || 0));
 };
 
 export const formatProductMoney = (amount: number, code: ProductCurrencyCode, productCurrencies: any) => {
   const def = productCurrencies[code] ?? productCurrencies.NGN;
-  return new Intl.NumberFormat(def.locale, {
+  return spaceNaira(new Intl.NumberFormat(def.locale, {
     style: "currency",
     currency: def.currency,
     maximumFractionDigits: 0
-  }).format(amount || 0);
+  }).format(amount || 0));
 };
 
 export const primaryPricing = (product: Product) => 
