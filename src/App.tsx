@@ -9390,6 +9390,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartsNavStart, setCartsNavStart] = useState(getSundayKey);
   const [recoveryRepNavStart, setRecoveryRepNavStart] = useState(getSundayKey);
   const [recoveryRepNavSpan, setRecoveryRepNavSpan] = useState<NavSpan>("1W");
+  // The bonus panel's own stepper, so it can walk periods independently of the
+  // page band above it. Same component, separate state.
+  const [recoveryBonusNavStart, setRecoveryBonusNavStart] = useState(getSundayKey);
+  const [recoveryBonusNavSpan, setRecoveryBonusNavSpan] = useState<NavSpan>("1M");
   const [cartsNavSpan, setCartsNavSpan] = useState<NavSpan>("1W");
   const [cartProductIds, setCartProductIds] = useState<Set<string>>(() =>
     readPref<Set<string>>("protohub.carts.productIds", new Set<string>(), (raw) => {
@@ -65917,6 +65921,18 @@ ${waybillLineItems(w).length > 1
                         <CalendarDays className="h-3.5 w-3.5" /> {recoveryBonusPeriod === "Custom" ? "Edit dates" : "Custom range"}
                       </button>
                       {showRecoveryBonusDateRange && renderDateRangeCalendar("recovery-bonus-date-range-panel", recoveryBonusDateRange, setRecoveryBonusDateRange, applyRecoveryBonusDateRange, () => setShowRecoveryBonusDateRange(false))}
+                    </div>
+                    {/* The same stepper band the page uses, pointed at this
+                        panel's state - so the resolved dates and window size
+                        are spelled out, and a period can be walked backwards
+                        without reaching for the custom range picker. */}
+                    <div className="w-full">
+                      {renderWeekNav(
+                        recoveryBonusNavStart, setRecoveryBonusNavStart,
+                        recoveryBonusNavSpan, setRecoveryBonusNavSpan,
+                        setRecoveryBonusPeriod, setRecoveryBonusDateRange,
+                        recoveryBonusPeriod, recoveryBonusDateRange
+                      )}
                     </div>
                   </div>
                   <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]">
