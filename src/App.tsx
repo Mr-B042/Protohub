@@ -217,6 +217,7 @@ import AgentAccessPage from "./pages/AgentAccessPage";
 import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalanceRow } from "./pages/CashFlowPage";
 import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
 import DraftTextarea from "./components/DraftTextarea";
+import CartLogCountdown from "./components/CartLogCountdown";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
 import {
@@ -15442,28 +15443,45 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const source = line?.selectionSource ?? "";
     return source === "public_form" || source === "public_upsell";
   };
+  const isAutoIncludedCrossSell = (line?: CrossSellLine | null) =>
+    (line?.selectionSource ?? "") === "auto_include";
   const splitCrossSellLinesBySource = (lines?: CrossSellLine[] | null) => {
     const customerSelected: CrossSellLine[] = [];
     const repDriven: CrossSellLine[] = [];
+    const autoIncluded: CrossSellLine[] = [];
     for (const line of lines ?? []) {
       if (isCustomerSelectedCrossSell(line)) customerSelected.push(line);
+      else if (isAutoIncludedCrossSell(line)) autoIncluded.push(line);
       else repDriven.push(line);
     }
-    return { customerSelected, repDriven };
+    return { customerSelected, repDriven, autoIncluded };
   };
+  const hasCrossSellPayout = (cfg: ProductBonusConfig) =>
+    Number(cfg.crossSellPercent ?? 0) > 0 || Number(cfg.crossSellFixed ?? 0) > 0;
   const crossSellBonusDetails = (lines: CrossSellLine[] | undefined, cfg: ProductBonusConfig) => {
     const { customerSelected, repDriven } = splitCrossSellLinesBySource(lines);
     const customerSelectedBonus = customerSelected.length * CUSTOMER_SELECTED_CROSS_SELL_BONUS;
-    // A cross-sell belongs to the product that was actually added, not the
-    // order's main product. Using the main product's config made a valid shelf
-    // cross-sell pay N0 whenever the original Edge Brusher config was 0%.
+    // Prefer the product that was actually sold. Older setups stored the
+    // cross-sell payout on the main product, though, so a missing add-on rule
+    // must fall back to the main-product rule instead of silently paying N0.
     const repDrivenLineBonuses = repDriven.map((line) => {
       const lineProductName = String(line.productName ?? "").trim().toLowerCase();
       const lineProduct = products.find((product) => product.id === line.productId)
         ?? (lineProductName
           ? products.find((product) => product.name.trim().toLowerCase() === lineProductName)
           : undefined);
-      const lineConfig = lineProduct ? productBonusConfig(lineProduct) : cfg;
+      const addedProductConfig = lineProduct ? productBonusConfig(lineProduct) : null;
+      const lineConfig = addedProductConfig && hasCrossSellPayout(addedProductConfig)
+        ? addedProductConfig
+        : hasCrossSellPayout(cfg)
+          ? cfg
+          : addedProductConfig ?? cfg;
+      const ruleSource: "added_product" | "main_product_fallback" | "none" =
+        addedProductConfig && lineConfig === addedProductConfig && hasCrossSellPayout(addedProductConfig)
+          ? "added_product"
+          : lineConfig === cfg && hasCrossSellPayout(cfg)
+            ? "main_product_fallback"
+            : "none";
       const value = Math.max(0, Number(line.amount) || 0);
       const bonus = Math.round(value * (lineConfig.crossSellPercent / 100)) + lineConfig.crossSellFixed;
       return {
@@ -15471,7 +15489,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         value,
         percent: lineConfig.crossSellPercent,
         fixed: lineConfig.crossSellFixed,
-        bonus
+        bonus,
+        ruleSource
       };
     });
     const repDrivenValue = repDrivenLineBonuses.reduce((sum, line) => sum + line.value, 0);
@@ -23911,7 +23930,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       }
       if (crossSellDetails.repDriven.length > 0) {
         const ruleSummary = crossSellDetails.repDrivenLineBonuses
-          .map((line) => `${line.productName}: ${line.percent}% + ${formatProductMoney(line.fixed, order.currency)} = ${formatProductMoney(line.bonus, order.currency)}`)
+          .map((line) => {
+            const ruleLabel = line.ruleSource === "main_product_fallback"
+              ? "main-product fallback"
+              : line.ruleSource === "added_product"
+                ? "added-product rule"
+                : "no configured payout rule";
+            return `${line.productName}: ${line.percent}% + ${formatProductMoney(line.fixed, order.currency)} = ${formatProductMoney(line.bonus, order.currency)} (${ruleLabel})`;
+          })
           .join("; ");
         crossSellNotes.push(
           `${crossSellDetails.repDriven.length} rep-added cross-sell line${crossSellDetails.repDriven.length === 1 ? "" : "s"} worth ${formatProductMoney(crossSellDetails.repDrivenValue, order.currency)} used the commission rule for each product sold (${ruleSummary}).`
@@ -24054,6 +24080,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       );
 
       let base = 0, upsell = 0, crossSell = 0;
+      let repCrossSellBonus = 0, customerAddOnBonus = 0;
       // Per-order combined (legacy + engine) split, kept alongside orderLines
       // so any UI drilling into individual orders sums to EXACTLY the same
       // rep-level totals above - a details view built from orderLines' legacy
@@ -24075,16 +24102,49 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         const engineBase = Math.max(0, line.enginePayable - engineUpsell - engineCrossSell);
         const orderBase = line.base + engineBase;
         const orderUpsell = line.upgrade + engineUpsell;
-        const orderCrossSell = line.crossSell + line.freeGift + engineCrossSell;
+        const product = products.find((candidate) => candidate.id === order.productId);
+        const sourceDetails = crossSellBonusDetails(order.crossSellLines, productBonusConfig(product));
+        const legacyCrossSellPayable = Math.max(0, Number(line.crossSell) || 0);
+        let legacyRepCrossSell = 0;
+        let legacyCustomerAddOn = 0;
+        if (sourceDetails.total > 0) {
+          legacyRepCrossSell = Math.round(
+            legacyCrossSellPayable * (sourceDetails.repDrivenBonus / sourceDetails.total)
+          );
+          legacyCustomerAddOn = legacyCrossSellPayable - legacyRepCrossSell;
+        } else if (sourceDetails.repDriven.length > 0) {
+          legacyRepCrossSell = legacyCrossSellPayable;
+        } else {
+          legacyCustomerAddOn = legacyCrossSellPayable;
+        }
+        const orderRepCrossSell = legacyRepCrossSell + engineCrossSell;
+        const orderCustomerAddOn = legacyCustomerAddOn;
+        const orderCrossSell = orderRepCrossSell + orderCustomerAddOn + line.freeGift;
         base += orderBase;
         upsell += orderUpsell;
         crossSell += orderCrossSell;
-        return { orderId: order.id, base: orderBase, upsell: orderUpsell, crossSell: orderCrossSell };
+        repCrossSellBonus += orderRepCrossSell;
+        customerAddOnBonus += orderCustomerAddOn;
+        return {
+          orderId: order.id,
+          base: orderBase,
+          upsell: orderUpsell,
+          repCrossSell: orderRepCrossSell,
+          customerAddOn: orderCustomerAddOn,
+          freeGift: line.freeGift,
+          crossSell: orderCrossSell
+        };
       });
 
       const total = base + upsell + crossSell;
       const upsellCount = deliveredThisWeek.filter(orderHasVerifiedUpsell).length;
       const crossSellCount = deliveredThisWeek.filter((o) => (o.crossSellLines?.length ?? 0) > 0).length;
+      const sourceCounts = deliveredThisWeek.reduce((counts, order) => {
+        const split = splitCrossSellLinesBySource(order.crossSellLines);
+        counts.rep += split.repDriven.length;
+        counts.customer += split.customerSelected.length;
+        return counts;
+      }, { rep: 0, customer: 0 });
       const revenue = deliveredThisWeek.reduce((sum, o) => sum + (o.amount || 0), 0);
       const aov = deliveredThisWeek.length > 0 ? Math.round(revenue / deliveredThisWeek.length) : 0;
 
@@ -24123,9 +24183,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         base,
         upsell,
         crossSell,
+        repCrossSellBonus,
+        customerAddOnBonus,
         total,
         upsellCount,
         crossSellCount,
+        repCrossSellLineCount: sourceCounts.rep,
+        customerAddOnLineCount: sourceCounts.customer,
         status,
         statusReason: statusReasonText,
         manualAdjustments: progressRow?.manualAdjustments ?? 0,
@@ -59883,6 +59947,10 @@ ${waybillLineItems(w).length > 1
       row.assignedAt ? lagosDayKeyOf(row.assignedAt) : "";
     const days = grid?.days ?? [];
     const todayKey = grid?.todayKey ?? "";
+    // Only mark cells with money on them once the rule is actually live. During
+    // the rehearsal the board must not wear a charge it cannot yet incur.
+    const cartPenaltyLive = Boolean(cartLogPenalties?.phase.active);
+    const cartPenaltyAmount = cartLogPenalties?.missAmount ?? 500;
     // Scope the ROWS to the week on screen, not just the columns. The week nav
     // only ever chose which days were columns, so a July cart sat under a
     // heading that said "this week" - 11 of 29 were doing exactly that.
@@ -60008,12 +60076,12 @@ ${waybillLineItems(w).length > 1
               <div className="min-w-0">
                 <p className={`m-0 text-[13px] font-black ${penalties.phase.active ? "text-rose-900" : "text-amber-900"}`}>
                   {penalties.phase.active
-                    ? `Daily log penalty is live — ₦${penalties.missAmount} a day per rep`
-                    : `${penalties.phase.label} — ₦${penalties.missAmount} a day per rep`}
+                    ? `Daily log penalty is live — ₦${penalties.missAmount} per cart, per day`
+                    : `${penalties.phase.label} — ₦${penalties.missAmount} per cart, per day`}
                 </p>
                 <p className={`m-0 mt-0.5 text-[12px] font-medium leading-4 ${penalties.phase.active ? "text-rose-800" : "text-amber-800"}`}>
                   {penalties.phase.active
-                    ? "A rep who logs nothing on their assigned carts owes ₦500 for that day. Logging even one cart clears it. Sundays are off, and nothing is charged until the Owner approves it."
+                    ? `Every assigned cart left unlogged costs ₦${penalties.missAmount} for that day — a board of 40 is ₦${(40 * penalties.missAmount).toLocaleString("en-NG")}. Clearing a cart removes its charge, so partial work counts. Sundays are off, and nothing is charged until the Owner approves it.`
                     : `Starts Monday ${new Date(`${penalties.phase.startDate}T12:00:00Z`).toLocaleDateString("en-NG", { day: "numeric", month: "long" })}, counting from the carts assigned that day. Nothing before then is charged — this is a practice run so everyone can see what is coming.`}
                 </p>
               </div>
@@ -60037,16 +60105,24 @@ ${waybillLineItems(w).length > 1
                 filter. A rep who has not logged today can still act; a rep
                 reading last month's misses has already lost the money. */}
             {penalties.today && penalties.today.status === "missed" && (
-              <p className={`m-0 mt-2.5 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[12px] font-bold leading-4 ${
+              <div className={`mt-2.5 flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2.5 ${
                 penalties.today.rehearsal
-                  ? "border-amber-300 bg-white text-amber-900"
-                  : "border-rose-400 bg-white text-rose-900"}`}>
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>
-                  <span className="block">{penalties.today.rehearsal ? "Practice run" : "You owe a log today"}</span>
-                  <span className="block font-semibold">{penalties.today.message}</span>
-                </span>
-              </p>
+                  ? "border-amber-300 bg-white"
+                  : "border-rose-400 bg-white"}`}>
+                <p className={`m-0 flex min-w-0 flex-1 items-start gap-2 text-[12px] font-bold leading-4 ${
+                  penalties.today.rehearsal ? "text-amber-900" : "text-rose-900"}`}>
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    <span className="block">{penalties.today.rehearsal ? "Practice run" : "You owe a log today"}</span>
+                    <span className="block font-semibold">{penalties.today.message}</span>
+                  </span>
+                </p>
+                <CartLogCountdown
+                  cartsRemaining={penalties.today.cartsRemaining ?? penalties.today.cartsDue}
+                  amountAtRisk={penalties.today.atRisk || ((penalties.today.cartsRemaining ?? penalties.today.cartsDue) * penalties.missAmount)}
+                  rehearsal={penalties.today.rehearsal}
+                />
+              </div>
             )}
             {penalties.today && penalties.today.status === "clear" && (
               <p className="m-0 mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[12px] font-bold text-emerald-700">
@@ -60057,19 +60133,27 @@ ${waybillLineItems(w).length > 1
             {penalties.repsAtRiskToday.length > 0 && (
               <div className="mt-2.5 rounded-lg border border-rose-300 bg-white px-3 py-2">
                 <p className="m-0 text-[10px] font-black uppercase tracking-wide text-rose-700">
-                  Logged nothing yet today
+                  Carts still unlogged today
                 </p>
                 <ul className="m-0 mt-1 flex list-none flex-wrap gap-2 p-0">
                   {penalties.repsAtRiskToday.map((rep) => (
                     <li key={rep.repId} className="text-[12px] font-bold text-gray-800">
                       {rep.repName}
-                      <span className="ml-1 font-semibold text-gray-400">({rep.cartsDue} carts)</span>
+                      {/* Both halves matter: 5 of 40 done is a very different
+                          conversation from 0 of 40, and the flat rule could not
+                          tell them apart. */}
+                      <span className="ml-1 font-semibold text-gray-400">
+                        ({rep.cartsRemaining} of {rep.cartsDue} left)
+                      </span>
+                      <span className="ml-1 font-black text-rose-700 tabular-nums">
+                        ₦{rep.atRisk.toLocaleString("en-NG")}
+                      </span>
                     </li>
                   ))}
                 </ul>
                 <p className="m-0 mt-1 text-[11px] font-medium text-gray-500">
                   {penalties.phase.active
-                    ? `₦${(penalties.repsAtRiskToday.length * penalties.missAmount).toLocaleString("en-NG")} at risk if the day ends like this.`
+                    ? `₦${penalties.repsAtRiskToday.reduce((sum, rep) => sum + rep.atRisk, 0).toLocaleString("en-NG")} at risk if the day ends like this.`
                     : "Nothing is charged yet — this is what Monday will look like."}
                 </p>
               </div>
@@ -60082,7 +60166,7 @@ ${waybillLineItems(w).length > 1
                     className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-black text-rose-800">
                     {rep.repName}
                     <span className="font-semibold text-rose-600">
-                      {rep.missedCount} day{rep.missedCount === 1 ? "" : "s"} · {naira(rep.atRiskAmount)}
+                      {rep.missedCount} day{rep.missedCount === 1 ? "" : "s"} · {rep.missedCarts} cart{rep.missedCarts === 1 ? "" : "s"} · {naira(rep.atRiskAmount)}
                     </span>
                   </li>
                 ))}
@@ -60097,7 +60181,12 @@ ${waybillLineItems(w).length > 1
                     <li key={`${row.repId}-${row.missDate}`} className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-[12px] font-semibold text-gray-700">
                         {row.repName} · {new Date(`${row.missDate}T12:00:00Z`).toLocaleDateString("en-NG", { weekday: "short", day: "numeric", month: "short" })}
-                        <span className="ml-1 font-medium text-gray-400">({row.cartsDue} carts unlogged)</span>
+                        {/* cartsMissed, not cartsDue: the charge is for the carts
+                            they did NOT reach, and on a partly worked board the
+                            two are different numbers. */}
+                        <span className="ml-1 font-medium text-gray-400">
+                          ({row.cartsMissed} of {row.cartsDue} carts unlogged)
+                        </span>
                       </span>
                       <span className="flex shrink-0 gap-1.5">
                         <button type="button" disabled={cartLogSaving}
@@ -60426,20 +60515,33 @@ ${waybillLineItems(w).length > 1
                           (() => {
                             const promise = row.urgency === "promise-overdue" || row.urgency === "promise-today";
                             const urgentHere = day.isToday && Boolean(row.urgency);
-                            const tone = !urgentHere ? "text-[#1F8FE0]"
-                              : promise ? "cart-urgent-promise bg-rose-100 text-rose-900 ring-1 ring-rose-300"
-                                : "cart-urgent-gap bg-amber-100 text-amber-900 ring-1 ring-amber-300";
+                            // ⚠️ Every unlogged cart on TODAY is its own ₦500. Under the
+                            // flat rule one log cleared the board, so a single warning on
+                            // the banner was enough; now the exposure is spread across the
+                            // column and the rep needs to see it cart by cart.
+                            const chargeable = day.isToday && cartPenaltyLive && !row.closed;
+                            const tone = chargeable
+                              ? "cart-penalty-risk bg-rose-100 text-rose-900 ring-1 ring-rose-400"
+                              : !urgentHere ? "text-[#1F8FE0]"
+                                : promise ? "cart-urgent-promise bg-rose-100 text-rose-900 ring-1 ring-rose-300"
+                                  : "cart-urgent-gap bg-amber-100 text-amber-900 ring-1 ring-amber-300";
                             const why = row.urgency === "promise-overdue"
                               ? `Callback promised for ${displayDateFromKey(String(row.nextActionAt).slice(0, 10))} and missed`
                               : row.urgency === "promise-today" ? "Callback promised for today"
                                 : row.urgency === "never-contacted" ? "Never contacted - nobody has called this customer yet"
                                   : row.urgency === "stale" ? `Nothing logged for ${row.staleDays} days`
                                     : undefined;
+                            const title = chargeable
+                              ? `Unlogged today — ₦${cartPenaltyAmount} if the day ends like this.${why ? ` ${why}.` : ""}`
+                              : (urgentHere ? why : undefined);
                             return (
                               <button type="button" onClick={() => openCartFollowUpFromGrid(row)}
-                                className={`!min-h-0 rounded px-1.5 py-0.5 text-[12px] font-bold hover:underline ${tone}`}
-                                title={urgentHere ? why : undefined}>
-                                {urgentHere && promise ? "call now" : "+ log"}
+                                className={`!min-h-0 rounded px-1.5 py-0.5 text-[12px] font-bold leading-tight hover:underline ${tone}`}
+                                title={title}>
+                                <span className="block">{urgentHere && promise ? "call now" : "+ log"}</span>
+                                {chargeable ? (
+                                  <span className="block text-[10px] font-black tabular-nums">₦{cartPenaltyAmount}</span>
+                                ) : null}
                               </button>
                             );
                           })()
@@ -72716,11 +72818,6 @@ ${waybillLineItems(w).length > 1
                       : `${Math.abs(Math.round(overviewFinanceBreakEven.headroom ?? 0))} pts below break-even`
                     : "break-even n/a";
 
-                  // Cross-sell line source: rep-driven ("self") = manual_rep;
-                  // customer-selected = public_form / public_upsell; auto_include
-                  // counts as neither.
-                  const isRepXsLine = (l: CrossSellLine) => l.selectionSource === "manual_rep";
-                  const isCustomerXsLine = (l: CrossSellLine) => l.selectionSource === "public_form" || l.selectionSource === "public_upsell";
                   // Performance remains a placed-order cohort. Bonus settlement is
                   // earned at delivery, though, so it must use the exact same
                   // delivered-in-period ledger as the detailed breakdown below.
@@ -72732,7 +72829,6 @@ ${waybillLineItems(w).length > 1
                     const repPlaced = mgrPlaced.filter((o) => o.assignedRepId === u.id);
                     const repDelivered = repPlaced.filter((o) => (o.status ?? "New") === "Delivered");
                     const bonusRow = managerBonusByRepId.get(u.id);
-                    const repDeliveredForBonus = managerDeliveredInPeriod.filter((o) => o.assignedRepId === u.id);
                     const placed = repPlaced.length;
                     const delivered = repDelivered.length;
                     const rate = placed ? Math.round((delivered / placed) * 100) : 0;
@@ -72740,13 +72836,23 @@ ${waybillLineItems(w).length > 1
                     const aov = delivered ? Math.round(revenue / delivered) : 0;
                     const bonus = bonusRow?.total ?? 0;
                     const repUpsells = bonusRow?.upsellCount ?? 0;
-                    let repXs = 0;
-                    let custXs = 0;
-                    repDeliveredForBonus.forEach((o) => (o.crossSellLines ?? []).forEach((l) => {
-                      if (isRepXsLine(l)) repXs += 1;
-                      else if (isCustomerXsLine(l)) custXs += 1;
-                    }));
-                    return { user: u, placed, delivered, rate, revenue, aov, bonus, repUpsells, repXs, repAddOns: repUpsells + repXs, custAddOns: custXs };
+                    const repXs = bonusRow?.repCrossSellLineCount ?? 0;
+                    const custXs = bonusRow?.customerAddOnLineCount ?? 0;
+                    return {
+                      user: u,
+                      placed,
+                      delivered,
+                      rate,
+                      revenue,
+                      aov,
+                      bonus,
+                      repUpsells,
+                      repXs,
+                      custAddOns: custXs,
+                      upsellBonus: bonusRow?.upsell ?? 0,
+                      repCrossSellBonus: bonusRow?.repCrossSellBonus ?? 0,
+                      customerAddOnBonus: bonusRow?.customerAddOnBonus ?? 0
+                    };
                   }).sort((a, b) => b.delivered - a.delivered || b.revenue - a.revenue);
                   const nextInLine = roundRobinActiveRows[0]?.user;
 
@@ -73089,7 +73195,7 @@ ${waybillLineItems(w).length > 1
                           )}
                         </div>
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
-                          <table className="w-full text-sm">
+                          <table className="w-full min-w-[1180px] text-sm">
                             <thead>
                               <tr className="border-b border-gray-100 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">
                                 <th className="px-4 py-3">Rep</th>
@@ -73097,15 +73203,16 @@ ${waybillLineItems(w).length > 1
                                 <th className="px-4 py-3 text-right">Delivered</th>
                                 <th className="px-4 py-3 text-right">Rate</th>
                                 <th className="px-4 py-3 text-right">AOV</th>
-                                <th className="px-4 py-3 text-right" title="Delivered add-ons the rep drove: their upsells + rep-added cross-sells">Rep add-ons</th>
-                                <th className="px-4 py-3 text-right" title="Delivered add-ons the customer picked themselves (customer-selected cross-sells)">Cust add-ons</th>
+                                <th className="px-4 py-3 text-right" title="Delivered orders with a verified quantity upgrade and the bonus attributed to them">Upsells</th>
+                                <th className="px-4 py-3 text-right" title="Delivered cross-sell lines added by the sales rep and the bonus attributed to them">Rep cross-sells</th>
+                                <th className="px-4 py-3 text-right" title="Delivered add-on lines selected by the customer on the public form and the bonus attributed to them">Customer-picked</th>
                                 <th className="px-4 py-3 text-right">Revenue</th>
                                 <th className="px-4 py-3 text-right">Bonus earned</th>
                               </tr>
                             </thead>
                             <tbody>
                               {teamRows.length === 0 ? (
-                                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400 italic">No sales reps found.</td></tr>
+                                <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400 italic">No sales reps found.</td></tr>
                               ) : teamRows.map((r) => (
                                 <tr key={r.user.id} className="border-b border-gray-50 last:border-0">
                                   <td className="px-4 py-3">
@@ -73117,10 +73224,17 @@ ${waybillLineItems(w).length > 1
                                   <td className={`px-4 py-3 text-right font-semibold ${r.rate >= 70 ? "text-emerald-600" : r.rate >= 50 ? "text-amber-600" : "text-rose-600"}`}>{r.placed ? `${r.rate}%` : "-"}</td>
                                   <td className="px-4 py-3 text-right text-gray-700">{r.aov ? formatMoney(r.aov) : "-"}</td>
                                   <td className="px-4 py-3 text-right">
-                                    <span className="font-semibold text-indigo-700">{r.repAddOns}</span>
-                                    {r.repAddOns > 0 && <span className="block text-[10px] text-gray-400">{r.repUpsells} up · {r.repXs} xs</span>}
+                                    <span className="font-semibold text-violet-700">{r.repUpsells}</span>
+                                    <span className="block text-[10px] text-gray-400">{formatMoney(r.upsellBonus)} earned</span>
                                   </td>
-                                  <td className="px-4 py-3 text-right font-semibold text-sky-700">{r.custAddOns}</td>
+                                  <td className="px-4 py-3 text-right">
+                                    <span className="font-semibold text-amber-700">{r.repXs}</span>
+                                    <span className="block text-[10px] text-gray-400">{formatMoney(r.repCrossSellBonus)} earned</span>
+                                  </td>
+                                  <td className="px-4 py-3 text-right">
+                                    <span className="font-semibold text-sky-700">{r.custAddOns}</span>
+                                    <span className="block text-[10px] text-gray-400">{formatMoney(r.customerAddOnBonus)} earned</span>
+                                  </td>
                                   <td className="px-4 py-3 text-right text-gray-700">{formatMoney(r.revenue)}</td>
                                   <td className="px-4 py-3 text-right font-bold text-emerald-700">{formatMoney(r.bonus)}</td>
                                 </tr>

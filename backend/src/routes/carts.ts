@@ -9,7 +9,8 @@ import { sendCartAssignedSms } from "../lib/sms.js";
 import { applyCartMarketingScope } from "../lib/marketing-attribution.js";
 import { lagosDateKey, lagosStartOfDayUtc, mondayOfWeek, addDays, dowOf } from "../lib/follow-up-kpi.js";
 import {
-  CART_LOG_MISS_AMOUNT, CART_LOG_PENALTY_START_DATE, chargeableDaysIn, penaltyPhase,
+  CART_LOG_MISS_AMOUNT, CART_LOG_PENALTY_START_DATE, chargeableDaysIn, dayPenaltyAmount,
+  missedCartCount, penaltyPhase,
   RANGE_PRESETS, repDayStatus, resolveRange, summariseRepPenalties, todayStanding,
   type RangePreset, type RepDayInput
 } from "../lib/cart-log-penalty.js";
@@ -2307,12 +2308,20 @@ router.get("/log-penalties",
         && row.status !== "Not interested"
         && row.status !== "Wrong number");
 
-      // Logs per rep per day.
+      // Logs per rep per day, counted BOTH ways. The charge is per cart, so it
+      // needs distinct carts touched - five attempts on one cart clears one
+      // cart, not five - while the raw attempt count still drives the
+      // activity figures shown alongside it.
       const logged = new Map<string, number>();
+      const loggedCarts = new Map<string, Set<string>>();
       ((attemptRows ?? []) as any[]).forEach((row) => {
         if (!row.rep_id) return;
         const key = `${row.rep_id}|${lagosDateKey(row.attempted_at)}`;
         logged.set(key, (logged.get(key) ?? 0) + 1);
+        if (!row.cart_id) return;
+        const seen = loggedCarts.get(key);
+        if (seen) seen.add(row.cart_id);
+        else loggedCarts.set(key, new Set([row.cart_id]));
       });
 
       const repIds = [...new Set(openCarts.map((row) => row.assigned_rep_id).filter(Boolean))] as string[];
@@ -2330,7 +2339,8 @@ router.get("/log-penalties",
             repName: repName.get(repId) ?? "Unknown",
             dateKey,
             cartsDue,
-            logsMade: logged.get(`${repId}|${dateKey}`) ?? 0
+            logsMade: logged.get(`${repId}|${dateKey}`) ?? 0,
+            cartsLogged: loggedCarts.get(`${repId}|${dateKey}`)?.size ?? 0
           });
         });
       });
@@ -2348,7 +2358,12 @@ router.get("/log-penalties",
             repName: input.repName,
             missDate: input.dateKey,
             cartsDue: input.cartsDue,
-            amount: Number(decision?.amount ?? CART_LOG_MISS_AMOUNT),
+            cartsLogged: input.cartsLogged ?? 0,
+            cartsMissed: missedCartCount(input),
+            // A saved decision keeps the amount it was reviewed at. The Owner
+            // approved a specific figure; recomputing it here would silently
+            // change what was already agreed if the board or the rate moved.
+            amount: Number(decision?.amount ?? dayPenaltyAmount(input)),
             status: (decision?.status ?? "pending") as "pending" | "approved" | "waived",
             reviewedByName: decision?.reviewed_by_name ?? "",
             reviewedAt: decision?.reviewed_at ?? null,
@@ -2375,21 +2390,31 @@ router.get("/log-penalties",
       const standing = myRepId
         ? todayStanding({
           repId: myRepId, repName: repName.get(myRepId) ?? "You",
-          dateKey: todayKey, cartsDue: todaysCarts.length, logsMade: todayAttempts
+          dateKey: todayKey, cartsDue: todaysCarts.length, logsMade: todayAttempts,
+          cartsLogged: loggedCarts.get(`${myRepId}|${todayKey}`)?.size ?? 0
         })
         : null;
 
       // For a supervisor: how many reps have logged nothing yet today.
+      // ⚠️ Now catches a PARTIALLY worked board, not just an untouched one. Under
+      // the per-cart rate a rep who logged 5 of 40 is still exposed to ₦17,500,
+      // and the old "logsMade === 0" filter would have shown them as fine.
       const repsAtRiskToday = myRepId ? [] : [...new Set(todaysCarts.map((row) => row.assigned_rep_id))]
         .filter((repId): repId is string => Boolean(repId))
-        .map((repId) => ({
-          repId,
-          repName: repName.get(repId) ?? "Unknown",
-          cartsDue: todaysCarts.filter((row) => row.assigned_rep_id === repId).length,
-          logsMade: 0
-        }))
-        .map((row) => ({ ...row, logsMade: logged.get(`${row.repId}|${todayKey}`) ?? 0 }))
-        .filter((row) => row.logsMade === 0 && row.cartsDue > 0);
+        .map((repId) => {
+          const input: RepDayInput = {
+            repId,
+            repName: repName.get(repId) ?? "Unknown",
+            dateKey: todayKey,
+            cartsDue: todaysCarts.filter((row) => row.assigned_rep_id === repId).length,
+            logsMade: logged.get(`${repId}|${todayKey}`) ?? 0,
+            cartsLogged: loggedCarts.get(`${repId}|${todayKey}`)?.size ?? 0
+          };
+          const cartsRemaining = missedCartCount(input);
+          return { ...input, cartsRemaining, atRisk: dayPenaltyAmount(input) };
+        })
+        .filter((row) => row.cartsRemaining > 0)
+        .sort((left, right) => right.atRisk - left.atRisk);
 
       res.json({
         range: preset,

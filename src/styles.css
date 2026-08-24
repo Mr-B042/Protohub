@@ -9646,7 +9646,27 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
 }
 .cart-urgent-promise { animation: cartUrgentPromise 1.5s ease-out infinite; }
 .cart-urgent-gap     { animation: cartUrgentGap 2.2s ease-out infinite; }
+
+/* A cart that will be CHARGED for if the day ends like this. Distinct from the
+   two urgency pulses above: those say "this customer needs a call", this says
+   "this costs you ₦500". Sharper and faster, because it is the rep's money. */
+@keyframes cartPenaltyRisk {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.6); }
+  50%      { box-shadow: 0 0 0 5px rgba(225, 29, 72, 0); }
+}
+.cart-penalty-risk { animation: cartPenaltyRisk 1.2s ease-out infinite; }
+
+/* The last hour. The clock itself breathes so it is visible from across a
+   room - reps work from their phones and glance at this, they do not read it. */
+@keyframes cartCountdownCritical {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.55); }
+  50%      { box-shadow: 0 0 0 8px rgba(225, 29, 72, 0); }
+}
+.cart-countdown-critical { animation: cartCountdownCritical 1s ease-out infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .cart-urgent-promise,
-  .cart-urgent-gap { animation: none; }
+  .cart-urgent-gap,
+  .cart-penalty-risk,
+  .cart-countdown-critical { animation: none; }
 }

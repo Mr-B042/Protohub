@@ -1,13 +1,16 @@
-// ₦500 a day for a rep who logs nothing on their assigned carts.
+// ₦500 for every assigned cart a rep leaves unlogged for a day.
 //
-// ⚠️ Per REP per DAY, not per cart. A rep with 61 carts and a rep with 6 have
-// committed the same offence by not logging; a per-cart rate would charge one
-// of them ₦30,500 for it. This differs from the order follow-up KPI (₦50 per
-// order per day) on purpose.
+// ⚠️ Per CART per DAY. Bright set this rate deliberately on 2026-08-24, after
+// a flat per-rep-per-day charge: the exposure is now the size of the board, so
+// a rep sitting on 40 carts risks ₦20,000 in a single day and ₦120,000 across
+// a Mon-Sat week. Partial work counts - logging 10 of 40 carts owes for 30,
+// not for all 40 and not for none.
 //
 // ⚠️ NEVER auto-deducted. A miss is recorded and shown; it becomes money only
-// when the Owner approves it.
+// when the Owner approves it. At these amounts that gate is the whole safety
+// margin, so nothing here may write to payroll on its own.
 
+/** Charged once per cart, per day that cart goes unlogged. */
 export const CART_LOG_MISS_AMOUNT = 500;
 
 /**
@@ -59,17 +62,40 @@ export type RepDayInput = {
   cartsDue: number;
   /** Attempts the rep logged that day, across any of their carts. */
   logsMade: number;
+  /**
+   * DISTINCT carts the rep logged against that day.
+   *
+   * Separate from `logsMade` because the charge counts carts, not effort:
+   * five attempts on one cart clears one cart, not five. Omitted means "not
+   * known", and falls back to treating any activity as covering the board -
+   * which cannot over-charge a rep on data we do not have.
+   */
+  cartsLogged?: number;
 };
+
+/** Carts the rep left untouched that day - the number actually charged for. */
+export function missedCartCount(input: RepDayInput): number {
+  const due = Math.max(0, Number(input.cartsDue) || 0);
+  if (due === 0) return 0;
+  const logged = input.cartsLogged == null
+    ? ((Number(input.logsMade) || 0) > 0 ? due : 0)
+    : Math.max(0, Number(input.cartsLogged) || 0);
+  return Math.max(0, due - Math.min(due, logged));
+}
+
+/** What a day costs at the per-cart rate. */
+export function dayPenaltyAmount(input: RepDayInput): number {
+  return missedCartCount(input) * CART_LOG_MISS_AMOUNT;
+}
 
 export type RepDayStatus = "not_due" | "clear" | "missed" | "before_go_live";
 
 /**
  * Whether a rep owes for a day.
  *
- * ⚠️ Logging ONE cart clears the day. Bright's rule catches the rep who did
- * nothing, not the rep who worked their board imperfectly - a per-cart standard
- * is what the order KPI already does, and doubling it here would make the two
- * systems fight over the same behaviour.
+ * ⚠️ Every cart is judged on its own. A rep who worked most of their board
+ * still owes for the ones they did not reach - "clear" now means the whole
+ * board was touched, not that the rep did something.
  *
  * A day with no carts due is "not_due", never "clear": a rep with an empty
  * board did not earn a pass, there was simply nothing to do.
@@ -78,7 +104,7 @@ export function repDayStatus(input: RepDayInput, startDate = CART_LOG_PENALTY_ST
   if (input.dateKey < startDate) return "before_go_live";
   if (!isChargeableDay(input.dateKey)) return "not_due";
   if (input.cartsDue <= 0) return "not_due";
-  return input.logsMade > 0 ? "clear" : "missed";
+  return missedCartCount(input) > 0 ? "missed" : "clear";
 }
 
 export type RepPenaltySummary = {
@@ -86,6 +112,8 @@ export type RepPenaltySummary = {
   repName: string;
   missedDays: string[];
   missedCount: number;
+  /** Total CARTS left unlogged across every missed day - what drives the money. */
+  missedCarts: number;
   /** What they would owe if every pending miss were approved. */
   atRiskAmount: number;
   clearDays: number;
@@ -98,13 +126,14 @@ export function summariseRepPenalties(
   (days ?? []).forEach((day) => {
     const entry = byRep.get(day.repId) ?? {
       repId: day.repId, repName: day.repName,
-      missedDays: [], missedCount: 0, atRiskAmount: 0, clearDays: 0
+      missedDays: [], missedCount: 0, missedCarts: 0, atRiskAmount: 0, clearDays: 0
     };
     const status = repDayStatus(day, startDate);
     if (status === "missed") {
       entry.missedDays.push(day.dateKey);
       entry.missedCount += 1;
-      entry.atRiskAmount += CART_LOG_MISS_AMOUNT;
+      entry.missedCarts += missedCartCount(day);
+      entry.atRiskAmount += dayPenaltyAmount(day);
     } else if (status === "clear") {
       entry.clearDays += 1;
     }
@@ -117,6 +146,8 @@ export type TodayStanding = {
   dateKey: string;
   cartsDue: number;
   logsMade: number;
+  /** Carts still untouched right now - what the rep can still act on. */
+  cartsRemaining: number;
   status: RepDayStatus;
   /** What it costs if the day ends like this. 0 unless actually at risk. */
   atRisk: number;
@@ -138,25 +169,34 @@ export function todayStanding(
 ): TodayStanding {
   const status = repDayStatus(input, startDate);
   const rehearsal = input.dateKey < startDate;
-  const atRisk = status === "missed" ? CART_LOG_MISS_AMOUNT : 0;
+  const remaining = missedCartCount(input);
+  const exposure = dayPenaltyAmount(input);
+  const atRisk = status === "missed" ? exposure : 0;
+  // Spelled out as rate x carts rather than a bare total. At ₦20,000 the
+  // number alone reads like a mistake; showing the arithmetic makes it obvious
+  // that clearing carts is what brings it down, one ₦500 step at a time.
+  const money = (value: number) => `₦${value.toLocaleString("en-NG")}`;
+  const sum = `${remaining} × ₦${CART_LOG_MISS_AMOUNT} = ${money(exposure)}`;
+  const carts = (count: number) => `${count} cart${count === 1 ? "" : "s"}`;
 
   let message: string;
   if (!isChargeableDay(input.dateKey)) {
     message = "Sunday - nothing due today.";
   } else if (input.cartsDue <= 0) {
     message = "No carts on your board today.";
-  } else if (input.logsMade > 0) {
-    message = `Logged today. ${input.cartsDue} cart${input.cartsDue === 1 ? "" : "s"} on your board.`;
+  } else if (remaining === 0) {
+    message = `Whole board logged today - all ${carts(input.cartsDue)} covered.`;
   } else if (rehearsal) {
-    message = `${input.cartsDue} cart${input.cartsDue === 1 ? "" : "s"} and nothing logged yet. From ${startDate} a day like this costs ₦${CART_LOG_MISS_AMOUNT}.`;
+    message = `${carts(remaining)} still unlogged. From ${startDate} that is ${sum}.`;
   } else {
-    message = `${input.cartsDue} cart${input.cartsDue === 1 ? "" : "s"} and nothing logged yet. Log one before the day ends or this is ₦${CART_LOG_MISS_AMOUNT}.`;
+    message = `${carts(remaining)} still unlogged, at ₦${CART_LOG_MISS_AMOUNT} each. Clear them before the day ends or this is ${money(exposure)}.`;
   }
 
   return {
     dateKey: input.dateKey,
     cartsDue: input.cartsDue,
     logsMade: input.logsMade,
+    cartsRemaining: remaining,
     status,
     atRisk: rehearsal ? 0 : atRisk,
     rehearsal,

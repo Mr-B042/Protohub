@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CART_LOG_MISS_AMOUNT, CART_LOG_PENALTY_START_DATE, chargeableDaysIn, isChargeableDay,
+  dayPenaltyAmount, missedCartCount,
   mondayOf, penaltyPhase, repDayStatus, resolveRange, summariseRepPenalties, todayStanding, type RepDayInput
 } from "./cart-log-penalty.js";
 
@@ -9,8 +10,9 @@ const day = (over: Partial<RepDayInput> = {}): RepDayInput => ({
   repId: "r1", repName: "Chelsea", dateKey: "2026-08-25", cartsDue: 61, logsMade: 0, ...over
 });
 
-test("the penalty is a flat five hundred", () => {
+test("the rate is five hundred, charged per cart", () => {
   assert.equal(CART_LOG_MISS_AMOUNT, 500);
+  assert.equal(dayPenaltyAmount(day({ cartsDue: 40, logsMade: 0 })), 20_000);
 });
 
 test("go-live is Monday 24 August 2026", () => {
@@ -53,12 +55,43 @@ test("a Sunday with carts due is still not chargeable", () => {
   assert.equal(repDayStatus(day({ dateKey: "2026-08-30", cartsDue: 40, logsMade: 0 })), "not_due");
 });
 
-// A rep with 61 carts and one with 6 owe the same for the same offence.
-test("the charge does not scale with board size", () => {
+// ⚠️ Reversed on 2026-08-24. The charge now scales with the board: a rep
+// holding 61 carts is exposed to ten times a rep holding 6.
+test("the charge scales with board size", () => {
   const big = summariseRepPenalties([day({ repId: "big", cartsDue: 61, logsMade: 0 })]);
   const small = summariseRepPenalties([day({ repId: "small", cartsDue: 6, logsMade: 0 })]);
-  assert.equal(big[0].atRiskAmount, 500);
-  assert.equal(small[0].atRiskAmount, 500);
+  assert.equal(big[0].atRiskAmount, 30_500);
+  assert.equal(small[0].atRiskAmount, 3_000);
+  assert.equal(big[0].missedCarts, 61);
+});
+
+test("only the carts left untouched are charged", () => {
+  assert.equal(missedCartCount(day({ cartsDue: 40, logsMade: 12, cartsLogged: 10 })), 30);
+  assert.equal(dayPenaltyAmount(day({ cartsDue: 40, logsMade: 12, cartsLogged: 10 })), 15_000);
+});
+
+// Repeat calls on the same cart clear that cart once, not once per call.
+test("effort on one cart does not clear the rest of the board", () => {
+  assert.equal(missedCartCount(day({ cartsDue: 40, logsMade: 9, cartsLogged: 1 })), 39);
+});
+
+test("a fully worked board owes nothing", () => {
+  const rows = summariseRepPenalties([day({ cartsDue: 40, logsMade: 40, cartsLogged: 40 })]);
+  assert.equal(rows[0].atRiskAmount, 0);
+  assert.equal(rows[0].clearDays, 1);
+});
+
+// Logging MORE carts than the board holds cannot buy credit.
+test("over-logging never produces a negative charge", () => {
+  assert.equal(missedCartCount(day({ cartsDue: 5, logsMade: 20, cartsLogged: 20 })), 0);
+  assert.equal(dayPenaltyAmount(day({ cartsDue: 5, logsMade: 20, cartsLogged: 20 })), 0);
+});
+
+// Older callers that never sent cartsLogged must not suddenly bill a full
+// board to a rep who did work - unknown means "assume covered".
+test("an unknown distinct-cart count never over-charges", () => {
+  assert.equal(missedCartCount({ ...day({ cartsDue: 40, logsMade: 3 }), cartsLogged: undefined }), 0);
+  assert.equal(missedCartCount({ ...day({ cartsDue: 40, logsMade: 0 }), cartsLogged: undefined }), 40);
 });
 
 test("misses accumulate across days and rank worst rep first", () => {
@@ -70,7 +103,8 @@ test("misses accumulate across days and rank worst rep first", () => {
   ]);
   assert.equal(rows[0].repId, "a");
   assert.equal(rows[0].missedCount, 2);
-  assert.equal(rows[0].atRiskAmount, 1000);
+  assert.equal(rows[0].atRiskAmount, 61_000);
+  assert.equal(rows[0].missedCarts, 122);
   assert.equal(rows[1].missedCount, 1);
   assert.equal(rows[1].clearDays, 1);
 });
@@ -147,15 +181,27 @@ test("a backwards range yields nothing rather than looping", () => {
 test("a rep who has logged nothing today is told they still can", () => {
   const standing = todayStanding(day({ dateKey: "2026-08-25", cartsDue: 61, logsMade: 0 }));
   assert.equal(standing.status, "missed");
-  assert.equal(standing.atRisk, 500);
+  assert.equal(standing.atRisk, 30_500);
+  assert.equal(standing.cartsRemaining, 61);
   assert.match(standing.message, /before the day ends/);
+  // The rate has to appear next to the total, or ₦30,500 reads as a bug.
+  assert.match(standing.message, /₦500 each/);
 });
 
 test("a rep who has logged today is clear and owes nothing", () => {
-  const standing = todayStanding(day({ dateKey: "2026-08-25", logsMade: 1 }));
+  const standing = todayStanding(day({ dateKey: "2026-08-25", logsMade: 61, cartsLogged: 61 }));
   assert.equal(standing.status, "clear");
   assert.equal(standing.atRisk, 0);
-  assert.match(standing.message, /Logged today/);
+  assert.equal(standing.cartsRemaining, 0);
+  assert.match(standing.message, /Whole board logged/);
+});
+
+// ⚠️ Under the old flat rule this rep was "clear". They are not any more.
+test("a partly worked board is still a miss, for the remainder only", () => {
+  const standing = todayStanding(day({ dateKey: "2026-08-25", cartsDue: 40, logsMade: 5, cartsLogged: 5 }));
+  assert.equal(standing.status, "missed");
+  assert.equal(standing.cartsRemaining, 35);
+  assert.equal(standing.atRisk, 17_500);
 });
 
 // Before go-live the warning still shows, but no money is at stake.
@@ -163,7 +209,7 @@ test("during the rehearsal the same miss costs nothing", () => {
   const standing = todayStanding(day({ dateKey: "2026-08-21", cartsDue: 40, logsMade: 0 }));
   assert.equal(standing.rehearsal, true);
   assert.equal(standing.atRisk, 0);
-  assert.match(standing.message, /From 2026-08-24 a day like this costs/);
+  assert.match(standing.message, /From 2026-08-24 that is 40 × ₦500 = ₦20,000/);
 });
 
 test("Sunday says nothing is due rather than showing a risk", () => {

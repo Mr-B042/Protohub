@@ -73,3 +73,30 @@ test("Chelsea legacy order bonuses reconcile to ₦5,980 using finalized deliver
   assert.equal(rate, 94);
   assert.equal(total, 5_980);
 });
+
+test("cross-sell bonus source rules match the Sales Bonus Engine", () => {
+  const productMap = buildProductBonusConfigMap([{
+    id: "edge",
+    bonus_config: {
+      ...defaultBonusConfig(),
+      baseDelivered: [],
+      crossSellPercent: 10,
+      crossSellFixed: 0
+    }
+  }]);
+  const bonusFor = (selectionSource?: string) => computeOrderBonus(
+    deliveredOrder(`source-${selectionSource ?? "legacy"}`, {
+      cross_sell_lines: [{ amount: 5_000, ...(selectionSource ? { selectionSource } : {}) }]
+    }),
+    productMap,
+    100,
+    0,
+    1
+  );
+
+  assert.equal(bonusFor("manual_rep"), 500);
+  assert.equal(bonusFor("public_form"), 100);
+  assert.equal(bonusFor("public_upsell"), 100);
+  assert.equal(bonusFor("auto_include"), 0);
+  assert.equal(bonusFor(), 500);
+});
