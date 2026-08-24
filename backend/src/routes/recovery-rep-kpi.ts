@@ -8,6 +8,14 @@ import { sundayWeekStartForDateKey, addDaysToDateKey, lagosDateKey } from "../li
 import { isWorkingDay } from "../lib/follow-up-kpi.js";
 import { scoreOrderDocumentation, type DocumentationScoreOrder } from "../lib/recovery-rep-documentation-score.js";
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
+import { buildRecoveryCalendar, calendarDayKeys } from "../lib/recovery-calendar.js";
+
+/**
+ * One recovered delivery a day. No settings column exists for it yet;
+ * loadKpiSettings reads select("*") so adding one later starts overriding this
+ * without any further change here.
+ */
+const DEFAULT_DAILY_DELIVERED_TARGET = 1;
 
 const router = Router();
 router.use(requireAuth);
@@ -509,6 +517,94 @@ async function openClaimCount(orgId: string, repId: string) {
     .in("status", OPEN_STATUSES);
   return count ?? 0;
 }
+
+// ── GET /api/recovery-rep-kpi/calendar?repId=&dateFrom=&dateTo= ──
+//
+// Per-day activity behind the panel's totals. Deliberately a SEPARATE endpoint
+// from /summary rather than another field on it: this needs only three counts
+// per day and no COGS, while /summary prices every delivered order in the
+// range. Bolting it on would have made the page's slowest query slower still.
+router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
+    const scopeId = req.user!.effectiveUserId ?? req.user!.id;
+    const repId = scopeRole === "Recovery Rep" ? scopeId : (typeof req.query.repId === "string" ? req.query.repId : "");
+    if (!repId) { res.json({ days: [], targets: null }); return; }
+
+    const { start, exclusiveEnd } = resolveBounds(req.query as Record<string, unknown>);
+    const inclusiveEnd = addDaysToDateKey(exclusiveEnd, -1);
+    const settings = await loadKpiSettings(orgId);
+
+    const [followUps, retentions, deliveries] = await Promise.all([
+      supabase.from("order_contact_attempts").select("order_id, attempted_at")
+        .eq("org_id", orgId).eq("rep_id", repId)
+        .gte("attempted_at", `${start}T00:00:00`).lt("attempted_at", `${exclusiveEnd}T00:00:00`)
+        .limit(REPORT_ROW_CEILING),
+      supabase.from("customer_retention_touchpoints").select("order_id, logged_at")
+        .eq("org_id", orgId).eq("logged_by", repId)
+        .gte("logged_at", `${start}T00:00:00`).lt("logged_at", `${exclusiveEnd}T00:00:00`)
+        .limit(REPORT_ROW_CEILING),
+      // ⚠️ Filtered EXACTLY as /summary filters its delivered cohort -
+      // assigned_rep_id, Delivered, and review_hold excluded. A calendar whose
+      // day cells added up to a different number than the card above it would
+      // be worse than no calendar.
+      supabase.from("orders").select("id, delivered_date")
+        .eq("org_id", orgId).eq("assigned_rep_id", repId).eq("status", "Delivered")
+        .gte("delivered_date", start).lt("delivered_date", exclusiveEnd)
+        .neq("review_hold", true)
+        .limit(REPORT_ROW_CEILING)
+    ]);
+
+    // ⚠️ DISTINCT ORDERS per day, not attempts. Five calls to one customer is
+    // one pick, and counting rows would let a single stubborn order look like
+    // a full day's work - the same mistake the cart log penalty made.
+    const seen = new Map<string, { followUp: Set<string>; retention: Set<string>; delivered: Set<string> }>();
+    const bucket = (day: string) => {
+      const found = seen.get(day);
+      if (found) return found;
+      const fresh = { followUp: new Set<string>(), retention: new Set<string>(), delivered: new Set<string>() };
+      seen.set(day, fresh);
+      return fresh;
+    };
+    ((followUps.data ?? []) as any[]).forEach((row) => {
+      if (row.order_id) bucket(lagosDateKey(row.attempted_at)).followUp.add(row.order_id);
+    });
+    ((retentions.data ?? []) as any[]).forEach((row) => {
+      if (row.order_id) bucket(lagosDateKey(row.logged_at)).retention.add(row.order_id);
+    });
+    ((deliveries.data ?? []) as any[]).forEach((row) => {
+      if (row.id && row.delivered_date) bucket(String(row.delivered_date).slice(0, 10)).delivered.add(row.id);
+    });
+
+    const countsByDay = new Map(
+      [...seen.entries()].map(([day, sets]) => [day, {
+        day, followUp: sets.followUp.size, retention: sets.retention.size, delivered: sets.delivered.size
+      }])
+    );
+    const targets = {
+      followUp: settings.dailyFollowUpPickTarget,
+      retention: settings.dailyRetentionPickTarget,
+      // No column for this yet; loadKpiSettings reads select("*") so the
+      // default simply applies until someone adds one.
+      delivered: DEFAULT_DAILY_DELIVERED_TARGET
+    };
+    const summary = buildRecoveryCalendar(
+      calendarDayKeys(start, inclusiveEnd), countsByDay, targets, lagosDateKey()
+    );
+
+    res.json({
+      from: start,
+      to: inclusiveEnd,
+      targets,
+      bonusPerRecoveredOrder: settings.bonusPerRecoveredOrder,
+      monthlyRecoveredTarget: settings.monthlyRecoveredTarget,
+      ...summary
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the recovery calendar." });
+  }
+});
 
 router.get("/candidates", requireRole("Owner", "Admin", "Manager", "Recovery Rep"), async (req, res) => {
   try {
