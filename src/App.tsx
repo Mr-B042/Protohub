@@ -13036,6 +13036,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [manualBonusReasonText, setManualBonusReasonText] = useState("");
   const [manualBonusParts, setManualBonusParts] = useState<{ base: string; upgrade: string; crossSell: string; freeGift: string }>({ base: "", upgrade: "", crossSell: "", freeGift: "" });
   const [bonusBreakdownData, setBonusBreakdownData] = useState<BonusBreakdownData | null>(null);
+  const [managerBonusRepDetailId, setManagerBonusRepDetailId] = useState<string | null>(null);
   const [salesBonusFullReportTab, setSalesBonusFullReportTab] = useState<"Bonus Summary" | "Base Bonus Details" | "Upsell Bonus Details" | "Cross-sell Bonus Details" | "Adjustments & Penalties" | "Payment Status">("Bonus Summary");
   // Sales Bonus Engine ("Bonuses up for grabs") earnings for the exact rep +
   // week shown in the breakdown modal - fetched separately from
@@ -23949,9 +23950,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // value so both the Manager Dashboard overview section and the full report
   // modal can call it fresh, without threading state between two separate
   // branches of the render tree.
-  const buildManagerBonusRepRows = (weekStart: string) => {
-    const weekEnd = weekEndFromStartKey(weekStart);
-    const weekRange: DateRange = { start: weekStart, end: weekEnd };
+  // The Manager Dashboard's period-scoped delivered orders, at component scope
+  // so the Overview's bonus section and the Full Bonus Report modal share ONE
+  // definition. Mirrors mgrDeliveredInPeriod inside the Overview render block;
+  // two copies drifting apart is how the bonus section ended up on a different
+  // week from the table directly above it.
+  const managerPeriodRange: DateRange = (() => {
+    const bounds = periodBoundsForQuery(managerPeriod, managerDateRange);
+    return { start: bounds?.dateFrom ?? "", end: bounds?.dateTo ?? "" };
+  })();
+  const managerDeliveredInPeriod = trackedOrders.filter((o) =>
+    (o.status ?? "New") === "Delivered"
+    && isInPeriod(orderDeliveredKey(o), managerPeriod, managerDateRange)
+    && (managerProductFilterKeys.size === 0 || managerProductFilterKeys.has(productKeyForOrder(o)))
+  );
+
+  // ⚠️ Takes the ALREADY period-scoped delivered orders rather than deriving
+  // its own week. Everything on the Manager Dashboard Overview follows the
+  // page's Period control (see mgrPlaced/mgrDeliveredInPeriod) - a section that
+  // quietly used the Bonus tab's own Sunday week instead sat under "Last Week"
+  // showing this week's zeros, which is exactly how it first shipped.
+  const buildManagerBonusRepRows = (
+    deliveredInPeriod: TrackedOrder[],
+    periodRange: DateRange
+  ) => {
+    const weekRange: DateRange = periodRange;
     const cohortThisWeek = trackedOrders.filter((o) => !o.reviewHold && isInExplicitRange(orderCreatedKey(o), weekRange));
     const repCohort = new Map<string, { placed: number; delivered: number; finalized: number }>();
     cohortThisWeek.forEach((o) => {
@@ -23975,12 +23998,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const repRate = progressRow?.deliveryRate ?? fallbackRate;
       const repCount = progressRow?.assignedCount ?? cohortStats.placed;
 
-      const deliveredThisWeek = trackedOrders.filter((o) =>
-        !o.reviewHold
-        && o.assignedRepId === u.id
-        && (o.status ?? "New") === "Delivered"
-        && isInExplicitRange(orderDeliveredKey(o), weekRange)
-      );
+      const deliveredThisWeek = deliveredInPeriod.filter((o) => o.assignedRepId === u.id);
 
       const orderLines = deliveredThisWeek.map((order) =>
         buildOrderBonusBreakdownLine(order, repRate, repCount, weekRange, newEngineBonusSettlementByOrderId[order.id])
@@ -24049,8 +24067,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         deliveredOrders: deliveredThisWeek,
         orderLines,
         orderComponents,
-        weekStart,
-        weekEnd
+        weekStart: periodRange.start,
+        weekEnd: periodRange.end
       };
     }).sort((a, b) => b.total - a.total || b.revenue - a.revenue || a.repName.localeCompare(b.repName));
   };
@@ -73018,14 +73036,17 @@ ${waybillLineItems(w).length > 1
                       </section>
 
                       {(() => {
-                        const bonusRows = buildManagerBonusRepRows(salesBonusWeekStart);
+                        // Same period as Team performance above and Fulfillment
+                        // below - driven by the page's Period control, never by
+                        // the Bonus tab's own week.
+                        const bonusRows = buildManagerBonusRepRows(managerDeliveredInPeriod, managerPeriodRange);
                         const totalTeamBonus = bonusRows.reduce((sum, r) => sum + r.total, 0);
                         return (
                       <section className="space-y-3">
                         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-1">
                           <div>
                             <h2 className="text-sm font-bold text-gray-800">Sales Rep Bonus Breakdown</h2>
-                            <p className="text-xs text-gray-400">See exactly how each rep's bonus was earned for this period.</p>
+                            <p className="text-xs text-gray-400">{periodLabel === "today" ? "Today" : managerPeriod} · how each rep's bonus was earned in this window.</p>
                           </div>
                           <div className="flex items-center gap-3">
                             <div className="text-right">
@@ -73099,27 +73120,7 @@ ${waybillLineItems(w).length > 1
                                       type="button"
                                       title="Open detailed bonus breakdown"
                                       className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-violet-200 bg-violet-50 p-1.5 text-violet-700 hover:bg-violet-100"
-                                      onClick={() => {
-                                        setBonusBreakdownData({
-                                          personName: r.repName,
-                                          role: r.role,
-                                          weekLabel: `${formatDateWithWeekday(r.weekStart)} to ${formatDateWithWeekday(r.weekEnd)}`,
-                                          deliveredCount: r.deliveredCount,
-                                          carryoverDelivered: 0,
-                                          revenue: r.revenue,
-                                          aov: r.aov,
-                                          cohortPlaced: r.deliveredCount,
-                                          cohortDelivered: r.deliveredCount,
-                                          cohortPending: 0,
-                                          cohortRate: r.deliveryRate,
-                                          finalRate: r.deliveryRate,
-                                          targetRate: 60,
-                                          totalBonus: r.total,
-                                          newEngineBonusEstimate: r.orderLines.reduce((sum, l) => sum + l.enginePayable, 0),
-                                          orders: r.orderLines
-                                        });
-                                        setModal("bonusBreakdown");
-                                      }}
+                                      onClick={() => setManagerBonusRepDetailId(r.repId)}
                                     >
                                       <Eye className="w-4 h-4" />
                                     </button>
@@ -95331,6 +95332,193 @@ ${waybillLineItems(w).length > 1
         </div>
       )}
 
+      {/* Per-rep bonus detail slide-over, built to the supplied design: three
+          numbered component cards, targets, and one final figure. Deliberately
+          NOT the existing centre-screen bonusBreakdown modal - that one is an
+          order-by-order audit trail; this answers "how was my number reached"
+          in three cards. Both stay: the order-level detail is reachable from
+          the button at the bottom of this panel. */}
+      {managerBonusRepDetailId && (() => {
+        const rows = buildManagerBonusRepRows(managerDeliveredInPeriod, managerPeriodRange);
+        const r = rows.find((row) => row.repId === managerBonusRepDetailId);
+        if (!r) return null;
+        const upgradeCounts = new Map<string, number>();
+        r.deliveredOrders.forEach((o) => {
+          if (!orderHasVerifiedUpsell(o)) return;
+          const to = o.upsellToQty ?? quantityForOrder(o);
+          const key = `${to}pcs upgrades`;
+          upgradeCounts.set(key, (upgradeCounts.get(key) ?? 0) + 1);
+        });
+        const upsellRevenue = r.deliveredOrders.reduce((sum, o) => {
+          if (!orderHasVerifiedUpsell(o) || typeof o.originalAmount !== "number") return sum;
+          const xs = (o.crossSellLines ?? []).reduce((x, l) => x + (Number(l.amount) || 0), 0);
+          return sum + Math.max(0, o.amount - o.originalAmount - xs);
+        }, 0);
+        const crossSellRevenue = r.deliveredOrders.reduce((sum, o) =>
+          sum + (o.crossSellLines ?? []).reduce((x, l) => x + (Number(l.amount) || 0), 0), 0);
+        const perDelivery = r.deliveredCount > 0 ? Math.round(r.base / r.deliveredCount) : 0;
+        // Effective rate rather than a hardcoded 10%: the real rules are
+        // per-product tiers, so a fixed percentage here would be fiction.
+        const upsellRatePct = upsellRevenue > 0 ? Math.round((r.upsell / upsellRevenue) * 1000) / 10 : null;
+        const crossSellRatePct = crossSellRevenue > 0 ? Math.round((r.crossSell / crossSellRevenue) * 1000) / 10 : null;
+        const progressRow = salesBonusProgress?.reps.find((x) => x.repId === r.repId) ?? null;
+        const activeRules = (progressRow?.rules ?? []).filter((rule) => rule.active);
+        const close = () => setManagerBonusRepDetailId(null);
+        return (
+          <div className="fixed inset-0 z-[60] flex justify-end">
+            <button type="button" aria-label="Close" onClick={close} className="!min-h-0 absolute inset-0 cursor-default bg-slate-900/40 p-0" />
+            <div className="relative flex h-full w-full max-w-xl flex-col overflow-hidden bg-white shadow-2xl" role="dialog" aria-modal="true">
+              <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+                <div className="flex items-start gap-3 min-w-0">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-100 text-violet-700 font-black">{userInitials(r.repName)}</span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="m-0 text-lg font-black text-gray-900">{r.repName} — Bonus Breakdown</h3>
+                      {r.status === "qualified" ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> Qualified</span>
+                      ) : r.status === "at_risk" ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-bold text-amber-700"><AlertTriangle className="w-3 h-3" /> At Risk</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 border border-gray-200 px-2 py-0.5 text-[11px] font-bold text-gray-500">No deliveries</span>
+                      )}
+                    </div>
+                    <p className="m-0 mt-0.5 text-[13px] font-medium text-gray-500">Detailed breakdown of how {r.repName}'s bonus was earned.</p>
+                  </div>
+                </div>
+                <button type="button" onClick={close} aria-label="Close" className="!min-h-0 rounded-lg bg-transparent p-1 text-gray-400 hover:text-gray-700"><X className="h-5 w-5" /></button>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-5 py-3">
+                <span className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[13px] font-bold text-gray-700">
+                  <CalendarDays className="w-4 h-4 text-gray-400" />
+                  {managerPeriod}
+                  {managerPeriodRange.start && <span className="font-semibold text-gray-400">{formatDateOnly(managerPeriodRange.start)} – {formatDateOnly(managerPeriodRange.end)}</span>}
+                </span>
+                <div className="text-right">
+                  <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Total estimated bonus</p>
+                  <p className="m-0 text-xl font-black text-emerald-600">{formatMoney(r.total)}</p>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-gray-50 px-5 py-4">
+                <section className="rounded-2xl border border-gray-200 bg-white p-4">
+                  <h4 className="m-0 flex items-center gap-2 text-[12px] font-black uppercase tracking-wide text-gray-700">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-violet-100 text-[10px] text-violet-700">1</span> Base Bonus
+                  </h4>
+                  <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <div><p className="m-0 text-[11px] font-bold text-gray-500">Delivered Orders</p><p className="m-0 text-base font-black text-gray-900">{r.deliveredCount} orders</p></div>
+                    <div>
+                      <p className="m-0 text-[11px] font-bold text-gray-500">Avg per delivered order</p>
+                      <p className="m-0 text-base font-black text-gray-900">{formatMoney(perDelivery)}</p>
+                      <p className="m-0 text-[10px] text-gray-400">varies by product rule</p>
+                    </div>
+                    <div className="text-right"><p className="m-0 text-[10px] font-black uppercase tracking-wide text-gray-400">Earned</p><p className="m-0 text-lg font-black text-gray-900">{formatMoney(r.base)}</p></div>
+                  </div>
+                  <p className="m-0 mt-2 border-t border-gray-100 pt-2 text-[11px] font-semibold text-gray-500">Delivery Rate {r.deliveryRate}%</p>
+                </section>
+
+                <section className="rounded-2xl border border-gray-200 bg-white p-4">
+                  <h4 className="m-0 flex items-center gap-2 text-[12px] font-black uppercase tracking-wide text-gray-700">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-violet-100 text-[10px] text-violet-700">2</span> Upsell Bonus
+                  </h4>
+                  <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <div>
+                      <p className="m-0 text-[11px] font-bold text-gray-500">Upsell Upgrades</p>
+                      {upgradeCounts.size === 0 ? (
+                        <p className="m-0 text-[13px] font-semibold text-gray-400">None</p>
+                      ) : [...upgradeCounts.entries()].map(([label, n]) => (
+                        <p key={label} className="m-0 text-[12px] font-semibold text-gray-700">• {label} <span className="float-right font-black">{n}</span></p>
+                      ))}
+                    </div>
+                    <div>
+                      <p className="m-0 text-[11px] font-bold text-gray-500">Effective rate</p>
+                      <p className="m-0 text-base font-black text-gray-900">{upsellRatePct === null ? "-" : `${upsellRatePct}%`}</p>
+                      <p className="m-0 text-[10px] text-gray-400">of {formatMoney(upsellRevenue)} upsell revenue</p>
+                    </div>
+                    <div className="text-right"><p className="m-0 text-[10px] font-black uppercase tracking-wide text-gray-400">Earned</p><p className="m-0 text-lg font-black text-violet-700">{formatMoney(r.upsell)}</p></div>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-gray-200 bg-white p-4">
+                  <h4 className="m-0 flex items-center gap-2 text-[12px] font-black uppercase tracking-wide text-gray-700">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-violet-100 text-[10px] text-violet-700">3</span> Cross-sell Bonus
+                  </h4>
+                  <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <div><p className="m-0 text-[11px] font-bold text-gray-500">Cross-sell Orders Delivered</p><p className="m-0 text-base font-black text-gray-900">{r.crossSellCount} orders</p></div>
+                    <div>
+                      <p className="m-0 text-[11px] font-bold text-gray-500">Effective rate</p>
+                      <p className="m-0 text-base font-black text-gray-900">{crossSellRatePct === null ? "-" : `${crossSellRatePct}%`}</p>
+                      <p className="m-0 text-[10px] text-gray-400">of {formatMoney(crossSellRevenue)} cross-sell revenue</p>
+                    </div>
+                    <div className="text-right"><p className="m-0 text-[10px] font-black uppercase tracking-wide text-gray-400">Earned</p><p className="m-0 text-lg font-black text-sky-700">{formatMoney(r.crossSell)}</p></div>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-gray-200 bg-white p-4">
+                  <h4 className="m-0 text-[12px] font-black uppercase tracking-wide text-gray-700">Bonus Adjustments &amp; Targets</h4>
+                  <ul className="m-0 mt-2.5 list-none space-y-1.5 p-0">
+                    {activeRules.length === 0 ? (
+                      <li className="text-[12px] font-semibold text-gray-400">No active Sales Bonus Engine rules for this rep.</li>
+                    ) : activeRules.map((rule) => (
+                      <li key={rule.ruleId} className="flex items-center justify-between gap-2 text-[12px]">
+                        <span className="min-w-0 truncate font-semibold text-gray-700" title={rule.helper}>{rule.name}</span>
+                        <span className="shrink-0 inline-flex items-center gap-1.5">
+                          <span className="font-black text-gray-900">{formatMoney(rule.earnedAmount)}</span>
+                          {rule.completed
+                            ? <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-600"><CheckCircle2 className="w-3 h-3" /> Passed</span>
+                            : <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-600"><AlertTriangle className="w-3 h-3" /> Not met</span>}
+                        </span>
+                      </li>
+                    ))}
+                    <li className="flex items-center justify-between gap-2 border-t border-gray-100 pt-2 text-[12px]">
+                      <span className="font-semibold text-gray-700">Penalties / Deductions</span>
+                      <span className={`font-black ${r.manualAdjustments < 0 ? "text-rose-600" : "text-gray-900"}`}>{r.manualAdjustments === 0 ? formatMoney(0) : formatMoney(r.manualAdjustments)}</span>
+                    </li>
+                  </ul>
+                </section>
+
+                <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-center">
+                  <p className="m-0 text-[11px] font-black uppercase tracking-wider text-emerald-700">Final estimated bonus</p>
+                  <p className="m-0 mt-1 text-3xl font-black text-emerald-700">{formatMoney(r.total)}</p>
+                </section>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 px-5 py-3">
+                <button
+                  type="button"
+                  className="!min-h-0 inline-flex items-center gap-1.5 rounded-xl border border-violet-200 bg-white px-3 py-2 text-[13px] font-bold text-violet-700 hover:bg-violet-50"
+                  onClick={() => {
+                    setBonusBreakdownData({
+                      personName: r.repName,
+                      role: r.role,
+                      weekLabel: `${formatDateWithWeekday(r.weekStart)} to ${formatDateWithWeekday(r.weekEnd)}`,
+                      deliveredCount: r.deliveredCount,
+                      carryoverDelivered: 0,
+                      revenue: r.revenue,
+                      aov: r.aov,
+                      cohortPlaced: r.deliveredCount,
+                      cohortDelivered: r.deliveredCount,
+                      cohortPending: 0,
+                      cohortRate: r.deliveryRate,
+                      finalRate: r.deliveryRate,
+                      targetRate: 60,
+                      totalBonus: r.total,
+                      newEngineBonusEstimate: r.orderLines.reduce((sum, l) => sum + l.enginePayable, 0),
+                      orders: r.orderLines
+                    });
+                    setManagerBonusRepDetailId(null);
+                    setModal("bonusBreakdown");
+                  }}
+                >
+                  <Eye className="w-4 h-4" /> View Orders Behind This Bonus
+                </button>
+                <button type="button" className="!min-h-0 rounded-xl bg-violet-600 px-4 py-2 text-[13px] font-black text-white hover:bg-violet-700" onClick={close}>Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {modal && (() => {
         // Gold shows here if either the CURRENT viewer is gold-honored (her
         // own order), or the order's ASSIGNED REP is - so an Owner/Admin
@@ -104667,8 +104855,11 @@ ${waybillLineItems(w).length > 1
             })()}
 
             {modal === "salesBonusFullReport" && (() => {
-              const rows = buildManagerBonusRepRows(salesBonusWeekStart);
-              const weekEnd = weekEndFromStartKey(salesBonusWeekStart);
+              // Same period as the dashboard section that opened it. A second
+              // period control here that disagreed with the page behind it
+              // would just recreate the confusion this modal is meant to clear.
+              const rows = buildManagerBonusRepRows(managerDeliveredInPeriod, managerPeriodRange);
+              const weekEnd = managerPeriodRange.end;
               const totalBonus = rows.reduce((s, r) => s + r.total, 0);
               const totalBase = rows.reduce((s, r) => s + r.base, 0);
               const totalUpsell = rows.reduce((s, r) => s + r.upsell, 0);
@@ -104676,29 +104867,14 @@ ${waybillLineItems(w).length > 1
               const qualifiedCount = rows.filter((r) => r.status === "qualified").length;
               const pct = (part: number) => totalBonus > 0 ? Math.round((part / totalBonus) * 1000) / 10 : 0;
               const openRepBreakdown = (r: ReturnType<typeof buildManagerBonusRepRows>[number]) => {
-                setBonusBreakdownData({
-                  personName: r.repName,
-                  role: r.role,
-                  weekLabel: `${formatDateWithWeekday(r.weekStart)} to ${formatDateWithWeekday(r.weekEnd)}`,
-                  deliveredCount: r.deliveredCount,
-                  carryoverDelivered: 0,
-                  revenue: r.revenue,
-                  aov: r.aov,
-                  cohortPlaced: r.deliveredCount,
-                  cohortDelivered: r.deliveredCount,
-                  cohortPending: 0,
-                  cohortRate: r.deliveryRate,
-                  finalRate: r.deliveryRate,
-                  targetRate: 60,
-                  totalBonus: r.total,
-                  newEngineBonusEstimate: r.orderLines.reduce((s2, l) => s2 + l.enginePayable, 0),
-                  orders: r.orderLines
-                });
-                setModal("bonusBreakdown");
+                // Same designed panel the Overview table opens - one detail
+                // view, so the two entry points cannot show different things.
+                setModal(null);
+                setManagerBonusRepDetailId(r.repId);
               };
               const exportReport = () => {
                 triggerCsvDownload(
-                  `sales-bonus-report-${salesBonusWeekStart}`,
+                  `sales-bonus-report-${managerPeriodRange.start || "period"}`,
                   [
                     ["Sales Rep", "Delivery Rate %", "AOV", "Base Bonus", "Upsell Bonus", "Cross-sell Bonus", "Adjustments", "Total Bonus", "Status"],
                     ...rows.map((r) => [r.repName, r.deliveryRate, r.aov, r.base, r.upsell, r.crossSell, r.manualAdjustments, r.total, r.status]),
@@ -104719,7 +104895,18 @@ ${waybillLineItems(w).length > 1
               return (
                 <div className="space-y-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    {renderSalesBonusWeekControls()}
+                    {/* Read-only: the dashboard's own Period control drives this.
+                        A second picker here would let the modal disagree with
+                        the page that opened it. */}
+                    <span className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-sm">
+                      <CalendarDays className="w-4 h-4 text-gray-400" />
+                      Period: {managerPeriod}
+                      {managerPeriodRange.start && (
+                        <span className="font-semibold text-gray-400">
+                          {formatDateOnly(managerPeriodRange.start)} – {formatDateOnly(managerPeriodRange.end)}
+                        </span>
+                      )}
+                    </span>
                     <button
                       type="button"
                       className="!min-h-0 inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50"
