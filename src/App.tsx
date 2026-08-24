@@ -9200,6 +9200,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [upsellBonusError, setUpsellBonusError] = useState("");
   const [upsellBonusProfitDetailsOpen, setUpsellBonusProfitDetailsOpen] = useState(false);
   const [upsellBonusExpansionAttributionByOrderId, setUpsellBonusExpansionAttributionByOrderId] = useState<Record<string, SalesBonusOrderAttribution[]> | null>(null);
+  // ⚠️ SEPARATE from upsellBonusExpansionAttributionByOrderId above. That one is
+  // fetched for the Upsell Bonus tab's own week and, for an Owner, only while
+  // that tab is open - so on the Overview it is permanently null and every
+  // engine-paid upgrade/cross-sell silently collapsed into Base. This one
+  // follows the dashboard's Period control and loads on any Manager Dashboard
+  // tab, for any role that can see the page.
+  const [managerBonusAttributionByOrderId, setManagerBonusAttributionByOrderId] = useState<Record<string, SalesBonusOrderAttribution[]> | null>(null);
   const [upsellBonusExpansionAttributionLoading, setUpsellBonusExpansionAttributionLoading] = useState(false);
   const [upsellBonusExpansionAttributionError, setUpsellBonusExpansionAttributionError] = useState("");
   // Weekly per-rep upsell/cross-sell targets, for the same selected week.
@@ -23959,6 +23966,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const bounds = periodBoundsForQuery(managerPeriod, managerDateRange);
     return { start: bounds?.dateFrom ?? "", end: bounds?.dateTo ?? "" };
   })();
+  const managerPlacedInPeriod = trackedOrders.filter((o) =>
+    !o.reviewHold
+    && isInPeriod(orderCreatedKey(o), managerPeriod, managerDateRange)
+    && (managerProductFilterKeys.size === 0 || managerProductFilterKeys.has(productKeyForOrder(o)))
+  );
   const managerDeliveredInPeriod = trackedOrders.filter((o) =>
     (o.status ?? "New") === "Delivered"
     && isInPeriod(orderDeliveredKey(o), managerPeriod, managerDateRange)
@@ -23972,33 +23984,23 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // showing this week's zeros, which is exactly how it first shipped.
   const buildManagerBonusRepRows = (
     deliveredInPeriod: TrackedOrder[],
+    placedInPeriod: TrackedOrder[],
     periodRange: DateRange
   ) => {
     const weekRange: DateRange = periodRange;
-    const cohortThisWeek = trackedOrders.filter((o) => !o.reviewHold && isInExplicitRange(orderCreatedKey(o), weekRange));
-    const repCohort = new Map<string, { placed: number; delivered: number; finalized: number }>();
-    cohortThisWeek.forEach((o) => {
-      const id = o.assignedRepId ?? "__none__";
-      const g = repCohort.get(id) ?? { placed: 0, delivered: 0, finalized: 0 };
-      g.placed += 1;
-      const status = o.status ?? "New";
-      if (status === "Delivered") g.delivered += 1;
-      if (["Delivered", "Cancelled", "Failed"].includes(status)) g.finalized += 1;
-      repCohort.set(id, g);
-    });
 
     return salesRepUsers.map((u) => {
       const progressRow = salesBonusProgress?.reps.find((r) => r.repId === u.id) ?? null;
-      // The engine's own gating numbers, when available, win over a locally
-      // re-derived rate - it is the same figure the engine used to decide
-      // whether this rep's rules paid out, so re-deriving it separately here
-      // could disagree with the totals shown right beside it.
-      const cohortStats = repCohort.get(u.id) ?? { placed: 0, delivered: 0, finalized: 0 };
-      const fallbackRate = cohortStats.finalized > 0 ? Math.round((cohortStats.delivered / cohortStats.finalized) * 100) : 100;
-      const repRate = progressRow?.deliveryRate ?? fallbackRate;
-      const repCount = progressRow?.assignedCount ?? cohortStats.placed;
-
       const deliveredThisWeek = deliveredInPeriod.filter((o) => o.assignedRepId === u.id);
+      // ⚠️ Rate is placed-vs-delivered for THIS period, the identical cohort
+      // Team performance shows directly above. Reading it off salesBonusProgress
+      // instead pulled the engine's own fixed week, so a rep at 63% here showed
+      // "DR: 0%" whenever the page was filtered to any other window.
+      const placedThisPeriod = placedInPeriod.filter((o) => o.assignedRepId === u.id);
+      const repRate = placedThisPeriod.length > 0
+        ? Math.round((placedThisPeriod.filter((o) => (o.status ?? "New") === "Delivered").length / placedThisPeriod.length) * 100)
+        : 0;
+      const repCount = placedThisPeriod.length;
 
       const orderLines = deliveredThisWeek.map((order) =>
         buildOrderBonusBreakdownLine(order, repRate, repCount, weekRange, newEngineBonusSettlementByOrderId[order.id])
@@ -24012,7 +24014,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       // under-count against the very total it is supposed to explain.
       const orderComponents = orderLines.map((line, index) => {
         const order = deliveredThisWeek[index];
-        const attributions = upsellBonusExpansionAttributionByOrderId?.[order.id] ?? [];
+        const attributions = managerBonusAttributionByOrderId?.[order.id] ?? [];
         const engineUpsell = attributions
           .filter((item) => item.ruleType === "upgrade_count")
           .reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
@@ -24039,13 +24041,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const revenue = deliveredThisWeek.reduce((sum, o) => sum + (o.amount || 0), 0);
       const aov = deliveredThisWeek.length > 0 ? Math.round(revenue / deliveredThisWeek.length) : 0;
 
-      // A rep with no deliveries has nothing to qualify for; an active,
-      // unmet engine rule is the only thing that puts a rep genuinely "at
-      // risk" (rather than merely quiet) once they do have deliveries.
-      const activeRules = (progressRow?.rules ?? []).filter((rule) => rule.active);
-      const unmetRule = activeRules.find((rule) => !rule.completed);
+      // ⚠️ Status is judged on the DELIVERY-RATE gate, not on "any unmet rule".
+      // There are ~18 active engine rules (every upgrade ladder step is its
+      // own rule), so almost every rep always has one unmet - judging on that
+      // marked all four reps "At Risk" permanently with the same reason, which
+      // is a badge nobody can ever clear and therefore tells nobody anything.
+      // The rate gate is the one that actually decides whether bonuses pay.
+      const rateGateTarget = activeSalesBonusRules
+        .filter((rule) => rule.type === "delivery_rate_per_delivered")
+        .reduce<number | null>((worst, rule) => {
+          const target = Number(rule.config?.targetRatePercent ?? 0);
+          return worst === null ? target : Math.max(worst, target);
+        }, null);
       const status: "qualified" | "at_risk" | "none" =
-        deliveredThisWeek.length === 0 ? "none" : unmetRule ? "at_risk" : "qualified";
+        deliveredThisWeek.length === 0
+          ? "none"
+          : rateGateTarget !== null && repRate < rateGateTarget
+            ? "at_risk"
+            : "qualified";
+      const statusReasonText = status === "at_risk"
+        ? `Delivery rate ${repRate}% is below the ${rateGateTarget}% target`
+        : status === "qualified"
+          ? "All targets met"
+          : "";
 
       return {
         repId: u.id,
@@ -24062,7 +24080,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         upsellCount,
         crossSellCount,
         status,
-        statusReason: unmetRule?.helper ?? "",
+        statusReason: statusReasonText,
         manualAdjustments: progressRow?.manualAdjustments ?? 0,
         deliveredOrders: deliveredThisWeek,
         orderLines,
@@ -29260,6 +29278,18 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     void refreshUpsellBonusSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentRole]);
+
+  // Loads for the DASHBOARD'S period on any Manager Dashboard tab. Without it
+  // the bonus section shows every engine-paid upgrade and cross-sell as Base.
+  useEffect(() => {
+    if (activePage !== "Manager Dashboard") return;
+    if (!managerPeriodRange.start || !managerPeriodRange.end) return;
+    let cancelled = false;
+    salesBonusesApi.orderExpansionAttributionMap(managerPeriodRange.end, managerPeriodRange.start)
+      .then((result) => { if (!cancelled) setManagerBonusAttributionByOrderId(result ?? {}); })
+      .catch(() => { if (!cancelled) setManagerBonusAttributionByOrderId(null); });
+    return () => { cancelled = true; };
+  }, [activePage, managerPeriodRange.start, managerPeriodRange.end]);
 
   useEffect(() => {
     if (activePage !== "Manager Dashboard") return;
@@ -73039,7 +73069,7 @@ ${waybillLineItems(w).length > 1
                         // Same period as Team performance above and Fulfillment
                         // below - driven by the page's Period control, never by
                         // the Bonus tab's own week.
-                        const bonusRows = buildManagerBonusRepRows(managerDeliveredInPeriod, managerPeriodRange);
+                        const bonusRows = buildManagerBonusRepRows(managerDeliveredInPeriod, managerPlacedInPeriod, managerPeriodRange);
                         const totalTeamBonus = bonusRows.reduce((sum, r) => sum + r.total, 0);
                         return (
                       <section className="space-y-3">
@@ -73111,8 +73141,8 @@ ${waybillLineItems(w).length > 1
                                         No deliveries
                                       </span>
                                     )}
-                                    {r.status === "at_risk" && r.statusReason && (
-                                      <div className="text-[10px] text-amber-600 mt-0.5">{r.statusReason}</div>
+                                    {r.statusReason && (
+                                      <div className={`text-[10px] mt-0.5 ${r.status === "at_risk" ? "text-amber-600" : "text-gray-400"}`}>{r.statusReason}</div>
                                     )}
                                   </td>
                                   <td className="px-4 py-3 text-right">
@@ -95339,7 +95369,7 @@ ${waybillLineItems(w).length > 1
           in three cards. Both stay: the order-level detail is reachable from
           the button at the bottom of this panel. */}
       {managerBonusRepDetailId && (() => {
-        const rows = buildManagerBonusRepRows(managerDeliveredInPeriod, managerPeriodRange);
+        const rows = buildManagerBonusRepRows(managerDeliveredInPeriod, managerPlacedInPeriod, managerPeriodRange);
         const r = rows.find((row) => row.repId === managerBonusRepDetailId);
         if (!r) return null;
         const upgradeCounts = new Map<string, number>();
@@ -104858,7 +104888,7 @@ ${waybillLineItems(w).length > 1
               // Same period as the dashboard section that opened it. A second
               // period control here that disagreed with the page behind it
               // would just recreate the confusion this modal is meant to clear.
-              const rows = buildManagerBonusRepRows(managerDeliveredInPeriod, managerPeriodRange);
+              const rows = buildManagerBonusRepRows(managerDeliveredInPeriod, managerPlacedInPeriod, managerPeriodRange);
               const weekEnd = managerPeriodRange.end;
               const totalBonus = rows.reduce((s, r) => s + r.total, 0);
               const totalBase = rows.reduce((s, r) => s + r.base, 0);
