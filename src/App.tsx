@@ -65990,25 +65990,29 @@ ${waybillLineItems(w).length > 1
                 : recoveryBonusPeriod.toLowerCase();
               const weekPct = rec.weeklyTarget > 0 ? Math.min(100, (rec.recoveredThisWeek / rec.weeklyTarget) * 100) : 0;
               const monthPct = rec.monthlyTarget > 0 ? Math.min(100, (rec.recoveredThisMonth / rec.monthlyTarget) * 100) : 0;
+              // ⚠️ The status tint is a 3px rail, not a wash over the whole
+              // panel. Flooding the background amber made every figure inside
+              // read as a warning, including the ones that were fine.
               return (
-                <section className={`overflow-hidden rounded-2xl border-2 p-5 shadow-sm ${rec.gatesMet ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white" : "border-amber-300 bg-gradient-to-br from-amber-50 to-white"}`}>
+                <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 bg-slate-50/60 p-5 shadow-sm dark:border-slate-700/70 dark:bg-slate-900/40">
+                  <span className={`absolute inset-y-0 left-0 w-[3px] ${rec.gatesMet ? "bg-emerald-500" : "bg-amber-500"}`} />
                   {/* Its own period, not the page strip above. */}
-                  <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-gray-200/70 pb-3">
-                    <span className="text-[10px] font-black uppercase tracking-[0.16em] text-gray-400">Bonus period</span>
+                  <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-slate-200/70 pb-3 dark:border-slate-700/70">
+                    <span className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Bonus period</span>
                     {/* Says it is working. Without this the old figures simply
                         sat there through a slow query, which reads as a frozen
                         panel rather than a loading one. */}
                     {recoveryBonusLoading && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-gray-500">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-sky-700">
                         <RefreshCw className="h-3 w-3 animate-spin" /> Updating
                       </span>
                     )}
-                    <div className="inline-flex flex-wrap items-center gap-1 rounded-lg bg-white/70 p-1">
+                    <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-slate-200/80 bg-white p-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
                       {periods.map((item) => (
                         <button
                           key={item}
                           type="button"
-                          className={`!min-h-0 rounded-md px-2.5 py-1 text-xs font-bold transition-colors ${recoveryBonusPeriod === item ? "bg-gray-900 text-white shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                          className={`!min-h-0 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${recoveryBonusPeriod === item ? "bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800"}`}
                           onClick={() => handleRecoveryBonusPeriodChange(item)}
                         >{item}</button>
                       ))}
@@ -66037,28 +66041,40 @@ ${waybillLineItems(w).length > 1
                     </div>
                   </div>
                   <div className={`grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)] transition-opacity ${recoveryBonusLoading ? "opacity-50" : "opacity-100"}`}>
-                    <div>
+                    <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm dark:border-slate-700/70 dark:bg-slate-900">
                       {/* ⚠️ Was hard-coded to "this month" while the figure had
                           always followed whatever range was requested - the
                           label was lying, which is why the filter looked absent. */}
-                      <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Your recovery bonus · {bonusRangeLabel}</p>
-                      <strong className={`mt-1 block text-3xl font-black ${rec.gatesMet ? "text-emerald-700" : "text-amber-700"}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="m-0 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
+                          Recovery bonus · {bonusRangeLabel}
+                        </p>
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${
+                          rec.gatesMet ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                          {rec.gatesMet ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+                          {rec.gatesMet ? "Earned" : "Held"}
+                        </span>
+                      </div>
+                      <strong className={`mt-2 block text-5xl font-black leading-none tracking-tight ${
+                        rec.gatesMet ? "text-emerald-600" : "text-slate-900 dark:text-slate-100"}`}>
                         {formatMoney(rec.bonusValue)}
                       </strong>
-                      <p className="mt-1 text-xs font-semibold text-gray-600">
+                      <p className="m-0 mt-2 text-xs font-semibold text-slate-500">
                         {rec.recoveredThisMonth} recovered × {formatMoney(rec.bonusPerOrder)} each
                       </p>
-                      <div className="mt-2 flex items-start gap-2">
-                        <span className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${rec.gatesMet ? "bg-emerald-500" : "bg-amber-500"} text-white`}>
-                          {rec.gatesMet ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
-                        </span>
-                        <p className={`m-0 text-xs font-bold ${rec.gatesMet ? "text-emerald-800" : "text-amber-800"}`}>
-                          {rec.gatesMet ? "All quality targets met - bonus is earned." : rec.note}
-                          {!rec.gatesMet && rec.bonusAtRisk > 0 && (
-                            <span className="mt-0.5 block font-black">{formatMoney(rec.bonusAtRisk)} is waiting on it.</span>
+                      {!rec.gatesMet && (
+                        <div className="mt-3 rounded-xl border border-amber-200/80 bg-amber-50/70 p-3 dark:border-amber-400/20 dark:bg-amber-500/10">
+                          <p className="m-0 text-xs font-bold text-amber-900 dark:text-amber-200">{rec.note}</p>
+                          {rec.bonusAtRisk > 0 && (
+                            <p className="m-0 mt-1 text-sm font-black text-amber-900 dark:text-amber-100">
+                              {formatMoney(rec.bonusAtRisk)} is waiting on it.
+                            </p>
                           )}
-                        </p>
-                      </div>
+                        </div>
+                      )}
+                      {rec.gatesMet && (
+                        <p className="m-0 mt-3 text-xs font-bold text-emerald-700">All quality targets met — bonus is earned.</p>
+                      )}
                     </div>
                     {(recoveryBonusSummary?.weeklyPace ?? summary.weeklyPace) && (() => {
                       const wp = (recoveryBonusSummary?.weeklyPace ?? summary.weeklyPace);
