@@ -12345,6 +12345,13 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [recoveryRepKpiError, setRecoveryRepKpiError] = useState("");
   const [recoveryRepPeriod, setRecoveryRepPeriod] = useState<Period>("This Month");
   const [recoveryRepDateRange, setRecoveryRepDateRange] = useState<DateRange>({ start: "", end: "" });
+  // The recovery bonus panel carries its OWN period, separate from the page
+  // strip above it. Bright wanted to re-window the bonus without dragging the
+  // rest of the dashboard along with it.
+  const [recoveryBonusPeriod, setRecoveryBonusPeriod] = useState<Period>("This Month");
+  const [recoveryBonusDateRange, setRecoveryBonusDateRange] = useState<DateRange>({ start: "", end: "" });
+  const [showRecoveryBonusDateRange, setShowRecoveryBonusDateRange] = useState(false);
+  const [recoveryBonusSummary, setRecoveryBonusSummary] = useState<any | null>(null);
   // When each dead order actually died, keyed by order id. Derived from
   // order_audit server-side because orders.updated_at is not the closure date.
   const [orderClosureDates, setOrderClosureDates] = useState<Record<string, string>>({});
@@ -32390,6 +32397,47 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     setShowRecoveryRepDateRange(false);
   };
 
+  /**
+   * Refetch JUST the recovery bonus block for the panel's own window.
+   *
+   * ⚠️ Skips the call entirely when the panel's window matches the page's -
+   * the summary endpoint costs every delivered order in the range, and firing
+   * it twice for the same dates would double the page's heaviest query for
+   * nothing. When it matches, the panel simply reads the page's own summary.
+   */
+  const loadRecoveryBonusSummary = async () => {
+    if (!recoveryRepViewingId) { setRecoveryBonusSummary(null); return; }
+    const panel = periodBoundsForQuery(recoveryBonusPeriod, recoveryBonusDateRange);
+    const page = periodBoundsForQuery(recoveryRepPeriod, recoveryRepDateRange);
+    if (!panel || (page && panel.dateFrom === page.dateFrom && panel.dateTo === page.dateTo)) {
+      setRecoveryBonusSummary(null);
+      return;
+    }
+    try {
+      setRecoveryBonusSummary(await recoveryRepKpiApi.summary({
+        repId: recoveryRepViewingId, dateFrom: panel.dateFrom, dateTo: panel.dateTo
+      }));
+    } catch { setRecoveryBonusSummary(null); }
+  };
+
+  const handleRecoveryBonusPeriodChange = (nextPeriod: Period) => {
+    setRecoveryBonusPeriod(nextPeriod);
+    setShowRecoveryBonusDateRange(false);
+  };
+
+  const applyRecoveryBonusDateRange = () => {
+    if (!recoveryBonusDateRange.start || !recoveryBonusDateRange.end) {
+      showToast("Choose both a start date and an end date.");
+      return;
+    }
+    if (!isDateValue(recoveryBonusDateRange.start) || !isDateValue(recoveryBonusDateRange.end)) {
+      showToast("Use YYYY-MM-DD for both dates.");
+      return;
+    }
+    setRecoveryBonusPeriod("Custom");
+    setShowRecoveryBonusDateRange(false);
+  };
+
   const applyRecoveryRepDateRange = () => {
     if (!recoveryRepDateRange.start || !recoveryRepDateRange.end) {
       showToast("Choose both a start date and an end date.");
@@ -46449,6 +46497,12 @@ ${waybillLineItems(w).length > 1
       setRecoveryRepSettingsSaving(false);
     }
   };
+
+  useEffect(() => {
+    void loadRecoveryBonusSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recoveryRepViewingId, recoveryBonusPeriod, recoveryBonusDateRange.start, recoveryBonusDateRange.end,
+      recoveryRepPeriod, recoveryRepDateRange.start, recoveryRepDateRange.end]);
 
   useEffect(() => {
     if (activePage !== "Recovery Rep Dashboard") return;
@@ -65831,14 +65885,46 @@ ${waybillLineItems(w).length > 1
                 sees - company revenue, cost and margin are stripped by the
                 API for them, not merely hidden here. */}
             {summary.recovery && (() => {
-              const rec = summary.recovery;
+              // The panel's own window. Falls back to the page's summary when
+              // the two match, so the heavy endpoint is not called twice.
+              const rec = (recoveryBonusSummary?.recovery ?? summary.recovery);
+              const bonusRangeLabel = recoveryBonusPeriod === "Custom"
+                ? `${recoveryBonusDateRange.start} to ${recoveryBonusDateRange.end}`
+                : recoveryBonusPeriod.toLowerCase();
               const weekPct = rec.weeklyTarget > 0 ? Math.min(100, (rec.recoveredThisWeek / rec.weeklyTarget) * 100) : 0;
               const monthPct = rec.monthlyTarget > 0 ? Math.min(100, (rec.recoveredThisMonth / rec.monthlyTarget) * 100) : 0;
               return (
                 <section className={`overflow-hidden rounded-2xl border-2 p-5 shadow-sm ${rec.gatesMet ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white" : "border-amber-300 bg-gradient-to-br from-amber-50 to-white"}`}>
+                  {/* Its own period, not the page strip above. */}
+                  <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-gray-200/70 pb-3">
+                    <span className="text-[10px] font-black uppercase tracking-[0.16em] text-gray-400">Bonus period</span>
+                    <div className="inline-flex flex-wrap items-center gap-1 rounded-lg bg-white/70 p-1">
+                      {periods.map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          className={`!min-h-0 rounded-md px-2.5 py-1 text-xs font-bold transition-colors ${recoveryBonusPeriod === item ? "bg-gray-900 text-white shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                          onClick={() => handleRecoveryBonusPeriodChange(item)}
+                        >{item}</button>
+                      ))}
+                    </div>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        className="!min-h-0 inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
+                        onClick={() => setShowRecoveryBonusDateRange((open) => !open)}
+                      >
+                        <CalendarDays className="h-3.5 w-3.5" /> {recoveryBonusPeriod === "Custom" ? "Edit dates" : "Custom range"}
+                      </button>
+                      {showRecoveryBonusDateRange && renderDateRangeCalendar("recovery-bonus-date-range-panel", recoveryBonusDateRange, setRecoveryBonusDateRange, applyRecoveryBonusDateRange, () => setShowRecoveryBonusDateRange(false))}
+                    </div>
+                  </div>
                   <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]">
                     <div>
-                      <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Your recovery bonus this month</p>
+                      {/* ⚠️ Was hard-coded to "this month" while the figure had
+                          always followed whatever range was requested - the
+                          label was lying, which is why the filter looked absent. */}
+                      <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Your recovery bonus · {bonusRangeLabel}</p>
                       <strong className={`mt-1 block text-3xl font-black ${rec.gatesMet ? "text-emerald-700" : "text-amber-700"}`}>
                         {formatMoney(rec.bonusValue)}
                       </strong>
@@ -65865,8 +65951,12 @@ ${waybillLineItems(w).length > 1
                           (rec.dailyFollowUpTarget ?? 0) > 0 ? Math.min(100, ((rec.followUpPicksToday ?? 0) / rec.dailyFollowUpTarget) * 100) : 0],
                         ["Picked today · retention", rec.retentionPicksToday ?? 0, rec.dailyRetentionTarget ?? 0,
                           (rec.dailyRetentionTarget ?? 0) > 0 ? Math.min(100, ((rec.retentionPicksToday ?? 0) / rec.dailyRetentionTarget) * 100) : 0],
+                        // ⚠️ "This week" really is the current week - the server
+                        // computes it on its own window and ignores the range.
+                        // The next card is the one that follows the filter, so
+                        // they must not both claim a fixed period.
                         ["This week", rec.recoveredThisWeek, rec.weeklyTarget, weekPct],
-                        ["This month", rec.recoveredThisMonth, rec.monthlyTarget, monthPct]
+                        [`Recovered · ${bonusRangeLabel}`, rec.recoveredThisMonth, rec.monthlyTarget, monthPct]
                       ] as Array<[string, number, number, number]>).map(([label, done, target, pct]) => {
                         const hit = done >= target;
                         return (
