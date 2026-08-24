@@ -253,7 +253,7 @@ function syncDynamicManifestLink(orgId: string | null | undefined, brandName: st
 type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" | "Last Month" | "This Year" | "Custom";
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
-type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
+type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
 type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
@@ -13036,6 +13036,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [manualBonusReasonText, setManualBonusReasonText] = useState("");
   const [manualBonusParts, setManualBonusParts] = useState<{ base: string; upgrade: string; crossSell: string; freeGift: string }>({ base: "", upgrade: "", crossSell: "", freeGift: "" });
   const [bonusBreakdownData, setBonusBreakdownData] = useState<BonusBreakdownData | null>(null);
+  const [salesBonusFullReportTab, setSalesBonusFullReportTab] = useState<"Bonus Summary" | "Base Bonus Details" | "Upsell Bonus Details" | "Cross-sell Bonus Details" | "Adjustments & Penalties" | "Payment Status">("Bonus Summary");
   // Sales Bonus Engine ("Bonuses up for grabs") earnings for the exact rep +
   // week shown in the breakdown modal - fetched separately from
   // bonusBreakdownData because it's a different, independently-loaded data
@@ -23939,6 +23940,119 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       payableTotal: legacyTotal + enginePayable,
       components: componentLines
     };
+  };
+
+  // Weekly bonus rollup per sales rep, combining the legacy per-product bonus
+  // config with the Sales Bonus Engine's own rules - the SAME two sources
+  // Team performance's own "Bonus est." column already adds together
+  // (recognizedBonusTotalForRows). A plain function rather than a memoized
+  // value so both the Manager Dashboard overview section and the full report
+  // modal can call it fresh, without threading state between two separate
+  // branches of the render tree.
+  const buildManagerBonusRepRows = (weekStart: string) => {
+    const weekEnd = weekEndFromStartKey(weekStart);
+    const weekRange: DateRange = { start: weekStart, end: weekEnd };
+    const cohortThisWeek = trackedOrders.filter((o) => !o.reviewHold && isInExplicitRange(orderCreatedKey(o), weekRange));
+    const repCohort = new Map<string, { placed: number; delivered: number; finalized: number }>();
+    cohortThisWeek.forEach((o) => {
+      const id = o.assignedRepId ?? "__none__";
+      const g = repCohort.get(id) ?? { placed: 0, delivered: 0, finalized: 0 };
+      g.placed += 1;
+      const status = o.status ?? "New";
+      if (status === "Delivered") g.delivered += 1;
+      if (["Delivered", "Cancelled", "Failed"].includes(status)) g.finalized += 1;
+      repCohort.set(id, g);
+    });
+
+    return salesRepUsers.map((u) => {
+      const progressRow = salesBonusProgress?.reps.find((r) => r.repId === u.id) ?? null;
+      // The engine's own gating numbers, when available, win over a locally
+      // re-derived rate - it is the same figure the engine used to decide
+      // whether this rep's rules paid out, so re-deriving it separately here
+      // could disagree with the totals shown right beside it.
+      const cohortStats = repCohort.get(u.id) ?? { placed: 0, delivered: 0, finalized: 0 };
+      const fallbackRate = cohortStats.finalized > 0 ? Math.round((cohortStats.delivered / cohortStats.finalized) * 100) : 100;
+      const repRate = progressRow?.deliveryRate ?? fallbackRate;
+      const repCount = progressRow?.assignedCount ?? cohortStats.placed;
+
+      const deliveredThisWeek = trackedOrders.filter((o) =>
+        !o.reviewHold
+        && o.assignedRepId === u.id
+        && (o.status ?? "New") === "Delivered"
+        && isInExplicitRange(orderDeliveredKey(o), weekRange)
+      );
+
+      const orderLines = deliveredThisWeek.map((order) =>
+        buildOrderBonusBreakdownLine(order, repRate, repCount, weekRange, newEngineBonusSettlementByOrderId[order.id])
+      );
+
+      let base = 0, upsell = 0, crossSell = 0;
+      // Per-order combined (legacy + engine) split, kept alongside orderLines
+      // so any UI drilling into individual orders sums to EXACTLY the same
+      // rep-level totals above - a details view built from orderLines' legacy
+      // fields alone would silently omit each order's engine-earned share and
+      // under-count against the very total it is supposed to explain.
+      const orderComponents = orderLines.map((line, index) => {
+        const order = deliveredThisWeek[index];
+        const attributions = upsellBonusExpansionAttributionByOrderId?.[order.id] ?? [];
+        const engineUpsell = attributions
+          .filter((item) => item.ruleType === "upgrade_count")
+          .reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+        const engineCrossSell = attributions
+          .filter((item) => item.ruleType === "cross_sell_count" || item.ruleType === "cross_sell_offer")
+          .reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+        // Whatever the engine paid on this order that is NOT an upgrade or
+        // cross-sell attribution is delivery-rate (or another per-delivery)
+        // pay, which belongs in Base - floored so a rounding mismatch between
+        // the two data sources can never read negative.
+        const engineBase = Math.max(0, line.enginePayable - engineUpsell - engineCrossSell);
+        const orderBase = line.base + engineBase;
+        const orderUpsell = line.upgrade + engineUpsell;
+        const orderCrossSell = line.crossSell + line.freeGift + engineCrossSell;
+        base += orderBase;
+        upsell += orderUpsell;
+        crossSell += orderCrossSell;
+        return { orderId: order.id, base: orderBase, upsell: orderUpsell, crossSell: orderCrossSell };
+      });
+
+      const total = base + upsell + crossSell;
+      const upsellCount = deliveredThisWeek.filter(orderHasVerifiedUpsell).length;
+      const crossSellCount = deliveredThisWeek.filter((o) => (o.crossSellLines?.length ?? 0) > 0).length;
+      const revenue = deliveredThisWeek.reduce((sum, o) => sum + (o.amount || 0), 0);
+      const aov = deliveredThisWeek.length > 0 ? Math.round(revenue / deliveredThisWeek.length) : 0;
+
+      // A rep with no deliveries has nothing to qualify for; an active,
+      // unmet engine rule is the only thing that puts a rep genuinely "at
+      // risk" (rather than merely quiet) once they do have deliveries.
+      const activeRules = (progressRow?.rules ?? []).filter((rule) => rule.active);
+      const unmetRule = activeRules.find((rule) => !rule.completed);
+      const status: "qualified" | "at_risk" | "none" =
+        deliveredThisWeek.length === 0 ? "none" : unmetRule ? "at_risk" : "qualified";
+
+      return {
+        repId: u.id,
+        repName: u.name,
+        role: u.role,
+        deliveryRate: repRate,
+        aov,
+        revenue,
+        deliveredCount: deliveredThisWeek.length,
+        base,
+        upsell,
+        crossSell,
+        total,
+        upsellCount,
+        crossSellCount,
+        status,
+        statusReason: unmetRule?.helper ?? "",
+        manualAdjustments: progressRow?.manualAdjustments ?? 0,
+        deliveredOrders: deliveredThisWeek,
+        orderLines,
+        orderComponents,
+        weekStart,
+        weekEnd
+      };
+    }).sort((a, b) => b.total - a.total || b.revenue - a.revenue || a.repName.localeCompare(b.repName));
   };
 
   // Projected bonus: what the rep would earn IF this order is delivered - ignores status check
@@ -72903,6 +73017,126 @@ ${waybillLineItems(w).length > 1
                         </div>
                       </section>
 
+                      {(() => {
+                        const bonusRows = buildManagerBonusRepRows(salesBonusWeekStart);
+                        const bonusWeekEndKey = weekEndFromStartKey(salesBonusWeekStart);
+                        const totalTeamBonus = bonusRows.reduce((sum, r) => sum + r.total, 0);
+                        return (
+                      <section className="space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-1">
+                          <div>
+                            <h2 className="text-sm font-bold text-gray-800">Sales Rep Bonus Breakdown</h2>
+                            <p className="text-xs text-gray-400">See exactly how each rep's bonus was earned for this period.</p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 m-0">Total Team Bonus</p>
+                              <p className="text-lg font-extrabold text-violet-700 m-0">{formatMoney(totalTeamBonus)}</p>
+                            </div>
+                            <button
+                              type="button"
+                              className="!min-h-0 inline-flex items-center gap-1.5 rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-bold text-violet-700 shadow-sm hover:bg-violet-50"
+                              onClick={() => setModal("salesBonusFullReport")}
+                            >
+                              View Full Bonus Report <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-gray-100 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                                <th className="px-4 py-3">Sales Rep</th>
+                                <th className="px-4 py-3 text-right" title="Per-delivery pay: legacy product config plus the Sales Bonus Engine's delivery-rate rules.">Base Bonus</th>
+                                <th className="px-4 py-3 text-right" title="Bonus earned on quantity upgrades this week.">Upsell Bonus</th>
+                                <th className="px-4 py-3 text-right" title="Bonus earned on cross-sells and free gifts this week.">Cross-sell Bonus</th>
+                                <th className="px-4 py-3 text-right">Total Bonus</th>
+                                <th className="px-4 py-3">Status</th>
+                                <th className="px-4 py-3 text-right">Details</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {bonusRows.length === 0 ? (
+                                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400 italic">No active sales reps found.</td></tr>
+                              ) : bonusRows.map((r) => (
+                                <tr key={r.repId} className="border-b border-gray-50 last:border-0">
+                                  <td className="px-4 py-3">
+                                    <div className="font-bold text-gray-900">{r.repName}</div>
+                                    <div className="text-[10px] text-gray-400">DR: {r.deliveryRate}% · AOV: {formatMoney(r.aov)}</div>
+                                  </td>
+                                  <td className="px-4 py-3 text-right">
+                                    <div className="font-bold text-gray-900">{formatMoney(r.base)}</div>
+                                    <div className="text-[10px] text-gray-400">{r.deliveredCount} deliveries</div>
+                                  </td>
+                                  <td className="px-4 py-3 text-right">
+                                    <div className="font-bold text-violet-700">{formatMoney(r.upsell)}</div>
+                                    <div className="text-[10px] text-gray-400">{r.upsellCount} upgrades</div>
+                                  </td>
+                                  <td className="px-4 py-3 text-right">
+                                    <div className="font-bold text-sky-700">{formatMoney(r.crossSell)}</div>
+                                    <div className="text-[10px] text-gray-400">{r.crossSellCount} cross-sells</div>
+                                  </td>
+                                  <td className="px-4 py-3 text-right font-extrabold text-gray-900">{formatMoney(r.total)}</td>
+                                  <td className="px-4 py-3">
+                                    {r.status === "qualified" ? (
+                                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
+                                        <CheckCircle2 className="w-3 h-3" /> Qualified
+                                      </span>
+                                    ) : r.status === "at_risk" ? (
+                                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-bold text-amber-700" title={r.statusReason}>
+                                        <AlertTriangle className="w-3 h-3" /> At Risk
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 border border-gray-200 px-2 py-0.5 text-[11px] font-bold text-gray-500">
+                                        No deliveries
+                                      </span>
+                                    )}
+                                    {r.status === "at_risk" && r.statusReason && (
+                                      <div className="text-[10px] text-amber-600 mt-0.5">{r.statusReason}</div>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-right">
+                                    <button
+                                      type="button"
+                                      title="Open detailed bonus breakdown"
+                                      className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-violet-200 bg-violet-50 p-1.5 text-violet-700 hover:bg-violet-100"
+                                      onClick={() => {
+                                        setBonusBreakdownData({
+                                          personName: r.repName,
+                                          role: r.role,
+                                          weekLabel: `${formatDateWithWeekday(r.weekStart)} to ${formatDateWithWeekday(r.weekEnd)}`,
+                                          deliveredCount: r.deliveredCount,
+                                          carryoverDelivered: 0,
+                                          revenue: r.revenue,
+                                          aov: r.aov,
+                                          cohortPlaced: r.deliveredCount,
+                                          cohortDelivered: r.deliveredCount,
+                                          cohortPending: 0,
+                                          cohortRate: r.deliveryRate,
+                                          finalRate: r.deliveryRate,
+                                          targetRate: 60,
+                                          totalBonus: r.total,
+                                          newEngineBonusEstimate: r.orderLines.reduce((sum, l) => sum + l.enginePayable, 0),
+                                          orders: r.orderLines
+                                        });
+                                        setModal("bonusBreakdown");
+                                      }}
+                                    >
+                                      <Eye className="w-4 h-4" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <p className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                          <Info className="w-3.5 h-3.5 shrink-0" /> Bonuses are estimated and will be finalized after period close &amp; verification.
+                        </p>
+                      </section>
+                        );
+                      })()}
+
                       {/* Fulfillment & stock health */}
                       <section className="space-y-3">
                         <div>
@@ -95109,7 +95343,7 @@ ${waybillLineItems(w).length > 1
         return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
           <section
-            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "sendToAgent" ? "h-[calc(100dvh-1rem)] sm:h-[46rem]" : ""} ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" ? "max-w-5xl" :modal === "recordRemittance" || modal === "sendToAgent" || modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "addExtraItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
+            className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "sendToAgent" ? "h-[calc(100dvh-1rem)] sm:h-[46rem]" : ""} ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" || modal === "salesBonusFullReport" ? "max-w-5xl" :modal === "recordRemittance" || modal === "sendToAgent" || modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "addExtraItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
             role="dialog" aria-modal="true" aria-labelledby="modal-title"
           >
@@ -95249,6 +95483,7 @@ ${waybillLineItems(w).length > 1
 	                  </span>
 	                )}
 	                {modal === "bonusBreakdown" && "Bonus Breakdown"}
+	                {modal === "salesBonusFullReport" && "Sales Bonus Full Report"}
 	                {modal === "bonusSettings" && "Bonus Settings"}
 	                {modal === "stateAvailability" && "State Availability"}
 	                {modal === "addCrossSell" && "Add Cross-sell"}
@@ -104428,6 +104663,302 @@ ${waybillLineItems(w).length > 1
                       )}
                     </div>
                   </section>
+                </div>
+              );
+            })()}
+
+            {modal === "salesBonusFullReport" && (() => {
+              const rows = buildManagerBonusRepRows(salesBonusWeekStart);
+              const weekEnd = weekEndFromStartKey(salesBonusWeekStart);
+              const totalBonus = rows.reduce((s, r) => s + r.total, 0);
+              const totalBase = rows.reduce((s, r) => s + r.base, 0);
+              const totalUpsell = rows.reduce((s, r) => s + r.upsell, 0);
+              const totalCrossSell = rows.reduce((s, r) => s + r.crossSell, 0);
+              const qualifiedCount = rows.filter((r) => r.status === "qualified").length;
+              const pct = (part: number) => totalBonus > 0 ? Math.round((part / totalBonus) * 1000) / 10 : 0;
+              const openRepBreakdown = (r: ReturnType<typeof buildManagerBonusRepRows>[number]) => {
+                setBonusBreakdownData({
+                  personName: r.repName,
+                  role: r.role,
+                  weekLabel: `${formatDateWithWeekday(r.weekStart)} to ${formatDateWithWeekday(r.weekEnd)}`,
+                  deliveredCount: r.deliveredCount,
+                  carryoverDelivered: 0,
+                  revenue: r.revenue,
+                  aov: r.aov,
+                  cohortPlaced: r.deliveredCount,
+                  cohortDelivered: r.deliveredCount,
+                  cohortPending: 0,
+                  cohortRate: r.deliveryRate,
+                  finalRate: r.deliveryRate,
+                  targetRate: 60,
+                  totalBonus: r.total,
+                  newEngineBonusEstimate: r.orderLines.reduce((s2, l) => s2 + l.enginePayable, 0),
+                  orders: r.orderLines
+                });
+                setModal("bonusBreakdown");
+              };
+              const exportReport = () => {
+                triggerCsvDownload(
+                  `sales-bonus-report-${salesBonusWeekStart}`,
+                  [
+                    ["Sales Rep", "Delivery Rate %", "AOV", "Base Bonus", "Upsell Bonus", "Cross-sell Bonus", "Adjustments", "Total Bonus", "Status"],
+                    ...rows.map((r) => [r.repName, r.deliveryRate, r.aov, r.base, r.upsell, r.crossSell, r.manualAdjustments, r.total, r.status]),
+                  ],
+                  "Bonus report exported."
+                );
+              };
+              // Describe the LIVE active rules rather than a hardcoded formula -
+              // amounts vary per product/tier, and a flat number here would lie
+              // about what is actually configured (and would have hidden the
+              // duplicate delivery-rate rule found earlier).
+              const deliveryRateRules = activeSalesBonusRules.filter((r) => r.type === "delivery_rate_per_delivered");
+              const upgradeRules = activeSalesBonusRules.filter((r) => r.type === "upgrade_count");
+              const crossSellRules = activeSalesBonusRules.filter((r) => r.type === "cross_sell_count" || r.type === "cross_sell_offer");
+              const legacyProductsWithBase = products.filter((p) => p.active !== false && (p.bonusConfig?.baseDelivered?.length ?? 0) > 0);
+              const legacyProductsWithUpgrade = products.filter((p) => p.active !== false && (p.bonusConfig?.upgradeBonuses?.length ?? 0) > 0);
+              const legacyProductsWithCrossSell = products.filter((p) => p.active !== false && ((p.bonusConfig?.crossSellPercent ?? 0) > 0 || (p.bonusConfig?.crossSellFixed ?? 0) > 0));
+              return (
+                <div className="space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    {renderSalesBonusWeekControls()}
+                    <button
+                      type="button"
+                      className="!min-h-0 inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50"
+                      onClick={exportReport}
+                    >
+                      <Download className="w-4 h-4" /> Export Report
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    {[
+                      { label: "Total Team Bonus", value: formatMoney(totalBonus), helper: "Estimated total", icon: Wallet, tone: "text-violet-700 bg-violet-50" },
+                      { label: "Base Bonus", value: formatMoney(totalBase), helper: `${pct(totalBase)}% of total`, icon: Users, tone: "text-indigo-700 bg-indigo-50" },
+                      { label: "Upsell Bonus", value: formatMoney(totalUpsell), helper: `${pct(totalUpsell)}% of total`, icon: TrendingUp, tone: "text-violet-700 bg-violet-50" },
+                      { label: "Cross-sell Bonus", value: formatMoney(totalCrossSell), helper: `${pct(totalCrossSell)}% of total`, icon: Gift, tone: "text-sky-700 bg-sky-50" },
+                      { label: "Qualified Reps", value: `${qualifiedCount} / ${rows.length}`, helper: rows.length > 0 ? `${Math.round((qualifiedCount / rows.length) * 100)}% qualified` : "-", icon: CheckCircle2, tone: "text-emerald-700 bg-emerald-50" }
+                    ].map((card) => (
+                      <div key={card.label} className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+                        <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg ${card.tone}`}><card.icon className="w-4 h-4" /></span>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mt-2 mb-0.5">{card.label}</p>
+                        <p className="text-lg font-extrabold text-gray-900 m-0">{card.value}</p>
+                        <p className="text-[10px] text-gray-400 m-0">{card.helper}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="border-b border-gray-200 overflow-x-auto">
+                    <div className="flex gap-1 min-w-max">
+                      {(["Bonus Summary", "Base Bonus Details", "Upsell Bonus Details", "Cross-sell Bonus Details", "Adjustments & Penalties", "Payment Status"] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          type="button"
+                          className={`!min-h-0 px-3 py-2 text-sm font-bold border-b-2 whitespace-nowrap ${salesBonusFullReportTab === tab ? "border-violet-600 text-violet-700" : "border-transparent text-gray-500 hover:text-gray-800"}`}
+                          onClick={() => setSalesBonusFullReportTab(tab)}
+                        >
+                          {tab}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {salesBonusFullReportTab === "Bonus Summary" && (
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-100 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                            <th className="px-3 py-2.5">Sales Rep</th>
+                            <th className="px-3 py-2.5 text-right">Base Bonus</th>
+                            <th className="px-3 py-2.5 text-right">Upsell Bonus</th>
+                            <th className="px-3 py-2.5 text-right">Cross-sell Bonus</th>
+                            <th className="px-3 py-2.5 text-right">Adjustments</th>
+                            <th className="px-3 py-2.5 text-right">Total Bonus</th>
+                            <th className="px-3 py-2.5">Status</th>
+                            <th className="px-3 py-2.5 text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((r) => (
+                            <tr key={r.repId} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
+                              <td className="px-3 py-2.5">
+                                <div className="font-bold text-gray-900">{r.repName}</div>
+                                <div className="text-[10px] text-gray-400">DR: {r.deliveryRate}% · AOV: {formatMoney(r.aov)}</div>
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-semibold text-gray-900">{formatMoney(r.base)}</td>
+                              <td className="px-3 py-2.5 text-right font-semibold text-violet-700">{formatMoney(r.upsell)}</td>
+                              <td className="px-3 py-2.5 text-right font-semibold text-sky-700">{formatMoney(r.crossSell)}</td>
+                              <td className={`px-3 py-2.5 text-right font-semibold ${r.manualAdjustments < 0 ? "text-rose-600" : r.manualAdjustments > 0 ? "text-emerald-600" : "text-gray-400"}`}>{r.manualAdjustments === 0 ? "-" : formatMoney(r.manualAdjustments)}</td>
+                              <td className="px-3 py-2.5 text-right font-extrabold text-gray-900">{formatMoney(r.total)}</td>
+                              <td className="px-3 py-2.5">
+                                {r.status === "qualified" ? (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> Qualified</span>
+                                ) : r.status === "at_risk" ? (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-bold text-amber-700"><AlertTriangle className="w-3 h-3" /> At Risk</span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 border border-gray-200 px-2 py-0.5 text-[11px] font-bold text-gray-500">No deliveries</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2.5 text-right">
+                                <button type="button" title="Open detailed bonus breakdown" className="!min-h-0 inline-flex items-center justify-center rounded-lg border border-violet-200 bg-violet-50 p-1.5 text-violet-700 hover:bg-violet-100" onClick={() => openRepBreakdown(r)}>
+                                  <Eye className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {(salesBonusFullReportTab === "Base Bonus Details" || salesBonusFullReportTab === "Upsell Bonus Details" || salesBonusFullReportTab === "Cross-sell Bonus Details") && (() => {
+                    const key = salesBonusFullReportTab === "Base Bonus Details" ? "base" : salesBonusFullReportTab === "Upsell Bonus Details" ? "upsell" : "crossSell";
+                    const label = salesBonusFullReportTab.replace(" Details", "");
+                    return (
+                      <div className="space-y-3">
+                        {rows.filter((r) => r[key] > 0).length === 0 ? (
+                          <p className="px-3 py-8 text-center text-gray-400 italic bg-white rounded-xl border border-gray-200">No {label.toLowerCase()} earned by anyone this period.</p>
+                        ) : rows.map((r) => {
+                          const repTotal = r[key];
+                          if (repTotal <= 0) return null;
+                          // Combined (legacy + Sales Bonus Engine) per order, so
+                          // these lines always sum to EXACTLY repTotal above -
+                          // the legacy-only fields on orderLines would omit each
+                          // order's engine-earned share and under-count here.
+                          const contributingOrderIds = new Set(
+                            r.orderComponents.filter((c) => c[key] > 0).map((c) => c.orderId)
+                          );
+                          const componentByOrderId = new Map(r.orderComponents.map((c) => [c.orderId, c]));
+                          const contributingLines = r.orderLines.filter((l) => contributingOrderIds.has(l.orderId));
+                          return (
+                            <div key={r.repId} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                              <div className="px-3 py-2.5 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+                                <span className="font-bold text-gray-900 text-sm">{r.repName}</span>
+                                <span className="font-extrabold text-gray-900 text-sm">{formatMoney(repTotal)}</span>
+                              </div>
+                              <table className="w-full text-sm">
+                                <tbody>
+                                  {contributingLines.map((l) => (
+                                    <tr key={l.orderId} className="border-b border-gray-50 last:border-0">
+                                      <td className="px-3 py-2 text-gray-700">#{l.orderId} · {l.customer}</td>
+                                      <td className="px-3 py-2 text-gray-500">{l.productName}{l.packageName ? ` · ${l.packageName}` : ""}</td>
+                                      <td className="px-3 py-2 text-right font-semibold text-gray-900">
+                                        {formatProductMoney(componentByOrderId.get(l.orderId)?.[key] ?? 0, l.currency)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+
+                  {salesBonusFullReportTab === "Adjustments & Penalties" && (
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-100 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                            <th className="px-3 py-2.5">Sales Rep</th>
+                            <th className="px-3 py-2.5 text-right">Adjustment</th>
+                            <th className="px-3 py-2.5">Note</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((r) => (
+                            <tr key={r.repId} className="border-b border-gray-50 last:border-0">
+                              <td className="px-3 py-2.5 font-bold text-gray-900">{r.repName}</td>
+                              <td className={`px-3 py-2.5 text-right font-semibold ${r.manualAdjustments < 0 ? "text-rose-600" : r.manualAdjustments > 0 ? "text-emerald-600" : "text-gray-400"}`}>
+                                {r.manualAdjustments === 0 ? "None" : formatMoney(r.manualAdjustments)}
+                              </td>
+                              <td className="px-3 py-2.5 text-[11px] text-gray-400">
+                                {r.manualAdjustments === 0 ? "-" : "Set from the Sales Rep Bonuses page. Open the rep breakdown for the full history."}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {salesBonusFullReportTab === "Payment Status" && (
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-100 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                            <th className="px-3 py-2.5">Sales Rep</th>
+                            <th className="px-3 py-2.5 text-right">Orders Paid</th>
+                            <th className="px-3 py-2.5 text-right">Orders Unpaid</th>
+                            <th className="px-3 py-2.5 text-right">Total Bonus</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((r) => {
+                            const paid = r.deliveredOrders.filter((o) => o.bonusPaid).length;
+                            const unpaid = r.deliveredOrders.length - paid;
+                            return (
+                              <tr key={r.repId} className="border-b border-gray-50 last:border-0">
+                                <td className="px-3 py-2.5 font-bold text-gray-900">{r.repName}</td>
+                                <td className="px-3 py-2.5 text-right font-semibold text-emerald-700">{paid}</td>
+                                <td className="px-3 py-2.5 text-right font-semibold text-amber-700">{unpaid}</td>
+                                <td className="px-3 py-2.5 text-right font-extrabold text-gray-900">{formatMoney(r.total)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                      <h4 className="text-sm font-bold text-gray-900 m-0 mb-2">Bonus Formula (how bonuses are calculated)</h4>
+                      <ul className="text-xs text-gray-600 space-y-1.5 m-0 pl-4 list-disc">
+                        {deliveryRateRules.length > 0 ? deliveryRateRules.map((rule) => (
+                          <li key={rule.id}>
+                            <strong className="text-gray-900">Base:</strong> {formatMoney(Number(rule.config?.fallbackPerDelivered ?? 0))}–{formatMoney(Number(rule.config?.qualifiedPerDelivered ?? 0))} per delivered order
+                            {rule.config?.scopeProductName ? ` (${rule.config.scopeProductName} only)` : " (all products)"} - Sales Bonus Engine.
+                          </li>
+                        )) : <li>No active per-delivery Sales Bonus Engine rule.</li>}
+                        {legacyProductsWithBase.length > 0 && <li><strong className="text-gray-900">Base (legacy):</strong> {legacyProductsWithBase.length} product{legacyProductsWithBase.length === 1 ? "" : "s"} also pay a flat per-order amount configured on the product itself.</li>}
+                        {upgradeRules.length > 0 || legacyProductsWithUpgrade.length > 0 ? (
+                          <li><strong className="text-gray-900">Upsell:</strong> amount varies by product and upgrade tier - {upgradeRules.length > 0 ? `${upgradeRules.length} engine rule${upgradeRules.length === 1 ? "" : "s"}` : ""}{upgradeRules.length > 0 && legacyProductsWithUpgrade.length > 0 ? " + " : ""}{legacyProductsWithUpgrade.length > 0 ? `${legacyProductsWithUpgrade.length} product${legacyProductsWithUpgrade.length === 1 ? "" : "s"} with legacy tiers` : ""}. See Product Bonus Settings for exact amounts.</li>
+                        ) : <li>No active upsell bonus rule configured.</li>}
+                        {crossSellRules.length > 0 || legacyProductsWithCrossSell.length > 0 ? (
+                          <li><strong className="text-gray-900">Cross-sell:</strong> amount varies by product - {crossSellRules.length > 0 ? `${crossSellRules.length} engine rule${crossSellRules.length === 1 ? "" : "s"}` : ""}{crossSellRules.length > 0 && legacyProductsWithCrossSell.length > 0 ? " + " : ""}{legacyProductsWithCrossSell.length > 0 ? `${legacyProductsWithCrossSell.length} product${legacyProductsWithCrossSell.length === 1 ? "" : "s"} with a legacy %/flat rate` : ""}. See Product Bonus Settings for exact amounts.</li>
+                        ) : <li>No active cross-sell bonus rule configured.</li>}
+                      </ul>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                      <h4 className="text-sm font-bold text-gray-900 m-0 mb-2">Bonus Qualification Requirements</h4>
+                      {deliveryRateRules.length === 0 ? (
+                        <p className="text-xs text-gray-500 m-0">No active delivery-rate gate is configured.</p>
+                      ) : (
+                        <ul className="text-xs text-gray-600 space-y-1.5 m-0 pl-4 list-disc">
+                          {deliveryRateRules.map((rule) => (
+                            <li key={rule.id}>
+                              <strong className="text-gray-900">{rule.name}{rule.config?.scopeProductName ? ` (${rule.config.scopeProductName})` : " (all products)"}:</strong>{" "}
+                              ≥{Number(rule.config?.targetRatePercent ?? 0)}% delivery rate, ≥{Number(rule.config?.minOrders ?? 0)} assigned orders.
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {deliveryRateRules.filter((r) => !r.config?.scopeProductId).length > 0 && deliveryRateRules.filter((r) => r.config?.scopeProductId).length > 0 && (
+                        <p className="mt-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
+                          A company-wide rule AND a product-scoped rule are both active for delivery-rate pay. An order matching both is paid by both, so every naira here may be doubled for that product. Review the Sales Bonus Engine rules before treating this as final.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 shrink-0" /> Bonuses are estimated and will be finalized after period close &amp; verification.
+                  </p>
+
+                  <div className="flex justify-end gap-3 pt-2">
+                    <button className="!min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#1F8FE0] text-white text-sm font-medium hover:bg-[#1560a8] transition-colors" onClick={closeModal}>Close</button>
+                  </div>
                 </div>
               );
             })()}
