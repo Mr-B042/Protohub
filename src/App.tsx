@@ -220,6 +220,7 @@ import DraftTextarea from "./components/DraftTextarea";
 import ChargeRiskBanner from "./components/ChargeRiskBanner";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
+import { spaceNaira } from "./lib/naira-glyph";
 import {
   isMoneyHidden, maskFormattedMoney, maskMoneyText, naira, setMoneyHiddenGlobal, shortNaira, subscribeMoneyHidden
 } from "./lib/money-privacy";
@@ -2959,7 +2960,7 @@ const formatProductMoney = (amount: number, code: ProductCurrencyCode) => {
     currency: productCurrencies[code].currency,
     maximumFractionDigits: 0
   }).format(amount || 0);
-  return isMoneyHidden() ? maskFormattedMoney(formatted) : formatted;
+  return spaceNaira(isMoneyHidden() ? maskFormattedMoney(formatted) : formatted);
 };
 const formatFlexibleMoney = (amount: number, code?: string) => {
   const normalized = (code || "NGN").toUpperCase();
@@ -14446,7 +14447,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       currency: selectedCurrency.currency,
       maximumFractionDigits: 0
     }).format(amount);
-    return isMoneyHidden() ? maskFormattedMoney(formatted) : formatted;
+    return spaceNaira(isMoneyHidden() ? maskFormattedMoney(formatted) : formatted);
   };
   const productEmbedCurrency = (product: Product | undefined) => (product ? embedCurrencyByProduct[product.id] ?? "NGN" : "NGN");
   const productEmbedRedirect = (product: Product | undefined) => (product ? embedRedirectUrls[product.id] ?? "" : "");

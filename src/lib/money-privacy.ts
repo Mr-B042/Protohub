@@ -1,3 +1,4 @@
+import { spaceNaira } from "./naira-glyph";
 // App-wide "hide money" privacy toggle.
 //
 // ⚠️ The flag is a plain module-level value, NOT React state, so the dozens of
@@ -63,14 +64,14 @@ export const maskFormattedMoney = (formatted: string) => {
 const MONEY_IN_TEXT = /(₦|NGN\s?|\$|£|€)\s?\d[\d,]*(?:\.\d+)?/gi;
 export const maskMoneyText = (text: string): string => {
   if (!isMoneyHidden()) return text;
-  return String(text ?? "").replace(MONEY_IN_TEXT, (_match, symbol: string) => `${symbol.trim()}••••`);
+  return String(text ?? "").replace(MONEY_IN_TEXT, (_match, symbol: string) => spaceNaira(`${symbol.trim()}••••`));
 };
 
 const nairaDigits = (value: number) => Math.round(Number(value) || 0).toLocaleString("en-NG");
 
 /** ₦1,234,567 — masked to ₦•••• when privacy mode is on. */
 export const naira = (value: number): string =>
-  isMoneyHidden() ? "₦••••" : `₦${nairaDigits(value)}`;
+  spaceNaira(isMoneyHidden() ? "₦••••" : `₦${nairaDigits(value)}`);
 
 /** Explicitly signed, for variances where the direction is the whole point. */
 export const signedNaira = (value: number): string => {
@@ -79,20 +80,20 @@ export const signedNaira = (value: number): string => {
     // ⚠️ The SIGN survives masking. Whether money is missing or surplus is not
     // the sensitive part - the amount is - and hiding the direction would make
     // a variance panel useless rather than private.
-    if (rounded === 0) return "₦••••";
-    return `${rounded < 0 ? "−" : "+"}₦••••`;
+    if (rounded === 0) return spaceNaira("₦••••");
+    return spaceNaira(`${rounded < 0 ? "−" : "+"}₦••••`);
   }
-  if (rounded === 0) return "₦0";
-  return `${rounded < 0 ? "−" : "+"}₦${Math.abs(rounded).toLocaleString("en-NG")}`;
+  if (rounded === 0) return spaceNaira("₦0");
+  return spaceNaira(`${rounded < 0 ? "−" : "+"}₦${Math.abs(rounded).toLocaleString("en-NG")}`);
 };
 
 /** ₦1.2M / ₦450K, for axis labels and tight cells. */
 export const shortNaira = (value: number): string => {
-  if (isMoneyHidden()) return "₦••";
+  if (isMoneyHidden()) return spaceNaira("₦••");
   const amount = Number(value) || 0;
   const abs = Math.abs(amount);
   const sign = amount < 0 ? "−" : "";
-  if (abs >= 1_000_000) return `${sign}₦${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
-  if (abs >= 1_000) return `${sign}₦${Math.round(abs / 1_000)}K`;
-  return `${sign}₦${Math.round(abs)}`;
+  if (abs >= 1_000_000) return spaceNaira(`${sign}₦${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`);
+  if (abs >= 1_000) return spaceNaira(`${sign}₦${Math.round(abs / 1_000)}K`);
+  return spaceNaira(`${sign}₦${Math.round(abs)}`);
 };
