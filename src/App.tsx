@@ -13043,6 +13043,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // itself is on, which may not match this modal's week).
   const [bonusBreakdownSalesBonus, setBonusBreakdownSalesBonus] = useState<SalesBonusRepProgress | null>(null);
   const [bonusBreakdownSalesBonusLoading, setBonusBreakdownSalesBonusLoading] = useState(false);
+  const [bonusBreakdownOrdersLoading, setBonusBreakdownOrdersLoading] = useState(false);
+  const [bonusBreakdownOrdersError, setBonusBreakdownOrdersError] = useState("");
   const [repPenalties, setRepPenalties] = useState<RepPenaltyRecord[]>([]);
   const [dataLoading, setDataLoading] = useState(() => {
     if (auth.isLoggedIn()) return true;
@@ -23818,6 +23820,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
       if (order.upsellFromQty && order.upsellToQty && order.upsellToQty > order.upsellFromQty) {
         const upgradeRule = cfg.upgradeBonuses.find((rule) => rule.fromQty === order.upsellFromQty && rule.toQty === order.upsellToQty);
+        const engineUpgradeRule = activeSalesBonusRules.find((rule) => {
+          if (rule.type !== "upgrade_count" || rule.config?.scopeProductId !== order.productId) return false;
+          const fromQty = Math.max(1, Math.round(Number(rule.config?.fromQty ?? 0)));
+          const toQtyMin = Math.max(fromQty + 1, Math.round(Number(rule.config?.toQtyMin ?? rule.config?.toQty ?? 0)));
+          return fromQty === order.upsellFromQty && order.upsellToQty! >= toQtyMin;
+        });
         const meetsGate = repWeeklyDeliveryRate >= cfg.upgradeRequiresMinDeliveryRate;
         componentLines.push({
           label: "Upgrade bonus",
@@ -23826,8 +23834,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
             ? meetsGate
               ? `Upsell ${order.upsellFromQty} to ${order.upsellToQty} pcs qualified. Weekly delivery rate ${repWeeklyDeliveryRate}% met the ${cfg.upgradeRequiresMinDeliveryRate}% upgrade gate.`
               : `Upsell ${order.upsellFromQty} to ${order.upsellToQty} pcs matched ${formatProductMoney(upgradeRule.amount, order.currency)}, but weekly delivery rate ${repWeeklyDeliveryRate}% is below ${cfg.upgradeRequiresMinDeliveryRate}%, so half was counted.`
-            : `Upsell ${order.upsellFromQty} to ${order.upsellToQty} pcs was recorded, but no matching upgrade rule exists.`,
-          tone: computed.upgrade > 0 ? "earned" : "blocked"
+            : engineUpgradeRule
+              ? `Upsell ${order.upsellFromQty} to ${order.upsellToQty} pcs is covered by the Sales Bonus Engine's "${engineUpgradeRule.name}" rule. Any amount earned from that weekly rule appears in the Sales Bonus Engine allocation below and is not paid a second time here.`
+              : `Upsell ${order.upsellFromQty} to ${order.upsellToQty} pcs was recorded, but no matching upgrade rule exists.`,
+          tone: computed.upgrade > 0 ? "earned" : engineUpgradeRule ? "info" : "blocked"
         });
       } else {
         componentLines.push({
@@ -68357,6 +68367,8 @@ ${waybillLineItems(w).length > 1
     if (modalBeforeClose === "bonusBreakdown") {
       setBonusBreakdownData(null);
       setBonusBreakdownSalesBonus(null);
+      setBonusBreakdownOrdersLoading(false);
+      setBonusBreakdownOrdersError("");
     }
     if (modalBeforeClose === "remittanceReceipts") {
       setReceiptHistoryTarget(null);
@@ -81706,6 +81718,9 @@ ${waybillLineItems(w).length > 1
                           cohortPending: cohortOrders.length - cohortFinalizedOrders.length,
                           cohortRate,
                           finalRate,
+                          deliveredOrders: cashOrders,
+                          weeklyDeliveryRate: repRs.rate,
+                          weeklyDeliveryCount: repRs.count,
                           bonusOrderBreakdowns
                         };
                       })
@@ -81833,6 +81848,47 @@ ${waybillLineItems(w).length > 1
                                             // This "Weekly Accounting" tab is already Sunday-anchored (startKey),
                                             // matching the Sales Bonus Engine's own week convention exactly - no
                                             // cross-week aggregation needed, just fetch this one week directly.
+                                            setBonusBreakdownOrdersError("");
+                                            setBonusBreakdownOrdersLoading(true);
+                                            salesBonusesApi.orderBonusSettlementMap(endKey, startKey)
+                                              .then((response) => {
+                                                const exactSettlements = response ?? {};
+                                                const refreshedOrders = r.deliveredOrders.map((order) => buildOrderBonusBreakdownLine(
+                                                  order,
+                                                  r.weeklyDeliveryRate,
+                                                  r.weeklyDeliveryCount,
+                                                  cashWeekRange,
+                                                  exactSettlements[order.id]
+                                                ));
+                                                const exactEnginePayable = refreshedOrders.reduce((sum, order) => sum + order.enginePayable, 0);
+                                                const exactLegacyPayable = refreshedOrders.reduce((sum, order) => sum + order.legacyTotal, 0);
+
+                                                setNewEngineBonusSettlementByOrderId((previous) => ({
+                                                  ...previous,
+                                                  ...exactSettlements
+                                                }));
+                                                setNewEngineBonusByOrderId((previous) => ({
+                                                  ...previous,
+                                                  ...Object.fromEntries(
+                                                    Object.entries(exactSettlements).map(([orderId, settlement]) => [
+                                                      orderId,
+                                                      Number(settlement.payable ?? 0)
+                                                    ])
+                                                  )
+                                                }));
+                                                setBonusBreakdownData((current) => current && current.personName === r.user.name
+                                                  ? {
+                                                      ...current,
+                                                      orders: refreshedOrders,
+                                                      newEngineBonusEstimate: exactEnginePayable,
+                                                      totalBonus: exactLegacyPayable + exactEnginePayable
+                                                    }
+                                                  : current);
+                                              })
+                                              .catch(() => {
+                                                setBonusBreakdownOrdersError("Exact order bonus allocations could not be verified. Close and reopen this breakdown to retry.");
+                                              })
+                                              .finally(() => setBonusBreakdownOrdersLoading(false));
                                             setBonusBreakdownSalesBonus(null);
                                             setBonusBreakdownSalesBonusLoading(true);
                                             salesBonusesApi.progress(startKey)
@@ -104307,7 +104363,16 @@ ${waybillLineItems(w).length > 1
                       </div>
                     </div>
                     <div className="divide-y divide-gray-100 dark:divide-slate-800">
-                      {bonusBreakdownData.orders.length === 0 ? (
+                      {bonusBreakdownOrdersLoading ? (
+                        <div className="px-4 py-8 text-center">
+                          <p className="m-0 text-sm font-black text-gray-700 dark:text-slate-200">Refreshing exact order allocations...</p>
+                          <p className="m-0 mt-1 text-xs font-semibold text-gray-500 dark:text-slate-400">The breakdown will appear after this week's Sales Bonus Engine settlements are verified.</p>
+                        </div>
+                      ) : bonusBreakdownOrdersError ? (
+                        <div className="mx-4 my-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm font-bold text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+                          {bonusBreakdownOrdersError}
+                        </div>
+                      ) : bonusBreakdownData.orders.length === 0 ? (
                         <p className="m-0 px-4 py-8 text-center text-sm font-semibold text-gray-500 dark:text-slate-400">No delivered orders contributed to this estimate.</p>
                       ) : (
                         bonusBreakdownData.orders.map((order) => (
