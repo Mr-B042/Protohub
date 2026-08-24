@@ -217,7 +217,7 @@ import AgentAccessPage from "./pages/AgentAccessPage";
 import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalanceRow } from "./pages/CashFlowPage";
 import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
 import DraftTextarea from "./components/DraftTextarea";
-import CartLogCountdown from "./components/CartLogCountdown";
+import ChargeRiskBanner from "./components/ChargeRiskBanner";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
 import {
@@ -60104,26 +60104,26 @@ ${waybillLineItems(w).length > 1
             {/* ⚠️ Today sits ABOVE the historical summary and outside the date
                 filter. A rep who has not logged today can still act; a rep
                 reading last month's misses has already lost the money. */}
-            {penalties.today && penalties.today.status === "missed" && (
-              <div className={`mt-2.5 flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2.5 ${
-                penalties.today.rehearsal
-                  ? "border-amber-300 bg-white"
-                  : "border-rose-400 bg-white"}`}>
-                <p className={`m-0 flex min-w-0 flex-1 items-start gap-2 text-[12px] font-bold leading-4 ${
-                  penalties.today.rehearsal ? "text-amber-900" : "text-rose-900"}`}>
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>
-                    <span className="block">{penalties.today.rehearsal ? "Practice run" : "You owe a log today"}</span>
-                    <span className="block font-semibold">{penalties.today.message}</span>
-                  </span>
-                </p>
-                <CartLogCountdown
-                  cartsRemaining={penalties.today.cartsRemaining ?? penalties.today.cartsDue}
-                  amountAtRisk={penalties.today.atRisk || ((penalties.today.cartsRemaining ?? penalties.today.cartsDue) * penalties.missAmount)}
-                  rehearsal={penalties.today.rehearsal}
-                />
-              </div>
-            )}
+            {penalties.today && penalties.today.status === "missed" && (() => {
+              const remaining = penalties.today.cartsRemaining ?? penalties.today.cartsDue;
+              const exposure = penalties.today.atRisk || remaining * penalties.missAmount;
+              return (
+                <div className="mt-2.5">
+                  {/* ⚠️ Closes at MIDNIGHT, not the follow-up KPI's 10:00 PM.
+                      Cart misses are derived from the Lagos date rather than
+                      written by a nightly job, so a log at 11pm still counts
+                      and the banner must not claim otherwise. */}
+                  <ChargeRiskBanner
+                    label={penalties.today.rehearsal ? "Cart log charge risk — practice run" : "Cart log charge risk"}
+                    amount={exposure}
+                    detail={`${remaining} cart${remaining === 1 ? "" : "s"} still unlogged. Each unlogged cart is ₦${penalties.missAmount.toLocaleString("en-NG")}. Log the carts marked below before midnight Lagos.`}
+                    cutoffHour={24}
+                    cutoffLabel="midnight"
+                    rehearsal={penalties.today.rehearsal}
+                  />
+                </div>
+              );
+            })()}
             {penalties.today && penalties.today.status === "clear" && (
               <p className="m-0 mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[12px] font-bold text-emerald-700">
                 <CheckCircle2 className="h-4 w-4" /> {penalties.today.message}

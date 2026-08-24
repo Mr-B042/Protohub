@@ -8,11 +8,24 @@
 export const LAGOS_OFFSET_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Milliseconds until a given hour of the CURRENT Lagos day. Never negative -
+ * once the hour has passed the answer is 0, meaning "the window has closed",
+ * not "wait until tomorrow".
+ *
+ * Hour 24 means the end of the day. The follow-up KPI closes at 22 because its
+ * nightly job runs 21:00 UTC; the cart log has no job and is decided purely by
+ * the Lagos date, so anything logged before midnight still counts.
+ */
+export function msUntilLagosHour(nowMs: number, hour: number): number {
+  if (!Number.isFinite(nowMs) || !Number.isFinite(hour)) return 0;
+  const intoDay = ((nowMs + LAGOS_OFFSET_MS) % DAY_MS + DAY_MS) % DAY_MS;
+  return Math.max(0, hour * 3_600_000 - intoDay);
+}
+
 /** Milliseconds left in the current Lagos day. Never negative. */
 export function msUntilEndOfLagosDay(nowMs: number): number {
-  if (!Number.isFinite(nowMs)) return 0;
-  const intoDay = ((nowMs + LAGOS_OFFSET_MS) % DAY_MS + DAY_MS) % DAY_MS;
-  return DAY_MS - intoDay;
+  return msUntilLagosHour(nowMs, 24);
 }
 
 export type CountdownParts = { hours: number; minutes: number; seconds: number };
@@ -32,6 +45,17 @@ const pad = (value: number) => String(value).padStart(2, "0");
 export function formatCountdown(ms: number): string {
   const { hours, minutes, seconds } = countdownParts(ms);
   return `${hours}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+/**
+ * "10h 44m 19s" - the wording the follow-up charge banner already uses.
+ *
+ * The hours segment is dropped under an hour rather than shown as "0h", so the
+ * last stretch reads as urgently as it actually is.
+ */
+export function formatCountdownWords(ms: number): string {
+  const { hours, minutes, seconds } = countdownParts(ms);
+  return hours > 0 ? `${hours}h ${minutes}m ${seconds}s` : `${minutes}m ${seconds}s`;
 }
 
 /**
