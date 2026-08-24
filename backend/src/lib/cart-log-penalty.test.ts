@@ -224,3 +224,20 @@ test("an empty board is not a warning", () => {
   assert.equal(standing.atRisk, 0);
   assert.match(standing.message, /No carts/);
 });
+
+// ── Regression: the due-set intersection ──
+//
+// Chelsea, 24 Aug 2026: 11 carts due, 37 distinct carts logged, but only 8 of
+// those were hers-and-due. She owed for 3 and the board showed nothing,
+// because the raw 37 was clamped to 11 and cancelled the whole obligation.
+
+test("only logs against DUE carts clear the board", () => {
+  const chelsea = day({ cartsDue: 11, logsMade: 52, cartsLogged: 8 });
+  assert.equal(missedCartCount(chelsea), 3);
+  assert.equal(dayPenaltyAmount(chelsea), 1_500);
+  assert.equal(repDayStatus(chelsea), "missed");
+});
+
+test("a busy day on carts that were never due clears nothing", () => {
+  assert.equal(missedCartCount(day({ cartsDue: 11, logsMade: 37, cartsLogged: 0 })), 11);
+});

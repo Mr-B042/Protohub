@@ -2326,21 +2326,37 @@ router.get("/log-penalties",
 
       const repIds = [...new Set(openCarts.map((row) => row.assigned_rep_id).filter(Boolean))] as string[];
       const inputs: RepDayInput[] = [];
+      // ⚠️ cartsLogged MUST be the intersection with the due set, not a raw
+      // count of everything the rep touched. The two are different populations:
+      // a rep logs carts that later convert or close, and those drop out of
+      // "due" while remaining in the attempts table. Chelsea logged 37 distinct
+      // carts on 24 Aug 2026 against 11 due, of which only 8 were actually
+      // hers-and-due - a raw count cleared all 11 and hid a real ₦1,500 debt on
+      // the 3 she never touched.
+      const dueCartIdsFor = (theirCarts: any[], dateKey: string) => new Set(
+        theirCarts
+          .filter((row) => lagosDateKey(row.assigned_at ?? row.created_at) <= dateKey)
+          .map((row) => row.id as string)
+      );
+      const loggedDueCount = (repId: string, dateKey: string, dueIds: Set<string>) => {
+        const touched = loggedCarts.get(`${repId}|${dateKey}`);
+        if (!touched) return 0;
+        let count = 0;
+        touched.forEach((cartId) => { if (dueIds.has(cartId)) count += 1; });
+        return count;
+      };
       repIds.forEach((repId) => {
         const theirCarts = openCarts.filter((row) => row.assigned_rep_id === repId);
         days.forEach((dateKey) => {
           // Only carts they already had that day count against them.
-          const cartsDue = theirCarts.filter((row) => {
-            const assigned = lagosDateKey(row.assigned_at ?? row.created_at);
-            return assigned <= dateKey;
-          }).length;
+          const dueIds = dueCartIdsFor(theirCarts, dateKey);
           inputs.push({
             repId,
             repName: repName.get(repId) ?? "Unknown",
             dateKey,
-            cartsDue,
+            cartsDue: dueIds.size,
             logsMade: logged.get(`${repId}|${dateKey}`) ?? 0,
-            cartsLogged: loggedCarts.get(`${repId}|${dateKey}`)?.size ?? 0
+            cartsLogged: loggedDueCount(repId, dateKey, dueIds)
           });
         });
       });
@@ -2391,7 +2407,8 @@ router.get("/log-penalties",
         ? todayStanding({
           repId: myRepId, repName: repName.get(myRepId) ?? "You",
           dateKey: todayKey, cartsDue: todaysCarts.length, logsMade: todayAttempts,
-          cartsLogged: loggedCarts.get(`${myRepId}|${todayKey}`)?.size ?? 0
+          // Intersected with the board, same as the historical rows above.
+          cartsLogged: loggedDueCount(myRepId, todayKey, new Set(todaysCarts.map((row) => row.id as string)))
         })
         : null;
 
@@ -2402,13 +2419,16 @@ router.get("/log-penalties",
       const repsAtRiskToday = myRepId ? [] : [...new Set(todaysCarts.map((row) => row.assigned_rep_id))]
         .filter((repId): repId is string => Boolean(repId))
         .map((repId) => {
+          const theirDueIds = new Set(todaysCarts
+            .filter((row) => row.assigned_rep_id === repId)
+            .map((row) => row.id as string));
           const input: RepDayInput = {
             repId,
             repName: repName.get(repId) ?? "Unknown",
             dateKey: todayKey,
-            cartsDue: todaysCarts.filter((row) => row.assigned_rep_id === repId).length,
+            cartsDue: theirDueIds.size,
             logsMade: logged.get(`${repId}|${todayKey}`) ?? 0,
-            cartsLogged: loggedCarts.get(`${repId}|${todayKey}`)?.size ?? 0
+            cartsLogged: loggedDueCount(repId, todayKey, theirDueIds)
           };
           const cartsRemaining = missedCartCount(input);
           return { ...input, cartsRemaining, atRisk: dayPenaltyAmount(input) };
