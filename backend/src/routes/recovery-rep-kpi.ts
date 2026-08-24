@@ -518,6 +518,60 @@ async function openClaimCount(orgId: string, repId: string) {
   return count ?? 0;
 }
 
+// ── GET /api/recovery-rep-kpi/follow-up-pairs?repId=&dateFrom=&dateTo= ──
+//
+// For each of the rep's orders: the newest attempt THEY logged, and the newest
+// attempt anyone else logged. A recovery rep is working an order that already
+// failed once for somebody, and "what did the last person find" is the single
+// most useful thing to see before dialling - it was previously only reachable
+// by opening each order one at a time.
+router.get("/follow-up-pairs", requireRole("Owner", "Admin", "Manager", "Recovery Rep"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
+    const scopeId = req.user!.effectiveUserId ?? req.user!.id;
+    const repId = scopeRole === "Recovery Rep" ? scopeId : (typeof req.query.repId === "string" ? req.query.repId : "");
+    if (!repId) { res.json({ pairs: {} }); return; }
+
+    const { data: myOrders } = await supabase.from("orders").select("id")
+      .eq("org_id", orgId).eq("assigned_rep_id", repId).limit(REPORT_ROW_CEILING);
+    const orderIds = ((myOrders ?? []) as any[]).map((row) => row.id as string);
+    if (orderIds.length === 0) { res.json({ pairs: {} }); return; }
+
+    const [attemptsResult, usersResult] = await Promise.all([
+      supabase.from("order_contact_attempts")
+        .select("order_id, rep_id, attempted_at, outcome_code, outcome_note, customer_reached, channel")
+        .eq("org_id", orgId).in("order_id", orderIds)
+        .order("attempted_at", { ascending: false })
+        .limit(REPORT_ROW_CEILING),
+      supabase.from("users").select("id, name").eq("org_id", orgId).limit(REPORT_ROW_CEILING)
+    ]);
+    const nameById = new Map(((usersResult.data ?? []) as any[]).map((row) => [row.id, row.name as string]));
+
+    // Rows arrive newest first, so the FIRST match on each side is the one to
+    // keep and everything after it can be ignored.
+    const pairs: Record<string, { mine: unknown; prior: unknown }> = {};
+    const shape = (row: any) => ({
+      at: row.attempted_at,
+      outcome: row.outcome_code ?? "",
+      note: row.outcome_note ?? "",
+      reached: Boolean(row.customer_reached),
+      channel: row.channel ?? "",
+      repName: nameById.get(row.rep_id) ?? "Someone else"
+    });
+    ((attemptsResult.data ?? []) as any[]).forEach((row) => {
+      if (!row.order_id) return;
+      const entry = pairs[row.order_id] ?? (pairs[row.order_id] = { mine: null, prior: null });
+      if (row.rep_id === repId) { if (!entry.mine) entry.mine = shape(row); }
+      else if (!entry.prior) entry.prior = shape(row);
+    });
+
+    res.json({ pairs });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load follow-up history." });
+  }
+});
+
 // ── GET /api/recovery-rep-kpi/calendar?repId=&dateFrom=&dateTo= ──
 //
 // Per-day activity behind the panel's totals. Deliberately a SEPARATE endpoint

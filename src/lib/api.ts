@@ -2110,7 +2110,19 @@ export type RecoveryCalendarView = {
   restDays: number;
 };
 
+export type RecoveryFollowUpEntry = {
+  at: string; outcome: string; note: string; reached: boolean; channel: string; repName: string;
+};
+/** Per order: the rep's own newest attempt, and the newest by anyone else. */
+export type RecoveryFollowUpPairs = Record<string, {
+  mine: RecoveryFollowUpEntry | null;
+  prior: RecoveryFollowUpEntry | null;
+}>;
+
 export const recoveryRepKpiApi = {
+  followUpPairs: (repId?: string) =>
+    get<{ pairs: RecoveryFollowUpPairs }>(
+      `/api/recovery-rep-kpi/follow-up-pairs${repId ? `?repId=${encodeURIComponent(repId)}` : ""}`),
   calendar: (params: { repId?: string; dateFrom?: string; dateTo?: string }) => {
     const qs = new URLSearchParams();
     if (params.repId) qs.set("repId", params.repId);

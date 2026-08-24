@@ -156,7 +156,7 @@ import {
   PreviewReadOnlyError
 } from "./lib/api";
 import { NIGERIA_STATES } from "./lib/nigeria";
-import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
+import type { RecoveryWorklistView, RetentionWorklistRow, RetentionBonusSummary, RetentionBonusSettings, RetentionTouchpointPayload, RetentionDashboardSummary, RetentionCustomerDetail, RetentionCustomerRow, RetentionActivityLogRow, RetentionProductTiming, RetentionManualTask, RetentionManualTaskInput, RetentionReferral, RetentionReferralInput, RecoveryTemplate, RecoveryTemplateUsage, RecoveryCandidatesView, CartFollowUpRow, CartAttemptRow, CartFollowUpGrid, CartGridRow, CartLogPenaltiesView, CartLogRangePreset, RecoveryCalendarView, RecoveryFollowUpPairs, PersonalDeliveryAgentRow, PersonalDeliveryAgentOverview, PdaAgentDetail, PdaGuarantor, PdaAssignment, PdaMySummary, PdaCodView, PdaWallet, PdaDispatchRow, PdaCandidateView, PdaFeeRule, PdaIncident, PdaReportRow, PdaSettings, PdaApplicationsView, PdaApplicationRow, PdaApplicationLink, PdaBlockedApplicant, PdaReviewView, PdaGuarantorQueueRow, PdaGuarantorDetail, PdaNote, PdaActivityEntry, PdaDocument, PdaDocumentViewRow, PdaActiveAgentsView, PdaDispatchSummary, PdaInventoryOverview, PdaStockLedgerView, PdaCodOverview, PdaAgentRemittance, PdaPaymentsView, PdaCodDiscrepancyView, PdaIncidentsOverview, PdaReportsView, PdaSettingsOverview, SalesLead, SalesCloserOverview, SalesCloserFollowUps, SalesCloserOrders, SalesCloserPerformance, SalesCloserBonus, SalesCloserBonusComponent, SalesCloserLeaderboardRow, DeliveryGoalsView, ProductDeliveryGoal, BankAccountsView, AgentAccessView, AgentLoginEvent, PortalSendOptions, CostChangeImpact, WeeklyReconciliationView, ReconciliationHistoryWeek, ReservesView, InventoryValueView, StockConditionKey, AccountReconciliationsView, ReconciliationWorkspace, PeriodCloseView, WeeklyOverviewView } from "./lib/api";
 import {
   FOLLOW_UP_OUTCOME_DEFINITIONS,
   FOLLOW_UP_OUTCOME_GROUP_LABELS,
@@ -12369,6 +12369,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [recoveryCalendar, setRecoveryCalendar] = useState<RecoveryCalendarView | null>(null);
   const recoveryCalendarCache = useRef(new Map<string, RecoveryCalendarView>());
   const recoveryCalendarRequestId = useRef(0);
+  const [recoveryFollowUpPairs, setRecoveryFollowUpPairs] = useState<RecoveryFollowUpPairs>({});
   // When each dead order actually died, keyed by order id. Derived from
   // order_audit server-side because orders.updated_at is not the closure date.
   const [orderClosureDates, setOrderClosureDates] = useState<Record<string, string>>({});
@@ -32510,6 +32511,22 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
+  const loadRecoveryFollowUpPairs = async () => {
+    if (!recoveryRepViewingId) { setRecoveryFollowUpPairs({}); return; }
+    try {
+      const result = await recoveryRepKpiApi.followUpPairs(recoveryRepViewingId);
+      setRecoveryFollowUpPairs(result?.pairs ?? {});
+    } catch { setRecoveryFollowUpPairs({}); }
+  };
+
+  // My Recovered Orders: its own quick-tab, search, outcome filter and sort.
+  // Separate from the page period because this list is worked minute to minute
+  // while the period control above frames the bonus figures.
+  const [myOrdersTab, setMyOrdersTab] = useState<"today" | "yesterday" | "week" | "all">("today");
+  const [myOrdersSearch, setMyOrdersSearch] = useState("");
+  const [myOrdersOutcome, setMyOrdersOutcome] = useState("All Outcomes");
+  const [myOrdersSort, setMyOrdersSort] = useState<"newest" | "oldest" | "stalest">("newest");
+
   const handleRecoveryBonusPeriodChange = (nextPeriod: Period) => {
     setRecoveryBonusPeriod(nextPeriod);
     setShowRecoveryBonusDateRange(false);
@@ -46595,6 +46612,7 @@ ${waybillLineItems(w).length > 1
     const timer = window.setTimeout(() => {
       void loadRecoveryBonusSummary();
       void loadRecoveryCalendar();
+      void loadRecoveryFollowUpPairs();
     }, 250);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -65562,33 +65580,67 @@ ${waybillLineItems(w).length > 1
       if (!myPickBounds) return true;
       return key >= myPickBounds.dateFrom && key <= myPickBounds.dateTo;
     });
-    const myPickGroups = (() => {
-      const byDay = new Map<string, TrackedOrder[]>();
-      const undated: TrackedOrder[] = [];
-      for (const order of myOrdersInPeriod) {
-        const key = pickDayKey(order);
-        if (!key) { undated.push(order); continue; }
-        if (!byDay.has(key)) byDay.set(key, []);
-        byDay.get(key)!.push(order);
-      }
-      const today = formatDateKey(new Date());
-      const yesterday = formatDateKey(new Date(Date.now() - 86400000));
-      const dayLabel = (key: string) => {
-        if (key === today) return "Today";
-        if (key === yesterday) return "Yesterday";
-        const d = new Date(`${key}T00:00:00`);
-        return Number.isFinite(d.getTime())
-          ? d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" })
-          : key;
-      };
-      const groups = [...byDay.entries()]
-        .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
-        .map(([key, orders]) => ({ key, label: dayLabel(key), sublabel: key, orders }));
-      if (undated.length > 0) {
-        groups.push({ key: "undated", label: "Picked earlier", sublabel: "pick date not recorded", orders: undated });
-      }
-      return groups;
+    // ── My Recovered Orders: tabs, search, filter, sort, header stats ──
+    const myOrdersToday = formatDateKey(new Date());
+    const myOrdersYesterday = formatDateKey(new Date(Date.now() - 86400000));
+    const myOrdersWeekStart = (() => {
+      const now = new Date();
+      now.setDate(now.getDate() - now.getDay()); // Sunday-anchored, like the rest of the app
+      return formatDateKey(now);
     })();
+    const inTab = (order: TrackedOrder, tab: typeof myOrdersTab) => {
+      const key = pickDayKey(order);
+      if (tab === "all") return true;
+      if (!key) return false;
+      if (tab === "today") return key === myOrdersToday;
+      if (tab === "yesterday") return key === myOrdersYesterday;
+      return key >= myOrdersWeekStart;
+    };
+    const myOrdersTabCounts = {
+      today: myOrders.filter((order) => inTab(order, "today")).length,
+      yesterday: myOrders.filter((order) => inTab(order, "yesterday")).length,
+      week: myOrders.filter((order) => inTab(order, "week")).length,
+      all: myOrders.length
+    };
+    const myOrdersOutcomeOptions = ["All Outcomes", ...Array.from(new Set(
+      myOrders.map((order) => orderStatusLabelFor(order)).filter(Boolean)
+    )).sort()];
+    const myOrdersFiltered = (() => {
+      const needle = myOrdersSearch.trim().toLowerCase();
+      const rows = myOrders.filter((order) => {
+        if (!inTab(order, myOrdersTab)) return false;
+        if (myOrdersOutcome !== "All Outcomes" && orderStatusLabelFor(order) !== myOrdersOutcome) return false;
+        if (!needle) return true;
+        return `${order.customer ?? ""} ${order.phone ?? ""} ${order.id}`.toLowerCase().includes(needle);
+      });
+      const lastAtMs = (order: TrackedOrder) =>
+        order.lastContactAttemptAt ? new Date(order.lastContactAttemptAt).getTime() : 0;
+      const pickedMs = (order: TrackedOrder) => {
+        const key = pickDayKey(order);
+        return key ? new Date(`${key}T00:00:00`).getTime() : 0;
+      };
+      return [...rows].sort((left, right) => {
+        // ⚠️ "Stalest" sorts by LAST CONTACT, not by pick date. An order picked
+        // today but never called is the one going cold, and ordering by pick
+        // date would bury it under older orders that are being worked fine.
+        if (myOrdersSort === "stalest") return lastAtMs(left) - lastAtMs(right);
+        return myOrdersSort === "oldest" ? pickedMs(left) - pickedMs(right) : pickedMs(right) - pickedMs(left);
+      });
+    })();
+    const myOrdersStats = (() => {
+      const scoped = myOrders.filter((order) => inTab(order, myOrdersTab));
+      const closed = (order: TrackedOrder) => ["Delivered", "Cancelled", "Failed"].includes(order.status ?? "");
+      return {
+        picked: scoped.length,
+        pending: scoped.filter((order) => !closed(order)).length,
+        recovered: scoped.filter((order) => order.status === "Delivered").length,
+        // Open orders only - counting delivered ones here would present money
+        // already banked as still up for grabs.
+        potential: scoped.filter((order) => !closed(order))
+          .reduce((sum, order) => sum + (Number(order.amount) || 0), 0)
+      };
+    })();
+
     // Recovery Candidates. Each candidate carries its own `reason` (why it
     // surfaced) so the card can show it, matching the Customers page's
     // "Customer Status" badge convention.
@@ -66420,84 +66472,206 @@ ${waybillLineItems(w).length > 1
         )}
 
         <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200/80">
-            <h2 className="text-base font-black tracking-tight text-slate-900">My Recovered Orders</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Grouped by the day each order was picked, newest first. Keep logging follow-ups until the customer buys or tells you no.
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200/80 px-5 py-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50">
+                <RefreshCw className="h-5 w-5 text-emerald-600" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="m-0 text-xl font-black tracking-tight text-slate-900">My Recovered Orders</h2>
+                <p className="m-0 mt-0.5 text-xs font-medium leading-relaxed text-slate-500">
+                  Grouped by the day each order was picked, newest first.<br />
+                  Keep logging follow-ups until the customer buys or tells you no.
+                </p>
+              </div>
+            </div>
+            {/* Scoped to the TAB, not the whole board - a figure that ignored
+                the tab beside it would contradict the list underneath it. */}
+            <div className="flex flex-wrap gap-2">
+              {[
+                { icon: <ShoppingBag className="h-4 w-4 text-emerald-600" />, tone: "bg-emerald-50",
+                  value: myOrdersStats.picked.toLocaleString("en-NG"), label: "Orders Picked" },
+                { icon: <Clock className="h-4 w-4 text-amber-600" />, tone: "bg-amber-50",
+                  value: myOrdersStats.pending.toLocaleString("en-NG"), label: "Still Open" },
+                { icon: <RefreshCw className="h-4 w-4 text-violet-600" />, tone: "bg-violet-50",
+                  value: myOrdersStats.recovered.toLocaleString("en-NG"), label: "Recovered" },
+                { icon: <TrendingUp className="h-4 w-4 text-sky-600" />, tone: "bg-sky-50",
+                  value: formatMoney(myOrdersStats.potential), label: "Potential Revenue" }
+              ].map((chip) => (
+                <div key={chip.label} className="flex items-center gap-2.5 rounded-xl border border-slate-200/80 bg-white px-3 py-2 shadow-sm">
+                  <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${chip.tone}`}>{chip.icon}</span>
+                  <span className="min-w-0">
+                    <span className="block text-base font-black leading-none tracking-tight tabular-nums text-slate-900">{chip.value}</span>
+                    <span className="mt-0.5 block text-[10px] font-bold text-slate-500">{chip.label}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 bg-slate-50/60 px-5 py-3">
+            <div className="inline-flex flex-wrap items-center gap-1">
+              {([
+                ["today", "Today", myOrdersTabCounts.today],
+                ["yesterday", "Yesterday", myOrdersTabCounts.yesterday],
+                ["week", "This Week", myOrdersTabCounts.week],
+                ["all", "All Orders", myOrdersTabCounts.all]
+              ] as Array<[typeof myOrdersTab, string, number]>).map(([key, label, count]) => (
+                <button key={key} type="button" onClick={() => setMyOrdersTab(key)}
+                  className={`!min-h-0 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition-all ${
+                    myOrdersTab === key
+                      ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                      : "text-slate-500 hover:bg-white hover:text-slate-900"}`}>
+                  {label}
+                  <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-black tabular-nums ${
+                    myOrdersTab === key ? "bg-emerald-100 text-emerald-800" : "bg-slate-200/70 text-slate-600"}`}>{count}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={myOrdersSearch}
+                  onChange={(event) => setMyOrdersSearch(event.target.value)}
+                  placeholder="Search name or phone…"
+                  className="h-9 w-full rounded-xl border border-slate-200/80 bg-white pl-9 pr-3 text-sm font-medium text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/20 sm:w-56"
+                />
+              </div>
+              <select value={myOrdersOutcome} onChange={(event) => setMyOrdersOutcome(event.target.value)}
+                className="h-9 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20">
+                {myOrdersOutcomeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <select value={myOrdersSort} onChange={(event) => setMyOrdersSort(event.target.value as typeof myOrdersSort)}
+                className="h-9 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20">
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+                <option value="stalest">Longest Since Contact</option>
+              </select>
+            </div>
           </div>
           {myOrders.length === 0 ? (
-            <div className="px-5 py-10 text-sm text-gray-400 text-center">No orders assigned yet. Claim one from Recovery Candidates below.</div>
-          ) : myOrdersInPeriod.length === 0 ? (
-            <div className="px-5 py-10 text-center text-sm text-gray-400">
-              No orders were picked in this period.
-              <span className="mt-1 block text-xs">{myOrders.length} assigned order{myOrders.length === 1 ? "" : "s"} fall outside it - widen the date range above to see them.</span>
+            <div className="px-5 py-12 text-center text-sm font-semibold text-slate-400">No orders assigned yet. Claim one from Recovery Candidates below.</div>
+          ) : myOrdersFiltered.length === 0 ? (
+            <div className="px-5 py-12 text-center text-sm font-semibold text-slate-400">
+              Nothing matches this view.
+              <span className="mt-1 block text-xs font-medium">{myOrders.length} assigned order{myOrders.length === 1 ? "" : "s"} in total — try another tab, or clear the search.</span>
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
-              {myPickGroups.map((group) => (
-                <div key={group.key}>
-                  <div className="sticky top-0 z-10 flex items-baseline justify-between gap-3 border-b border-gray-100 bg-gray-50/95 px-5 py-2 backdrop-blur">
-                    <span className="text-xs font-black uppercase tracking-wide text-gray-600">
-                      {group.label}
-                      <span className="ml-2 font-semibold normal-case tracking-normal text-gray-400">{group.sublabel}</span>
-                    </span>
-                    <span className="shrink-0 text-[11px] font-bold text-gray-500">
-                      {group.orders.length} order{group.orders.length === 1 ? "" : "s"} picked
-                    </span>
-                  </div>
-                  <div className="divide-y divide-slate-100">
-              {group.orders.map((order) => {
+              {myOrdersFiltered.map((order) => {
                 // A claimed order is worked as a loop: log an attempt, set the
                 // next one, repeat until it converts or the customer closes it
                 // out. Surfacing where each order sits in that loop is what
                 // stops one going quiet for weeks.
                 const status = order.status ?? "New";
                 const isClosed = ["Delivered", "Cancelled", "Failed"].includes(status);
-                const lastAt = order.lastContactAttemptAt ? new Date(order.lastContactAttemptAt) : null;
                 const nextAt = order.nextFollowUpAt ? new Date(order.nextFollowUpAt) : null;
                 const nextOverdue = Boolean(nextAt && nextAt.getTime() < Date.now());
+                const pair = recoveryFollowUpPairs[order.id];
+                const prior = pair?.prior ?? null;
+                const mine = pair?.mine ?? null;
+                const ageDays = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+                const stamp = (iso: string, withTime = false) => new Date(iso).toLocaleDateString("en-NG",
+                  withTime
+                    ? { day: "numeric", month: "short", year: "numeric" }
+                    : { day: "numeric", month: "short", year: "numeric" });
+                const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { timeStyle: "short" });
+                const lastAt = order.lastContactAttemptAt ? new Date(order.lastContactAttemptAt) : null;
                 const daysSinceLast = lastAt ? Math.floor((Date.now() - lastAt.getTime()) / 86400000) : null;
                 const needsAttention = !isClosed && (nextOverdue || nextAt === null || (daysSinceLast !== null && daysSinceLast >= 3));
                 return (
-                  <div key={order.id} className="px-5 py-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <button type="button" className="!min-h-0 min-w-0 text-left" onClick={() => openOrderDetailPopup(order.id)}>
-                        <strong className="text-sm text-[#1F8FE0]">{order.id}</strong>{" "}
-                        <span className="text-sm font-semibold text-gray-900">{order.customer}</span>
-                        <p className="mt-0.5 text-xs text-gray-400">{order.phone}</p>
+                  <div key={order.id} className="group px-5 py-4 transition-colors hover:bg-slate-50/60">
+                    <div className="flex flex-wrap items-start gap-4 xl:flex-nowrap">
+                      {/* Who */}
+                      <button type="button" onClick={() => openOrderDetailPopup(order.id)}
+                        className="!min-h-0 flex min-w-0 flex-1 items-start gap-3 text-left xl:w-56 xl:flex-none">
+                        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50">
+                          <Phone className="h-4 w-4 text-emerald-600" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-base font-black leading-tight text-[#1F8FE0]">{order.id}</span>
+                          <span className="block truncate text-sm font-bold text-slate-900">{order.customer}</span>
+                          <span className="block text-xs font-medium text-slate-400">{order.phone}</span>
+                        </span>
                       </button>
-                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${orderStatusPillClass(status, order.callOutcome)}`}>
-                        {orderStatusLabelFor(order)}
-                      </span>
+
+                      {/* ⚠️ Two panes, and the LEFT one is somebody else's work.
+                          A recovery rep is always picking up an order that
+                          already failed for another rep, and what that person
+                          found was previously only reachable by opening the
+                          order one at a time. */}
+                      <div className="grid min-w-0 flex-1 gap-4 sm:grid-cols-2">
+                        <div className="min-w-0">
+                          <p className="m-0 text-[11px] font-bold text-slate-500">
+                            {prior ? `Last follow-up (by ${prior.repName})` : "No earlier follow-up"}
+                          </p>
+                          {prior ? (
+                            <>
+                              <p className="m-0 mt-1 flex items-center gap-1.5 text-xs font-black">
+                                <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                <span className={ageDays(prior.at) >= 3 ? "text-amber-600" : "text-slate-700"}>
+                                  {stamp(prior.at)} ({ageDays(prior.at)}d ago)
+                                </span>
+                              </p>
+                              <p className="m-0 mt-1 flex items-start gap-1.5 text-xs font-medium text-slate-600">
+                                <MessageCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                <span className="min-w-0">{prior.note || prior.outcome || "No note left"}</span>
+                              </p>
+                            </>
+                          ) : (
+                            <p className="m-0 mt-1 text-xs font-medium text-slate-400">Nobody worked this before you.</p>
+                          )}
+                        </div>
+
+                        <div className="min-w-0 border-slate-100 sm:border-l sm:pl-4">
+                          <p className={`m-0 text-[11px] font-bold ${mine ? "text-emerald-600" : "text-rose-600"}`}>
+                            {mine ? "Latest follow-up (by you)" : "You have not logged one yet"}
+                          </p>
+                          {mine ? (
+                            <>
+                              <p className="m-0 mt-1 flex items-center gap-1.5 text-xs font-black text-slate-700">
+                                <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                {stamp(mine.at, true)} • {clock(mine.at)}
+                              </p>
+                              <p className="m-0 mt-1 flex items-start gap-1.5 text-xs font-medium text-slate-600">
+                                {mine.reached
+                                  ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                                  : <MessageCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />}
+                                <span className="min-w-0">{mine.note || mine.outcome || "No note left"}</span>
+                              </p>
+                            </>
+                          ) : (
+                            <p className="m-0 mt-1 text-xs font-medium text-slate-400">Log one to start the trail.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Where it stands */}
+                      <div className="shrink-0 xl:w-40 xl:text-right">
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${orderStatusPillClass(status, order.callOutcome)}`}>
+                          {orderStatusLabelFor(order)}
+                        </span>
+                        <p className="m-0 mt-2 text-[11px] font-semibold text-slate-500">
+                          Next:{" "}
+                          {nextAt
+                            ? <span className={`font-black ${nextOverdue ? "text-rose-600" : "text-slate-700"}`}>
+                                {nextAt.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}{nextOverdue ? " · overdue" : ""}
+                              </span>
+                            : <span className="font-black text-rose-600">not scheduled</span>}
+                        </p>
+                        {needsAttention && (
+                          <span className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-700">
+                            <AlertTriangle className="h-3 w-3" /> {lastAt === null ? "Not started" : nextOverdue ? "Overdue" : "Going quiet"}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
-                      <span className="font-semibold text-gray-500">
-                        Last follow-up:{" "}
-                        {lastAt
-                          ? <span className={`font-black ${daysSinceLast !== null && daysSinceLast >= 3 ? "text-amber-700" : "text-gray-700"}`}>
-                              {lastAt.toLocaleDateString()}{daysSinceLast !== null ? ` (${daysSinceLast}d ago)` : ""}
-                            </span>
-                          : <span className="font-black text-rose-600">never logged</span>}
-                      </span>
-                      <span className="font-semibold text-gray-500">
-                        Next:{" "}
-                        {nextAt
-                          ? <span className={`font-black ${nextOverdue ? "text-rose-600" : "text-gray-700"}`}>
-                              {nextAt.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}{nextOverdue ? " · overdue" : ""}
-                            </span>
-                          : <span className="font-black text-rose-600">not scheduled</span>}
-                      </span>
-                    </div>
-                    {order.lastContactAttemptOutcome && (
-                      <p className="m-0 mt-1 text-[11px] text-gray-600"><span className="font-black text-gray-500">Last outcome: </span>{order.lastContactAttemptOutcome}</p>
-                    )}
-
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
                       {isClosed ? (
-                        <span className="inline-flex items-center gap-1 rounded-md border border-slate-200/80 bg-gray-50 px-2 py-1 text-[11px] font-bold text-gray-500">
-                          <CheckCircle2 className="h-3 w-3" /> Closed - no more follow-ups needed
+                        <span className="inline-flex items-center gap-1 rounded-lg border border-slate-200/80 bg-slate-50 px-2 py-1 text-[11px] font-bold text-slate-500">
+                          <CheckCircle2 className="h-3 w-3" /> Closed — no more follow-ups needed
                         </span>
                       ) : (
                         <>
@@ -66505,22 +66679,17 @@ ${waybillLineItems(w).length > 1
                               to the order detail first made them hunt for it,
                               which is why it felt like there was nowhere to log. */}
                           <button type="button" onClick={() => openFollowUpAttemptModal(order)}
-                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-[#1560a8]">
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg bg-[#1F8FE0] px-2.5 py-1.5 text-[11px] font-bold text-white transition-colors hover:bg-[#1560a8]">
                             <ClipboardCheck className="h-3 w-3" /> Log follow-up
                           </button>
                           <button type="button" onClick={() => openOrderDetailPopup(order.id)}
-                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-slate-50">
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold text-slate-700 transition-colors hover:bg-slate-50">
                             <Eye className="h-3 w-3" /> History
                           </button>
-                          <a href={`tel:${order.phone}`} className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-slate-50"><Phone className="h-3 w-3" /> Call</a>
+                          <a href={`tel:${order.phone}`} className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold text-slate-700 transition-colors hover:bg-slate-50"><Phone className="h-3 w-3" /> Call</a>
                           {buildWhatsAppTargets(order.phone ?? "", `Hello ${order.customer}, this is Protohub following up on your order.`).normalUrl && (
                             <a href={buildWhatsAppTargets(order.phone ?? "", `Hello ${order.customer}, this is Protohub following up on your order.`).normalUrl ?? undefined} target="_blank" rel="noreferrer"
-                              className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-slate-50"><WhatsAppIcon className="h-3 w-3" /> WhatsApp</a>
-                          )}
-                          {needsAttention && (
-                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-black text-amber-700">
-                              <AlertTriangle className="h-3 w-3" /> {lastAt === null ? "Not started" : nextOverdue ? "Follow-up overdue" : "Going quiet"}
-                            </span>
+                              className="!min-h-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold text-slate-700 transition-colors hover:bg-slate-50"><WhatsAppIcon className="h-3 w-3" /> WhatsApp</a>
                           )}
                         </>
                       )}
@@ -66528,11 +66697,12 @@ ${waybillLineItems(w).length > 1
                   </div>
                 );
               })}
-                  </div>
-                </div>
-              ))}
             </div>
           )}
+          <p className="m-0 flex items-center justify-center gap-2 border-t border-slate-200/80 bg-slate-50/60 px-5 py-3 text-xs font-semibold text-slate-500">
+            <Lock className="h-3.5 w-3.5 text-slate-400" />
+            Keep following up consistently. Persistence turns missed calls into sales.
+          </p>
         </section>
 
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
