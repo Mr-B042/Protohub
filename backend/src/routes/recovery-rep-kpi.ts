@@ -228,6 +228,12 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
       return sum + Math.max(0, bonus);
     }, 0);
     const weeklyPace = weekRevenue - weekProductCost - weekLogistics - weekCommission;
+    // The same measure over the REQUESTED range is netContribution, already
+    // computed above - revenue less product cost, logistics and commission. It
+    // is aliased rather than recomputed so the two can never drift, and kept
+    // alongside weeklyPace rather than replacing it: the dashboard's own "this
+    // week" card promises a fixed current week and must keep meaning that.
+    const rangePace = netContribution;
 
     // Upsell/cross-sell attempt rate: reuse the EXISTING Sales Expansion Log
     // compliance system rather than a parallel tracker - average each
@@ -294,15 +300,26 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
     // Claim ten times. Follow-up picks come from logged contact attempts,
     // retention picks from logged retention touchpoints.
     const todayKey = lagosDateKey();
-    const dayStart = `${todayKey}T00:00:00`;
-    const dayEnd = `${todayKey}T23:59:59.999`;
+    // ⚠️ The pick counters follow the REQUESTED RANGE, not a hard-coded today.
+    // They were pinned to today while the bonus beside them moved with the
+    // filter, so half the panel answered the date control and half ignored it -
+    // which is what made the filter look absent rather than partial.
+    // A request with no range still resolves to a window (the month), so
+    // "today" is now just the case where that window happens to be one day.
+    const rangeIsSingleDay = start === todayKey && exclusiveEnd === addDaysToDateKey(todayKey, 1);
+    // Whether the window is exactly one Sunday-week, which is the only shape a
+    // WEEKLY target legitimately applies to.
+    const rangeIsSingleWeek = start === sundayWeekStartForDateKey(start)
+      && exclusiveEnd === addDaysToDateKey(start, 7);
+    const pickStart = `${start}T00:00:00`;
+    const pickEnd = `${exclusiveEnd}T00:00:00`;
     const [followUpTodayResult, retentionTodayResult] = await Promise.all([
       supabase.from("order_contact_attempts").select("order_id")
         .eq("org_id", orgId).eq("rep_id", repId)
-        .gte("attempted_at", dayStart).lte("attempted_at", dayEnd),
+        .gte("attempted_at", pickStart).lt("attempted_at", pickEnd),
       supabase.from("customer_retention_touchpoints").select("order_id")
         .eq("org_id", orgId).eq("logged_by", repId)
-        .gte("logged_at", dayStart).lte("logged_at", dayEnd)
+        .gte("logged_at", pickStart).lt("logged_at", pickEnd)
     ]);
     const followUpPicksToday = new Set((followUpTodayResult.data ?? []).map((r: any) => r.order_id)).size;
     const retentionPicksToday = new Set((retentionTodayResult.data ?? []).map((r: any) => r.order_id)).size;
@@ -328,9 +345,20 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
       recoveredThisWeek,
       followUpPicksToday,
       retentionPicksToday,
-      dailyFollowUpTarget: isWorkingToday ? settings.dailyFollowUpPickTarget : 0,
-      dailyRetentionTarget: isWorkingToday ? settings.dailyRetentionPickTarget : 0,
+      // ⚠️ A DAILY target only means something over a single day. Across a week
+      // or a month it is not a target the rep has failed - it is the wrong
+      // denominator entirely, and showing "4 / 10" against a month would invent
+      // a shortfall that does not exist. Zero tells the client to render the
+      // count with no target beside it.
+      dailyFollowUpTarget: rangeIsSingleDay && isWorkingToday ? settings.dailyFollowUpPickTarget : 0,
+      dailyRetentionTarget: rangeIsSingleDay && isWorkingToday ? settings.dailyRetentionPickTarget : 0,
       isWorkingDayToday: isWorkingToday,
+      // Echoed back so the client can label what it is showing rather than
+      // guessing, and can tell "today" from a one-day custom range.
+      rangeStart: start,
+      rangeEnd: addDaysToDateKey(exclusiveEnd, -1),
+      rangeIsSingleDay,
+      rangeIsSingleWeek,
       weeklyTarget: settings.weeklyRecoveredTarget,
       monthlyTarget: settings.monthlyRecoveredTarget,
       bonusPerOrder: settings.bonusPerRecoveredOrder,
@@ -364,7 +392,11 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
         weeklyPace: {
           value: Math.round(weeklyPace),
           target: settings.weeklyPaceTarget,
-          weekStart: currentWeekStart
+          weekStart: currentWeekStart,
+          // Same measure over the requested range, so a panel with its own
+          // period can show that instead without a second endpoint.
+          rangeValue: Math.round(rangePace),
+          rangeIsSingleWeek
         },
         deliveryRate: { pct: deliveryRatePct, target: settings.minDeliveryRatePct, deliveredCount, closedCount },
         upsellAttemptRate: { pct: upsellAttemptRatePct, target: settings.upsellAttemptRatePct, eligibleCount: eligibleTotal, loggedCount: loggedTotal },
@@ -400,7 +432,9 @@ router.get("/summary", requireRole("Owner", "Admin", "Manager", "Recovery Rep"),
       weeklyPace: {
         value: Math.round(weeklyPace),
         target: settings.weeklyPaceTarget,
-        weekStart: currentWeekStart
+        weekStart: currentWeekStart,
+        rangeValue: Math.round(rangePace),
+        rangeIsSingleWeek
       },
       deliveryRate: {
         pct: deliveryRatePct,
