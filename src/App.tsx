@@ -218,6 +218,7 @@ import CashFlowPage, { type CashFlowPeriod, type CashFlowView, type OpeningBalan
 import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyOpeningCashWizard";
 import DraftTextarea from "./components/DraftTextarea";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
+import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
 import {
   isMoneyHidden, maskFormattedMoney, maskMoneyText, naira, setMoneyHiddenGlobal, shortNaira, subscribeMoneyHidden
 } from "./lib/money-privacy";
@@ -15286,6 +15287,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       closeModal();
     } catch (err: any) {
       showToast(err?.message ?? "Could not change that cost.");
+      loadProductCostChanges();
     } finally { setCostChangeSaving(false); }
   };
 
@@ -15464,14 +15466,34 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
   };
   // Per-product unit cost in the order's currency (falls back to primary).
-  const unitCostForProductInCurrency = (productId: string | undefined | null, currency?: string) => {
+  // Cost history, so an old order is costed at what it cost THEN. Without this
+  // a unit-cost change silently restates every past line that reads pricing
+  // live - the order TOTAL is protected by cogs_snapshot, but a per-line
+  // breakdown has no snapshot to read.
+  const [productCostChanges, setProductCostChanges] = useState<ProductCostChange[]>([]);
+  const costChangesByProduct = useMemo(() => indexCostChanges(productCostChanges), [productCostChanges]);
+  const unitCostForProductInCurrency = (
+    productId: string | undefined | null,
+    currency?: string,
+    /** Day to cost against (YYYY-MM-DD). Omitted = today's cost. */
+    asOfDay?: string | null
+  ) => {
     if (!productId) return 0;
     const product = products.find((item) => item.id === productId);
     if (!product) return 0;
     const matchPricing = currency ? product.pricings.find((p) => p.currency === currency) : undefined;
     const pricing = matchPricing ?? primaryPricing(product);
-    return pricing?.unitCost ?? 0;
+    const current = pricing?.unitCost ?? 0;
+    if (!asOfDay) return current;
+    return unitCostAsOf(current, costChangesByProduct.get(productId) ?? [], asOfDay);
   };
+  // The day an order's cost should be judged on. Only a CLOSED order gets a
+  // historical cost, which is the same line cogs_snapshot draws: its cost is
+  // settled and must never be restated. An order still in flight has not
+  // consumed stock yet and will ship at whatever the product costs today, so it
+  // is left on live pricing.
+  const costAsOfDayForOrder = (order: TrackedOrder) =>
+    order.deliveredDate ? String(order.deliveredDate).slice(0, 10) : null;
   // True COGS for an order = cost of every real unit that leaves stock:
   //   - the main product × quantity, unless the package snapshot already
   //     replaces it with non-gift component products
@@ -15576,27 +15598,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
 
   const costForOrder = (order: TrackedOrder) => {
     let total = 0;
+    const asOf = costAsOfDayForOrder(order);
     const packageComponents = order.packageComponentsSnapshot ?? [];
     const packageSnapshotOnlyContainsGifts =
       packageComponents.length > 0 && packageComponents.every((component) => Boolean(component.isFreeGift));
     if (packageComponents.length === 0 || packageSnapshotOnlyContainsGifts) {
-      total += quantityForOrder(order) * unitCostForProductInCurrency(order.productId, order.currency);
+      total += quantityForOrder(order) * unitCostForProductInCurrency(order.productId, order.currency, asOf);
     }
     if (packageComponents.length > 0) {
       for (const component of packageComponents) {
-        total += Math.max(0, Number(component.quantity) || 0) * unitCostForProductInCurrency(component.productId, order.currency);
+        total += Math.max(0, Number(component.quantity) || 0) * unitCostForProductInCurrency(component.productId, order.currency, asOf);
       }
     }
     for (const line of order.crossSellLines ?? []) {
       for (const component of crossSellLineInventoryComponents(line)) {
-        total += Math.max(0, Number(component.quantity) || 0) * unitCostForProductInCurrency(component.productId, order.currency);
+        total += Math.max(0, Number(component.quantity) || 0) * unitCostForProductInCurrency(component.productId, order.currency, asOf);
       }
     }
     for (const line of order.additionalLines ?? []) {
-      total += Math.max(0, Number(line.quantity) || 0) * unitCostForProductInCurrency(line.productId, order.currency);
+      total += Math.max(0, Number(line.quantity) || 0) * unitCostForProductInCurrency(line.productId, order.currency, asOf);
     }
     for (const line of order.freeGiftLines ?? []) {
-      total += Math.max(0, Number(line.quantity) || 0) * unitCostForProductInCurrency(line.productId, order.currency);
+      total += Math.max(0, Number(line.quantity) || 0) * unitCostForProductInCurrency(line.productId, order.currency, asOf);
     }
     return total;
   };
@@ -26750,6 +26773,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const retryLoadData = useRef<() => void>(() => {});
   const lastAutoResyncAt = useRef(Date.now());
   const latestCartSyncAt = useRef<string>("");
+  // The cost-change log is tiny and append-only, so it loads once rather than
+  // riding the bootstrap batch, and is re-pulled after a cost is changed.
+  const loadProductCostChanges = () => {
+    productsApi.costChanges()
+      .then((payload) => setProductCostChanges((payload?.changes ?? []) as ProductCostChange[]))
+      .catch(() => undefined);
+  };
+  const isSignedIn = auth.isLoggedIn();
+  useEffect(() => {
+    if (!isSignedIn) return;
+    loadProductCostChanges();
+  }, [isSignedIn]);
+
   useEffect(() => {
     if (!auth.isLoggedIn()) {
       setDataLoading(false);
@@ -29320,13 +29356,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return parts.join(" + ") || "No expansion commission rule matched";
     };
     const missingCostProducts = new Set<string>();
+    // Costed on the day the order closed, not today: a later unit-cost change
+    // must not restate a line that was already sold and already frozen.
+    const costAsOf = costAsOfDayForOrder(order);
     const costForProduct = (productId: string | undefined, productName: string, currency: string) => {
       const product = productId ? products.find((item) => item.id === productId) : undefined;
       const pricing = product
         ? (product.pricings.find((item) => item.currency === currency) ?? primaryPricing(product))
         : undefined;
       if (!pricing) missingCostProducts.add(productName || productId || "Unknown product");
-      return Number(pricing?.unitCost ?? 0);
+      if (!productId) return Number(pricing?.unitCost ?? 0);
+      return unitCostAsOf(Number(pricing?.unitCost ?? 0), costChangesByProduct.get(productId) ?? [], costAsOf);
     };
     const lines: Array<{
       kind: "Upsell" | "Cross-sell";

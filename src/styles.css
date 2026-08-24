@@ -195,6 +195,19 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  /* Slashed zero. "\20A6 0" - a zero naira - reads as the word "NO" at bold
+     weight, because the naira sign is an N with two bars and a plain zero is an
+     O. Inter's slashed zero has the SAME advance width as the plain one, so
+     this is a glyph swap with no layout consequence anywhere. */
+  font-variant-numeric: slashed-zero;
+}
+
+/* Tailwind's base resets --tw-slashed-zero to empty on every element, and its
+   `tabular-nums` utility rebuilds font-variant-numeric from those vars - which
+   would drop the slashed zero above on the ~18 figure columns that use it.
+   Seeding the variable keeps the two composable instead of mutually exclusive. */
+*, ::before, ::after {
+  --tw-slashed-zero: slashed-zero;
 }
 
 * {

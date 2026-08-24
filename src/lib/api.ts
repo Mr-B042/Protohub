@@ -502,6 +502,9 @@ export const usersApi = {
 // ── Products ──────────────────────────────────────────────
 export const productsApi = {
   list: () => get<any[]>("/api/products"),
+  // Every recorded unit-cost move, so a historical line can be costed at what
+  // it cost THEN instead of what the product record says today.
+  costChanges: () => get<{ changes: any[] }>("/api/products/cost-changes"),
   // Public storefront view of one product, with cross-sells + free-gifts inlined.
   // Raw fetch so embed forms never inherit stale auth headers or 401 refresh logic.
   public: async (id: string) => {
