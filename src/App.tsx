@@ -12356,6 +12356,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [recoveryBonusDateRange, setRecoveryBonusDateRange] = useState<DateRange>({ start: "", end: "" });
   const [showRecoveryBonusDateRange, setShowRecoveryBonusDateRange] = useState(false);
   const [recoveryBonusSummary, setRecoveryBonusSummary] = useState<any | null>(null);
+  const [recoveryBonusLoading, setRecoveryBonusLoading] = useState(false);
+  // Stepping through periods re-asks a query that costs every delivered order
+  // in the range, so each arrow click was a fresh round trip - including for
+  // ranges just visited. Cached by rep+range for the session.
+  const recoveryBonusCache = useRef(new Map<string, any>());
+  // Only the newest request may write. Walking back four days fires four
+  // requests that can land out of order, and a slow early one overwriting a
+  // fast late one shows the wrong dates' figures under the right dates' label.
+  const recoveryBonusRequestId = useRef(0);
   // When each dead order actually died, keyed by order id. Derived from
   // order_audit server-side because orders.updated_at is not the closure date.
   const [orderClosureDates, setOrderClosureDates] = useState<Record<string, string>>({});
@@ -32410,18 +32419,37 @@ export function App({ onLogout }: { onLogout?: () => void }) {
    * nothing. When it matches, the panel simply reads the page's own summary.
    */
   const loadRecoveryBonusSummary = async () => {
-    if (!recoveryRepViewingId) { setRecoveryBonusSummary(null); return; }
+    if (!recoveryRepViewingId) { setRecoveryBonusSummary(null); setRecoveryBonusLoading(false); return; }
     const panel = periodBoundsForQuery(recoveryBonusPeriod, recoveryBonusDateRange);
     const page = periodBoundsForQuery(recoveryRepPeriod, recoveryRepDateRange);
     if (!panel || (page && panel.dateFrom === page.dateFrom && panel.dateTo === page.dateTo)) {
       setRecoveryBonusSummary(null);
+      setRecoveryBonusLoading(false);
       return;
     }
+    const key = `${recoveryRepViewingId}|${panel.dateFrom}|${panel.dateTo}`;
+    const cached = recoveryBonusCache.current.get(key);
+    if (cached) {
+      // Instant on a revisit, which is most of what stepping through dates is.
+      setRecoveryBonusSummary(cached);
+      setRecoveryBonusLoading(false);
+      return;
+    }
+    const requestId = ++recoveryBonusRequestId.current;
+    setRecoveryBonusLoading(true);
     try {
-      setRecoveryBonusSummary(await recoveryRepKpiApi.summary({
+      const result = await recoveryRepKpiApi.summary({
         repId: recoveryRepViewingId, dateFrom: panel.dateFrom, dateTo: panel.dateTo
-      }));
-    } catch { setRecoveryBonusSummary(null); }
+      });
+      recoveryBonusCache.current.set(key, result);
+      if (requestId !== recoveryBonusRequestId.current) return; // superseded
+      setRecoveryBonusSummary(result);
+    } catch {
+      if (requestId !== recoveryBonusRequestId.current) return;
+      setRecoveryBonusSummary(null);
+    } finally {
+      if (requestId === recoveryBonusRequestId.current) setRecoveryBonusLoading(false);
+    }
   };
 
   const handleRecoveryBonusPeriodChange = (nextPeriod: Period) => {
@@ -46503,7 +46531,11 @@ ${waybillLineItems(w).length > 1
   };
 
   useEffect(() => {
-    void loadRecoveryBonusSummary();
+    // Debounced: holding the arrow down walked four periods and fired four
+    // full-cost queries, three of which nobody would ever read. Settling first
+    // means one request for wherever the rep actually stopped.
+    const timer = window.setTimeout(() => { void loadRecoveryBonusSummary(); }, 250);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recoveryRepViewingId, recoveryBonusPeriod, recoveryBonusDateRange.start, recoveryBonusDateRange.end,
       recoveryRepPeriod, recoveryRepDateRange.start, recoveryRepDateRange.end]);
@@ -65902,6 +65934,14 @@ ${waybillLineItems(w).length > 1
                   {/* Its own period, not the page strip above. */}
                   <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-gray-200/70 pb-3">
                     <span className="text-[10px] font-black uppercase tracking-[0.16em] text-gray-400">Bonus period</span>
+                    {/* Says it is working. Without this the old figures simply
+                        sat there through a slow query, which reads as a frozen
+                        panel rather than a loading one. */}
+                    {recoveryBonusLoading && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-gray-500">
+                        <RefreshCw className="h-3 w-3 animate-spin" /> Updating
+                      </span>
+                    )}
                     <div className="inline-flex flex-wrap items-center gap-1 rounded-lg bg-white/70 p-1">
                       {periods.map((item) => (
                         <button
@@ -65935,7 +65975,7 @@ ${waybillLineItems(w).length > 1
                       )}
                     </div>
                   </div>
-                  <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]">
+                  <div className={`grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)] transition-opacity ${recoveryBonusLoading ? "opacity-50" : "opacity-100"}`}>
                     <div>
                       {/* ⚠️ Was hard-coded to "this month" while the figure had
                           always followed whatever range was requested - the
@@ -65979,7 +66019,11 @@ ${waybillLineItems(w).length > 1
                           <div key={label} className="rounded-xl border border-gray-200 bg-white/80 p-3">
                             <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-500">{label}</p>
                             <p className="m-0 mt-0.5 text-2xl font-black text-gray-900">
-                              {done}<span className="text-base font-bold text-gray-400"> / {target}</span>
+                              {/* No denominator when there is no applicable
+                                  target - "11 / 0" reads as a broken card, and
+                                  as an infinite overshoot rather than "this
+                                  target does not apply to this range". */}
+                              {done}{target > 0 && <span className="text-base font-bold text-gray-400"> / {target}</span>}
                             </p>
                             <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
                               <div className={`h-full rounded-full ${hit ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
