@@ -60124,6 +60124,28 @@ ${waybillLineItems(w).length > 1
                 </div>
               );
             })()}
+            {/* ⚠️ The banner above is second-person and needs a rep to address, so
+                the server sends `today` only when the view is scoped to one -
+                which for an Owner, Admin or Manager it is not. Without this they
+                saw no banner at all. Same component, team totals, so the people
+                who approve the money see the same number the reps are racing. */}
+            {!penalties.today && penalties.repsAtRiskToday.length > 0 && (() => {
+              const teamCarts = penalties.repsAtRiskToday.reduce((sum, rep) => sum + rep.cartsRemaining, 0);
+              const teamExposure = penalties.repsAtRiskToday.reduce((sum, rep) => sum + rep.atRisk, 0);
+              const repCount = penalties.repsAtRiskToday.length;
+              return (
+                <div className="mt-2.5">
+                  <ChargeRiskBanner
+                    label={penalties.phase.active ? "Cart log charge risk — team" : "Cart log charge risk — practice run"}
+                    amount={teamExposure}
+                    detail={`${teamCarts} cart${teamCarts === 1 ? "" : "s"} unlogged across ${repCount} rep${repCount === 1 ? "" : "s"}. Each unlogged cart is ₦${penalties.missAmount.toLocaleString("en-NG")}. Nothing is charged until you approve it.`}
+                    cutoffHour={24}
+                    cutoffLabel="midnight"
+                    rehearsal={!penalties.phase.active}
+                  />
+                </div>
+              );
+            })()}
             {penalties.today && penalties.today.status === "clear" && (
               <p className="m-0 mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[12px] font-bold text-emerald-700">
                 <CheckCircle2 className="h-4 w-4" /> {penalties.today.message}
