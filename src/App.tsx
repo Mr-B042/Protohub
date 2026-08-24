@@ -65544,7 +65544,7 @@ ${waybillLineItems(w).length > 1
           tone: "border-slate-200 bg-slate-50", head: "text-slate-800", pill: "bg-slate-500 text-white",
           rows: scheduled.filter((o) => { const d = dayIndex(o.nextFollowUpAt!); return d > 1 && d <= 7; }) },
         { key: "later", title: "Later", hint: "more than a week away",
-          tone: "border-gray-200 bg-gray-50", head: "text-gray-700", pill: "bg-gray-400 text-white",
+          tone: "border-slate-200/80 bg-gray-50", head: "text-gray-700", pill: "bg-gray-400 text-white",
           rows: scheduled.filter((o) => dayIndex(o.nextFollowUpAt!) > 7) },
         { key: "none", title: "No follow-up scheduled", hint: "open, but nothing says when it is touched again",
           tone: "border-violet-200 bg-violet-50", head: "text-violet-900", pill: "bg-violet-500 text-white",
@@ -65816,25 +65816,30 @@ ${waybillLineItems(w).length > 1
       tooltip?: string;
     }) => {
       const { label, value, targetLabel, met, progressPct = null, primaryNote = null, deltaNote = null, barClass = "bg-emerald-500", tooltip } = opts;
+      // ⚠️ The status colour lives on a top rail and the note, NOT on the
+      // label or the figure. Colouring the number itself made a tracked-only
+      // card look like a pass or a fail, when met === null means neither.
+      const rail = met === null ? "bg-slate-200" : met ? "bg-emerald-500" : "bg-rose-500";
       return (
-        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] transition-all hover:-translate-y-0.5 hover:shadow-md">
+          <span className={`absolute inset-x-0 top-0 h-1 ${rail}`} />
           <div className="flex items-start justify-between gap-2">
-            <p className={`m-0 text-[10px] font-black uppercase leading-tight tracking-[0.12em] ${met === null ? "text-gray-500" : met ? "text-emerald-700" : "text-rose-700"}`}>{label}</p>
-            {tooltip && <span title={tooltip} className="shrink-0 cursor-help text-gray-300 hover:text-gray-500"><Info className="h-3.5 w-3.5" /></span>}
+            <p className="m-0 text-[10px] font-black uppercase leading-tight tracking-[0.12em] text-slate-400">{label}</p>
+            {tooltip && <span title={tooltip} className="shrink-0 cursor-help text-slate-300 transition-colors hover:text-slate-500"><Info className="h-3.5 w-3.5" /></span>}
           </div>
-          <strong className="mt-1.5 block text-2xl font-black text-gray-900">{value}</strong>
-          <p className="m-0 mt-1 text-[11px] font-medium text-gray-500">{targetLabel}</p>
+          <strong className="mt-2 block text-3xl font-black leading-none tracking-tight tabular-nums text-slate-900">{value}</strong>
+          <p className="m-0 mt-1.5 text-[11px] font-semibold text-slate-500">{targetLabel}</p>
           {progressPct !== null && (
-            <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-              <div className={`h-full rounded-full ${barClass}`} style={{ width: `${Math.min(100, Math.max(2, progressPct))}%` }} />
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className={`h-full rounded-full transition-all ${barClass}`} style={{ width: `${Math.min(100, Math.max(2, progressPct))}%` }} />
             </div>
           )}
           {(primaryNote || deltaNote) && (
-            <div className="mt-2 flex items-end justify-between gap-2">
+            <div className="mt-2.5 flex items-end justify-between gap-2">
               {primaryNote && (
-                <span className={`text-xs font-black ${met === null ? "text-gray-700" : met ? "text-emerald-700" : "text-rose-700"}`}>{primaryNote}</span>
+                <span className={`text-xs font-black ${met === null ? "text-slate-600" : met ? "text-emerald-600" : "text-rose-600"}`}>{primaryNote}</span>
               )}
-              {deltaNote && <span className="text-right text-[11px] font-bold text-gray-400">{deltaNote}</span>}
+              {deltaNote && <span className="text-right text-[11px] font-bold text-slate-400">{deltaNote}</span>}
             </div>
           )}
         </div>
@@ -65846,13 +65851,13 @@ ${waybillLineItems(w).length > 1
       <div className="space-y-6">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-[#1F8FE0]">Recovery Rep Dashboard</h1>
-            <p className="text-sm font-medium text-gray-500">Net contribution and recovery KPIs for {viewingUser?.name ?? "this rep"}.</p>
+            <h1 className="m-0 text-2xl font-black tracking-tight text-slate-900">Recovery Rep Dashboard</h1>
+            <p className="m-0 mt-0.5 text-sm font-medium text-slate-500">Net contribution and recovery KPIs for {viewingUser?.name ?? "this rep"}.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {recoveryRepIsOwnerLike && (
               <select
-                className="h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                className="h-9 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20"
                 value={recoveryRepScopeId || recoveryRepUsers[0]?.id || ""}
                 onChange={(event) => setRecoveryRepScopeId(event.target.value)}
               >
@@ -65862,12 +65867,12 @@ ${waybillLineItems(w).length > 1
             )}
             {/* Same period strip every other page uses, rather than a bare
                 dropdown - one control, one behaviour across the app. */}
-            <div className="grid grid-cols-4 sm:inline-flex items-center bg-gray-100 p-1 rounded-lg">
+            <div className="grid grid-cols-4 items-center rounded-xl border border-slate-200/80 bg-white p-1 shadow-sm sm:inline-flex">
               {periods.map((item) => (
                 <button
                   key={item}
                   type="button"
-                  className={`!min-h-0 px-2 py-2 sm:px-3 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-center leading-tight ${recoveryRepPeriod === item ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                  className={`!min-h-0 rounded-lg px-2 py-2 text-center text-xs font-bold leading-tight transition-all sm:px-3 sm:py-1.5 sm:text-sm ${recoveryRepPeriod === item ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
                   onClick={() => handleRecoveryRepPeriodChange(item)}
                 >{item}</button>
               ))}
@@ -65875,7 +65880,7 @@ ${waybillLineItems(w).length > 1
             <div className="relative">
               <button
                 type="button"
-                className="!min-h-0 h-9 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
                 onClick={() => setShowRecoveryRepDateRange((open) => !open)}
               >
                 <CalendarDays className="w-4 h-4" /> {recoveryRepPeriod === "Custom" ? "Edit date range" : "Pick a date range"}
@@ -65885,7 +65890,7 @@ ${waybillLineItems(w).length > 1
             {currentRole === "Owner" && (
               <button
                 type="button"
-                className="!min-h-0 h-9 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-gray-50"
+                className="!min-h-0 h-9 inline-flex items-center gap-1.5 rounded-lg border border-slate-200/80 bg-white px-3 text-sm font-bold text-gray-700 hover:bg-slate-50"
                 onClick={() => setRecoveryRepSettingsOpen((open) => !open)}
               >
                 <Settings className="w-4 h-4" /> KPI Settings
@@ -65917,10 +65922,10 @@ ${waybillLineItems(w).length > 1
           : recoveryRepDashboardTab === "Activity Sheet" ? renderRecoveryActivitySheet() : (
         <>
         {currentRole === "Owner" && recoveryRepSettingsOpen && recoveryRepSettingsDraft && (
-          <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+          <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm space-y-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h3 className="text-base font-black text-gray-900">Recovery Rep KPI Targets</h3>
+                <h3 className="text-base font-black tracking-tight text-slate-900">Recovery Rep KPI Targets</h3>
                 <p className="text-sm text-gray-500">Org-wide targets used to grade every Recovery Rep&apos;s dashboard.</p>
               </div>
               <button
@@ -65952,7 +65957,7 @@ ${waybillLineItems(w).length > 1
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">{label}</span>
                   <input
                     type="number"
-                    className="w-full h-9 px-3 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
+                    className="w-full h-9 px-3 border border-slate-200/80 rounded-lg bg-white text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#1F8FE0]"
                     value={recoveryRepSettingsDraft[key]}
                     onChange={(event) => {
                       const value = Number(event.target.value);
@@ -65966,13 +65971,13 @@ ${waybillLineItems(w).length > 1
         )}
 
         {recoveryRepKpiError && (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{recoveryRepKpiError}</div>
+          <div className="rounded-2xl border border-rose-200/80 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{recoveryRepKpiError}</div>
         )}
 
         {recoveryRepKpiLoading && !summary ? (
-          <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-gray-400">Loading KPI summary…</div>
+          <div className="rounded-2xl border border-slate-200/80 bg-white p-10 text-center text-sm font-semibold text-slate-400">Loading KPI summary…</div>
         ) : !summary ? (
-          <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-gray-400">
+          <div className="rounded-2xl border border-slate-200/80 bg-white p-10 text-center text-sm font-semibold text-slate-400">
             {recoveryRepUsers.length === 0 ? "No Recovery Reps have been added yet." : "Select a Recovery Rep to see their KPI summary."}
           </div>
         ) : (
@@ -66020,7 +66025,7 @@ ${waybillLineItems(w).length > 1
                     <div className="relative">
                       <button
                         type="button"
-                        className="!min-h-0 inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
+                        className="!min-h-0 inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200/80 bg-white px-2.5 text-xs font-bold text-gray-700 hover:bg-slate-50"
                         onClick={() => setShowRecoveryBonusDateRange((open) => !open)}
                       >
                         <CalendarDays className="h-3.5 w-3.5" /> {recoveryBonusPeriod === "Custom" ? "Edit dates" : "Custom range"}
@@ -66131,7 +66136,7 @@ ${waybillLineItems(w).length > 1
                         formatMoney={formatMoney}
                       />
                     ) : (
-                      <p className="m-0 rounded-xl border border-gray-200 bg-white px-3 py-6 text-center text-[12px] font-semibold text-gray-500">
+                      <p className="m-0 rounded-xl border border-slate-200/80 bg-white px-3 py-6 text-center text-[12px] font-semibold text-gray-500">
                         {recoveryBonusLoading ? "Loading the day-by-day breakdown…" : "No day-by-day data for this range."}
                       </p>
                     )}
@@ -66155,7 +66160,7 @@ ${waybillLineItems(w).length > 1
                 ["Documentation", summary.documentation.pct, summary.documentation.target]
               ];
               return (
-                <details className="group rounded-2xl border border-gray-200 bg-white p-5 shadow-sm" open={!rec.gatesMet}>
+                <details className="group rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm" open={!rec.gatesMet}>
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
                     <span>
                       <span className="block text-base font-black text-gray-900">How your bonus works</span>
@@ -66210,13 +66215,13 @@ ${waybillLineItems(w).length > 1
                   </div>
 
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-xl border border-gray-200 p-3">
+                    <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3">
                       <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">Your targets</p>
                       <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
                         <strong>{rec.weeklyTarget} recovered orders a week</strong> and <strong>{rec.monthlyTarget} a month</strong>. Targets are order counts, not naira - you&apos;re measured on what you control.
                       </p>
                     </div>
-                    <div className="rounded-xl border border-gray-200 p-3">
+                    <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3">
                       <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">What does NOT pay</p>
                       <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
                         Logging a satisfaction check, collecting a review or taking a referral contact earn nothing on their own. The bonus follows real delivered sales.
@@ -66227,24 +66232,30 @@ ${waybillLineItems(w).length > 1
               );
             })()}
 
+            {/* ⚠️ Status as an edge rail and a pill, never a wash over the whole
+                panel - the same fix made on the recovery bonus block. A section
+                flooded amber makes every figure inside it read as a warning,
+                including the ones that are fine. */}
             {summary.surplusBonus && (
-              <section className={`overflow-hidden rounded-2xl border-2 p-5 shadow-sm ${summary.surplusBonus.gatesMet ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white" : "border-amber-300 bg-gradient-to-br from-amber-50 to-white"}`}>
+              <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 bg-white p-5 shadow-sm ring-1 ring-slate-900/[0.02]">
+                <span className={`absolute inset-y-0 left-0 w-[3px] ${summary.surplusBonus.gatesMet ? "bg-emerald-500" : "bg-amber-500"}`} />
                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)] lg:items-center">
                   <div>
-                    <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-500">Your recovery bonus this month</p>
-                    <strong className={`mt-1 block text-3xl font-black ${summary.surplusBonus.gatesMet ? "text-emerald-700" : "text-amber-700"}`}>
+                    <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Your recovery bonus this month</p>
+                    <strong className={`mt-1.5 block text-4xl font-black leading-none tracking-tight ${summary.surplusBonus.gatesMet ? "text-emerald-600" : "text-slate-900"}`}>
                       {formatMoney(summary.surplusBonus.value)}
                     </strong>
-                    <p className="mt-1 text-xs font-semibold text-gray-500">
-                      Surplus above {formatMoney(summary.netContribution.targetMin)}: <span className="font-black text-gray-900">{formatMoney(summary.surplusBonus.surplusBase)}</span> × {summary.surplusBonus.pct}%
+                    <p className="m-0 mt-2 text-xs font-semibold text-slate-500">
+                      Surplus above {formatMoney(summary.netContribution.targetMin)}: <span className="font-black text-slate-900">{formatMoney(summary.surplusBonus.surplusBase)}</span> × {summary.surplusBonus.pct}%
                     </p>
                   </div>
                   <div className="flex items-start gap-2">
-                    <span className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${summary.surplusBonus.gatesMet ? "bg-emerald-500" : "bg-amber-500"} text-white`}>
-                      {summary.surplusBonus.gatesMet ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+                    <span className={`mt-0.5 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${summary.surplusBonus.gatesMet ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                      {summary.surplusBonus.gatesMet ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+                      {summary.surplusBonus.gatesMet ? "Earned" : "Held"}
                     </span>
                     <div className="min-w-0">
-                      <p className={`m-0 text-sm font-black ${summary.surplusBonus.gatesMet ? "text-emerald-800" : "text-amber-800"}`}>
+                      <p className={`m-0 text-sm font-black ${summary.surplusBonus.gatesMet ? "text-emerald-700" : "text-amber-700"}`}>
                         {summary.surplusBonus.gatesMet ? "Bonus Earned!" : "Bonus Withheld"}
                       </p>
                       <p className="m-0 mt-0.5 text-xs font-semibold text-gray-600">
@@ -66255,7 +66266,7 @@ ${waybillLineItems(w).length > 1
                       <p className="m-0 mt-1 text-[11px] font-medium text-gray-400">Withheld if any KPI falls below target.</p>
                     </div>
                   </div>
-                  <div className="rounded-xl border border-gray-200 bg-white/70 px-4 py-3">
+                  <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 px-4 py-3">
                     <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">How your bonus is calculated</p>
                     <ul className="m-0 mt-1.5 list-none space-y-1 p-0 text-[11px] font-medium text-gray-600">
                       <li>Monthly Net Contribution must be above {formatMoney(summary.netContribution.targetMin)}.</li>
@@ -66408,9 +66419,9 @@ ${waybillLineItems(w).length > 1
           </>
         )}
 
-        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-200">
-            <h2 className="text-base font-bold text-gray-900">My Recovered Orders</h2>
+        <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-200/80">
+            <h2 className="text-base font-black tracking-tight text-slate-900">My Recovered Orders</h2>
             <p className="text-xs text-gray-500 mt-0.5">
               Grouped by the day each order was picked, newest first. Keep logging follow-ups until the customer buys or tells you no.
             </p>
@@ -66423,7 +66434,7 @@ ${waybillLineItems(w).length > 1
               <span className="mt-1 block text-xs">{myOrders.length} assigned order{myOrders.length === 1 ? "" : "s"} fall outside it - widen the date range above to see them.</span>
             </div>
           ) : (
-            <div className="divide-y divide-gray-100">
+            <div className="divide-y divide-slate-100">
               {myPickGroups.map((group) => (
                 <div key={group.key}>
                   <div className="sticky top-0 z-10 flex items-baseline justify-between gap-3 border-b border-gray-100 bg-gray-50/95 px-5 py-2 backdrop-blur">
@@ -66435,7 +66446,7 @@ ${waybillLineItems(w).length > 1
                       {group.orders.length} order{group.orders.length === 1 ? "" : "s"} picked
                     </span>
                   </div>
-                  <div className="divide-y divide-gray-100">
+                  <div className="divide-y divide-slate-100">
               {group.orders.map((order) => {
                 // A claimed order is worked as a loop: log an attempt, set the
                 // next one, repeat until it converts or the customer closes it
@@ -66485,7 +66496,7 @@ ${waybillLineItems(w).length > 1
 
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       {isClosed ? (
-                        <span className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-bold text-gray-500">
+                        <span className="inline-flex items-center gap-1 rounded-md border border-slate-200/80 bg-gray-50 px-2 py-1 text-[11px] font-bold text-gray-500">
                           <CheckCircle2 className="h-3 w-3" /> Closed - no more follow-ups needed
                         </span>
                       ) : (
@@ -66498,13 +66509,13 @@ ${waybillLineItems(w).length > 1
                             <ClipboardCheck className="h-3 w-3" /> Log follow-up
                           </button>
                           <button type="button" onClick={() => openOrderDetailPopup(order.id)}
-                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50">
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-slate-50">
                             <Eye className="h-3 w-3" /> History
                           </button>
-                          <a href={`tel:${order.phone}`} className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50"><Phone className="h-3 w-3" /> Call</a>
+                          <a href={`tel:${order.phone}`} className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-slate-50"><Phone className="h-3 w-3" /> Call</a>
                           {buildWhatsAppTargets(order.phone ?? "", `Hello ${order.customer}, this is Protohub following up on your order.`).normalUrl && (
                             <a href={buildWhatsAppTargets(order.phone ?? "", `Hello ${order.customer}, this is Protohub following up on your order.`).normalUrl ?? undefined} target="_blank" rel="noreferrer"
-                              className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50"><WhatsAppIcon className="h-3 w-3" /> WhatsApp</a>
+                              className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-slate-50"><WhatsAppIcon className="h-3 w-3" /> WhatsApp</a>
                           )}
                           {needsAttention && (
                             <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-black text-amber-700">
@@ -66525,25 +66536,25 @@ ${waybillLineItems(w).length > 1
         </section>
 
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
-            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Total Candidates</div>
-            <div className="text-xl font-black text-gray-900 mt-1">{recoveryCandidates.length}</div>
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] px-4 py-3">
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.14em]">Total Candidates</div>
+            <div className="text-2xl font-black tabular-nums text-slate-900 mt-1 tracking-tight">{recoveryCandidates.length}</div>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
-            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Cancelled</div>
-            <div className="text-xl font-black text-red-600 mt-1">{candidateReasonCounts["Cancelled"] ?? 0}</div>
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] px-4 py-3">
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.14em]">Cancelled</div>
+            <div className="text-2xl font-black tabular-nums text-rose-600 mt-1 tracking-tight">{candidateReasonCounts["Cancelled"] ?? 0}</div>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
-            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Rejected</div>
-            <div className="text-xl font-black text-amber-600 mt-1">{candidateReasonCounts["Rejected"] ?? 0}</div>
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] px-4 py-3">
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.14em]">Rejected</div>
+            <div className="text-2xl font-black tabular-nums text-amber-600 mt-1 tracking-tight">{candidateReasonCounts["Rejected"] ?? 0}</div>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
-            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Product Unavailable</div>
-            <div className="text-xl font-black text-violet-600 mt-1">{candidateReasonCounts["Product Unavailable"] ?? 0}</div>
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] px-4 py-3">
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.14em]">Product Unavailable</div>
+            <div className="text-2xl font-black tabular-nums text-violet-600 mt-1 tracking-tight">{candidateReasonCounts["Product Unavailable"] ?? 0}</div>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3 col-span-2 sm:col-span-1">
-            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Failed</div>
-            <div className="text-xl font-black text-sky-600 mt-1">{candidateReasonCounts["Failed"] ?? 0}</div>
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] px-4 py-3 col-span-2 sm:col-span-1">
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.14em]">Failed</div>
+            <div className="text-2xl font-black tabular-nums text-sky-600 mt-1 tracking-tight">{candidateReasonCounts["Failed"] ?? 0}</div>
           </div>
         </div>
 
@@ -66551,9 +66562,9 @@ ${waybillLineItems(w).length > 1
             next. A commitment made on Monday had nowhere to resurface on
             Thursday - it lived as a flag on one row in one list. */}
         {nextActionGroups.length > 0 && (
-          <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 px-5 py-4">
-              <h2 className="m-0 text-base font-bold text-gray-900">Next actions</h2>
+          <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] overflow-hidden">
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-200/80 px-5 py-4">
+              <h2 className="m-0 text-base font-black tracking-tight text-slate-900">Next actions</h2>
               {overdueNextActionCount > 0 && (
                 <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-black text-rose-700">
                   {overdueNextActionCount} overdue
@@ -66617,9 +66628,9 @@ ${waybillLineItems(w).length > 1
           </section>
         )}
 
-        <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-200">
-            <h2 className="text-base font-bold text-gray-900">Recovery Candidates</h2>
+        <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-200/80">
+            <h2 className="text-base font-black tracking-tight text-slate-900">Recovery Candidates</h2>
             {/* The recovery window, stated as counts. A dead order has a
                 half-life: reached in a day or two the customer still remembers
                 wanting it, three weeks on you are cold-calling a stranger about
@@ -66630,7 +66641,7 @@ ${waybillLineItems(w).length > 1
                 { key: "now", label: "Act now", sub: "closed in the last 2 days", cls: "border-rose-300 bg-rose-50 text-rose-800", num: "text-rose-700" },
                 { key: "week", label: "This week", sub: "3–7 days", cls: "border-amber-300 bg-amber-50 text-amber-800", num: "text-amber-700" },
                 { key: "fading", label: "Fading", sub: "8–21 days", cls: "border-slate-200 bg-slate-50 text-slate-700", num: "text-slate-700" },
-                { key: "cold", label: "Cold", sub: "over 21 days", cls: "border-gray-200 bg-gray-50 text-gray-500", num: "text-gray-500" }
+                { key: "cold", label: "Cold", sub: "over 21 days", cls: "border-slate-200/80 bg-slate-50 text-slate-500", num: "text-gray-500" }
               ].map((band) => (
                 <div key={band.key} className={`min-w-[132px] flex-1 rounded-xl border px-3 py-2 ${band.cls}`}>
                   <div className={`text-2xl font-black leading-none ${band.num}`}>{urgencyCounts[band.key] ?? 0}</div>
@@ -66660,12 +66671,12 @@ ${waybillLineItems(w).length > 1
               value={recoveryCandidateSearch}
               onChange={(e) => setRecoveryCandidateSearch(e.target.value)}
               placeholder="Search name, phone, or order ID"
-              className="!min-h-0 w-full sm:w-64 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              className="!min-h-0 w-full sm:w-64 rounded-xl border border-slate-200/80 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-brand-500/30"
             />
             <select
               value={recoveryCandidateReasonFilter}
               onChange={(e) => setRecoveryCandidateReasonFilter(e.target.value)}
-              className="!min-h-0 w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              className="!min-h-0 w-full sm:w-auto rounded-xl border border-slate-200/80 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-brand-500/30"
             >
               {candidateReasonOptions.map((reason) => (
                 <option key={reason} value={reason}>{reason === "All" ? "Reason: All" : reason}</option>
@@ -66689,7 +66700,7 @@ ${waybillLineItems(w).length > 1
           ) : (
             <>
               {/* Mobile: stacked cards, easiest to scan/tap one-handed. */}
-              <div className="sm:hidden divide-y divide-gray-100">
+              <div className="sm:hidden divide-y divide-slate-100">
                 {pagedRecoveryCandidates.map((order) => {
                   const reason = candidateReason(order);
                   const tone = candidateStatusTone(reason);
@@ -66726,7 +66737,7 @@ ${waybillLineItems(w).length > 1
                       <div className="flex items-center gap-2">
                         {whatsappUrl && <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-green-50 text-green-600 ring-1 ring-green-100 transition hover:bg-green-100" href={whatsappUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${order.customer}`}><WhatsAppIcon className="h-4 w-4" /></a>}
                         <a className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-50 text-blue-600 ring-1 ring-blue-100 transition hover:bg-blue-100" href={`tel:${order.phone}`} title={`Call ${order.customer}`}><Phone className="h-4 w-4" /></a>
-                        <button className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-gray-50 text-gray-500 ring-1 ring-gray-200 transition hover:bg-gray-100" onClick={() => copyText(order.phone ?? "", `${order.customer} phone`)} title={`Copy ${order.customer}'s phone`}><Copy className="h-4 w-4" /></button>
+                        <button className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-50 text-slate-500 ring-1 ring-gray-200 transition hover:bg-gray-100" onClick={() => copyText(order.phone ?? "", `${order.customer} phone`)} title={`Copy ${order.customer}'s phone`}><Copy className="h-4 w-4" /></button>
                       </div>
                       <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 text-xs">
                         <span className="font-semibold uppercase tracking-wide text-gray-400">Order details</span>
@@ -66740,9 +66751,9 @@ ${waybillLineItems(w).length > 1
                         <span><strong className="block text-red-500">{history.cancelled}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Cancelled</span></span>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
-                        <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
+                        <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-slate-200/80 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
                         <button disabled={!canClaimMore} title={canClaimMore ? undefined : `Holding ${claimHeld} of ${claimCap} open orders.`} className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-md bg-[#1F8FE0] px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-[#1560a8] disabled:opacity-40 disabled:cursor-not-allowed" onClick={() => claimRecoveryCandidate(order)}>Claim</button>
-                        <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => addRecoveryCandidateNote(order)}>Add Note</button>
+                        <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium border border-slate-200/80 bg-white text-gray-700 rounded-md hover:bg-slate-50 transition-colors" onClick={() => addRecoveryCandidateNote(order)}>Add Note</button>
                       </div>
                     </article>
                   );
@@ -66753,7 +66764,7 @@ ${waybillLineItems(w).length > 1
               <div className="hidden sm:block overflow-x-auto">
                 <table className="w-full min-w-[900px] text-sm">
                   <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200 text-left">
+                    <tr className="bg-gray-50 border-b border-slate-200/80 text-left">
                       {/* Empty header for the urgency rail. */}
                       <th className="w-1 p-0" />
                       {["Customer", "Order Details", "Recovery Window", "Order History", "Actions"].map((h) => (
@@ -66761,7 +66772,7 @@ ${waybillLineItems(w).length > 1
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-slate-100">
                     {pagedRecoveryCandidates.map((order) => {
                       const reason = candidateReason(order);
                       const tone = candidateStatusTone(reason);
@@ -66769,7 +66780,7 @@ ${waybillLineItems(w).length > 1
                       const whatsappUrl = buildWhatsAppTargets(order.phone ?? "", `Hello ${order.customer}, this is Protohub following up on your order.`).normalUrl;
                       const urgency = recoveryUrgency(order);
                       return (
-                        <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                        <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                           {/* A coloured rail down the row. The window a dead
                               order can still be recovered in is the whole point
                               of this queue, so it is the first thing the eye
@@ -66785,7 +66796,7 @@ ${waybillLineItems(w).length > 1
                                 <div className="mt-2 flex items-center gap-2">
                                   {whatsappUrl && <a className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-green-50 text-green-600 ring-1 ring-green-100 transition hover:bg-green-100" href={whatsappUrl} target="_blank" rel="noreferrer" title={`WhatsApp ${order.customer}`}><WhatsAppIcon className="h-3.5 w-3.5" /></a>}
                                   <a className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-50 text-blue-600 ring-1 ring-blue-100 transition hover:bg-blue-100" href={`tel:${order.phone}`} title={`Call ${order.customer}`}><Phone className="h-3.5 w-3.5" /></a>
-                                  <button className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-gray-50 text-gray-500 ring-1 ring-gray-200 transition hover:bg-gray-100" onClick={() => copyText(order.phone ?? "", `${order.customer} phone`)} title={`Copy ${order.customer}'s phone`}><Copy className="h-3.5 w-3.5" /></button>
+                                  <button className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-50 text-slate-500 ring-1 ring-gray-200 transition hover:bg-gray-100" onClick={() => copyText(order.phone ?? "", `${order.customer} phone`)} title={`Copy ${order.customer}'s phone`}><Copy className="h-3.5 w-3.5" /></button>
                                 </div>
                               </div>
                             </div>
@@ -66909,8 +66920,8 @@ ${waybillLineItems(w).length > 1
                           <td className="px-4 py-4">
                             <div className="flex items-center gap-1.5">
                               <button disabled={!canClaimMore} title={canClaimMore ? undefined : `Holding ${claimHeld} of ${claimCap} open orders.`} className="!min-h-0 inline-flex items-center gap-1.5 rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#1560a8] disabled:opacity-40 disabled:cursor-not-allowed" onClick={() => claimRecoveryCandidate(order)}>Claim</button>
-                              <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
-                              <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-gray-200 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors" onClick={() => addRecoveryCandidateNote(order)}>Add Note</button>
+                              <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-slate-200/80 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
+                              <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-slate-200/80 bg-white text-gray-700 rounded-md hover:bg-slate-50 transition-colors" onClick={() => addRecoveryCandidateNote(order)}>Add Note</button>
                             </div>
                           </td>
                         </tr>
@@ -66920,16 +66931,16 @@ ${waybillLineItems(w).length > 1
                 </table>
               </div>
               {candidateTotalPages > 1 && (
-                <div className="flex flex-col items-center justify-between gap-2 border-t border-gray-200 px-4 py-3 sm:flex-row">
+                <div className="flex flex-col items-center justify-between gap-2 border-t border-slate-200/80 px-4 py-3 sm:flex-row">
                   <span className="text-xs font-semibold text-gray-500">
                     Page {candidatePage} of {candidateTotalPages} · {CANDIDATE_PAGE_SIZE} per page
                   </span>
                   <div className="flex items-center gap-1">
-                    <button type="button" disabled={candidatePage === 1} onClick={() => setRecoveryCandidatePage(candidatePage - 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-3.5 w-3.5" /></button>
+                    <button type="button" disabled={candidatePage === 1} onClick={() => setRecoveryCandidatePage(candidatePage - 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200/80 text-gray-600 disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-3.5 w-3.5" /></button>
                     {candidatePageNumbers.map((p, i) => p === "gap"
                       ? <span key={`cg${i}`} className="px-1 text-xs text-gray-400">…</span>
-                      : <button key={p} type="button" onClick={() => setRecoveryCandidatePage(p)} className={`!min-h-0 inline-flex h-7 min-w-[28px] items-center justify-center rounded-md border px-1.5 text-xs font-bold ${p === candidatePage ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{p}</button>)}
-                    <button type="button" disabled={candidatePage === candidateTotalPages} onClick={() => setRecoveryCandidatePage(candidatePage + 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-3.5 w-3.5" /></button>
+                      : <button key={p} type="button" onClick={() => setRecoveryCandidatePage(p)} className={`!min-h-0 inline-flex h-7 min-w-[28px] items-center justify-center rounded-md border px-1.5 text-xs font-bold ${p === candidatePage ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-slate-200/80 text-gray-600 hover:bg-slate-50"}`}>{p}</button>)}
+                    <button type="button" disabled={candidatePage === candidateTotalPages} onClick={() => setRecoveryCandidatePage(candidatePage + 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200/80 text-gray-600 disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-3.5 w-3.5" /></button>
                   </div>
                 </div>
               )}
@@ -66938,8 +66949,8 @@ ${waybillLineItems(w).length > 1
         </section>
 
         <section className="grid gap-4 xl:grid-cols-3">
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <h2 className="m-0 text-base font-bold text-gray-900">Documentation &amp; Consent</h2>
+          <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm">
+            <h2 className="m-0 text-base font-black tracking-tight text-slate-900">Documentation &amp; Consent</h2>
             <p className="mb-3 mt-1 text-xs text-gray-500">Data quality decides bonus eligibility.</p>
             {summary ? (() => {
               const doc = summary.documentation;
@@ -67007,8 +67018,8 @@ ${waybillLineItems(w).length > 1
             </button>
           </div>
 
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <h2 className="m-0 text-base font-bold text-gray-900">Bonus Coach</h2>
+          <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm">
+            <h2 className="m-0 text-base font-black tracking-tight text-slate-900">Bonus Coach</h2>
             <p className="mb-3 mt-1 text-xs text-gray-500">Your progress vs. targets.</p>
             {summary ? (
               <ul className="m-0 list-none space-y-2.5 p-0">
@@ -67057,12 +67068,12 @@ ${waybillLineItems(w).length > 1
             )}
           </div>
 
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <h2 className="m-0 text-base font-bold text-gray-900">Quick Actions</h2>
+          <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm">
+            <h2 className="m-0 text-base font-black tracking-tight text-slate-900">Quick Actions</h2>
             <p className="mb-3 mt-1 text-xs text-gray-500">Jump straight into the work.</p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
               <button type="button" onClick={() => setRecoveryRepDashboardTab("Customer Retention")}
-                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-slate-200/80 px-3 py-2.5 text-left hover:bg-slate-50">
                 <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600"><Phone className="h-4 w-4" /></span>
                 <span className="min-w-0">
                   <span className="block text-xs font-black text-gray-800">Call Queue</span>
@@ -67070,7 +67081,7 @@ ${waybillLineItems(w).length > 1
                 </span>
               </button>
               <button type="button" onClick={() => handleNavClick("WhatsApp")}
-                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-slate-200/80 px-3 py-2.5 text-left hover:bg-slate-50">
                 <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><WhatsAppIcon className="h-4 w-4" /></span>
                 <span className="min-w-0">
                   <span className="block text-xs font-black text-gray-800">WhatsApp Queue</span>
@@ -67078,7 +67089,7 @@ ${waybillLineItems(w).length > 1
                 </span>
               </button>
               <button type="button" onClick={() => { setRecoveryRepDashboardTab("Customer Retention"); setRetentionSubPage("Tasks"); }}
-                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-slate-200/80 px-3 py-2.5 text-left hover:bg-slate-50">
                 <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600"><CalendarDays className="h-4 w-4" /></span>
                 <span className="min-w-0">
                   <span className="block text-xs font-black text-gray-800">Reschedule Follow-up</span>
@@ -67086,7 +67097,7 @@ ${waybillLineItems(w).length > 1
                 </span>
               </button>
               <button type="button" onClick={() => handleNavClick("Follow-up Queue")}
-                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-slate-200/80 px-3 py-2.5 text-left hover:bg-slate-50">
                 <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600"><ClipboardCheck className="h-4 w-4" /></span>
                 <span className="min-w-0">
                   <span className="block text-xs font-black text-gray-800">Follow-up Queue</span>
@@ -67096,7 +67107,7 @@ ${waybillLineItems(w).length > 1
             </div>
             <div className="mt-2 grid grid-cols-1 gap-2 border-t border-gray-100 pt-2 sm:grid-cols-2 xl:grid-cols-1">
               <button type="button" onClick={() => setTemplateBrowserKind("offer")}
-                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-slate-200/80 px-3 py-2.5 text-left hover:bg-slate-50">
                 <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><Gift className="h-4 w-4" /></span>
                 <span className="min-w-0">
                   <span className="block text-xs font-black text-gray-800">Offer Templates</span>
@@ -67104,7 +67115,7 @@ ${waybillLineItems(w).length > 1
                 </span>
               </button>
               <button type="button" onClick={() => setTemplateBrowserKind("script")}
-                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-slate-200/80 px-3 py-2.5 text-left hover:bg-slate-50">
                 <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600"><MessageCircle className="h-4 w-4" /></span>
                 <span className="min-w-0">
                   <span className="block text-xs font-black text-gray-800">Recovery Scripts</span>
@@ -67112,7 +67123,7 @@ ${waybillLineItems(w).length > 1
                 </span>
               </button>
               <button type="button" onClick={() => { setBroadcastTemplateId(""); setBroadcastProgress(null); setBroadcastOpen(true); }}
-                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left hover:bg-gray-50">
+                className="!min-h-0 flex items-center gap-2.5 rounded-lg border border-slate-200/80 px-3 py-2.5 text-left hover:bg-slate-50">
                 <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600"><Send className="h-4 w-4" /></span>
                 <span className="min-w-0">
                   <span className="block text-xs font-black text-gray-800">Broadcast Message</span>
@@ -67142,7 +67153,7 @@ ${waybillLineItems(w).length > 1
                 <p className="m-0 mt-0.5 text-xs text-gray-500">It moves into {viewingUser?.name ?? "this rep"}&apos;s queue and out of the candidate list.</p>
               </div>
               <div className="space-y-3 p-5">
-                <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                <div className="rounded-xl border border-slate-200/80 bg-gray-50 p-3">
                   <p className="m-0 text-sm font-black text-gray-900">{order.customer}</p>
                   <p className="m-0 text-xs text-gray-500">{order.phone} · Order {order.id}</p>
                   <p className="m-0 mt-1 text-xs text-gray-600">{customerOrderLabel(order.productName, order.packageName)} · {formatProductMoney(order.amount, order.currency)}</p>
@@ -67156,7 +67167,7 @@ ${waybillLineItems(w).length > 1
                   </div>
                 )}
                 <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
-                  <button type="button" disabled={claimSaving} className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700 disabled:opacity-60" onClick={() => setClaimCandidateOrder(null)}>Cancel</button>
+                  <button type="button" disabled={claimSaving} className="!min-h-0 rounded-lg border border-slate-200/80 px-4 py-2 text-sm font-bold text-gray-700 disabled:opacity-60" onClick={() => setClaimCandidateOrder(null)}>Cancel</button>
                   <button type="button" disabled={claimSaving} className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white disabled:opacity-60" onClick={confirmClaimCandidate}>
                     {claimSaving ? "Claiming…" : "Claim order"}
                   </button>
@@ -67178,7 +67189,7 @@ ${waybillLineItems(w).length > 1
             <section className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
               <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white px-5 py-4">
                 <div>
-                  <h3 className="text-base font-black text-gray-900">{title}</h3>
+                  <h3 className="text-base font-black tracking-tight text-slate-900">{title}</h3>
                   <p className="mt-0.5 text-xs text-gray-500">{blurb}</p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -67199,7 +67210,7 @@ ${waybillLineItems(w).length > 1
                 ) : (
                   <ul className="space-y-2">
                     {rows.map((t) => (
-                      <li key={t.id} className="rounded-xl border border-gray-200 p-3">
+                      <li key={t.id} className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="m-0 text-sm font-black text-gray-900">{t.name}</p>
@@ -67211,19 +67222,19 @@ ${waybillLineItems(w).length > 1
                           </div>
                           {canManage && (
                             <div className="flex shrink-0 gap-1">
-                              <button type="button" onClick={() => setTemplateEditing(t)} className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-50">Edit</button>
+                              <button type="button" onClick={() => setTemplateEditing(t)} className="!min-h-0 rounded-md border border-slate-200/80 px-2 py-1 text-[11px] font-bold text-gray-600 hover:bg-slate-50">Edit</button>
                               <button type="button" onClick={async () => {
                                 if (!window.confirm(`Deactivate "${t.name}"? Past sends keep showing what was actually sent.`)) return;
                                 try { await recoveryTemplatesApi.deactivate(t.id); showToast("Template deactivated."); reloadRecoveryTemplates(); }
                                 catch (err: any) { showToast(err?.message ?? "Could not deactivate."); }
-                              }} className="!min-h-0 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50">Remove</button>
+                              }} className="!min-h-0 rounded-md border border-slate-200/80 px-2 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50">Remove</button>
                             </div>
                           )}
                         </div>
                         <p className="mt-2 whitespace-pre-wrap rounded-lg bg-gray-50 p-2 text-xs text-gray-700">{t.body}</p>
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           <button type="button" onClick={() => { void navigator.clipboard?.writeText(t.body); showToast("Copied to clipboard."); }}
-                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50"><Copy className="h-3 w-3" /> Copy</button>
+                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-md border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-slate-50"><Copy className="h-3 w-3" /> Copy</button>
                           {kind !== "script" && (
                             <button type="button" onClick={() => { setBroadcastTemplateId(t.id); setTemplateBrowserKind(null); setBroadcastOpen(true); }}
                               className="!min-h-0 inline-flex items-center gap-1.5 rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-[#1560a8]"><Send className="h-3 w-3" /> Send to a list</button>
@@ -67243,18 +67254,18 @@ ${waybillLineItems(w).length > 1
         <div className="fixed inset-0 z-[60] flex items-end justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setTemplateEditing(null)}>
           <section className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="border-b border-gray-100 px-5 py-4">
-              <h3 className="text-base font-black text-gray-900">{templateEditing.id ? "Edit" : "New"} {templateEditing.kind === "offer" ? "offer" : templateEditing.kind === "script" ? "script" : "message"}</h3>
+              <h3 className="text-base font-black tracking-tight text-slate-900">{templateEditing.id ? "Edit" : "New"} {templateEditing.kind === "offer" ? "offer" : templateEditing.kind === "script" ? "script" : "message"}</h3>
             </div>
             <div className="space-y-3 p-5">
               <label className="block space-y-1">
                 <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Name *</span>
-                <input value={templateEditing.name ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, name: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                <input value={templateEditing.name ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, name: e.target.value }))} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm" />
               </label>
               {templateEditing.kind === "offer" && (
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block space-y-1">
                     <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Offer type</span>
-                    <select value={templateEditing.offerType ?? "discount_pct"} onChange={(e) => setTemplateEditing((f) => ({ ...f, offerType: e.target.value as RecoveryTemplate["offerType"] }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                    <select value={templateEditing.offerType ?? "discount_pct"} onChange={(e) => setTemplateEditing((f) => ({ ...f, offerType: e.target.value as RecoveryTemplate["offerType"] }))} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm">
                       <option value="discount_pct">Discount %</option>
                       <option value="free_shipping">Free shipping</option>
                       <option value="bundle">Bundle deal</option>
@@ -67265,18 +67276,18 @@ ${waybillLineItems(w).length > 1
                   {(templateEditing.offerType ?? "discount_pct") === "discount_pct" && (
                     <label className="block space-y-1">
                       <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Discount %</span>
-                      <input type="number" min={0} max={100} value={templateEditing.discountPct ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, discountPct: e.target.value === "" ? null : Number(e.target.value) }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" />
+                      <input type="number" min={0} max={100} value={templateEditing.discountPct ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, discountPct: e.target.value === "" ? null : Number(e.target.value) }))} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm" />
                     </label>
                   )}
                 </div>
               )}
               <label className="block space-y-1">
                 <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">{templateEditing.kind === "script" ? "Script" : "Message"} *</span>
-                <textarea rows={6} value={templateEditing.body ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, body: e.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm" placeholder={templateEditing.kind === "script" ? "What the rep should say..." : "Hello {name}, ..."} />
+                <textarea rows={6} value={templateEditing.body ?? ""} onChange={(e) => setTemplateEditing((f) => ({ ...f, body: e.target.value }))} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm" placeholder={templateEditing.kind === "script" ? "What the rep should say..." : "Hello {name}, ..."} />
                 <span className="block text-[11px] text-gray-400">Type <code className="rounded bg-gray-100 px-1">{"{name}"}</code> to insert the customer&apos;s name when sending.</span>
               </label>
               <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
-                <button type="button" className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700" onClick={() => setTemplateEditing(null)}>Cancel</button>
+                <button type="button" className="!min-h-0 rounded-lg border border-slate-200/80 px-4 py-2 text-sm font-bold text-gray-700" onClick={() => setTemplateEditing(null)}>Cancel</button>
                 <button type="button" disabled={templateSaving} className="!min-h-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
                   onClick={async () => {
                     const t = templateEditing;
@@ -67325,26 +67336,26 @@ ${waybillLineItems(w).length > 1
           <div className="fixed inset-0 z-[60] flex items-end justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => !broadcastSending && setBroadcastOpen(false)}>
             <section className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
               <div className="border-b border-gray-100 px-5 py-4">
-                <h3 className="text-base font-black text-gray-900">Broadcast Message</h3>
+                <h3 className="text-base font-black tracking-tight text-slate-900">Broadcast Message</h3>
                 <p className="mt-0.5 text-xs text-gray-500">Sends one WhatsApp per customer through your connected number.</p>
               </div>
               <div className="space-y-3 p-5">
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Message template *</span>
-                  <select value={broadcastTemplateId} onChange={(e) => setBroadcastTemplateId(e.target.value)} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                  <select value={broadcastTemplateId} onChange={(e) => setBroadcastTemplateId(e.target.value)} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm">
                     <option value="">Choose a template…</option>
                     {recoveryTemplates.filter((t) => t.active && t.kind !== "script").map((t) => <option key={t.id} value={t.id}>{t.kind === "offer" ? "Offer · " : ""}{t.name}</option>)}
                   </select>
                 </label>
                 <label className="block space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">Send to</span>
-                  <select value={broadcastAudience} onChange={(e) => setBroadcastAudience(e.target.value as typeof broadcastAudience)} className="w-full rounded-lg border border-gray-200 bg-white p-2 text-sm">
+                  <select value={broadcastAudience} onChange={(e) => setBroadcastAudience(e.target.value as typeof broadcastAudience)} className="w-full rounded-lg border border-slate-200/80 bg-white p-2 text-sm">
                     <option value="candidates">Recovery candidates ({recoveryCandidates.length})</option>
                     <option value="my_orders">My assigned orders ({myOrders.length})</option>
                   </select>
                 </label>
                 {template && (
-                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <div className="rounded-lg border border-slate-200/80 bg-gray-50 p-3">
                     <p className="m-0 text-[10px] font-black uppercase tracking-wider text-gray-400">Preview</p>
                     <p className="mt-1 whitespace-pre-wrap text-xs text-gray-700">{template.body.replace(/\{name\}/g, willSend[0]?.name ?? "there")}</p>
                   </div>
@@ -67365,7 +67376,7 @@ ${waybillLineItems(w).length > 1
                   </div>
                 )}
                 <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
-                  <button type="button" disabled={broadcastSending} className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700 disabled:opacity-60" onClick={() => setBroadcastOpen(false)}>Close</button>
+                  <button type="button" disabled={broadcastSending} className="!min-h-0 rounded-lg border border-slate-200/80 px-4 py-2 text-sm font-bold text-gray-700 disabled:opacity-60" onClick={() => setBroadcastOpen(false)}>Close</button>
                   <button type="button" disabled={broadcastSending || !template || willSend.length === 0 || broadcastOptOutsError}
                     className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-black text-white disabled:opacity-60"
                     onClick={async () => {
