@@ -15454,11 +15454,32 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const crossSellBonusDetails = (lines: CrossSellLine[] | undefined, cfg: ProductBonusConfig) => {
     const { customerSelected, repDriven } = splitCrossSellLinesBySource(lines);
     const customerSelectedBonus = customerSelected.length * CUSTOMER_SELECTED_CROSS_SELL_BONUS;
-    const repDrivenValue = repDriven.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);
-    const repDrivenBonus = Math.round(repDrivenValue * (cfg.crossSellPercent / 100)) + (cfg.crossSellFixed * repDriven.length);
+    // A cross-sell belongs to the product that was actually added, not the
+    // order's main product. Using the main product's config made a valid shelf
+    // cross-sell pay N0 whenever the original Edge Brusher config was 0%.
+    const repDrivenLineBonuses = repDriven.map((line) => {
+      const lineProductName = String(line.productName ?? "").trim().toLowerCase();
+      const lineProduct = products.find((product) => product.id === line.productId)
+        ?? (lineProductName
+          ? products.find((product) => product.name.trim().toLowerCase() === lineProductName)
+          : undefined);
+      const lineConfig = lineProduct ? productBonusConfig(lineProduct) : cfg;
+      const value = Math.max(0, Number(line.amount) || 0);
+      const bonus = Math.round(value * (lineConfig.crossSellPercent / 100)) + lineConfig.crossSellFixed;
+      return {
+        productName: lineProduct?.name ?? line.productName ?? "Add-on",
+        value,
+        percent: lineConfig.crossSellPercent,
+        fixed: lineConfig.crossSellFixed,
+        bonus
+      };
+    });
+    const repDrivenValue = repDrivenLineBonuses.reduce((sum, line) => sum + line.value, 0);
+    const repDrivenBonus = repDrivenLineBonuses.reduce((sum, line) => sum + line.bonus, 0);
     return {
       customerSelected,
       repDriven,
+      repDrivenLineBonuses,
       customerSelectedBonus,
       repDrivenValue,
       repDrivenBonus,
@@ -23889,8 +23910,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
         );
       }
       if (crossSellDetails.repDriven.length > 0) {
+        const ruleSummary = crossSellDetails.repDrivenLineBonuses
+          .map((line) => `${line.productName}: ${line.percent}% + ${formatProductMoney(line.fixed, order.currency)} = ${formatProductMoney(line.bonus, order.currency)}`)
+          .join("; ");
         crossSellNotes.push(
-          `${crossSellDetails.repDriven.length} rep-added cross-sell line${crossSellDetails.repDriven.length === 1 ? "" : "s"} worth ${formatProductMoney(crossSellDetails.repDrivenValue, order.currency)} use ${cfg.crossSellPercent}% + ${formatProductMoney(cfg.crossSellFixed, order.currency)} per line.`
+          `${crossSellDetails.repDriven.length} rep-added cross-sell line${crossSellDetails.repDriven.length === 1 ? "" : "s"} worth ${formatProductMoney(crossSellDetails.repDrivenValue, order.currency)} used the commission rule for each product sold (${ruleSummary}).`
         );
       }
       componentLines.push({
@@ -72697,27 +72721,28 @@ ${waybillLineItems(w).length > 1
                   // counts as neither.
                   const isRepXsLine = (l: CrossSellLine) => l.selectionSource === "manual_rep";
                   const isCustomerXsLine = (l: CrossSellLine) => l.selectionSource === "public_form" || l.selectionSource === "public_upsell";
-                  const hasUpsell = orderHasVerifiedUpsell;
-
-                  // Team performance follows the period too (cohort of orders
-                  // PLACED in the window and their outcome), so Placed/Delivered/
-                  // Rate stay internally consistent and revenue/bonus/AOV/add-ons
-                  // come from that same delivered set. Add-ons are DELIVERED only:
-                  // rep = upsells (rep-logged) + rep-driven cross-sells; customer =
-                  // customer-selected cross-sells.
+                  // Performance remains a placed-order cohort. Bonus settlement is
+                  // earned at delivery, though, so it must use the exact same
+                  // delivered-in-period ledger as the detailed breakdown below.
+                  // Otherwise carry-over deliveries vanish from this summary while
+                  // still appearing in payroll and the detailed bonus report.
+                  const managerBonusRows = buildManagerBonusRepRows(managerDeliveredInPeriod, managerPlacedInPeriod, managerPeriodRange);
+                  const managerBonusByRepId = new Map(managerBonusRows.map((row) => [row.repId, row]));
                   const teamRows = salesRepUsers.map((u) => {
                     const repPlaced = mgrPlaced.filter((o) => o.assignedRepId === u.id);
                     const repDelivered = repPlaced.filter((o) => (o.status ?? "New") === "Delivered");
+                    const bonusRow = managerBonusByRepId.get(u.id);
+                    const repDeliveredForBonus = managerDeliveredInPeriod.filter((o) => o.assignedRepId === u.id);
                     const placed = repPlaced.length;
                     const delivered = repDelivered.length;
                     const rate = placed ? Math.round((delivered / placed) * 100) : 0;
                     const revenue = repDelivered.reduce((s, o) => s + o.amount, 0);
                     const aov = delivered ? Math.round(revenue / delivered) : 0;
-                    const bonus = recognizedBonusTotalForRows(repDelivered);
-                    const repUpsells = repDelivered.filter(hasUpsell).length;
+                    const bonus = bonusRow?.total ?? 0;
+                    const repUpsells = bonusRow?.upsellCount ?? 0;
                     let repXs = 0;
                     let custXs = 0;
-                    repDelivered.forEach((o) => (o.crossSellLines ?? []).forEach((l) => {
+                    repDeliveredForBonus.forEach((o) => (o.crossSellLines ?? []).forEach((l) => {
                       if (isRepXsLine(l)) repXs += 1;
                       else if (isCustomerXsLine(l)) custXs += 1;
                     }));
@@ -73052,7 +73077,7 @@ ${waybillLineItems(w).length > 1
                         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-1">
                           <div>
                             <h2 className="text-sm font-bold text-gray-800">Team performance</h2>
-                            <p className="text-xs text-gray-400">{managerPeriod} · orders placed in this window and their outcome.</p>
+                            <p className="text-xs text-gray-400">{managerPeriod} · placed/rate use the order cohort; add-ons and bonus use all deliveries settled in this window.</p>
                           </div>
                           {nextInLine && (
                             <span
@@ -73075,7 +73100,7 @@ ${waybillLineItems(w).length > 1
                                 <th className="px-4 py-3 text-right" title="Delivered add-ons the rep drove: their upsells + rep-added cross-sells">Rep add-ons</th>
                                 <th className="px-4 py-3 text-right" title="Delivered add-ons the customer picked themselves (customer-selected cross-sells)">Cust add-ons</th>
                                 <th className="px-4 py-3 text-right">Revenue</th>
-                                <th className="px-4 py-3 text-right">Bonus est.</th>
+                                <th className="px-4 py-3 text-right">Bonus earned</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -73109,7 +73134,7 @@ ${waybillLineItems(w).length > 1
                         // Same period as Team performance above and Fulfillment
                         // below - driven by the page's Period control, never by
                         // the Bonus tab's own week.
-                        const bonusRows = buildManagerBonusRepRows(managerDeliveredInPeriod, managerPlacedInPeriod, managerPeriodRange);
+                        const bonusRows = managerBonusRows;
                         const totalTeamBonus = bonusRows.reduce((sum, r) => sum + r.total, 0);
                         return (
                       <section className="space-y-3">
