@@ -282,7 +282,7 @@ const normalizedRepDrivenCrossSellLines = (lines: unknown) =>
   Array.isArray(lines)
     ? lines.filter((line) => {
         const source = normalizedLineSelectionSource(line);
-        return source !== "public_form" && source !== "public_upsell";
+        return source !== "public_form" && source !== "public_upsell" && source !== "auto_include";
       })
     : [];
 

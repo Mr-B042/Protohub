@@ -3154,7 +3154,7 @@ export type CartLogRangePreset =
 
 export type CartLogMiss = {
   id: string | null; repId: string; repName: string; missDate: string;
-  cartsDue: number; amount: number;
+  cartsDue: number; cartsLogged: number; cartsMissed: number; amount: number;
   status: "pending" | "approved" | "waived";
   reviewedByName: string; reviewedAt: string | null; reviewNote: string;
 };
@@ -3166,7 +3166,7 @@ export type CartLogPenaltiesView = {
   missAmount: number;
   chargeableDays: number;
   misses: CartLogMiss[];
-  byRep: Array<{ repId: string; repName: string; missedDays: string[]; missedCount: number; atRiskAmount: number; clearDays: number }>;
+  byRep: Array<{ repId: string; repName: string; missedDays: string[]; missedCount: number; missedCarts: number; atRiskAmount: number; clearDays: number }>;
   totals: {
     pendingCount: number; pendingAmount: number;
     approvedCount: number; approvedAmount: number; waivedCount: number;
@@ -3174,11 +3174,16 @@ export type CartLogPenaltiesView = {
   /** Present tense, for the rep reading it. Null when viewing all reps. */
   today: {
     dateKey: string; cartsDue: number; logsMade: number;
+    /** Carts still untouched right now - what the charge is counted on. */
+    cartsRemaining: number;
     status: "not_due" | "clear" | "missed" | "before_go_live";
     atRisk: number; rehearsal: boolean; message: string;
   } | null;
-  /** Supervisor view: reps who have logged nothing yet today. */
-  repsAtRiskToday: Array<{ repId: string; repName: string; cartsDue: number; logsMade: number }>;
+  /** Supervisor view: reps with carts still unlogged today, worst exposure first. */
+  repsAtRiskToday: Array<{
+    repId: string; repName: string; cartsDue: number; logsMade: number;
+    cartsLogged: number; cartsRemaining: number; atRisk: number;
+  }>;
 };
 
 export type OrderAdditionalLine = {
