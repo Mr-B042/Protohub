@@ -856,6 +856,34 @@ router.post("/freeze-cogs", requireRole("Owner"), async (req, res) => {
   }
 });
 
+// ── GET /api/products/cost-changes ────────────────────────
+// The audit log doubles as a cost HISTORY: given a date, the cost that applied
+// then is recoverable by stepping back through changes made after it. Needed
+// because orders.cogs_snapshot freezes an order's TOTAL, which cannot answer
+// "what did this one line cost" in a per-line profit breakdown.
+router.get("/cost-changes", async (req, res) => {
+  try {
+    const { data, error } = await supabase.from("product_cost_changes")
+      .select("product_id, product_name, currency, previous_unit_cost, new_unit_cost, created_at")
+      .eq("org_id", req.user!.orgId)
+      .order("created_at", { ascending: false })
+      .limit(REPORT_ROW_CEILING);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({
+      changes: ((data ?? []) as any[]).map((row) => ({
+        productId: row.product_id,
+        productName: row.product_name ?? "",
+        currency: row.currency ?? "NGN",
+        previousUnitCost: Number(row.previous_unit_cost ?? 0),
+        newUnitCost: Number(row.new_unit_cost ?? 0),
+        createdAt: row.created_at
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load cost changes." });
+  }
+});
+
 // ── GET /api/products/:id/cost-change-preview?newUnitCost= ──
 router.get("/:id/cost-change-preview", requireRole("Owner", "Admin"), async (req, res) => {
   try {
