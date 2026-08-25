@@ -18,6 +18,8 @@ import {
   BellOff,
   Bot,
   Clock,
+  Hourglass,
+  Snowflake,
   Crown,
   ChevronLeft,
   CheckCircle2,
@@ -219,6 +221,7 @@ import WeeklyOpeningCashWizard, { type WeeklyOpeningView } from "./pages/WeeklyO
 import DraftTextarea from "./components/DraftTextarea";
 import ChargeRiskBanner from "./components/ChargeRiskBanner";
 import CartLogOwedBanner from "./components/CartLogOwedBanner";
+import OrderHistoryModal from "./components/OrderHistoryModal";
 import RecoveryBonusCalendar from "./components/RecoveryBonusCalendar";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
@@ -9177,6 +9180,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [recoveryCandidatesView, setRecoveryCandidatesView] = useState<RecoveryCandidatesView | null>(null);
   const [recoveryCandidateReasonFilter, setRecoveryCandidateReasonFilter] = useState("All");
   const [recoveryCandidatePage, setRecoveryCandidatePage] = useState(1);
+  const [candidateRowsPerPage, setCandidateRowsPerPage] = useState(20);
   // Which candidates have their "why it was lost" note expanded. Clamped by
   // default so rows stay scannable, but a rep must be able to read the whole
   // reason - a truncated one ("...but she isn't") is worse than none.
@@ -12371,6 +12375,11 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const recoveryCalendarCache = useRef(new Map<string, RecoveryCalendarView>());
   const recoveryCalendarRequestId = useRef(0);
   const [recoveryFollowUpPairs, setRecoveryFollowUpPairs] = useState<RecoveryFollowUpPairs>({});
+  // Order History modal. Attempts are fetched on OPEN rather than for every row
+  // up front - the list runs to hundreds of candidates and pre-loading each
+  // one's timeline would be hundreds of queries for a panel nobody opened.
+  const [orderHistoryModalId, setOrderHistoryModalId] = useState<string | null>(null);
+  const [orderHistoryLoading, setOrderHistoryLoading] = useState(false);
   // When each dead order actually died, keyed by order id. Derived from
   // order_audit server-side because orders.updated_at is not the closure date.
   const [orderClosureDates, setOrderClosureDates] = useState<Record<string, string>>({});
@@ -32510,6 +32519,29 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       if (requestId !== recoveryCalendarRequestId.current) return;
       setRecoveryCalendar(null);
     }
+  };
+
+  const openOrderHistoryModal = async (orderId: string) => {
+    setOrderHistoryModalId(orderId);
+    if (orderContactAttemptsByOrder[orderId]) return; // already have it
+    setOrderHistoryLoading(true);
+    try {
+      const attempts = await ordersApi.contactAttempts(orderId);
+      setOrderContactAttemptsByOrder((value) => ({
+        ...value,
+        [orderId]: (attempts as any[]).map((attempt) => normalizeContactAttempt(attempt))
+      }));
+    } catch {
+      setOrderContactAttemptsByOrder((value) => ({ ...value, [orderId]: [] }));
+    } finally {
+      setOrderHistoryLoading(false);
+    }
+  };
+
+  /** repId → who they are. Never blank: an unattributed row is still a fact. */
+  const lookupHistoryRep = (repId?: string) => {
+    const found = repId ? users.find((user) => user.id === repId) : undefined;
+    return { name: found?.name ?? "Unknown user", role: found?.role ?? "No longer on the team" };
   };
 
   const loadRecoveryFollowUpPairs = async () => {
@@ -65852,7 +65884,7 @@ ${waybillLineItems(w).length > 1
         if (ua.rank !== ub.rank) return ua.rank - ub.rank;
         return closedAtMs(b) - closedAtMs(a);
       });
-    const CANDIDATE_PAGE_SIZE = 20;
+    const CANDIDATE_PAGE_SIZE = candidateRowsPerPage;
     const candidateTotalPages = Math.max(1, Math.ceil(filteredRecoveryCandidates.length / CANDIDATE_PAGE_SIZE));
     const candidatePage = Math.min(recoveryCandidatePage, candidateTotalPages);
     const pagedRecoveryCandidates = filteredRecoveryCandidates.slice((candidatePage - 1) * CANDIDATE_PAGE_SIZE, candidatePage * CANDIDATE_PAGE_SIZE);
@@ -66716,29 +66748,6 @@ ${waybillLineItems(w).length > 1
           </p>
         </section>
 
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] px-4 py-3">
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.14em]">Total Candidates</div>
-            <div className="text-2xl font-black tabular-nums text-slate-900 mt-1 tracking-tight">{recoveryCandidates.length}</div>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] px-4 py-3">
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.14em]">Cancelled</div>
-            <div className="text-2xl font-black tabular-nums text-rose-600 mt-1 tracking-tight">{candidateReasonCounts["Cancelled"] ?? 0}</div>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] px-4 py-3">
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.14em]">Rejected</div>
-            <div className="text-2xl font-black tabular-nums text-amber-600 mt-1 tracking-tight">{candidateReasonCounts["Rejected"] ?? 0}</div>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] px-4 py-3">
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.14em]">Product Unavailable</div>
-            <div className="text-2xl font-black tabular-nums text-violet-600 mt-1 tracking-tight">{candidateReasonCounts["Product Unavailable"] ?? 0}</div>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] px-4 py-3 col-span-2 sm:col-span-1">
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.14em]">Failed</div>
-            <div className="text-2xl font-black tabular-nums text-sky-600 mt-1 tracking-tight">{candidateReasonCounts["Failed"] ?? 0}</div>
-          </div>
-        </div>
-
         {/* What this rep has already promised, before what they could pick up
             next. A commitment made on Monday had nowhere to resurface on
             Thursday - it lived as a flag on one row in one list. */}
@@ -66810,8 +66819,48 @@ ${waybillLineItems(w).length > 1
         )}
 
         <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] overflow-hidden">
+          {/* ⚠️ Titled "Recovery Candidates", not the design's "My Recovered
+              Orders" - that name already belongs to the rep's own claimed list
+              further up the page, and two sections sharing it would be a
+              genuine ambiguity rather than a style choice. */}
+          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200/80 px-5 py-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50">
+                <RefreshCw className="h-5 w-5 text-emerald-600" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="m-0 text-xl font-black tracking-tight text-slate-900">Recovery Candidates</h2>
+                <p className="m-0 mt-0.5 text-xs font-medium leading-relaxed text-slate-500">
+                  Orders that didn't go through the first time.<br />
+                  Your follow-up today can turn them into sales.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { icon: <Users className="h-4 w-4 text-sky-600" />, tone: "bg-sky-50", label: "Total Candidates",
+                  value: recoveryCandidates.length, sub: "All time", num: "text-slate-900" },
+                { icon: <CircleX className="h-4 w-4 text-rose-600" />, tone: "bg-rose-50", label: "Cancelled",
+                  value: candidateReasonCounts["Cancelled"] ?? 0, sub: "Orders", num: "text-rose-600" },
+                { icon: <AlertTriangle className="h-4 w-4 text-amber-600" />, tone: "bg-amber-50", label: "Rejected",
+                  value: candidateReasonCounts["Rejected"] ?? 0, sub: "Orders", num: "text-amber-600" },
+                { icon: <Package className="h-4 w-4 text-violet-600" />, tone: "bg-violet-50", label: "Product Unavailable",
+                  value: candidateReasonCounts["Product Unavailable"] ?? 0, sub: "Orders", num: "text-violet-600" },
+                { icon: <ClipboardCheck className="h-4 w-4 text-sky-600" />, tone: "bg-sky-50", label: "Failed",
+                  value: candidateReasonCounts["Failed"] ?? 0, sub: "Orders", num: "text-sky-600" }
+              ].map((tile) => (
+                <div key={tile.label} className="flex items-start gap-2.5 rounded-xl border border-slate-200/80 bg-white px-3 py-2.5 shadow-sm">
+                  <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tile.tone}`}>{tile.icon}</span>
+                  <span className="min-w-0">
+                    <span className="block text-[11px] font-bold leading-tight text-slate-500">{tile.label}</span>
+                    <span className={`block text-xl font-black leading-tight tracking-tight tabular-nums ${tile.num}`}>{tile.value}</span>
+                    <span className="block text-[10px] font-semibold text-slate-400">{tile.sub}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
           <div className="px-5 py-4 border-b border-slate-200/80">
-            <h2 className="text-base font-black tracking-tight text-slate-900">Recovery Candidates</h2>
             {/* The recovery window, stated as counts. A dead order has a
                 half-life: reached in a day or two the customer still remembers
                 wanting it, three weeks on you are cold-calling a stranger about
@@ -66819,26 +66868,45 @@ ${waybillLineItems(w).length > 1
                 genuinely running out. */}
             <div className="mt-2 flex flex-wrap gap-2">
               {[
-                { key: "now", label: "Act now", sub: "closed in the last 2 days", cls: "border-rose-300 bg-rose-50 text-rose-800", num: "text-rose-700" },
-                { key: "week", label: "This week", sub: "3–7 days", cls: "border-amber-300 bg-amber-50 text-amber-800", num: "text-amber-700" },
-                { key: "fading", label: "Fading", sub: "8–21 days", cls: "border-slate-200 bg-slate-50 text-slate-700", num: "text-slate-700" },
-                { key: "cold", label: "Cold", sub: "over 21 days", cls: "border-slate-200/80 bg-slate-50 text-slate-500", num: "text-gray-500" }
-              ].map((band) => (
-                <div key={band.key} className={`min-w-[132px] flex-1 rounded-xl border px-3 py-2 ${band.cls}`}>
-                  <div className={`text-2xl font-black leading-none ${band.num}`}>{urgencyCounts[band.key] ?? 0}</div>
-                  <div className="mt-1 text-[11px] font-black uppercase tracking-wider">{band.label}</div>
-                  <div className="text-[10px] font-semibold opacity-80">{band.sub}</div>
-                </div>
-              ))}
+                { key: "now", label: "Act now", sub: "Closed in last 2 days", icon: Clock,
+                  cls: "border-rose-200 bg-rose-50", chip: "bg-rose-100", tone: "text-rose-600", num: "text-rose-700", lbl: "text-rose-700" },
+                { key: "week", label: "This week", sub: "3 – 7 days", icon: CalendarDays,
+                  cls: "border-amber-200 bg-amber-50", chip: "bg-amber-100", tone: "text-amber-600", num: "text-amber-700", lbl: "text-amber-700" },
+                { key: "fading", label: "Fading", sub: "8 – 21 days", icon: Hourglass,
+                  cls: "border-sky-200 bg-sky-50", chip: "bg-sky-100", tone: "text-sky-600", num: "text-sky-700", lbl: "text-sky-700" },
+                { key: "cold", label: "Cold", sub: "Over 21 days", icon: Snowflake,
+                  cls: "border-slate-200 bg-slate-50", chip: "bg-slate-200/70", tone: "text-slate-500", num: "text-slate-700", lbl: "text-slate-500" }
+              ].map((band) => {
+                const Icon = band.icon;
+                return (
+                  <div key={band.key} className={`flex min-w-[180px] flex-1 items-center gap-3 rounded-2xl border px-3.5 py-3 ${band.cls}`}>
+                    <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${band.chip}`}>
+                      <Icon className={`h-5 w-5 ${band.tone}`} />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="flex items-baseline gap-2">
+                        <span className={`text-2xl font-black leading-none tracking-tight tabular-nums ${band.num}`}>{urgencyCounts[band.key] ?? 0}</span>
+                        <span className={`text-[11px] font-black uppercase tracking-wider ${band.lbl}`}>{band.label}</span>
+                      </span>
+                      <span className="mt-1 block text-[11px] font-semibold text-slate-500">{band.sub}</span>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
             {/* The cap, stated where the claiming happens. A rep who hits it
                 needs to know why the buttons went quiet. */}
             {recoveryCandidatesView && claimCap > 0 && (
-              <span className={`ml-2 rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                canClaimMore ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
-                {canClaimMore
-                  ? `Holding ${claimHeld} of ${claimCap} · can claim ${claimRemaining} more`
-                  : `At the limit — holding ${claimHeld} of ${claimCap}. Close some before claiming more.`}
+              <span className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                  canClaimMore ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
+                  Holding {claimHeld} of {claimCap}
+                </span>
+                <span className="text-[11px] font-bold text-slate-300">·</span>
+                <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                  canClaimMore ? "bg-emerald-50 text-emerald-700" : "bg-amber-100 text-amber-900"}`}>
+                  {canClaimMore ? `Can claim ${claimRemaining} more` : "At the limit — close some before claiming more"}
+                </span>
               </span>
             )}
             <p className="text-xs text-gray-500 mt-0.5">
@@ -66846,18 +66914,21 @@ ${waybillLineItems(w).length > 1
               Reassign a candidate using its order's existing "Reassign Sales Rep" action.
             </p>
           </div>
-          <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/60 flex flex-col sm:flex-row gap-2.5 sm:items-center">
-            <input
-              type="text"
-              value={recoveryCandidateSearch}
-              onChange={(e) => setRecoveryCandidateSearch(e.target.value)}
-              placeholder="Search name, phone, or order ID"
-              className="!min-h-0 w-full sm:w-64 rounded-xl border border-slate-200/80 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-            />
+          <div className="flex flex-col gap-2.5 border-b border-slate-200/80 bg-slate-50/60 px-5 py-3 sm:flex-row sm:items-center">
+            <div className="relative w-full sm:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={recoveryCandidateSearch}
+                onChange={(e) => setRecoveryCandidateSearch(e.target.value)}
+                placeholder="Search name, phone or order ID…"
+                className="!min-h-0 w-full rounded-xl border border-slate-200/80 bg-white py-2 pl-9 pr-3 text-sm font-medium text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/20"
+              />
+            </div>
             <select
               value={recoveryCandidateReasonFilter}
               onChange={(e) => setRecoveryCandidateReasonFilter(e.target.value)}
-              className="!min-h-0 w-full sm:w-auto rounded-xl border border-slate-200/80 px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              className="!min-h-0 w-full rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-sm font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 sm:w-auto"
             >
               {candidateReasonOptions.map((reason) => (
                 <option key={reason} value={reason}>{reason === "All" ? "Reason: All" : reason}</option>
@@ -66872,7 +66943,10 @@ ${waybillLineItems(w).length > 1
                 Reset
               </button>
             )}
-            <span className="text-xs text-gray-400 sm:ml-2">Showing {filteredRecoveryCandidates.length === 0 ? 0 : (candidatePage - 1) * CANDIDATE_PAGE_SIZE + 1}-{Math.min(candidatePage * CANDIDATE_PAGE_SIZE, filteredRecoveryCandidates.length)} of {filteredRecoveryCandidates.length}{filteredRecoveryCandidates.length !== recoveryCandidates.length ? ` (filtered from ${recoveryCandidates.length})` : ""}</span>
+            <span className="text-xs font-semibold text-slate-500 sm:ml-2">
+              Showing {filteredRecoveryCandidates.length === 0 ? 0 : (candidatePage - 1) * CANDIDATE_PAGE_SIZE + 1}–{Math.min(candidatePage * CANDIDATE_PAGE_SIZE, filteredRecoveryCandidates.length)} of {filteredRecoveryCandidates.length}
+              {filteredRecoveryCandidates.length !== recoveryCandidates.length ? ` (filtered from ${recoveryCandidates.length})` : ""}
+            </span>
           </div>
           {filteredRecoveryCandidates.length === 0 ? (
             <div className="px-5 py-10 text-sm text-gray-400 text-center">
@@ -67093,16 +67167,33 @@ ${waybillLineItems(w).length > 1
                           </td>
                           <td className="px-4 py-4">
                             <div className="grid grid-cols-3 gap-3 text-center">
-                              <span><strong className="block text-gray-900">{history.orders}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Orders</span></span>
-                              <span><strong className="block text-green-600">{history.delivered}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Delivered</span></span>
-                              <span><strong className="block text-red-500">{history.cancelled}</strong><span className="text-[10px] uppercase tracking-wide text-gray-400">Cancelled</span></span>
+                              <span><strong className="block text-base font-black tabular-nums text-slate-900">{history.orders}</strong><span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Orders</span></span>
+                              <span><strong className="block text-base font-black tabular-nums text-emerald-600">{history.delivered}</strong><span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Delivered</span></span>
+                              <span><strong className="block text-base font-black tabular-nums text-rose-500">{history.cancelled}</strong><span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Cancelled</span></span>
                             </div>
+                            {/* The counts say WHAT happened before; this says
+                                what was actually said. A recovery pitch turns
+                                on the previous rep's last conversation, which
+                                was reachable only by leaving the page. */}
+                            <button type="button" onClick={() => void openOrderHistoryModal(order.id)}
+                              className="!min-h-0 mx-auto mt-2.5 flex items-center gap-1.5 rounded-lg border border-slate-200/80 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 shadow-sm transition-colors hover:bg-slate-50">
+                              <LineChart className="h-3.5 w-3.5 text-slate-400" /> View history
+                            </button>
                           </td>
                           <td className="px-4 py-4">
-                            <div className="flex items-center gap-1.5">
-                              <button disabled={!canClaimMore} title={canClaimMore ? undefined : `Holding ${claimHeld} of ${claimCap} open orders.`} className="!min-h-0 inline-flex items-center gap-1.5 rounded-md bg-[#1F8FE0] px-2.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#1560a8] disabled:opacity-40 disabled:cursor-not-allowed" onClick={() => claimRecoveryCandidate(order)}>Claim</button>
-                              <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-slate-200/80 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
-                              <button className="!min-h-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border border-slate-200/80 bg-white text-gray-700 rounded-md hover:bg-slate-50 transition-colors" onClick={() => addRecoveryCandidateNote(order)}>Add Note</button>
+                            <div className="flex items-start gap-2">
+                              <div className="flex min-w-[110px] flex-1 flex-col gap-1.5">
+                                <button disabled={!canClaimMore} title={canClaimMore ? undefined : `Holding ${claimHeld} of ${claimCap} open orders.`} className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#1F8FE0] px-2.5 py-2 text-xs font-bold text-white transition-colors hover:bg-[#1560a8] disabled:cursor-not-allowed disabled:opacity-40" onClick={() => claimRecoveryCandidate(order)}>Claim</button>
+                                <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200/80 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-50" onClick={() => openOrderDetailPopup(order.id)}>View Order</button>
+                                <button className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200/80 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-50" onClick={() => addRecoveryCandidateNote(order)}>
+                                  <StickyNote className="h-3.5 w-3.5 text-slate-400" /> Add Note
+                                </button>
+                              </div>
+                              <button type="button" onClick={() => openOrderDetailPopup(order.id)}
+                                title="Open the full order"
+                                className="!min-h-0 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200/80 bg-white text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-700">
+                                <MoreVertical className="h-4 w-4" />
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -67112,22 +67203,69 @@ ${waybillLineItems(w).length > 1
                 </table>
               </div>
               {candidateTotalPages > 1 && (
-                <div className="flex flex-col items-center justify-between gap-2 border-t border-slate-200/80 px-4 py-3 sm:flex-row">
-                  <span className="text-xs font-semibold text-gray-500">
-                    Page {candidatePage} of {candidateTotalPages} · {CANDIDATE_PAGE_SIZE} per page
-                  </span>
+                <div className="flex flex-col items-center justify-between gap-3 border-t border-slate-200/80 px-4 py-3 lg:flex-row">
+                  <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                    Rows per page
+                    <select value={candidateRowsPerPage}
+                      onChange={(event) => { setCandidateRowsPerPage(Number(event.target.value)); setRecoveryCandidatePage(1); }}
+                      className="!min-h-0 rounded-lg border border-slate-200/80 bg-white px-2 py-1.5 text-xs font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20">
+                      {[10, 20, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}
+                    </select>
+                  </label>
                   <div className="flex items-center gap-1">
                     <button type="button" disabled={candidatePage === 1} onClick={() => setRecoveryCandidatePage(candidatePage - 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200/80 text-gray-600 disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-3.5 w-3.5" /></button>
                     {candidatePageNumbers.map((p, i) => p === "gap"
                       ? <span key={`cg${i}`} className="px-1 text-xs text-gray-400">…</span>
                       : <button key={p} type="button" onClick={() => setRecoveryCandidatePage(p)} className={`!min-h-0 inline-flex h-7 min-w-[28px] items-center justify-center rounded-md border px-1.5 text-xs font-bold ${p === candidatePage ? "border-[#1F8FE0] bg-[#1F8FE0] text-white" : "border-slate-200/80 text-gray-600 hover:bg-slate-50"}`}>{p}</button>)}
-                    <button type="button" disabled={candidatePage === candidateTotalPages} onClick={() => setRecoveryCandidatePage(candidatePage + 1)} className="!min-h-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200/80 text-gray-600 disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-3.5 w-3.5" /></button>
+                    <button type="button" disabled={candidatePage === candidateTotalPages} onClick={() => setRecoveryCandidatePage(candidatePage + 1)} className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200/80 text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-3.5 w-3.5" /></button>
                   </div>
+                  {/* ⚠️ Commits on blur/Enter, not on every keystroke. Typing
+                      "12" would otherwise jump to page 1 first and re-render
+                      the whole table under the rep's fingers. */}
+                  <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                    Go to page
+                    <input
+                      type="number" min={1} max={candidateTotalPages} defaultValue={candidatePage}
+                      key={candidatePage}
+                      onBlur={(event) => {
+                        const wanted = Number(event.target.value);
+                        if (Number.isFinite(wanted)) setRecoveryCandidatePage(Math.min(candidateTotalPages, Math.max(1, Math.round(wanted))));
+                      }}
+                      onKeyDown={(event) => { if (event.key === "Enter") (event.target as HTMLInputElement).blur(); }}
+                      className="!min-h-0 w-16 rounded-lg border border-slate-200/80 bg-white px-2 py-1.5 text-xs font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20"
+                    />
+                  </label>
                 </div>
               )}
             </>
           )}
         </section>
+
+        {orderHistoryModalId && (() => {
+          const order = trackedOrders.find((row) => row.id === orderHistoryModalId);
+          if (!order) return null;
+          return (
+            <OrderHistoryModal
+              order={{
+                id: order.id, customer: order.customer, phone: order.phone, state: order.state,
+                productName: order.productName, packageName: order.packageName,
+                quantity: quantityForOrder(order), amount: Number(order.amount) || 0,
+                createdAt: order.createdAt, source: order.source,
+                statusLabel: orderStatusLabelFor(order)
+              }}
+              attempts={(orderContactAttemptsByOrder[orderHistoryModalId] ?? []) as any}
+              notes={orderNotesFor(order as any).map((note: any) => ({
+                text: typeof note.text === "string" ? note.text : String(note.text ?? ""),
+                at: note.at ?? note.createdAt,
+                author: note.author ?? note.authorName
+              }))}
+              loading={orderHistoryLoading}
+              lookupRep={lookupHistoryRep}
+              formatMoney={formatMoney}
+              onClose={() => setOrderHistoryModalId(null)}
+            />
+          );
+        })()}
 
         <section className="grid gap-4 xl:grid-cols-3">
           <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm">
