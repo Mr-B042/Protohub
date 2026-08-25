@@ -32,6 +32,18 @@ type DraftTextareaProps = {
   className?: string;
   disabled?: boolean;
   autoFocus?: boolean;
+  /** Single-line fields have the same problem; they just need an <input>. */
+  as?: "textarea" | "input";
+  /**
+   * Render the "n / max" counter here rather than in the parent.
+   *
+   * ⚠️ A counter driven by parent state trails the box by the debounce, so it
+   * visibly lags behind the letters being typed - which looks like the bug this
+   * component exists to fix. Reading the local draft keeps it instant.
+   */
+  showCount?: boolean;
+  /** So a <label htmlFor> can still point at the field. */
+  id?: string;
   "aria-label"?: string;
 };
 
@@ -39,7 +51,8 @@ type DraftTextareaProps = {
 const COMMIT_DELAY_MS = 250;
 
 function DraftTextareaInner({
-  value, onCommit, liveRef, placeholder, rows, maxLength, className, disabled, autoFocus, ...rest
+  value, onCommit, liveRef, placeholder, rows, maxLength, className, disabled, autoFocus,
+  as = "textarea", showCount, ...rest
 }: DraftTextareaProps) {
   const [draft, setDraft] = useState(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -90,21 +103,32 @@ function DraftTextareaInner({
     }, COMMIT_DELAY_MS);
   };
 
+  const shared = {
+    ...rest,
+    value: draft,
+    maxLength,
+    placeholder,
+    className,
+    disabled,
+    autoFocus,
+    onChange: (event: { target: { value: string } }) => handleChange(event.target.value),
+    // Blur fires before a button's click, so pressing Save always sees the
+    // final text even if the debounce has not run yet.
+    onBlur: flush
+  };
+
+  const field = as === "input"
+    ? <input {...shared} />
+    : <textarea {...shared} rows={rows} />;
+
+  if (!showCount || !maxLength) return field;
   return (
-    <textarea
-      {...rest}
-      value={draft}
-      rows={rows}
-      maxLength={maxLength}
-      placeholder={placeholder}
-      className={className}
-      disabled={disabled}
-      autoFocus={autoFocus}
-      onChange={(event) => handleChange(event.target.value)}
-      // Blur fires before a button's click, so pressing Save always sees the
-      // final text even if the debounce has not run yet.
-      onBlur={flush}
-    />
+    <span className="relative block">
+      {field}
+      <span className="pointer-events-none absolute bottom-2.5 right-3 text-[11px] text-gray-400">
+        {draft.length} / {maxLength}
+      </span>
+    </span>
   );
 }
 

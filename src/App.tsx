@@ -37941,7 +37941,18 @@ ${waybillLineItems(w).length > 1
       });
   };
 
+  /**
+   * The outcome text, undebounced.
+   *
+   * ⚠️ Updated by BOTH paths - typing in the free-text box and clicking a
+   * preset card - so it is authoritative at save time with no conditional
+   * fallback. A `ref.current || state` fallback silently breaks the one case
+   * that matters: clearing the box falls back to stale state and validates an
+   * empty required field as filled.
+   */
+  const followUpOutcomeLiveRef = useRef("");
   const setFollowUpOutcomeText = (value: string) => {
+    followUpOutcomeLiveRef.current = value;
     setFollowUpAttemptOutcome(value);
     const definition = FOLLOW_UP_OUTCOME_DEFINITIONS.find((entry) => entry.label.toLowerCase() === value.trim().toLowerCase());
     setFollowUpAttemptRecoveryBucket(definition?.bucket ?? "");
@@ -38186,7 +38197,10 @@ ${waybillLineItems(w).length > 1
 
   const submitFollowUpAttempt = async () => {
     if (!selectedOrder) return;
-    if (!followUpAttemptOutcome.trim()) {
+    // Read the ref, not state: on mobile a tap on Save does not reliably blur
+    // the field first, so debounced state can still be a keystroke behind.
+    const outcomeText = followUpOutcomeLiveRef.current;
+    if (!outcomeText.trim()) {
       showToast("Pick the outcome of the follow-up attempt.");
       return;
     }
@@ -38227,7 +38241,7 @@ ${waybillLineItems(w).length > 1
         channel: primaryChannel,
         channels: followUpAttemptChannels,
         attemptType: followUpAttemptType,
-        outcomeCode: followUpAttemptOutcome.trim(),
+        outcomeCode: outcomeText.trim(),
         recoveryBucket: followUpAttemptRecoveryBucket || null,
         outcomeNote: followUpAttemptNote.trim() || null,
         // Only creates the follow-up task when the rep asked for a reminder;
@@ -38235,7 +38249,7 @@ ${waybillLineItems(w).length > 1
         // order look due to everyone else.
         nextActionType: followUpNextActionEnabled && followUpReminderSet ? followUpNextActionType : null,
         nextActionAt: followUpNextActionEnabled ? nextActionMoment.iso ?? null : null,
-        nextActionNote: followUpNextActionEnabled ? (followUpNextActionNote.trim() || followUpAttemptNote.trim() || followUpAttemptOutcome.trim()) : null,
+        nextActionNote: followUpNextActionEnabled ? (followUpNextActionNote.trim() || followUpAttemptNote.trim() || outcomeText.trim()) : null,
         attemptedAt: attemptedMoment.iso ?? null,
         contactPerson: followUpContactPerson || null,
         reminderSet: followUpNextActionEnabled && followUpReminderSet,
@@ -99126,7 +99140,19 @@ ${waybillLineItems(w).length > 1
                     {(usingOther || !followUpAttemptOutcome) && (
                       <div className="mt-3">
                         <label className={fieldLabel} htmlFor="fu-outcome">Describe the outcome <span className="text-rose-500">*</span></label>
-                        <input id="fu-outcome" className={control} value={followUpAttemptOutcome} onChange={(event) => setFollowUpOutcomeText(event.target.value)} placeholder="e.g. Wants delivery next week, asked for a discount..." />
+                        {/* ⚠️ Debounced. Bound straight to component state, every
+                            keystroke re-rendered all ~105,000 lines and ~1,400
+                            hooks of App.tsx - unusable on a phone, which is
+                            where reps actually log follow-ups. */}
+                        <DraftTextarea
+                          as="input"
+                          id="fu-outcome"
+                          className={control}
+                          value={followUpAttemptOutcome}
+                          liveRef={followUpOutcomeLiveRef}
+                          onCommit={setFollowUpOutcomeText}
+                          placeholder="e.g. Wants delivery next week, asked for a discount..."
+                        />
                       </div>
                     )}
                   </section>
@@ -99134,16 +99160,19 @@ ${waybillLineItems(w).length > 1
                   <section>
                     <h3 className={stepTitle}>3. Notes</h3>
                     <p className={stepSub}>A brief note about the conversation.</p>
-                    <div className="relative mt-3">
-                      <textarea
+                    <div className="mt-3">
+                      {/* The counter lives inside the component so it counts the
+                          LOCAL draft - one driven by debounced parent state
+                          visibly lags the letters being typed. */}
+                      <DraftTextarea
                         value={followUpAttemptNote}
+                        onCommit={setFollowUpAttemptNote}
                         maxLength={500}
                         rows={3}
-                        onChange={(event) => setFollowUpAttemptNote(event.target.value)}
+                        showCount
                         placeholder="What the customer actually said - the next rep reads this before calling."
                         className="w-full resize-y rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-900 outline-none transition focus:border-[#1F8FE0] focus:ring-4 focus:ring-[#1F8FE0]/10 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                       />
-                      <span className="pointer-events-none absolute bottom-2.5 right-3 text-[11px] text-gray-400">{followUpAttemptNote.length} / 500</span>
                     </div>
                   </section>
 
