@@ -12,6 +12,14 @@ export type RecoveryDayCounts = {
   delivered: number;
   /** Orders CLAIMED that day - a separate duty from working the board. */
   claimed: number;
+  /**
+   * Open orders the rep was already holding when the day began.
+   *
+   * ⚠️ A rep at the claim cap CANNOT claim, so a zero-claim day at the cap is
+   * correct behaviour. Without this the claim target would mark them down for
+   * doing exactly the right thing.
+   */
+  heldAtStart?: number;
 };
 
 export type RecoveryDayTargets = {
@@ -34,6 +42,12 @@ export type RecoveryDayTargets = {
  */
 export type RecoveryDayStatus = "none" | "rest" | "critical" | "below" | "above";
 
+/** Was the rep unable to claim that day because their board was full? */
+export function atClaimCap(counts: RecoveryDayCounts, claimCap: number): boolean {
+  if (!Number.isFinite(claimCap) || claimCap <= 0) return false;
+  return (Number(counts.heldAtStart) || 0) >= claimCap;
+}
+
 const num = (value: unknown) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -54,15 +68,20 @@ export function isRestDay(day: string): boolean {
  *
  * Targets set to zero are skipped rather than treated as instantly met.
  */
-export function dayAttainment(counts: RecoveryDayCounts, targets: RecoveryDayTargets): number | null {
-  // ⚠️ CLAIMED IS DELIBERATELY NOT PART OF THIS. A rep holding the full claim
-  // cap cannot claim anything, so a zero-claim day at the cap is correct
-  // behaviour, not a miss - folding it in would paint those days red for doing
-  // the right thing. It is tracked and reported on its own instead.
+export function dayAttainment(
+  counts: RecoveryDayCounts, targets: RecoveryDayTargets, claimCap = 0
+): number | null {
   const ratios: number[] = [];
   if (num(targets.followUp) > 0) ratios.push(num(counts.followUp) / num(targets.followUp));
   if (num(targets.retention) > 0) ratios.push(num(counts.retention) / num(targets.retention));
   if (num(targets.delivered) > 0) ratios.push(num(counts.delivered) / num(targets.delivered));
+  // ⚠️ Claiming counts EXCEPT when the board was already full. A rep at the cap
+  // cannot claim, so judging them on it would mark them down for doing exactly
+  // the right thing - which is why the cap has to be read here rather than the
+  // metric simply being left out.
+  if (num(targets.claimed) > 0 && !atClaimCap(counts, claimCap)) {
+    ratios.push(num(counts.claimed) / num(targets.claimed));
+  }
   if (ratios.length === 0) return null;
   return Math.min(...ratios);
 }
@@ -73,11 +92,12 @@ export const CRITICAL_ATTAINMENT = 0.5;
 export function dayStatus(
   counts: RecoveryDayCounts,
   targets: RecoveryDayTargets,
-  todayKey: string
+  todayKey: string,
+  claimCap = 0
 ): RecoveryDayStatus {
   if (counts.day > todayKey) return "none";
   if (isRestDay(counts.day)) return "rest";
-  const attainment = dayAttainment(counts, targets);
+  const attainment = dayAttainment(counts, targets, claimCap);
   if (attainment === null) return "none";
   if (attainment >= 1) return "above";
   return attainment < CRITICAL_ATTAINMENT ? "critical" : "below";
@@ -86,6 +106,8 @@ export function dayStatus(
 export type RecoveryCalendarDay = RecoveryDayCounts & {
   status: RecoveryDayStatus;
   attainment: number | null;
+  /** The board was full, so no claim was possible - not a miss. */
+  claimCapped: boolean;
 };
 
 export type RecoveryCalendarSummary = {
@@ -98,6 +120,8 @@ export type RecoveryCalendarSummary = {
   claimDaysMet: number;
   /** Working days that did not, ignoring days with no board activity at all. */
   claimDaysMissed: number;
+  /** Working days the rep could not claim on because the board was full. */
+  claimDaysAtCap: number;
   belowTargetDays: number;
   aboveTargetDays: number;
   restDays: number;
@@ -108,7 +132,8 @@ export function buildRecoveryCalendar(
   dayKeys: string[],
   countsByDay: Map<string, RecoveryDayCounts>,
   targets: RecoveryDayTargets,
-  todayKey: string
+  todayKey: string,
+  claimCap = 0
 ): RecoveryCalendarSummary {
   const days = dayKeys.map((day) => {
     const counts = countsByDay.get(day) ?? { day, followUp: 0, retention: 0, delivered: 0, claimed: 0 };
@@ -117,9 +142,15 @@ export function buildRecoveryCalendar(
       followUp: num(counts.followUp),
       retention: num(counts.retention),
       delivered: num(counts.delivered),
-      claimed: num(counts.claimed)
+      claimed: num(counts.claimed),
+      heldAtStart: num(counts.heldAtStart)
     };
-    return { ...row, status: dayStatus(row, targets, todayKey), attainment: dayAttainment(row, targets) };
+    return {
+      ...row,
+      status: dayStatus(row, targets, todayKey, claimCap),
+      attainment: dayAttainment(row, targets, claimCap),
+      claimCapped: atClaimCap(row, claimCap)
+    };
   });
   return {
     days,
@@ -132,9 +163,13 @@ export function buildRecoveryCalendar(
     claimDaysMet: num(targets.claimed) > 0
       ? days.filter((row) => row.status !== "rest" && row.status !== "none" && row.claimed >= targets.claimed).length
       : 0,
+    // A capped day is neither met nor missed - it is excused, and counting it
+    // as a miss is the unfairness this whole branch exists to avoid.
     claimDaysMissed: num(targets.claimed) > 0
-      ? days.filter((row) => row.status !== "rest" && row.status !== "none" && row.claimed < targets.claimed).length
+      ? days.filter((row) => row.status !== "rest" && row.status !== "none"
+          && !row.claimCapped && row.claimed < targets.claimed).length
       : 0,
+    claimDaysAtCap: days.filter((row) => row.status !== "rest" && row.status !== "none" && row.claimCapped).length,
     // ⚠️ "critical" counts as below target. It is a severity, not a separate
     // outcome, and a supervisor reading "6 below target days" must not be
     // shown a number that quietly excludes the very worst ones.
