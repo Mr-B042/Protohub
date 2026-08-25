@@ -17,6 +17,14 @@ import { buildRecoveryCalendar, calendarDayKeys } from "../lib/recovery-calendar
  */
 const DEFAULT_DAILY_DELIVERED_TARGET = 1;
 
+/**
+ * Orders a recovery rep is expected to CLAIM each working day.
+ *
+ * No settings column yet; loadKpiSettings reads select("*") so adding
+ * daily_claim_target later starts overriding this with no change here.
+ */
+const DEFAULT_DAILY_CLAIM_TARGET = 10;
+
 const router = Router();
 router.use(requireAuth);
 
@@ -590,7 +598,7 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
     const inclusiveEnd = addDaysToDateKey(exclusiveEnd, -1);
     const settings = await loadKpiSettings(orgId);
 
-    const [followUps, retentions, deliveries] = await Promise.all([
+    const [followUps, retentions, deliveries, claims] = await Promise.all([
       supabase.from("order_contact_attempts").select("order_id, attempted_at")
         .eq("org_id", orgId).eq("rep_id", repId)
         .gte("attempted_at", `${start}T00:00:00`).lt("attempted_at", `${exclusiveEnd}T00:00:00`)
@@ -607,17 +615,32 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
         .eq("org_id", orgId).eq("assigned_rep_id", repId).eq("status", "Delivered")
         .gte("delivered_date", start).lt("delivered_date", exclusiveEnd)
         .neq("review_hold", true)
+        .limit(REPORT_ROW_CEILING),
+      // Orders CLAIMED in the range. assigned_at only exists from migration 186
+      // onward, so orders claimed before that are simply absent rather than
+      // guessed at - a claim date invented from updated_at would be worse than
+      // none, and the rep would be judged on it.
+      supabase.from("orders").select("id, assigned_at")
+        .eq("org_id", orgId).eq("assigned_rep_id", repId)
+        .not("assigned_at", "is", null)
+        .gte("assigned_at", `${start}T00:00:00`)
+        .lt("assigned_at", `${exclusiveEnd}T00:00:00`)
         .limit(REPORT_ROW_CEILING)
     ]);
 
     // ⚠️ DISTINCT ORDERS per day, not attempts. Five calls to one customer is
     // one pick, and counting rows would let a single stubborn order look like
     // a full day's work - the same mistake the cart log penalty made.
-    const seen = new Map<string, { followUp: Set<string>; retention: Set<string>; delivered: Set<string> }>();
+    const seen = new Map<string, {
+      followUp: Set<string>; retention: Set<string>; delivered: Set<string>; claimed: Set<string>;
+    }>();
     const bucket = (day: string) => {
       const found = seen.get(day);
       if (found) return found;
-      const fresh = { followUp: new Set<string>(), retention: new Set<string>(), delivered: new Set<string>() };
+      const fresh = {
+        followUp: new Set<string>(), retention: new Set<string>(),
+        delivered: new Set<string>(), claimed: new Set<string>()
+      };
       seen.set(day, fresh);
       return fresh;
     };
@@ -630,10 +653,17 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
     ((deliveries.data ?? []) as any[]).forEach((row) => {
       if (row.id && row.delivered_date) bucket(String(row.delivered_date).slice(0, 10)).delivered.add(row.id);
     });
+    ((claims.data ?? []) as any[]).forEach((row) => {
+      if (row.id && row.assigned_at) bucket(lagosDateKey(row.assigned_at)).claimed.add(row.id);
+    });
 
     const countsByDay = new Map(
       [...seen.entries()].map(([day, sets]) => [day, {
-        day, followUp: sets.followUp.size, retention: sets.retention.size, delivered: sets.delivered.size
+        day,
+        followUp: sets.followUp.size,
+        retention: sets.retention.size,
+        delivered: sets.delivered.size,
+        claimed: sets.claimed.size
       }])
     );
     const targets = {
@@ -641,7 +671,8 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
       retention: settings.dailyRetentionPickTarget,
       // No column for this yet; loadKpiSettings reads select("*") so the
       // default simply applies until someone adds one.
-      delivered: DEFAULT_DAILY_DELIVERED_TARGET
+      delivered: DEFAULT_DAILY_DELIVERED_TARGET,
+      claimed: DEFAULT_DAILY_CLAIM_TARGET
     };
     const summary = buildRecoveryCalendar(
       calendarDayKeys(start, inclusiveEnd), countsByDay, targets, lagosDateKey()

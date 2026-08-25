@@ -10,12 +10,15 @@ export type RecoveryDayCounts = {
   followUp: number;
   retention: number;
   delivered: number;
+  /** Orders CLAIMED that day - a separate duty from working the board. */
+  claimed: number;
 };
 
 export type RecoveryDayTargets = {
   followUp: number;
   retention: number;
   delivered: number;
+  claimed: number;
 };
 
 /**
@@ -52,6 +55,10 @@ export function isRestDay(day: string): boolean {
  * Targets set to zero are skipped rather than treated as instantly met.
  */
 export function dayAttainment(counts: RecoveryDayCounts, targets: RecoveryDayTargets): number | null {
+  // ⚠️ CLAIMED IS DELIBERATELY NOT PART OF THIS. A rep holding the full claim
+  // cap cannot claim anything, so a zero-claim day at the cap is correct
+  // behaviour, not a miss - folding it in would paint those days red for doing
+  // the right thing. It is tracked and reported on its own instead.
   const ratios: number[] = [];
   if (num(targets.followUp) > 0) ratios.push(num(counts.followUp) / num(targets.followUp));
   if (num(targets.retention) > 0) ratios.push(num(counts.retention) / num(targets.retention));
@@ -86,6 +93,11 @@ export type RecoveryCalendarSummary = {
   followUpTotal: number;
   retentionTotal: number;
   deliveredTotal: number;
+  claimedTotal: number;
+  /** Working days that reached the claim target - the answer to "is she hitting it". */
+  claimDaysMet: number;
+  /** Working days that did not, ignoring days with no board activity at all. */
+  claimDaysMissed: number;
   belowTargetDays: number;
   aboveTargetDays: number;
   restDays: number;
@@ -99,12 +111,13 @@ export function buildRecoveryCalendar(
   todayKey: string
 ): RecoveryCalendarSummary {
   const days = dayKeys.map((day) => {
-    const counts = countsByDay.get(day) ?? { day, followUp: 0, retention: 0, delivered: 0 };
+    const counts = countsByDay.get(day) ?? { day, followUp: 0, retention: 0, delivered: 0, claimed: 0 };
     const row: RecoveryDayCounts = {
       day,
       followUp: num(counts.followUp),
       retention: num(counts.retention),
-      delivered: num(counts.delivered)
+      delivered: num(counts.delivered),
+      claimed: num(counts.claimed)
     };
     return { ...row, status: dayStatus(row, targets, todayKey), attainment: dayAttainment(row, targets) };
   });
@@ -113,6 +126,15 @@ export function buildRecoveryCalendar(
     followUpTotal: days.reduce((sum, row) => sum + row.followUp, 0),
     retentionTotal: days.reduce((sum, row) => sum + row.retention, 0),
     deliveredTotal: days.reduce((sum, row) => sum + row.delivered, 0),
+    claimedTotal: days.reduce((sum, row) => sum + row.claimed, 0),
+    // Judged only on days that were actually workable: never a Sunday, and
+    // never a future day the rep has not reached yet.
+    claimDaysMet: num(targets.claimed) > 0
+      ? days.filter((row) => row.status !== "rest" && row.status !== "none" && row.claimed >= targets.claimed).length
+      : 0,
+    claimDaysMissed: num(targets.claimed) > 0
+      ? days.filter((row) => row.status !== "rest" && row.status !== "none" && row.claimed < targets.claimed).length
+      : 0,
     // ⚠️ "critical" counts as below target. It is a severity, not a separate
     // outcome, and a supervisor reading "6 below target days" must not be
     // shown a number that quietly excludes the very worst ones.
