@@ -32507,7 +32507,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       return;
     }
     const key = `${recoveryRepViewingId}|${panel.dateFrom}|${panel.dateTo}`;
-    const cached = recoveryBonusCache.current.get(key);
+    // Same rule as the calendar: a window that includes today is still moving.
+    const isSettledRange = panel.dateTo < formatDateKey(new Date());
+    const cached = isSettledRange ? recoveryBonusCache.current.get(key) : undefined;
     if (cached) {
       // Instant on a revisit, which is most of what stepping through dates is.
       setRecoveryBonusSummary(cached);
@@ -32520,7 +32522,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       const result = await recoveryRepKpiApi.summary({
         repId: recoveryRepViewingId, dateFrom: panel.dateFrom, dateTo: panel.dateTo
       });
-      recoveryBonusCache.current.set(key, result);
+      if (isSettledRange) recoveryBonusCache.current.set(key, result);
       if (requestId !== recoveryBonusRequestId.current) return; // superseded
       setRecoveryBonusSummary(result);
     } catch {
@@ -32543,14 +32545,19 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const bounds = periodBoundsForQuery(recoveryBonusPeriod, recoveryBonusDateRange);
     if (!bounds) { setRecoveryCalendar(null); return; }
     const key = `${recoveryRepViewingId}|${bounds.dateFrom}|${bounds.dateTo}`;
-    const cached = recoveryCalendarCache.current.get(key);
+    // ⚠️ ONLY a range that has fully ended may be cached. A range containing
+    // today keeps changing as the rep works, and caching it froze the calendar
+    // at whatever today looked like when the page opened - Delight logged 26
+    // orders and her cell still read 0. Past days are immutable; today is not.
+    const isSettledRange = bounds.dateTo < formatDateKey(new Date());
+    const cached = isSettledRange ? recoveryCalendarCache.current.get(key) : undefined;
     if (cached) { setRecoveryCalendar(cached); return; }
     const requestId = ++recoveryCalendarRequestId.current;
     try {
       const result = await recoveryRepKpiApi.calendar({
         repId: recoveryRepViewingId, dateFrom: bounds.dateFrom, dateTo: bounds.dateTo
       });
-      recoveryCalendarCache.current.set(key, result);
+      if (isSettledRange) recoveryCalendarCache.current.set(key, result);
       if (requestId !== recoveryCalendarRequestId.current) return;
       setRecoveryCalendar(result);
     } catch {
@@ -38272,6 +38279,13 @@ ${waybillLineItems(w).length > 1
           showToast(`Follow-up saved, but the WhatsApp did not send: ${err?.message ?? "please retry from the order."}`);
         }
       }
+
+      // ⚠️ The calendar and the bonus block count THIS attempt, so they have to
+      // be re-pulled. Without it a rep logs a follow-up, looks at today's cell,
+      // and sees the old number - which reads as the log not having saved.
+      void loadRecoveryCalendar();
+      void loadRecoveryBonusSummary();
+      void loadRecoveryFollowUpPairs();
 
       const refreshedOrder = await ordersApi.list({ search: selectedOrder.id, limit: "1" });
       const matched = (refreshedOrder.data as any[]).find((item) => item.id === selectedOrder.id);
