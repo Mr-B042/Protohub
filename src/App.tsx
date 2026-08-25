@@ -28120,6 +28120,38 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     };
   }, []);
 
+  /**
+   * Pull a single order that is not in memory.
+   *
+   * ⚠️ The boot query only reaches back 90 days on the critical path, and an
+   * order's PICK date is not its placement date - Delight Ogbonna picked ten
+   * May orders in August, so they appear in her list while sitting outside the
+   * window that loaded it. Rather than widen the boot query for everyone (which
+   * is the load spike that window exists to avoid), the detail modal fetches
+   * what it is missing.
+   */
+  const [orderDetailFetching, setOrderDetailFetching] = useState(false);
+  const fetchMissingOrder = async (orderId: string) => {
+    setOrderDetailFetching(true);
+    try {
+      const found = await ordersApi.list({ search: orderId, limit: "5" });
+      const matched = (found.data as any[]).find((item) => String(item.id) === String(orderId));
+      if (matched) {
+        const normalized = normalizeTrackedOrder(matched);
+        setTrackedOrders((value) => value.some((order) => order.id === normalized.id)
+          ? value.map((order) => order.id === normalized.id ? normalized : order)
+          : [...value, normalized]);
+      }
+    } catch { /* the modal keeps its own message; a failed lookup is not fatal */ }
+    finally { setOrderDetailFetching(false); }
+  };
+
+  useEffect(() => {
+    if (modal !== "orderDetails" || !selectedOrderId || selectedOrder || orderDetailFetching) return;
+    void fetchMissingOrder(selectedOrderId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal, selectedOrderId, selectedOrder]);
+
   // Fetch audit log when order details modal opens
   useEffect(() => {
     if (modal === "orderDetails" && selectedOrderId) {
@@ -97150,6 +97182,34 @@ ${waybillLineItems(w).length > 1
                 </div>
                 );
               })()}
+
+	            {/* ⚠️ EVERY orderDetails branch is gated on `selectedOrder &&`, so an
+	                order that is not in memory opened a completely EMPTY modal
+	                shell - no title, no body, nothing. That reads as "the button
+	                did nothing", which is what a rep reports as being bounced
+	                back. It happens for real: the boot query loads only the last
+	                90 days on the critical path, and Delight Ogbonna has 10
+	                orders placed in May that she picked in August, so they sit
+	                outside it until the full-history batch lands. The modal now
+	                says what is happening instead of showing a blank box. */}
+	            {modal === "orderDetails" && !selectedOrder && (
+	              <div className="px-6 py-10 text-center">
+	                <p className="m-0 text-sm font-bold text-slate-700">
+	                  {orderDetailFetching ? "Loading this order…" : `Order ${selectedOrderId} could not be loaded.`}
+	                </p>
+	                <p className="m-0 mt-1 text-xs font-medium text-slate-500">
+	                  {orderDetailFetching
+	                    ? "It was placed outside the range loaded with the page, so it is being fetched now."
+	                    : "It may have been reassigned or removed. Try again, or reload the page."}
+	                </p>
+	                {!orderDetailFetching && (
+	                  <button type="button" onClick={() => void fetchMissingOrder(selectedOrderId!)}
+	                    className="!min-h-0 mt-4 inline-flex items-center gap-1.5 rounded-xl bg-[#1F8FE0] px-4 py-2 text-sm font-bold text-white hover:bg-[#1560a8]">
+	                    <RefreshCw className="h-3.5 w-3.5" /> Try again
+	                  </button>
+	                )}
+	              </div>
+	            )}
 
 	            {modal === "orderDetails" && selectedOrder && !isMarketerOrderView && (
 	              <div className="px-6 py-5 flex flex-col gap-6">
