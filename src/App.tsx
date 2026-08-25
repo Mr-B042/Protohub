@@ -224,6 +224,10 @@ import DraftTextarea from "./components/DraftTextarea";
 import ChargeRiskBanner from "./components/ChargeRiskBanner";
 import CartLogOwedBanner from "./components/CartLogOwedBanner";
 import OrderHistoryModal from "./components/OrderHistoryModal";
+import DateWindowNav from "./components/DateWindowNav";
+import {
+  DateWindow, PRESET_LABEL, PresetKey, presetRange, windowContains
+} from "./lib/date-window";
 import RecoveryBonusCalendar from "./components/RecoveryBonusCalendar";
 import { STALE_TIER_STYLE, staleOrderVerdict, summariseStaleOrders } from "./lib/stale-orders";
 import { indexCostChanges, ProductCostChange, unitCostAsOf } from "./lib/product-cost-history";
@@ -32562,11 +32566,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // app resolve these dates through ONE implementation. Hand-rolled month and
   // week maths here would be a second definition of "last month" to keep in
   // step with the first.
-  const [myOrdersPeriod, setMyOrdersPeriod] = useState<Period>("Today");
-  const [myOrdersDateRange, setMyOrdersDateRange] = useState<DateRange>({ start: "", end: "" });
-  const [myOrdersNavStart, setMyOrdersNavStart] = useState(getSundayKey);
-  const [myOrdersNavSpan, setMyOrdersNavSpan] = useState<NavSpan>("1W");
-  /** "All Orders" is not a period, so it sits outside the strip as its own toggle. */
+  // ⚠️ The RANGE is the source of truth, not a preset name. A preset produces a
+  // range; the label is computed back from the range; the arrows move the range
+  // a day at a time. Storing the preset instead is what makes a nudged window
+  // carry on calling itself "Last Week" when it is no longer last week.
+  const [myOrdersWindow, setMyOrdersWindow] = useState<DateWindow>(
+    () => presetRange("today", formatDateKey(new Date()))
+  );
+  /** "All Orders" is not a range, so it sits outside the window as its own toggle. */
   const [myOrdersShowAll, setMyOrdersShowAll] = useState(false);
   const [myOrdersSearch, setMyOrdersSearch] = useState("");
   const [myOrdersOutcome, setMyOrdersOutcome] = useState("All Outcomes");
@@ -65636,21 +65643,19 @@ ${waybillLineItems(w).length > 1
       return key >= myPickBounds.dateFrom && key <= myPickBounds.dateTo;
     });
     // ── My Recovered Orders: tabs, search, filter, sort, header stats ──
-    const myOrdersBounds = periodBoundsForQuery(myOrdersPeriod, myOrdersDateRange);
+    const myOrdersTodayKey = formatDateKey(new Date());
+    // ⚠️ The list, the header counts and the tab badges all read the SAME
+    // window. A stat that ignored it would contradict the rows beneath it.
     const inTab = (order: TrackedOrder) => {
       if (myOrdersShowAll) return true;
       const key = pickDayKey(order);
-      if (!key) return false;
-      if (!myOrdersBounds) return true;
-      return key >= myOrdersBounds.dateFrom && key <= myOrdersBounds.dateTo;
+      return Boolean(key) && windowContains(myOrdersWindow, key!);
     };
-    // Counts per period, so a rep can see where the work sits before switching.
-    const countFor = (period: Period) => {
-      const bounds = periodBoundsForQuery(period, { start: "", end: "" });
-      if (!bounds) return myOrders.length;
+    const countForPreset = (preset: PresetKey) => {
+      const range = presetRange(preset, myOrdersTodayKey);
       return myOrders.filter((order) => {
         const key = pickDayKey(order);
-        return Boolean(key) && key! >= bounds.dateFrom && key! <= bounds.dateTo;
+        return Boolean(key) && windowContains(range, key!);
       }).length;
     };
 
@@ -66682,16 +66687,20 @@ ${waybillLineItems(w).length > 1
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 bg-slate-50/60 px-5 py-3">
             <div className="inline-flex flex-wrap items-center gap-1">
-              {periods.map((period) => {
-                const active = !myOrdersShowAll && myOrdersPeriod === period;
+              {/* Shortcuts. They set the window; the toolbar below then moves it
+                  a day at a time without leaving the page. */}
+              {(["today", "yesterday", "thisWeek", "lastWeek", "thisMonth", "lastMonth"] as PresetKey[]).map((preset) => {
+                const range = presetRange(preset, myOrdersTodayKey);
+                const active = !myOrdersShowAll
+                  && myOrdersWindow.start === range.start && myOrdersWindow.end === range.end;
                 return (
-                  <button key={period} type="button"
-                    onClick={() => { setMyOrdersShowAll(false); setMyOrdersPeriod(period); setMyOrdersDateRange({ start: "", end: "" }); }}
+                  <button key={preset} type="button"
+                    onClick={() => { setMyOrdersShowAll(false); setMyOrdersWindow(range); }}
                     className={`!min-h-0 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition-all ${
                       active ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "text-slate-500 hover:bg-white hover:text-slate-900"}`}>
-                    {period}
+                    {PRESET_LABEL[preset]}
                     <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-black tabular-nums ${
-                      active ? "bg-emerald-100 text-emerald-800" : "bg-slate-200/70 text-slate-600"}`}>{countFor(period)}</span>
+                      active ? "bg-emerald-100 text-emerald-800" : "bg-slate-200/70 text-slate-600"}`}>{countForPreset(preset)}</span>
                   </button>
                 );
               })}
@@ -66730,13 +66739,12 @@ ${waybillLineItems(w).length > 1
               a week at a time and see the dates it landed on. Hidden on "All
               Orders", where there is no window to step through. */}
           {!myOrdersShowAll && (
-            <div className="border-b border-slate-200/80 bg-slate-50/60 px-5 py-2.5">
-              {renderWeekNav(
-                myOrdersNavStart, setMyOrdersNavStart,
-                myOrdersNavSpan, setMyOrdersNavSpan,
-                setMyOrdersPeriod, setMyOrdersDateRange,
-                myOrdersPeriod, myOrdersDateRange
-              )}
+            <div className="border-b border-slate-200/80 bg-slate-50/60 px-5 py-3">
+              <DateWindowNav
+                value={myOrdersWindow}
+                onChange={setMyOrdersWindow}
+                todayKey={myOrdersTodayKey}
+              />
             </div>
           )}
           {myOrders.length === 0 ? (
