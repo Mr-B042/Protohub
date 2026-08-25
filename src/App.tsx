@@ -103,6 +103,7 @@ import {
   Mail,
   PieChart,
   BarChart3,
+  CheckSquare,
   FileText,
   Wifi,
   WifiOff,
@@ -119,6 +120,7 @@ import {
   ArrowUp,
   Tag
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { OrderSourceLogo } from "./components/OrderSourceLogo";
 import { WhatsAppIcon } from "./components/WhatsAppIcon";
 import {
@@ -65916,8 +65918,10 @@ ${waybillLineItems(w).length > 1
       deltaNote?: string | null;
       barClass?: string;
       tooltip?: string;
+      icon?: LucideIcon;
+      iconTone?: string;
     }) => {
-      const { label, value, targetLabel, met, progressPct = null, primaryNote = null, deltaNote = null, barClass = "bg-emerald-500", tooltip } = opts;
+      const { label, value, targetLabel, met, progressPct = null, primaryNote = null, deltaNote = null, barClass = "bg-emerald-500", tooltip, icon: Icon, iconTone = "bg-slate-100 text-slate-500" } = opts;
       // ⚠️ The status colour lives on a top rail and the note, NOT on the
       // label or the figure. Colouring the number itself made a tracked-only
       // card look like a pass or a fail, when met === null means neither.
@@ -65926,7 +65930,14 @@ ${waybillLineItems(w).length > 1
         <div className="group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] transition-all hover:-translate-y-0.5 hover:shadow-md">
           <span className={`absolute inset-x-0 top-0 h-1 ${rail}`} />
           <div className="flex items-start justify-between gap-2">
-            <p className="m-0 text-[10px] font-black uppercase leading-tight tracking-[0.12em] text-slate-400">{label}</p>
+            <p className="m-0 flex min-w-0 items-center gap-2 text-[10px] font-black uppercase leading-tight tracking-[0.12em] text-slate-400">
+              {Icon && (
+                <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${iconTone}`}>
+                  <Icon className="h-3.5 w-3.5" />
+                </span>
+              )}
+              <span className="min-w-0">{label}</span>
+            </p>
             {tooltip && <span title={tooltip} className="shrink-0 cursor-help text-slate-300 transition-colors hover:text-slate-500"><Info className="h-3.5 w-3.5" /></span>}
           </div>
           <strong className="mt-2 block text-3xl font-black leading-none tracking-tight tabular-nums text-slate-900">{value}</strong>
@@ -66265,51 +66276,96 @@ ${waybillLineItems(w).length > 1
                 <details className="group rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm" open={!rec.gatesMet}>
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
                     <span>
-                      <span className="block text-base font-black text-gray-900">How your bonus works</span>
-                      <span className="mt-0.5 block text-xs text-gray-500">Exactly how you get paid, using today&apos;s live settings.</span>
+                      <span className="flex items-center gap-1.5 text-lg font-black tracking-tight text-slate-900">
+                        How your bonus works
+                        <Info className="h-4 w-4 text-slate-300" />
+                      </span>
+                      <span className="mt-0.5 block text-xs font-medium text-slate-500">Exactly how you get paid, using today&apos;s live settings.</span>
                     </span>
                     <ChevronDown className="h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-180" />
                   </summary>
 
                   <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-                      <p className="m-0 text-[11px] font-black uppercase tracking-wider text-emerald-700">1. Recovering a dead order</p>
-                      <p className="m-0 mt-1.5 text-sm font-bold text-gray-900">{formatMoney(rec.bonusPerOrder)} for every order you get delivered</p>
-                      <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
-                        Any order assigned to you that reaches <strong>Delivered</strong> counts as recovered. Claim a failed or cancelled order, work it, get it delivered - that&apos;s {formatMoney(rec.bonusPerOrder)}.
-                      </p>
-                      <p className="m-0 mt-2 text-xs font-bold text-gray-700">
-                        Example: {rec.monthlyTarget} recovered this month = {formatMoney(rec.monthlyTarget * rec.bonusPerOrder)}
-                      </p>
+                    <div className="flex gap-3 rounded-2xl border border-emerald-200/80 bg-emerald-50/50 p-4">
+                      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100">
+                        <CheckSquare className="h-5 w-5 text-emerald-600" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="m-0 flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-emerald-700">
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-emerald-100 text-[11px] text-emerald-800">1</span>
+                          Recovering a dead order
+                        </p>
+                        <p className="m-0 mt-1.5 text-sm font-black text-slate-900">{formatMoney(rec.bonusPerOrder)} for every order you get delivered</p>
+                        <p className="m-0 mt-1 text-xs font-medium leading-5 text-slate-600">
+                          Any order assigned to you that reaches <strong>Delivered</strong> counts as recovered. Claim a failed or cancelled order, work it, get it delivered — that&apos;s {formatMoney(rec.bonusPerOrder)}.
+                        </p>
+                        <p className="m-0 mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-emerald-200/80 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700">
+                          <BarChart3 className="h-3.5 w-3.5 text-emerald-600" />
+                          Example: {rec.monthlyTarget} recovered this month = {formatMoney(rec.monthlyTarget * rec.bonusPerOrder)}
+                        </p>
+                      </div>
                     </div>
 
-                    <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-4">
-                      <p className="m-0 text-[11px] font-black uppercase tracking-wider text-sky-700">2. A past customer buying again</p>
-                      <p className="m-0 mt-1.5 text-sm font-bold text-gray-900">{salePct}% of the new order&apos;s value</p>
-                      <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
-                        When someone you followed up buys again, you earn {salePct}% of that order. <strong>It pays when the new order is delivered</strong>, not when the customer agrees - so log the order number on the call and it lands on delivery.
-                      </p>
-                      <p className="m-0 mt-2 text-xs font-bold text-gray-700">
-                        Example: a {formatMoney(50000)} repeat order = {formatMoney(Math.round(50000 * (salePct / 100)))}
-                      </p>
+                    <div className="flex gap-3 rounded-2xl border border-sky-200/80 bg-sky-50/50 p-4">
+                      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-100">
+                        <RefreshCw className="h-5 w-5 text-sky-600" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="m-0 flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-sky-700">
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-sky-100 text-[11px] text-sky-800">2</span>
+                          A past customer buying again
+                        </p>
+                        <p className="m-0 mt-1.5 text-sm font-black text-slate-900">{salePct}% of the new order&apos;s value</p>
+                        <p className="m-0 mt-1 text-xs font-medium leading-5 text-slate-600">
+                          When someone you followed up buys again, you earn {salePct}% of that order. <strong>It pays when the new order is delivered</strong>, not when the customer agrees — so log the order number on the call and it lands on delivery.
+                        </p>
+                        <p className="m-0 mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-sky-200/80 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700">
+                          <BarChart3 className="h-3.5 w-3.5 text-sky-600" />
+                          Example: a {formatMoney(50000)} repeat order = {formatMoney(Math.round(50000 * (salePct / 100)))}
+                        </p>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/60 p-4">
-                    <p className="m-0 text-[11px] font-black uppercase tracking-wider text-amber-700">The catch - both must be met</p>
-                    <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
-                      Recovery bonus is held back entirely if either of these is below target. Not reduced - held back. This stops volume being chased by skipping the paperwork.
-                    </p>
-                    <ul className="m-0 mt-2 list-none space-y-1.5 p-0">
+                  {/* ⚠️ The gates now carry a BAR, not just a percentage. "39.1%
+                      vs 95% needed" is two numbers a reader has to compare;
+                      a bar shows the size of the gap without doing arithmetic. */}
+                  <div className="mt-4 grid gap-4 rounded-2xl border border-amber-200/80 bg-amber-50/50 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+                    <div className="flex gap-3">
+                      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100">
+                        <AlertTriangle className="h-5 w-5 text-amber-600" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="m-0 text-[11px] font-black uppercase tracking-wider text-amber-700">The catch — both must be met</p>
+                        <p className="m-0 mt-1.5 text-xs font-medium leading-5 text-slate-600">
+                          Recovery bonus is held back entirely if either of these is below target. Not reduced — held back. This stops volume being chased by skipping the paperwork.
+                        </p>
+                      </div>
+                    </div>
+                    <ul className="m-0 list-none space-y-3 p-0 lg:border-l lg:border-amber-200/70 lg:pl-4">
                       {gates.map(([label, value, target]) => {
                         const met = value >= target;
+                        const pct = target > 0 ? Math.min(100, (Number(value) / Number(target)) * 100) : 0;
                         return (
-                          <li key={label} className="flex items-center justify-between gap-2 text-xs">
-                            <span className="flex min-w-0 items-center gap-1.5">
-                              {met ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-500" />}
-                              <span className="truncate font-semibold text-gray-700">{label}</span>
-                            </span>
-                            <span className={`shrink-0 font-black ${met ? "text-emerald-700" : "text-rose-600"}`}>{value}% <span className="font-bold text-gray-400">/ {target}% needed</span></span>
+                          <li key={label}>
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="flex min-w-0 items-center gap-1.5 text-xs font-bold text-slate-700">
+                                {met ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />}
+                                <span className="truncate">{label}</span>
+                              </span>
+                              <span className="flex shrink-0 items-center gap-2">
+                                <span className={`text-xs font-black ${met ? "text-emerald-700" : "text-rose-600"}`}>
+                                  {value}% <span className="font-bold text-slate-400">/ {target}% needed</span>
+                                </span>
+                                <span className={`rounded-md px-2 py-0.5 text-[10px] font-black ${
+                                  met ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
+                                  {met ? "Met" : "Below target"}
+                                </span>
+                              </span>
+                            </div>
+                            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-white/80">
+                              <div className={`h-full rounded-full ${met ? "bg-emerald-500" : "bg-rose-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
+                            </div>
                           </li>
                         );
                       })}
@@ -66317,17 +66373,30 @@ ${waybillLineItems(w).length > 1
                   </div>
 
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3">
-                      <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">Your targets</p>
-                      <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
-                        <strong>{rec.weeklyTarget} recovered orders a week</strong> and <strong>{rec.monthlyTarget} a month</strong>. Targets are order counts, not naira - you&apos;re measured on what you control.
-                      </p>
+                    <div className="flex gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/60 p-4">
+                      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100">
+                        <Target className="h-4.5 w-4.5 text-violet-600" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="m-0 text-[11px] font-black uppercase tracking-wider text-slate-500">Your targets</p>
+                        <p className="m-0 mt-1 text-xs font-bold text-slate-900">
+                          {rec.weeklyTarget} recovered orders a week and {rec.monthlyTarget} a month.
+                        </p>
+                        <p className="m-0 mt-0.5 text-xs font-medium leading-5 text-slate-600">
+                          Targets are order counts, not naira — you&apos;re measured on what you control.
+                        </p>
+                      </div>
                     </div>
-                    <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3">
-                      <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">What does NOT pay</p>
-                      <p className="m-0 mt-1 text-xs leading-5 text-gray-600">
-                        Logging a satisfaction check, collecting a review or taking a referral contact earn nothing on their own. The bonus follows real delivered sales.
-                      </p>
+                    <div className="flex gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/60 p-4">
+                      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-100">
+                        <Info className="h-4.5 w-4.5 text-sky-600" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="m-0 text-[11px] font-black uppercase tracking-wider text-slate-500">What does not pay</p>
+                        <p className="m-0 mt-1 text-xs font-medium leading-5 text-slate-600">
+                          Logging a satisfaction check, collecting a review or taking a referral contact earn nothing on their own. The bonus follows real delivered sales.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </details>
@@ -66351,23 +66420,72 @@ ${waybillLineItems(w).length > 1
                       Surplus above {formatMoney(summary.netContribution.targetMin)}: <span className="font-black text-slate-900">{formatMoney(summary.surplusBonus.surplusBase)}</span> × {summary.surplusBonus.pct}%
                     </p>
                   </div>
-                  <div className="flex items-start gap-2">
-                    <span className={`mt-0.5 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${summary.surplusBonus.gatesMet ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                      {summary.surplusBonus.gatesMet ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
-                      {summary.surplusBonus.gatesMet ? "Earned" : "Held"}
-                    </span>
-                    <div className="min-w-0">
-                      <p className={`m-0 text-sm font-black ${summary.surplusBonus.gatesMet ? "text-emerald-700" : "text-amber-700"}`}>
-                        {summary.surplusBonus.gatesMet ? "Bonus Earned!" : "Bonus Withheld"}
-                      </p>
-                      <p className="m-0 mt-0.5 text-xs font-semibold text-gray-600">
-                        {summary.surplusBonus.gatesMet
-                          ? "All quality KPIs met their minimum targets."
-                          : "Upsell attempt rate and documentation must both meet target first."}
-                      </p>
-                      <p className="m-0 mt-1 text-[11px] font-medium text-gray-400">Withheld if any KPI falls below target.</p>
-                    </div>
-                  </div>
+                  {(() => {
+                    const checks: Array<[string, number, number]> = [
+                      ["Upsell / cross-sell attempts", summary.upsellAttemptRate.pct, summary.upsellAttemptRate.target],
+                      ["Documentation", summary.documentation.pct, summary.documentation.target]
+                    ];
+                    const metCount = checks.filter(([, value, target]) => value >= target).length;
+                    // ⚠️ What it takes to CLEAR the gate, in whole documents.
+                    // "39.1% against 95%" tells a rep they are behind; it does
+                    // not tell them how many more to write, which is the only
+                    // number they can act on. Rounded UP - 104.5 documents is
+                    // not a thing, and rounding down would set a target that
+                    // still misses.
+                    // scoredCount is how many orders were ASSESSED; passingCount
+                    // is how many cleared the bar. The rate is passing/scored,
+                    // so the gap is measured against passing - reading the two
+                    // the other way round silently produced no figure at all.
+                    const assessed = Number(summary.documentation.scoredCount) || 0;
+                    const passing = Number(summary.documentation.passingCount) || 0;
+                    const needToPass = Math.ceil((summary.documentation.target / 100) * assessed);
+                    const needed = Math.max(0, needToPass - passing);
+                    return (
+                      <div className="rounded-2xl border border-amber-200/80 bg-amber-50/50 p-4">
+                        <div className="flex items-start gap-2">
+                          <span className={`mt-0.5 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${summary.surplusBonus.gatesMet ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                            {summary.surplusBonus.gatesMet ? <CheckCircle2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+                            {summary.surplusBonus.gatesMet ? "Earned" : "Held"}
+                          </span>
+                          <div className="min-w-0">
+                            <p className={`m-0 text-sm font-black ${summary.surplusBonus.gatesMet ? "text-emerald-700" : "text-amber-700"}`}>
+                              {summary.surplusBonus.gatesMet ? "Bonus Earned!" : "Bonus Withheld"}
+                            </p>
+                            <p className="m-0 mt-0.5 text-xs font-bold text-slate-600">
+                              {metCount} of {checks.length} requirement{checks.length === 1 ? "" : "s"} met
+                            </p>
+                          </div>
+                        </div>
+                        <ul className="m-0 mt-2.5 list-none space-y-1.5 p-0">
+                          {checks.map(([label, value, target]) => {
+                            const met = value >= target;
+                            return (
+                              <li key={label} className="flex items-center justify-between gap-2 text-xs">
+                                <span className="flex min-w-0 items-center gap-1.5 font-semibold text-slate-700">
+                                  {met ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-500" />}
+                                  <span className="truncate">{label}</span>
+                                </span>
+                                <span className={`shrink-0 font-black ${met ? "text-emerald-700" : "text-rose-600"}`}>
+                                  {value}% <span className="font-bold text-slate-400">/ {target}%</span>
+                                </span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {!summary.surplusBonus.gatesMet && needed > 0 && (
+                          <div className="mt-3 rounded-xl border border-amber-200/80 bg-white px-3 py-2.5">
+                            <p className="m-0 text-[10px] font-black uppercase tracking-wider text-amber-700">What you need to unlock bonus</p>
+                            <p className="m-0 mt-1 text-xs font-bold text-slate-900">
+                              {needed} more completed document{needed === 1 ? "" : "s"}
+                            </p>
+                            <p className="m-0 mt-0.5 text-[11px] font-medium text-slate-500">
+                              {summary.documentation.target}% of {assessed} scored orders = {needToPass} passing. You have {passing}.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 px-4 py-3">
                     <p className="m-0 text-[11px] font-black uppercase tracking-wider text-gray-500">How your bonus is calculated</p>
                     <ul className="m-0 mt-1.5 list-none space-y-1 p-0 text-[11px] font-medium text-gray-600">
@@ -66442,6 +66560,7 @@ ${waybillLineItems(w).length > 1
                   <>
                     {kpiCard({
                       label: "Monthly Net Contribution",
+                  icon: Wallet, iconTone: "bg-violet-100 text-violet-600",
                       value: formatMoney(nc.value),
                       targetLabel: `Target: Min ${formatMoney(nc.targetMin)} · Preferred ${formatMoney(nc.targetPreferred)}`,
                       met: nc.value >= nc.targetMin,
@@ -66453,6 +66572,7 @@ ${waybillLineItems(w).length > 1
                     })}
                     {kpiCard({
                       label: "Weekly Pace",
+                  icon: BarChart3, iconTone: "bg-emerald-100 text-emerald-600",
                       value: formatMoney(pace.value),
                       targetLabel: `Target: ${formatMoney(pace.target)} / week`,
                       met: pace.value >= pace.target,
@@ -66501,6 +66621,7 @@ ${waybillLineItems(w).length > 1
                     })}
                     {kpiCard({
                       label: "Rep Monthly Salary",
+                  icon: UserRound, iconTone: "bg-sky-100 text-sky-600",
                       value: formatMoney(summary.repMonthlySalary),
                       targetLabel: "Company-level contribution after salary:",
                       met: null,
@@ -67202,7 +67323,7 @@ ${waybillLineItems(w).length > 1
                                 was reachable only by leaving the page. */}
                             <button type="button" onClick={() => void openOrderHistoryModal(order.id)}
                               className="!min-h-0 mx-auto mt-2.5 flex items-center gap-1.5 rounded-lg border border-slate-200/80 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 shadow-sm transition-colors hover:bg-slate-50">
-                              <LineChart className="h-3.5 w-3.5 text-slate-400" /> View history
+                              <BarChart3 className="h-3.5 w-3.5 text-slate-400" /> View history
                             </button>
                           </td>
                           <td className="px-4 py-4">
