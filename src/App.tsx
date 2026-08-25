@@ -32555,7 +32555,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // My Recovered Orders: its own quick-tab, search, outcome filter and sort.
   // Separate from the page period because this list is worked minute to minute
   // while the period control above frames the bonus figures.
-  const [myOrdersTab, setMyOrdersTab] = useState<"today" | "yesterday" | "week" | "all">("today");
+  // ⚠️ Driven by the shared Period type rather than a bespoke union, so the
+  // stepper band, the custom-range picker and every other date control in the
+  // app resolve these dates through ONE implementation. Hand-rolled month and
+  // week maths here would be a second definition of "last month" to keep in
+  // step with the first.
+  const [myOrdersPeriod, setMyOrdersPeriod] = useState<Period>("Today");
+  const [myOrdersDateRange, setMyOrdersDateRange] = useState<DateRange>({ start: "", end: "" });
+  const [myOrdersNavStart, setMyOrdersNavStart] = useState(getSundayKey);
+  const [myOrdersNavSpan, setMyOrdersNavSpan] = useState<NavSpan>("1W");
+  /** "All Orders" is not a period, so it sits outside the strip as its own toggle. */
+  const [myOrdersShowAll, setMyOrdersShowAll] = useState(false);
   const [myOrdersSearch, setMyOrdersSearch] = useState("");
   const [myOrdersOutcome, setMyOrdersOutcome] = useState("All Outcomes");
   const [myOrdersSort, setMyOrdersSort] = useState<"newest" | "oldest" | "stalest">("newest");
@@ -65624,34 +65634,31 @@ ${waybillLineItems(w).length > 1
       return key >= myPickBounds.dateFrom && key <= myPickBounds.dateTo;
     });
     // ── My Recovered Orders: tabs, search, filter, sort, header stats ──
-    const myOrdersToday = formatDateKey(new Date());
-    const myOrdersYesterday = formatDateKey(new Date(Date.now() - 86400000));
-    const myOrdersWeekStart = (() => {
-      const now = new Date();
-      now.setDate(now.getDate() - now.getDay()); // Sunday-anchored, like the rest of the app
-      return formatDateKey(now);
-    })();
-    const inTab = (order: TrackedOrder, tab: typeof myOrdersTab) => {
+    const myOrdersBounds = periodBoundsForQuery(myOrdersPeriod, myOrdersDateRange);
+    const inTab = (order: TrackedOrder) => {
+      if (myOrdersShowAll) return true;
       const key = pickDayKey(order);
-      if (tab === "all") return true;
       if (!key) return false;
-      if (tab === "today") return key === myOrdersToday;
-      if (tab === "yesterday") return key === myOrdersYesterday;
-      return key >= myOrdersWeekStart;
+      if (!myOrdersBounds) return true;
+      return key >= myOrdersBounds.dateFrom && key <= myOrdersBounds.dateTo;
     };
-    const myOrdersTabCounts = {
-      today: myOrders.filter((order) => inTab(order, "today")).length,
-      yesterday: myOrders.filter((order) => inTab(order, "yesterday")).length,
-      week: myOrders.filter((order) => inTab(order, "week")).length,
-      all: myOrders.length
+    // Counts per period, so a rep can see where the work sits before switching.
+    const countFor = (period: Period) => {
+      const bounds = periodBoundsForQuery(period, { start: "", end: "" });
+      if (!bounds) return myOrders.length;
+      return myOrders.filter((order) => {
+        const key = pickDayKey(order);
+        return Boolean(key) && key! >= bounds.dateFrom && key! <= bounds.dateTo;
+      }).length;
     };
+
     const myOrdersOutcomeOptions = ["All Outcomes", ...Array.from(new Set(
       myOrders.map((order) => orderStatusLabelFor(order)).filter(Boolean)
     )).sort()];
     const myOrdersFiltered = (() => {
       const needle = myOrdersSearch.trim().toLowerCase();
       const rows = myOrders.filter((order) => {
-        if (!inTab(order, myOrdersTab)) return false;
+        if (!inTab(order)) return false;
         if (myOrdersOutcome !== "All Outcomes" && orderStatusLabelFor(order) !== myOrdersOutcome) return false;
         if (!needle) return true;
         return `${order.customer ?? ""} ${order.phone ?? ""} ${order.id}`.toLowerCase().includes(needle);
@@ -65671,7 +65678,7 @@ ${waybillLineItems(w).length > 1
       });
     })();
     const myOrdersStats = (() => {
-      const scoped = myOrders.filter((order) => inTab(order, myOrdersTab));
+      const scoped = myOrders.filter((order) => inTab(order));
       const closed = (order: TrackedOrder) => ["Delivered", "Cancelled", "Failed"].includes(order.status ?? "");
       return {
         picked: scoped.length,
@@ -66554,22 +66561,26 @@ ${waybillLineItems(w).length > 1
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 bg-slate-50/60 px-5 py-3">
             <div className="inline-flex flex-wrap items-center gap-1">
-              {([
-                ["today", "Today", myOrdersTabCounts.today],
-                ["yesterday", "Yesterday", myOrdersTabCounts.yesterday],
-                ["week", "This Week", myOrdersTabCounts.week],
-                ["all", "All Orders", myOrdersTabCounts.all]
-              ] as Array<[typeof myOrdersTab, string, number]>).map(([key, label, count]) => (
-                <button key={key} type="button" onClick={() => setMyOrdersTab(key)}
-                  className={`!min-h-0 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition-all ${
-                    myOrdersTab === key
-                      ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                      : "text-slate-500 hover:bg-white hover:text-slate-900"}`}>
-                  {label}
-                  <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-black tabular-nums ${
-                    myOrdersTab === key ? "bg-emerald-100 text-emerald-800" : "bg-slate-200/70 text-slate-600"}`}>{count}</span>
-                </button>
-              ))}
+              {periods.map((period) => {
+                const active = !myOrdersShowAll && myOrdersPeriod === period;
+                return (
+                  <button key={period} type="button"
+                    onClick={() => { setMyOrdersShowAll(false); setMyOrdersPeriod(period); setMyOrdersDateRange({ start: "", end: "" }); }}
+                    className={`!min-h-0 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition-all ${
+                      active ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "text-slate-500 hover:bg-white hover:text-slate-900"}`}>
+                    {period}
+                    <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-black tabular-nums ${
+                      active ? "bg-emerald-100 text-emerald-800" : "bg-slate-200/70 text-slate-600"}`}>{countFor(period)}</span>
+                  </button>
+                );
+              })}
+              <button type="button" onClick={() => setMyOrdersShowAll(true)}
+                className={`!min-h-0 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold transition-all ${
+                  myOrdersShowAll ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "text-slate-500 hover:bg-white hover:text-slate-900"}`}>
+                All Orders
+                <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-black tabular-nums ${
+                  myOrdersShowAll ? "bg-emerald-100 text-emerald-800" : "bg-slate-200/70 text-slate-600"}`}>{myOrders.length}</span>
+              </button>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative">
@@ -66593,6 +66604,20 @@ ${waybillLineItems(w).length > 1
               </select>
             </div>
           </div>
+
+          {/* The same stepper the rest of the page uses, so a rep can walk back
+              a week at a time and see the dates it landed on. Hidden on "All
+              Orders", where there is no window to step through. */}
+          {!myOrdersShowAll && (
+            <div className="border-b border-slate-200/80 bg-slate-50/60 px-5 py-2.5">
+              {renderWeekNav(
+                myOrdersNavStart, setMyOrdersNavStart,
+                myOrdersNavSpan, setMyOrdersNavSpan,
+                setMyOrdersPeriod, setMyOrdersDateRange,
+                myOrdersPeriod, myOrdersDateRange
+              )}
+            </div>
+          )}
           {myOrders.length === 0 ? (
             <div className="px-5 py-12 text-center text-sm font-semibold text-slate-400">No orders assigned yet. Claim one from Recovery Candidates below.</div>
           ) : myOrdersFiltered.length === 0 ? (
