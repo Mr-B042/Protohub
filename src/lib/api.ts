@@ -2091,6 +2091,7 @@ export type RecoveryCalendarDay = {
   followUp: number;
   retention: number;
   delivered: number;
+  claimed: number;
   status: "none" | "rest" | "critical" | "below" | "above";
   attainment: number | null;
 };
@@ -2098,13 +2099,16 @@ export type RecoveryCalendarDay = {
 export type RecoveryCalendarView = {
   from: string;
   to: string;
-  targets: { followUp: number; retention: number; delivered: number } | null;
+  targets: { followUp: number; retention: number; delivered: number; claimed: number } | null;
   bonusPerRecoveredOrder: number;
   monthlyRecoveredTarget: number;
   days: RecoveryCalendarDay[];
   followUpTotal: number;
   retentionTotal: number;
   deliveredTotal: number;
+  claimedTotal: number;
+  claimDaysMet: number;
+  claimDaysMissed: number;
   belowTargetDays: number;
   aboveTargetDays: number;
   restDays: number;

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Phone, RefreshCw, CheckSquare, TrendingUp, TrendingDown, Info, X } from "lucide-react";
+import { Phone, RefreshCw, CheckSquare, Inbox, TrendingUp, TrendingDown, Info, X } from "lucide-react";
 import type { RecoveryCalendarDay, RecoveryCalendarView } from "../lib/api";
 
 type Props = {
@@ -42,6 +42,7 @@ const STATUS: Record<RecoveryCalendarDay["status"], {
 };
 
 const METRICS = [
+  { key: "claimed" as const, short: "C", name: "Claimed", bar: "bg-amber-500", soft: "bg-amber-100 dark:bg-amber-500/20", text: "text-amber-600 dark:text-amber-400" },
   { key: "followUp" as const, short: "F", name: "Follow-up", bar: "bg-emerald-500", soft: "bg-emerald-100 dark:bg-emerald-500/20", text: "text-emerald-600 dark:text-emerald-400" },
   { key: "retention" as const, short: "R", name: "Retention", bar: "bg-sky-500", soft: "bg-sky-100 dark:bg-sky-500/20", text: "text-sky-600 dark:text-sky-400" },
   { key: "delivered" as const, short: "D", name: "Delivered", bar: "bg-violet-500", soft: "bg-violet-100 dark:bg-violet-500/20", text: "text-violet-600 dark:text-violet-400" }
@@ -58,7 +59,7 @@ const longDate = (key: string) =>
 
 export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Props) {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const targets = view.targets ?? { followUp: 0, retention: 0, delivered: 0 };
+  const targets = view.targets ?? { followUp: 0, retention: 0, delivered: 0, claimed: 0 };
   const todayKey = new Date().toISOString().slice(0, 10);
 
   // Lead the first row with blanks so day 1 lands under its real weekday.
@@ -77,12 +78,15 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
   return (
     <div className={`transition-opacity duration-200 ${loading ? "opacity-40" : "opacity-100"}`}>
       {/* ── Metric strip ─────────────────────────────────── */}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {METRICS.map((metric) => {
           const total = metric.key === "followUp" ? view.followUpTotal
-            : metric.key === "retention" ? view.retentionTotal : view.deliveredTotal;
+            : metric.key === "retention" ? view.retentionTotal
+              : metric.key === "claimed" ? view.claimedTotal : view.deliveredTotal;
           const perDayTarget = targets[metric.key];
-          const Icon = metric.key === "followUp" ? Phone : metric.key === "retention" ? RefreshCw : CheckSquare;
+          const Icon = metric.key === "followUp" ? Phone
+            : metric.key === "retention" ? RefreshCw
+              : metric.key === "claimed" ? Inbox : CheckSquare;
           return (
             <div key={metric.key}
               className="group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] transition-all hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700/70 dark:bg-slate-900">
@@ -102,7 +106,9 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
                 {total.toLocaleString("en-NG")}
               </p>
               <p className="m-0 mt-2 text-[11px] font-semibold text-slate-500">
-                {perDayTarget > 0 ? `${perDayTarget} a day is target` : "No daily target set"}
+                {metric.key === "claimed" && perDayTarget > 0
+                  ? `${view.claimDaysMet} of ${view.claimDaysMet + view.claimDaysMissed} days hit ${perDayTarget}`
+                  : perDayTarget > 0 ? `${perDayTarget} a day is target` : "No daily target set"}
               </p>
             </div>
           );
