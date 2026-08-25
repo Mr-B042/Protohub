@@ -65746,7 +65746,11 @@ ${waybillLineItems(w).length > 1
     })();
     const myOrdersStats = (() => {
       const scoped = myOrders.filter((order) => inTab(order));
-      const closed = (order: TrackedOrder) => ["Delivered", "Cancelled", "Failed"].includes(order.status ?? "");
+      // ⚠️ For a RECOVERY rep only Delivered is finished. Failed and Cancelled
+      // are not closed work here - they are the entire job. Treating them as
+      // closed (which is right for a Sales Rep) reported Delight as having 0
+      // still open and ₦0 potential against 109 live orders.
+      const closed = (order: TrackedOrder) => order.status === "Delivered";
       return {
         picked: scoped.length,
         pending: scoped.filter((order) => !closed(order)).length,
@@ -66715,8 +66719,12 @@ ${waybillLineItems(w).length > 1
               </span>
               <div className="min-w-0">
                 <h2 className="m-0 text-xl font-black tracking-tight text-slate-900">My Recovered Orders</h2>
+                {/* ⚠️ "Claimed", not "picked". The calendar above uses "picked"
+                    for orders WORKED that day, and this list uses it for orders
+                    CLAIMED that day - two different numbers under one word on
+                    one page, which is exactly how 3 and 26 got compared. */}
                 <p className="m-0 mt-0.5 text-xs font-medium leading-relaxed text-slate-500">
-                  Grouped by the day each order was picked, newest first.<br />
+                  Grouped by the day you claimed each order, newest first.<br />
                   Keep logging follow-ups until the customer buys or tells you no.
                 </p>
               </div>
@@ -66726,7 +66734,7 @@ ${waybillLineItems(w).length > 1
             <div className="flex flex-wrap gap-2">
               {[
                 { icon: <ShoppingBag className="h-4 w-4 text-emerald-600" />, tone: "bg-emerald-50",
-                  value: myOrdersStats.picked.toLocaleString("en-NG"), label: "Orders Picked" },
+                  value: myOrdersStats.picked.toLocaleString("en-NG"), label: "Claimed in range" },
                 { icon: <Clock className="h-4 w-4 text-amber-600" />, tone: "bg-amber-50",
                   value: myOrdersStats.pending.toLocaleString("en-NG"), label: "Still Open" },
                 { icon: <RefreshCw className="h-4 w-4 text-violet-600" />, tone: "bg-violet-50",
@@ -66822,7 +66830,11 @@ ${waybillLineItems(w).length > 1
                 // out. Surfacing where each order sits in that loop is what
                 // stops one going quiet for weeks.
                 const status = order.status ?? "New";
-                const isClosed = ["Delivered", "Cancelled", "Failed"].includes(status);
+                // ⚠️ Same rule, and this one hid the buttons. Every Failed or
+                // Cancelled order she claimed rendered "Closed - no more
+                // follow-ups needed" with no Log follow-up, Call or WhatsApp -
+                // on 109 of her 113 orders, i.e. all the work.
+                const isClosed = status === "Delivered";
                 const nextAt = order.nextFollowUpAt ? new Date(order.nextFollowUpAt) : null;
                 const nextOverdue = Boolean(nextAt && nextAt.getTime() < Date.now());
                 const pair = recoveryFollowUpPairs[order.id];

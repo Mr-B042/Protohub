@@ -88,8 +88,11 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
               className="group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] transition-all hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700/70 dark:bg-slate-900">
               <span className={`absolute inset-x-0 top-0 h-1 ${metric.bar}`} />
               <div className="flex items-start justify-between gap-2">
+                {/* ⚠️ "Worked", not "picked". The list below counts orders
+                    CLAIMED on a day; this counts orders TOUCHED on a day. They
+                    are different numbers and must not share a word. */}
                 <p className="m-0 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">
-                  Picked · {metric.name}
+                  Worked · {metric.name}
                 </p>
                 <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${metric.soft}`}>
                   <Icon className={`h-4 w-4 ${metric.text}`} />
@@ -293,9 +296,9 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
 
           <p className="m-0 flex items-start gap-2 rounded-2xl border border-sky-200/70 bg-sky-50/60 px-3 py-3 text-[11px] font-semibold leading-relaxed text-sky-900 dark:border-sky-400/20 dark:bg-sky-500/10 dark:text-sky-200">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            Tap a day for its breakdown. Counts are per day, so an order worked
-            on three days counts three times — that is what a daily target
-            measures.
+            Tap a day for its breakdown. This counts orders you WORKED that
+            day, not orders you claimed — an order worked on three days counts
+            three times, which is what a daily target measures.
           </p>
         </div>
       </div>
