@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ArrowLeftRight, Lightbulb } from "lucide-react";
 import {
   DateWindow, PRESET_LABEL, PRESET_ORDER, PresetKey, WINDOW_SIZES,
@@ -45,6 +46,27 @@ export default function DateWindowNav({ value, onChange, todayKey }: Props) {
   const [leftMonth, setLeftMonth] = useState(value.start.slice(0, 7));
   const [picking, setPicking] = useState<"start" | "end">("start");
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const presetAnchorRef = useRef<HTMLDivElement | null>(null);
+  const calendarAnchorRef = useRef<HTMLButtonElement | null>(null);
+  const [anchorRect, setAnchorRect] = useState<{ left: number; top: number } | null>(null);
+
+  /**
+   * ⚠️ Both popovers are PORTALLED to the body and positioned from the
+   * trigger's rect. The panel used to be absolutely positioned inside the
+   * toolbar, which sits inside a section carrying `overflow-hidden` for its
+   * rounded corners - so the calendar was clipped off at the card edge and
+   * half the quick ranges were unreachable. No amount of z-index fixes that;
+   * only leaving the clipping ancestor does.
+   */
+  const positionFrom = useCallback((element: HTMLElement | null, width: number) => {
+    if (!element) return;
+    const rect = element.getBoundingClientRect();
+    const margin = 8;
+    // Flip against the right edge rather than running off the viewport.
+    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+    setAnchorRect({ left, top: rect.bottom + margin });
+  }, []);
 
   const size = windowSize(value);
   const label = windowLabel(value, todayKey);
@@ -57,20 +79,35 @@ export default function DateWindowNav({ value, onChange, todayKey }: Props) {
   }, [openCalendar]);
 
   // Click-away and Escape, so a popover never strands the page under it.
+  // ⚠️ The panel lives in a portal, so a click inside it is NOT inside rootRef -
+  // checking only the root would dismiss the calendar on its own date cells.
   useEffect(() => {
     if (!openPresets && !openCalendar) return;
     const onDown = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpenPresets(false); setOpenCalendar(false);
-      }
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target) || panelRef.current?.contains(target)) return;
+      setOpenPresets(false); setOpenCalendar(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") { setOpenPresets(false); setOpenCalendar(false); }
     };
+    // A portalled panel does not travel with the page, so it is repositioned
+    // while open rather than left floating over unrelated content.
+    const reposition = () => {
+      if (openCalendar) positionFrom(calendarAnchorRef.current, Math.min(window.innerWidth * 0.92, 704));
+      else if (openPresets) positionFrom(presetAnchorRef.current, 208);
+    };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
-  }, [openPresets, openCalendar]);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [openPresets, openCalendar, positionFrom]);
 
   // ⚠️ Keyboard nav is scoped to this toolbar, never the document. A global
   // arrow-key handler would hijack every text field and select on the page.
@@ -118,14 +155,21 @@ export default function DateWindowNav({ value, onChange, todayKey }: Props) {
         <ChevronLeft className="h-4 w-4" />
       </button>
 
-      <div className="relative">
-        <button type="button" onClick={() => { setOpenPresets((open) => !open); setOpenCalendar(false); }}
+      <div className="relative" ref={presetAnchorRef}>
+        <button type="button"
+          onClick={() => {
+            const next = !openPresets;
+            setOpenCalendar(false);
+            if (next) positionFrom(presetAnchorRef.current, 208);
+            setOpenPresets(next);
+          }}
           className="!min-h-0 inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-3 text-sm font-bold text-[#1F8FE0] shadow-sm transition-colors hover:bg-slate-50">
           {label}
           <ChevronDown className="h-3.5 w-3.5" />
         </button>
-        {openPresets && (
-          <div className="absolute left-0 top-11 z-40 w-52 rounded-xl border border-slate-200/80 bg-white p-1.5 shadow-xl">
+        {openPresets && anchorRect && createPortal((
+          <div ref={panelRef} style={{ left: anchorRect.left, top: anchorRect.top }}
+            className="fixed z-[80] w-52 rounded-xl border border-slate-200/80 bg-white p-1.5 shadow-2xl">
             <p className="m-0 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">Quick ranges</p>
             {PRESET_ORDER.map((preset) => (
               <button key={preset} type="button" onClick={() => applyPreset(preset)}
@@ -139,7 +183,7 @@ export default function DateWindowNav({ value, onChange, todayKey }: Props) {
               <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" />Custom Range
             </button>
           </div>
-        )}
+        ), document.body)}
       </div>
 
       <button type="button" aria-label="Move forward one day" title="Forward one day (→)"
@@ -148,7 +192,13 @@ export default function DateWindowNav({ value, onChange, todayKey }: Props) {
         <ChevronRight className="h-4 w-4" />
       </button>
 
-      <button type="button" onClick={() => { setOpenCalendar((open) => !open); setOpenPresets(false); }}
+      <button type="button" ref={calendarAnchorRef}
+        onClick={() => {
+          const next = !openCalendar;
+          setOpenPresets(false);
+          if (next) positionFrom(calendarAnchorRef.current, Math.min(window.innerWidth * 0.92, 704));
+          setOpenCalendar(next);
+        }}
         className="!min-h-0 inline-flex h-9 items-center gap-2 rounded-xl border-b-2 border-slate-200/80 px-2 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-50">
         {formatWindow(value)}
         <CalendarDays className="h-4 w-4 text-slate-400" />
@@ -169,8 +219,9 @@ export default function DateWindowNav({ value, onChange, todayKey }: Props) {
         </select>
       </label>
 
-      {openCalendar && (
-        <div className="absolute left-0 top-11 z-40 w-[min(92vw,44rem)] overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xl">
+      {openCalendar && anchorRect && createPortal((
+        <div ref={panelRef} style={{ left: anchorRect.left, top: anchorRect.top }}
+          className="fixed z-[80] max-h-[80vh] w-[min(92vw,44rem)] overflow-y-auto rounded-2xl border border-slate-200/80 bg-white shadow-2xl">
           <div className="flex flex-col sm:flex-row">
             <div className="shrink-0 border-b border-slate-200/80 p-2 sm:w-40 sm:border-b-0 sm:border-r">
               <p className="m-0 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">Quick ranges</p>
@@ -267,7 +318,7 @@ export default function DateWindowNav({ value, onChange, todayKey }: Props) {
             </span>
           </div>
         </div>
-      )}
+      ), document.body)}
 
       <p className="m-0 hidden w-full items-center gap-2 text-[11px] font-semibold text-slate-400 xl:flex">
         <Lightbulb className="h-3.5 w-3.5 shrink-0" />
