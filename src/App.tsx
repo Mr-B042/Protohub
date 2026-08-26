@@ -8452,6 +8452,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     channel: "Call", outcomeCode: "Interested", customOutcome: "", outcomeNote: "",
     customerReached: false, nextActionAt: ""
   });
+  const cartAttemptNoteRef = useRef("");
   const [cartEmbedFilter, setCartEmbedFilter] = useState<string>("All forms");
   const [scheduleRange, setScheduleRange] = useState<ScheduleRange>(() =>
     readPref<ScheduleRange>("protohub.schedule.range", "Today", (raw) => raw as ScheduleRange)
@@ -40950,6 +40951,7 @@ ${waybillLineItems(w).length > 1
       channel: "Call", outcomeCode: "Interested", customOutcome: "", outcomeNote: "",
       customerReached: false, nextActionAt: ""
     });
+    cartAttemptNoteRef.current = "";
     // Every previous call, so nobody repeats a conversation the customer has
     // already had - and so a supervisor can read the whole thread in one place.
     setCartAttemptHistory([]);
@@ -40972,7 +40974,7 @@ ${waybillLineItems(w).length > 1
         channel: cartAttemptDraft.channel,
         outcomeCode: cartAttemptDraft.outcomeCode,
         customOutcome: cartAttemptDraft.customOutcome.trim() || undefined,
-        outcomeNote: cartAttemptDraft.outcomeNote.trim() || undefined,
+        outcomeNote: cartAttemptNoteRef.current.trim() || cartAttemptDraft.outcomeNote.trim() || undefined,
         customerReached: cartAttemptDraft.customerReached,
         nextActionAt: cartAttemptDraft.nextActionAt || undefined
       });
@@ -103791,15 +103793,18 @@ ${waybillLineItems(w).length > 1
 	                  )}
 	                  <label className="flex flex-col gap-1 sm:col-span-2">
 	                    <span className="text-xs font-bold text-gray-600">What did the customer say?</span>
-                    <DraftTextarea rows={2} commitOnChange={false} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.outcomeNote}
-	                      onCommit={(next) => setCartAttemptDraft((v) => {
-	                        const asksForLater = /\b(?:tomorrow|today|next\s+(?:week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|in\s+\d+\s+days?)\b/i.test(next);
-	                        if (asksForLater && !["Rescheduled", "Not interested", "Wrong number"].includes(v.outcomeCode)) {
+                    <textarea rows={2} defaultValue={cartAttemptDraft.outcomeNote} className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                      onChange={(e) => { cartAttemptNoteRef.current = e.target.value; }}
+                      onBlur={(e) => setCartAttemptDraft((v) => {
+                        const next = e.target.value;
+                        const asksForLater = /\b(?:tomorrow|today|next\s+(?:week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|in\s+\d+\s+days?)\b/i.test(next);
+                        if (asksForLater && !["Rescheduled", "Not interested", "Wrong number"].includes(v.outcomeCode)) {
 	                          showToast("This sounds rescheduled — outcome changed to Rescheduled.");
 	                          return { ...v, outcomeNote: next, outcomeCode: "Rescheduled" };
 	                        }
 	                        return { ...v, outcomeNote: next };
-	                      })} />
+                        return { ...v, outcomeNote: next };
+                      })} />
 	                  </label>
 	                  <label className="flex flex-col gap-1">
 	                    <span className="text-xs font-bold text-gray-600">Call them again on</span>
