@@ -12957,6 +12957,10 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [repOrderStatusTab, setRepOrderStatusTab] = useState<RepOrderStatusTab>("All Orders");
   const [repProductSearch, setRepProductSearch] = useState("");
   const [repProductSort, setRepProductSort] = useState("Name A-Z");
+  const [repProductState, setRepProductState] = useState("Lagos");
+  const [repProductView, setRepProductView] = useState<"recommended" | "all" | "low" | "unavailable">("recommended");
+  const [repProductBuyingId, setRepProductBuyingId] = useState("");
+  void repProductBuyingId;
   const [repCartSearch, setRepCartSearch] = useState("");
   const [repScheduleRange, setRepScheduleRange] = useState<ScheduleRange>("Today");
   const [repScheduleAuditMode, setRepScheduleAuditMode] = useState<ScheduleAuditMode>("Active");
@@ -69369,8 +69373,46 @@ ${waybillLineItems(w).length > 1
           renderSalesExpansionTab()
         ) : repConsoleTab === "Products" ? (
           <div className="space-y-6">
+          <header>
+            <h1 className="m-0 text-2xl font-black text-gray-900 dark:text-slate-100">Products &amp; Stock</h1>
+            <p className="mt-1 text-sm font-medium text-gray-500 dark:text-slate-400">Know what&apos;s available before you sell or cross-sell.</p>
+          </header>
+          {(() => {
+            const states = stateStockStateOptions.length > 0 ? stateStockStateOptions : ["Lagos", "Abuja", "Rivers", "Edo", "Imo"];
+            const stockInState = (product: Product) => inventoryStateHubRows
+              .filter((row) => normalizeAgentState(row.location.state) === normalizeAgentState(repProductState))
+              .reduce((sum, row) => {
+                const stock = stockRowsForStateHub(row.agent, row.location).find((item) => item.productId === product.id);
+                return sum + Math.max(0, Number(stock?.quantity ?? 0) - Number(stock?.defective ?? 0) - Number(stock?.missing ?? 0));
+              }, 0);
+            const active = catalogProducts.filter((product) => product.active);
+            const low = active.filter((product) => stockInState(product) > 0 && stockInState(product) <= smartStockLowStockThreshold);
+            const unavailable = active.filter((product) => stockInState(product) <= 0);
+            const filtered = active.filter((product) => {
+              const stock = stockInState(product);
+              const matchesSearch = !repProductSearch.trim() || `${product.name} ${product.sku} ${product.description ?? ""}`.toLowerCase().includes(repProductSearch.trim().toLowerCase());
+              const matchesView = repProductView === "all" || (repProductView === "low" ? stock > 0 && stock <= smartStockLowStockThreshold : repProductView === "unavailable" ? stock <= 0 : stock > smartStockLowStockThreshold);
+              return matchesSearch && matchesView;
+            }).sort((a, b) => repProductSort === "Stock" ? stockInState(b) - stockInState(a) : repProductSort === "Price" ? (primaryPricing(a)?.sellingPrice ?? 0) - (primaryPricing(b)?.sellingPrice ?? 0) : a.name.localeCompare(b.name));
+            const totalAvailable = active.reduce((sum, product) => sum + stockInState(product), 0);
+            return <>
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {[{ label: "Active Products", value: active.length, tone: "blue" }, { label: "Units Available", value: totalAvailable.toLocaleString(), tone: "green" }, { label: "Low Stock", value: low.length, tone: "amber" }, { label: "Out of Stock", value: unavailable.length, tone: "red" }].map((stat) => <article key={stat.label} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-[#0c1722]"><span className={`text-[11px] font-black uppercase tracking-wide ${stat.tone === "green" ? "text-emerald-600" : stat.tone === "amber" ? "text-amber-600" : stat.tone === "red" ? "text-rose-600" : "text-blue-600"}`}>{stat.label}</span><strong className="mt-1 block text-2xl font-black text-gray-900 dark:text-slate-100">{stat.value}</strong></article>)}
+              </div>
+              <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-[#0c1722]">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <label className="flex-1"><span className="mb-1 block text-xs font-black text-gray-700 dark:text-slate-200">Customer delivery state</span><select className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100" value={repProductState} onChange={(e) => setRepProductState(e.target.value)}>{states.map((state) => <option key={state}>{state}</option>)}</select></label>
+                  <label className="flex-[2]"><span className="mb-1 block text-xs font-black text-gray-700 dark:text-slate-200">Search products</span><input className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100" value={repProductSearch} onChange={(e) => setRepProductSearch(e.target.value)} placeholder="Product, SKU, category..." /></label>
+                  <select className="h-10 rounded-lg border border-gray-200 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100" value={repProductSort} onChange={(e) => setRepProductSort(e.target.value)} aria-label="Sort products"><option>Name A-Z</option><option>Price</option><option>Stock</option></select>
+                </div>
+                <div className="mt-4 flex gap-2 overflow-x-auto border-b border-gray-100 pb-2 dark:border-slate-700">{([["recommended", "Recommended to Cross-sell"], ["all", "All Products"], ["low", "Low Stock"], ["unavailable", "Unavailable"]] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setRepProductView(key)} className={`whitespace-nowrap px-3 py-2 text-sm font-black ${repProductView === key ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 dark:text-slate-400"}`}>{label}</button>)}</div>
+                <h2 className="mt-5 text-base font-black text-gray-900 dark:text-slate-100">Products ready to sell in {repProductState} <span className="text-blue-600">— {filtered.length}</span></h2>
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{filtered.map((product) => { const stock = stockInState(product); const pricing = primaryPricing(product); const lowItem = stock > 0 && stock <= smartStockLowStockThreshold; return <article key={product.id} className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-start justify-between gap-2"><h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">{product.name}</h3><span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${stock <= 0 ? "bg-rose-100 text-rose-700" : lowItem ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{stock <= 0 ? "Unavailable" : lowItem ? "Low stock" : "High availability"}</span></div><p className="mt-2 text-xs text-gray-500 dark:text-slate-400">{product.description || "Product"}</p><strong className="mt-3 block text-lg text-blue-700 dark:text-blue-300">{formatProductMoney(pricing?.sellingPrice ?? 0, pricing?.currency ?? "NGN")}</strong><p className={`mt-2 text-xs font-black ${stock <= 0 ? "text-rose-600" : lowItem ? "text-amber-600" : "text-emerald-600"}`}>{repProductState}: {stock <= 0 ? "Out of stock" : `${stock.toLocaleString()} units available`}</p><p className="mt-1 text-[11px] font-semibold text-gray-500 dark:text-slate-400">Company stock: {totalProductStockLive(product).toLocaleString()}</p><button type="button" disabled={stock <= 0} onClick={() => { setRepProductBuyingId(product.id); showToast(`${product.name} is ready to cross-sell in ${repProductState}.`); }} className="mt-4 w-full rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-gray-300">{stock <= 0 ? "Find alternative" : "Cross-sell →"}</button></article>; })}</div>
+              </section>
+            </>;
+          })()}
           {renderRepWorkspaceFilters()}
-          <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <section className="hidden bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 px-5 py-4 border-b border-gray-200">
               <label className="relative flex items-center w-full sm:flex-1 sm:min-w-[200px]">
                 <Search className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" />
