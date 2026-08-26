@@ -32,6 +32,8 @@ import {
   ExternalLink,
   Filter,
   MoreVertical,
+  ArrowUpDown,
+  AlertCircle,
   Send,
   Lightbulb,
   Star,
@@ -294,6 +296,20 @@ type RecoveryRepDashboardTab = "Overview" | "Work Queue" | "Activity Sheet" | "C
 // small enough that a 618-order tier does not become an endless scroll.
 const WORK_QUEUE_PAGE = 9;
 type ActivitySheetSortKey = "picked" | "rep" | "customer" | "status" | "outcome" | "touches" | "next";
+// Next actions sorts on one key across every panel; each panel only renames it
+// to whatever "oldest" means for that pile ("Most overdue" / "Oldest
+// untouched" / "Soonest first"), so two controls can never sort differently.
+type NextActionSortKey = "oldest" | "newest" | "value" | "name";
+// Rows a Next actions panel shows before "Show N more". Five is what fits
+// above the fold next to the panel below it, so both piles stay visible.
+const NEXT_ACTION_PAGE_SIZE = 5;
+// The stack a rep last worked in. Overdue is the right default on day one, but
+// once someone has cleared it and moved to the unscheduled pile, reopening the
+// page on Overdue every morning is a small daily tax.
+const NEXT_ACTION_STACK_KEY = "protohub.recovery.nextActionStack";
+const readNextActionStack = () => {
+  try { return window.localStorage.getItem(NEXT_ACTION_STACK_KEY) ?? ""; } catch { return ""; }
+};
 type RetentionSubPage = "Overview" | "Pipeline" | "Customers" | "Tasks" | "Calls & Outcomes" | "Reviews" | "Referrals" | "Repeat Sales" | "Win-back" | "Reports" | "Settings";
 // Rendered as a contextual sub-section in the MAIN app sidebar, directly
 // under "Recovery Rep Dashboard" - not a second/nested sidebar. Static
@@ -3967,6 +3983,21 @@ const formatDateOnly = (value?: string | Date | null) => {
     return new Intl.DateTimeFormat("en-GB", {
       timeZone: _currentTimezone,
       day: "numeric", month: "short", year: "numeric"
+    }).format(d);
+  } catch {
+    return d.toLocaleDateString();
+  }
+};
+// "22 Aug" - the same clock and locale as formatDateOnly, without the year,
+// for lists where every row is inside the same few weeks and the year is only
+// noise. Never used where a stale date could be mistaken for a recent one.
+const formatDayMonth = (value?: string | Date | null) => {
+  if (!value) return "";
+  const d = new Date(value as any);
+  if (isNaN(d.getTime())) return String(value ?? "");
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: _currentTimezone, day: "numeric", month: "short"
     }).format(d);
   } catch {
     return d.toLocaleDateString();
@@ -9179,6 +9210,31 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [activitySheetSearch, setActivitySheetSearch] = useState("");
   const [activitySheetSortKey, setActivitySheetSortKey] = useState<ActivitySheetSortKey>("picked");
   const [activitySheetSortDir, setActivitySheetSortDir] = useState<"asc" | "desc">("desc");
+  // ── Next actions (Recovery Rep Overview) ────────────────
+  // Which pile is on screen: "all", or a single group key. Counts sit on the
+  // tabs so the size of each pile is readable without opening it.
+  const [nextActionTab, setNextActionTab] = useState("all");
+  const [nextActionSort, setNextActionSort] = useState<NextActionSortKey>("oldest");
+  // A panel keeps its own sort once the rep changes it; until then it follows
+  // the section control. Changing the section control clears these, otherwise
+  // the top of the page would appear to do nothing to a panel already touched.
+  const [nextActionGroupSort, setNextActionGroupSort] = useState<Record<string, NextActionSortKey>>({});
+  const [nextActionSearch, setNextActionSearch] = useState<Record<string, string>>({});
+  // Open/closed per panel. Undefined means "not decided yet", which the render
+  // reads as: the stack this rep last worked in, or the first (most urgent)
+  // panel when they have not opened one yet.
+  const [nextActionOpen, setNextActionOpen] = useState<Record<string, boolean>>({});
+  const [nextActionLastStack, setNextActionLastStack] = useState(readNextActionStack);
+  const openNextActionStack = (key: string) => {
+    setNextActionOpen((prev) => ({ ...prev, [key]: true }));
+    setNextActionLastStack(key);
+    try { window.localStorage.setItem(NEXT_ACTION_STACK_KEY, key); } catch { /* private mode */ }
+  };
+  const [nextActionShown, setNextActionShown] = useState<Record<string, number>>({});
+  const [nextActionMenuId, setNextActionMenuId] = useState<string | null>(null);
+  const [nextActionFilterOpen, setNextActionFilterOpen] = useState(false);
+  const [nextActionStatusFilter, setNextActionStatusFilter] = useState("all");
+  const [nextActionNeverCalledOnly, setNextActionNeverCalledOnly] = useState(false);
   const [recoveryCandidateSearch, setRecoveryCandidateSearch] = useState("");
   // Served by its own endpoint, not derived from trackedOrders: GET /api/orders
   // scopes a Recovery Rep to their OWN orders, so a rep with none saw no
@@ -45981,6 +46037,17 @@ ${waybillLineItems(w).length > 1
     ? (recoveryRepScopeId || recoveryRepUsers[0]?.id || "")
     : (currentManagedUser?.id ?? authUser?.id ?? "");
 
+  // A different rep is a different board. Search boxes and "show more" counts
+  // are about the last rep's rows and must not carry over - a stale search
+  // would hide the new rep's work behind a filter nobody typed. Which stack is
+  // open is a preference, not their data, so it deliberately survives.
+  useEffect(() => {
+    setNextActionSearch({});
+    setNextActionShown({});
+    setNextActionMenuId(null);
+    setNextActionTab("all");
+  }, [recoveryRepViewingId]);
+
   // Same pattern as Recovery Rep above: Owner/Admin/Manager get a plain
   // picker over whichever Sales Reps are flagged isHeadOfSalesRep (there can
   // be more than one), never view-as. The Sales Rep holding the flag is
@@ -65685,36 +65752,481 @@ ${waybillLineItems(w).length > 1
     // callbacks and 97 orders with no next action scheduled at all. Same rule
     // as the list above: only Delivered is finished here.
     const myOpenOrders = myOrders.filter((order) => order.status !== "Delivered");
-    const nextActionGroups = (() => {
+
+    // One model behind the whole section: every open order turned into a row
+    // that knows when it is owed, when it was last touched, and where the last
+    // call ended - then split into the piles the tabs and panels are built on.
+    const nextActionModel = (() => {
       const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
       const dayIndex = (iso: string) =>
         Math.floor((new Date(iso).setHours(0, 0, 0, 0) - startOfToday.getTime()) / 86400000);
-      const scheduled = myOpenOrders.filter((order) => Boolean(order.nextFollowUpAt));
-      // An open order with nothing scheduled is the quiet failure: nobody has
-      // said when it will be touched again, so nothing will remind anyone.
-      const unscheduled = myOpenOrders.filter((order) => !order.nextFollowUpAt);
-      return [
-        { key: "overdue", title: "Overdue", hint: "past the day it was promised",
-          tone: "border-rose-300 bg-rose-50", head: "text-rose-800", pill: "bg-rose-600 text-white",
-          rows: scheduled.filter((o) => dayIndex(o.nextFollowUpAt!) < 0) },
-        { key: "today", title: "Today", hint: "owed today",
-          tone: "border-amber-300 bg-amber-50", head: "text-amber-900", pill: "bg-amber-500 text-white",
-          rows: scheduled.filter((o) => dayIndex(o.nextFollowUpAt!) === 0) },
-        { key: "tomorrow", title: "Tomorrow", hint: "",
-          tone: "border-sky-200 bg-sky-50", head: "text-sky-900", pill: "bg-sky-500 text-white",
-          rows: scheduled.filter((o) => dayIndex(o.nextFollowUpAt!) === 1) },
-        { key: "week", title: "Later this week", hint: "within 7 days",
-          tone: "border-slate-200 bg-slate-50", head: "text-slate-800", pill: "bg-slate-500 text-white",
-          rows: scheduled.filter((o) => { const d = dayIndex(o.nextFollowUpAt!); return d > 1 && d <= 7; }) },
-        { key: "later", title: "Later", hint: "more than a week away",
-          tone: "border-slate-200/80 bg-gray-50", head: "text-gray-700", pill: "bg-gray-400 text-white",
-          rows: scheduled.filter((o) => dayIndex(o.nextFollowUpAt!) > 7) },
-        { key: "none", title: "No follow-up scheduled", hint: "open, but nothing says when it is touched again",
-          tone: "border-violet-200 bg-violet-50", head: "text-violet-900", pill: "bg-violet-500 text-white",
+
+      const toRow = (order: TrackedOrder) => {
+        // Each logged outcome appends a line, so the line count is the number
+        // of real touches and the last line is where the last call ended.
+        const lines = (order.callOutcome ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        const dueAt = order.nextFollowUpAt ?? null;
+        const lastTouchAt = order.lastContactAttemptAt ?? null;
+        // ⚠️ ONE anchor for every sort and every "oldest" stat on this section:
+        // the day it is owed if something was promised, else the last time
+        // anyone touched it, else the day it was picked. Without this the tab
+        // sort and a panel's own sort would answer "oldest" differently.
+        const anchorAt = dueAt ?? lastTouchAt ?? order.assignedAt ?? order.createdAt ?? null;
+        const anchorMs = anchorAt ? new Date(anchorAt).getTime() : 0;
+        return {
+          order,
+          id: order.id,
+          customer: order.customer ?? "",
+          phone: order.phone ?? "",
+          product: order.packageName || order.productName || "",
+          quantity: quantityForOrder(order),
+          amount: order.amount ?? 0,
+          currency: order.currency,
+          status: (order.status ?? "New") as string,
+          statusLabel: orderStatusLabelFor(order),
+          note: lines.length > 0 ? lines[lines.length - 1] : "",
+          touches: lines.length,
+          dueAt,
+          dueDay: dueAt ? dayIndex(dueAt) : null,
+          lastTouchAt,
+          anchorAt,
+          anchorMs: isNaN(anchorMs) ? 0 : anchorMs
+        };
+      };
+
+      const everyRow = myOpenOrders.map(toRow);
+      // The filter popover narrows the whole section, tab counts included - a
+      // tab that still counted filtered-out orders would send the rep into an
+      // empty panel.
+      const rows = everyRow.filter((row) => {
+        if (nextActionStatusFilter !== "all" && row.status !== nextActionStatusFilter) return false;
+        if (nextActionNeverCalledOnly && row.touches > 0) return false;
+        return true;
+      });
+      const scheduled = rows.filter((row) => row.dueDay !== null);
+      const unscheduled = rows.filter((row) => row.dueDay === null);
+
+      type ModelRow = ReturnType<typeof toRow>;
+      // Rows with no date anywhere report no oldest rather than 1970.
+      const oldestOf = (list: ModelRow[]) => {
+        const stamps = list.map((row) => row.anchorMs).filter((ms) => ms > 0);
+        return stamps.length > 0 ? new Date(Math.min(...stamps)) : null;
+      };
+
+      const groups = ([
+        { key: "overdue", title: "Overdue", hint: "Past the day it was promised", icon: AlertCircle,
+          iconBg: "bg-rose-600", panel: "border-rose-200", headerBg: "bg-rose-50/70", head: "text-rose-700",
+          pill: "bg-rose-100 text-rose-700", accent: "text-rose-600", underline: "border-rose-600",
+          tabPill: "bg-rose-600 text-white", dateTone: "text-rose-600",
+          rows: scheduled.filter((row) => row.dueDay! < 0) },
+        { key: "today", title: "Today", hint: "Owed today", icon: Clock,
+          iconBg: "bg-amber-500", panel: "border-amber-200", headerBg: "bg-amber-50/70", head: "text-amber-800",
+          pill: "bg-amber-100 text-amber-800", accent: "text-amber-700", underline: "border-amber-500",
+          tabPill: "bg-amber-500 text-white", dateTone: "text-amber-700",
+          rows: scheduled.filter((row) => row.dueDay === 0) },
+        { key: "tomorrow", title: "Tomorrow", hint: "Promised for the next working day", icon: CalendarDays,
+          iconBg: "bg-sky-500", panel: "border-sky-200", headerBg: "bg-sky-50/70", head: "text-sky-800",
+          pill: "bg-sky-100 text-sky-800", accent: "text-sky-700", underline: "border-sky-500",
+          tabPill: "bg-sky-500 text-white", dateTone: "text-sky-700",
+          rows: scheduled.filter((row) => row.dueDay === 1) },
+        { key: "week", title: "Later this week", hint: "Due within 7 days", icon: CalendarDays,
+          iconBg: "bg-slate-500", panel: "border-slate-200", headerBg: "bg-slate-50", head: "text-slate-800",
+          pill: "bg-slate-100 text-slate-700", accent: "text-slate-700", underline: "border-slate-500",
+          tabPill: "bg-slate-500 text-white", dateTone: "text-slate-700",
+          rows: scheduled.filter((row) => row.dueDay! > 1 && row.dueDay! <= 7) },
+        { key: "later", title: "Later", hint: "More than a week away", icon: CalendarDays,
+          iconBg: "bg-slate-400", panel: "border-slate-200", headerBg: "bg-slate-50", head: "text-slate-700",
+          pill: "bg-slate-100 text-slate-600", accent: "text-slate-600", underline: "border-slate-400",
+          tabPill: "bg-slate-400 text-white", dateTone: "text-slate-600",
+          rows: scheduled.filter((row) => row.dueDay! > 7) },
+        { key: "none", title: "No follow-up scheduled", hint: "Open, but nothing says when it should be touched again",
+          icon: CalendarDays,
+          iconBg: "bg-violet-600", panel: "border-violet-200", headerBg: "bg-violet-50/70", head: "text-violet-700",
+          pill: "bg-violet-100 text-violet-700", accent: "text-violet-700", underline: "border-violet-600",
+          tabPill: "bg-violet-600 text-white", dateTone: "text-violet-700",
           rows: unscheduled }
-      ].filter((group) => group.rows.length > 0);
+      ] as const)
+        .map((group) => {
+          // Failed is not a closed order for a Recovery Rep - it is the job.
+          // Splitting the pile by it says how much of the backlog is a customer
+          // who has already gone cold versus one still moving.
+          const failed = group.rows.filter((row) => row.status === "Failed").length;
+          const oldest = oldestOf(group.rows);
+          const stats = group.key === "none"
+            ? [
+                { key: "oldest", icon: CalendarDays, label: "Oldest untouched",
+                  value: oldest ? formatDayMonth(oldest) : "-", tone: group.dateTone },
+                // Everything in this pile needs attention by definition: nobody
+                // has said when it gets touched again.
+                { key: "attention", icon: Users, label: "Need attention",
+                  value: String(group.rows.length), tone: "text-slate-900" }
+              ]
+            : [
+                { key: "oldest", icon: CalendarDays, label: "Oldest",
+                  value: oldest ? formatDayMonth(oldest) : "-", tone: group.dateTone },
+                { key: "failed", icon: CircleX, label: "Failed", value: String(failed), tone: "text-slate-900" },
+                { key: "awaiting", icon: Clock, label: "Awaiting follow-up",
+                  value: String(group.rows.length - failed), tone: "text-slate-900" }
+              ];
+          return { ...group, rows: [...group.rows] as ModelRow[], stats };
+        })
+        .filter((group) => group.rows.length > 0);
+
+      // Only statuses actually present, so the filter can never offer a choice
+      // that empties the section.
+      const statuses = Array.from(new Set(everyRow.map((row) => row.status))).sort();
+      return {
+        groups, rows, statuses,
+        openCount: everyRow.length,
+        filteredCount: rows.length,
+        neverCalled: everyRow.filter((row) => row.touches === 0).length
+      };
     })();
-    const overdueNextActionCount = nextActionGroups.find((g) => g.key === "overdue")?.rows.length ?? 0;
+    type NextActionRow = typeof nextActionModel.rows[number];
+    type NextActionGroup = typeof nextActionModel.groups[number];
+
+    const nextActionSortRows = (rows: NextActionRow[], key: NextActionSortKey) => {
+      const sorted = [...rows];
+      switch (key) {
+        case "newest": return sorted.sort((a, b) => b.anchorMs - a.anchorMs);
+        case "value": return sorted.sort((a, b) => b.amount - a.amount);
+        case "name": return sorted.sort((a, b) => a.customer.localeCompare(b.customer));
+        // Oldest first, and an order with no date anywhere is the most
+        // neglected of all, so it leads rather than being parked at the end.
+        default: return sorted.sort((a, b) => a.anchorMs - b.anchorMs);
+      }
+    };
+    // The same four sorts everywhere, named for the pile they are sorting.
+    const nextActionSortOptions = (groupKey: string): { key: NextActionSortKey; label: string }[] => [
+      { key: "oldest", label: groupKey === "overdue" ? "Most overdue" : groupKey === "none" ? "Oldest untouched" : "Soonest first" },
+      { key: "newest", label: groupKey === "overdue" ? "Least overdue" : groupKey === "none" ? "Newest first" : "Latest first" },
+      { key: "value", label: "Highest value" },
+      { key: "name", label: "Customer A-Z" }
+    ];
+    const nextActionDue = (row: NextActionRow) => {
+      if (row.dueDay === null) return { label: "", tone: "" };
+      if (row.dueDay < 0) {
+        const days = Math.abs(row.dueDay);
+        return { label: `${days} day${days === 1 ? "" : "s"} overdue`, tone: "text-rose-600" };
+      }
+      if (row.dueDay === 0) return { label: "Due today", tone: "text-amber-600" };
+      if (row.dueDay === 1) return { label: "Due tomorrow", tone: "text-sky-600" };
+      return { label: `In ${row.dueDay} days`, tone: "text-slate-500" };
+    };
+    // Two letters, the way a contact list does it: initials of the first two
+    // names, or the first two letters when there is only one name.
+    const nextActionInitials = (name: string) => {
+      const parts = name.trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 0) return "?";
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    };
+    const overdueNextActionCount = nextActionModel.groups.find((g) => g.key === "overdue")?.rows.length ?? 0;
+    const nextActionFiltered = nextActionStatusFilter !== "all" || nextActionNeverCalledOnly;
+    // A pile can empty while its tab is selected - the rep logs the last
+    // overdue call, or the filter narrows it away. Falling back to "All" in the
+    // render keeps that self-correcting: no effect, and never a blank body
+    // under a tab that still looks chosen.
+    const nextActionActiveTab = nextActionTab !== "all" && !nextActionModel.groups.some((group) => group.key === nextActionTab)
+      ? "all"
+      : nextActionTab;
+    // The two ways of reaching a customer that are not "log a call": both are
+    // one tap on a phone, which is where this page is actually used.
+    const nextActionRowMenu = (row: NextActionRow) => {
+      const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customer}, this is Protohub following up on your order.`).normalUrl;
+      return (
+        <div className="relative">
+          <button
+            type="button"
+            aria-label={`More actions for ${row.customer || row.id}`}
+            onClick={() => setNextActionMenuId(nextActionMenuId === row.id ? null : row.id)}
+            className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+          >
+            <MoreVertical className="h-4 w-4" />
+          </button>
+          {nextActionMenuId === row.id && (
+            <>
+              <div className="fixed inset-0 z-20" onClick={() => setNextActionMenuId(null)} />
+              <div className="absolute right-0 z-30 mt-1 w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                <button type="button" onClick={() => { setNextActionMenuId(null); openOrderDetailPopup(row.id); }}
+                  className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                  <Eye className="h-4 w-4 text-slate-400" /> Open order
+                </button>
+                {whatsappUrl && (
+                  <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => setNextActionMenuId(null)}
+                    className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                    <WhatsAppIcon className="h-4 w-4 text-green-600" /> Message on WhatsApp
+                  </a>
+                )}
+                <button type="button" onClick={() => { setNextActionMenuId(null); copyText(row.phone, `${row.customer || "Customer"} phone`); }}
+                  className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                  <Copy className="h-4 w-4 text-slate-400" /> Copy phone
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      );
+    };
+    // When it is owed, and how far off that is in plain words. An unscheduled
+    // row says so in the same column rather than showing a blank cell, because
+    // "nobody has booked this" is the point of that pile, not missing data.
+    const nextActionDueCell = (row: NextActionRow) => {
+      const due = nextActionDue(row);
+      if (!row.dueAt) {
+        return (
+          <>
+            <span className="flex items-center gap-1.5 text-sm font-bold text-violet-700">
+              <CalendarDays className="h-4 w-4 text-violet-400" /> Not scheduled
+            </span>
+            <span className="mt-0.5 block text-xs font-semibold text-slate-500">
+              {row.touches === 0 ? "Never called" : `Last called ${formatDayMonth(row.lastTouchAt)}`}
+            </span>
+          </>
+        );
+      }
+      // ⚠️ The URGENCY is the headline, the promised date is the footnote.
+      // "22 Aug" needs subtracting from today before it means anything; "20
+      // days overdue" tells a rep who to ring first without doing any sums.
+      return (
+        <>
+          <span className={`block text-sm font-black ${due.tone}`}>{due.label}</span>
+          <span className="mt-0.5 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+            <CalendarDays className="h-3.5 w-3.5 text-slate-400" /> Promised {formatDayMonth(row.dueAt)}
+          </span>
+        </>
+      );
+    };
+    const nextActionLogButton = (row: NextActionRow) => (
+      <button
+        type="button"
+        onClick={() => openFollowUpAttemptModal(row.order)}
+        className="!min-h-0 inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-[#1560a8]"
+      >
+        <Phone className="h-3.5 w-3.5" /> Log call
+      </button>
+    );
+
+    // One pile: what it is, how big, its oldest and its shape, then the rows.
+    // Exactly one panel is open on arrival - the rest state their size in the
+    // header, so the whole board reads in two compact rows instead of 109
+    // permanently expanded cards.
+    const nextActionDefaultOpenKey = nextActionModel.groups.some((group) => group.key === nextActionLastStack)
+      ? nextActionLastStack
+      : nextActionModel.groups[0]?.key ?? "";
+    const renderNextActionPanel = (group: NextActionGroup) => {
+      const open = nextActionOpen[group.key] ?? group.key === nextActionDefaultOpenKey;
+      const sortKey = nextActionGroupSort[group.key] ?? nextActionSort;
+      const search = nextActionSearch[group.key] ?? "";
+      const needle = search.trim().toLowerCase();
+      const matched = needle
+        ? group.rows.filter((row) => `${row.customer} ${row.phone} ${row.id} ${row.product}`.toLowerCase().includes(needle))
+        : group.rows;
+      const rows = nextActionSortRows(matched, sortKey);
+      const shown = nextActionShown[group.key] ?? NEXT_ACTION_PAGE_SIZE;
+      const visible = rows.slice(0, shown);
+      const remaining = rows.length - visible.length;
+      const GroupIcon = group.icon;
+
+      return (
+        <section key={group.key} className={`rounded-2xl border ${group.panel} bg-white`}>
+          {/* ⚠️ Not overflow-hidden, and the corners are rounded child by
+              child instead: the row menu opens downward, so clipping here
+              would cut it in half on the last row of every panel. */}
+          <div className={`flex flex-wrap items-center gap-x-5 gap-y-3 rounded-t-2xl border-b ${group.panel} ${group.headerBg} px-4 py-4 sm:px-5`}>
+            <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${group.iconBg}`}>
+              <GroupIcon className="h-6 w-6 text-white" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className={`m-0 text-lg font-black tracking-tight ${group.head}`}>{group.title}</h3>
+                <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-black ${group.pill}`}>
+                  {group.rows.length} order{group.rows.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              <p className="m-0 mt-0.5 text-xs font-semibold text-slate-500">{group.hint}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              {group.stats.map((stat, statIndex) => {
+                const StatIcon = stat.icon;
+                return (
+                  <span key={stat.key} className={`flex items-center gap-2 ${statIndex > 0 ? "sm:border-l sm:border-slate-200 sm:pl-5" : ""}`}>
+                    <StatIcon className="h-4 w-4 shrink-0 text-slate-400" />
+                    <span>
+                      <span className="block text-[11px] font-semibold leading-tight text-slate-500">{stat.label}</span>
+                      <strong className={`block text-sm font-black leading-tight tabular-nums ${stat.tone}`}>{stat.value}</strong>
+                    </span>
+                  </span>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-label={open ? `Collapse ${group.title}` : `Expand ${group.title}`}
+              onClick={() => { if (open) setNextActionOpen((prev) => ({ ...prev, [group.key]: false })); else openNextActionStack(group.key); }}
+              className="!min-h-0 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+            >
+              {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+          </div>
+
+          {open && (
+            <>
+              <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                <div className="relative w-full sm:max-w-sm">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(e) => setNextActionSearch((prev) => ({ ...prev, [group.key]: e.target.value }))}
+                    placeholder="Search customers..."
+                    className="!min-h-0 h-10 w-full rounded-full border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400"
+                  />
+                </div>
+                <div className="relative w-full sm:w-auto">
+                  <select
+                    value={sortKey}
+                    onChange={(e) => setNextActionGroupSort((prev) => ({ ...prev, [group.key]: e.target.value as NextActionSortKey }))}
+                    className="!min-h-0 h-10 w-full appearance-none rounded-lg border border-slate-200 bg-white pl-3 pr-9 text-sm font-semibold text-slate-700 sm:w-auto"
+                  >
+                    {nextActionSortOptions(group.key).map((option) => (
+                      <option key={option.key} value={option.key}>Sort: {option.label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                </div>
+              </div>
+
+              {rows.length === 0 ? (
+                <p className="m-0 px-5 py-10 text-center text-sm font-semibold text-slate-400">
+                  No customers here match &ldquo;{search.trim()}&rdquo;.
+                </p>
+              ) : (
+                <>
+                  {/* Mobile: stacked cards, easiest to scan and tap one-handed. */}
+                  <div className="divide-y divide-slate-100 border-t border-slate-100 sm:hidden">
+                    {visible.map((row) => (
+                      <article key={row.id} className="flex flex-col gap-2.5 px-4 py-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-black ${customerAvatarTone(row.id)}`}>
+                              {nextActionInitials(row.customer)}
+                            </span>
+                            <div className="min-w-0">
+                              <button type="button" onClick={() => openOrderDetailPopup(row.id)}
+                                className="!min-h-0 block truncate text-left text-sm font-bold text-slate-900">
+                                {row.customer || "No name given"}
+                              </button>
+                              <a href={`tel:${row.phone}`} className="block text-xs font-semibold text-slate-500">{row.phone || "No phone"}</a>
+                            </div>
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${orderStatusPillClass(row.order.status, row.order.callOutcome)}`}>
+                            {row.statusLabel}
+                          </span>
+                        </div>
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+                          <div className="font-semibold text-slate-500">
+                            #{row.id} · {row.product || "No product"}{row.quantity ? ` · ${row.quantity} pcs` : ""}
+                          </div>
+                          <div className="mt-0.5 text-sm font-black tabular-nums text-slate-900">{formatProductMoney(row.amount, row.currency)}</div>
+                          <div className="mt-1.5">{nextActionDueCell(row)}</div>
+                        </div>
+                        {row.note && <p className="m-0 text-xs leading-snug text-slate-600">{row.note}</p>}
+                        <div className="flex items-center justify-between gap-2">
+                          {nextActionLogButton(row)}
+                          {nextActionRowMenu(row)}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
+                  {/* Desktop: one row per order, the columns a rep reads left to
+                      right before dialling - who, what, when it was promised,
+                      where the last call ended, and the one action to take. */}
+                  <div className="hidden overflow-x-auto border-t border-slate-100 sm:block">
+                    <table className="w-full min-w-[900px] text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-left">
+                          {["Customer", "Order details", "Promised date", "Status / notes", "Action"].map((heading) => (
+                            <th key={heading} className="px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-400">{heading}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {visible.map((row) => (
+                          <tr key={row.id} className="align-top transition-colors hover:bg-slate-50/70">
+                            <td className="px-4 py-4">
+                              <div className="flex items-start gap-3">
+                                <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-black ${customerAvatarTone(row.id)}`}>
+                                  {nextActionInitials(row.customer)}
+                                </span>
+                                <span className="min-w-0">
+                                  <button type="button" onClick={() => openOrderDetailPopup(row.id)}
+                                    className="!min-h-0 block max-w-[180px] truncate text-left text-sm font-bold text-slate-900 hover:text-[#1F8FE0] hover:underline">
+                                    {row.customer || "No name given"}
+                                  </button>
+                                  <a href={`tel:${row.phone}`} className="block text-xs font-semibold text-slate-500 hover:text-[#1F8FE0]">
+                                    {row.phone || "No phone"}
+                                  </a>
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-4">
+                              <div className="text-xs font-semibold text-slate-500">
+                                #{row.id} · {row.product || "No product"}{row.quantity ? ` · ${row.quantity} pcs` : ""}
+                              </div>
+                              <div className="mt-0.5 text-sm font-black tabular-nums text-slate-900">{formatProductMoney(row.amount, row.currency)}</div>
+                            </td>
+                            <td className="px-4 py-4 whitespace-nowrap">{nextActionDueCell(row)}</td>
+                            <td className="max-w-[280px] px-4 py-4">
+                              <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${orderStatusPillClass(row.order.status, row.order.callOutcome)}`}>
+                                {row.statusLabel}
+                              </span>
+                              {row.note
+                                ? <p className="m-0 mt-1 text-xs leading-snug text-slate-600">{row.note}</p>
+                                : <p className="m-0 mt-1 text-xs italic text-slate-400">Nothing logged yet</p>}
+                            </td>
+                            <td className="px-4 py-4">
+                              <div className="flex items-center gap-1.5">
+                                {nextActionLogButton(row)}
+                                {nextActionRowMenu(row)}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {remaining > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setNextActionShown((prev) => ({ ...prev, [group.key]: rows.length }))}
+                      className="!min-h-0 flex w-full items-center justify-center gap-1.5 rounded-b-2xl border-t border-slate-100 px-4 py-3 text-sm font-bold text-[#1F8FE0] hover:bg-blue-50/60"
+                    >
+                      Show {remaining} more <ChevronDown className="h-4 w-4" />
+                    </button>
+                  ) : rows.length > NEXT_ACTION_PAGE_SIZE ? (
+                    <button
+                      type="button"
+                      onClick={() => setNextActionShown((prev) => ({ ...prev, [group.key]: NEXT_ACTION_PAGE_SIZE }))}
+                      className="!min-h-0 flex w-full items-center justify-center gap-1.5 rounded-b-2xl border-t border-slate-100 px-4 py-3 text-sm font-bold text-slate-500 hover:bg-slate-50"
+                    >
+                      Show less <ChevronUp className="h-4 w-4" />
+                    </button>
+                  ) : (
+                    <p className="m-0 rounded-b-2xl border-t border-slate-100 px-4 py-2.5 text-center text-xs font-semibold text-slate-400">
+                      Showing all {rows.length} order{rows.length === 1 ? "" : "s"}
+                    </p>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </section>
+      );
+    };
 
     const myPickBounds = periodBoundsForQuery(recoveryRepPeriod, recoveryRepDateRange);
     const pickDayKey = (order: TrackedOrder): string | null =>
@@ -67007,70 +67519,143 @@ ${waybillLineItems(w).length > 1
         {/* What this rep has already promised, before what they could pick up
             next. A commitment made on Monday had nowhere to resurface on
             Thursday - it lived as a flag on one row in one list. */}
-        {nextActionGroups.length > 0 && (
-          <section className="bg-white rounded-2xl border border-slate-200/80 shadow-sm ring-1 ring-slate-900/[0.02] overflow-hidden">
-            <div className="flex flex-wrap items-center gap-2 border-b border-slate-200/80 px-5 py-4">
-              <h2 className="m-0 text-base font-black tracking-tight text-slate-900">Next actions</h2>
-              {overdueNextActionCount > 0 && (
-                <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-black text-rose-700">
-                  {overdueNextActionCount} overdue
-                </span>
-              )}
-              <span className="text-[11px] font-semibold text-gray-400">
-                {myOpenOrders.length} open order{myOpenOrders.length === 1 ? "" : "s"} on this rep
-              </span>
-            </div>
-            <div className="space-y-4 p-4">
-              {nextActionGroups.map((group) => (
-                <div key={group.key} className={`rounded-xl border ${group.tone} p-3`}>
-                  <div className="mb-2.5 flex flex-wrap items-baseline gap-2 px-1">
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-black ${group.pill}`}>
-                      {group.rows.length}
+        {nextActionModel.groups.length > 0 && (
+          /* ⚠️ No overflow-hidden here, unlike the sections around it: any
+             clipping ancestor silently disables the sticky tab bar below. The
+             corners still read as rounded because every child sits inside the
+             section's own padding. */
+          <section className="rounded-2xl border border-slate-200/80 bg-white shadow-sm ring-1 ring-slate-900/[0.02]">
+            <div className="flex flex-wrap items-start justify-between gap-3 px-4 pt-5 sm:px-5">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="m-0 text-2xl font-black tracking-tight text-slate-900">Next actions</h2>
+                  <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-black text-[#1F8FE0]">
+                    {nextActionModel.openCount} open order{nextActionModel.openCount === 1 ? "" : "s"}
+                  </span>
+                  {overdueNextActionCount > 0 && (
+                    <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-black text-rose-700">
+                      {overdueNextActionCount} overdue
                     </span>
-                    <h3 className={`m-0 text-sm font-black ${group.head}`}>{group.title}</h3>
-                    {group.hint && <span className="text-[11px] font-semibold text-gray-500">{group.hint}</span>}
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                    {group.rows.map((order) => (
-                      <article key={order.id} className="rounded-lg border border-white bg-white p-3 shadow-sm">
-                        <div className="flex items-start justify-between gap-2">
-                          <button type="button" onClick={() => openOrderDetailPopup(order.id)}
-                            className="!min-h-0 text-left text-[13px] font-bold text-gray-900 hover:text-[#1F8FE0] hover:underline">
-                            {order.customer}
-                          </button>
-                          {order.nextFollowUpAt && (
-                            <span className="shrink-0 text-[10px] font-black text-gray-500">
-                              {new Date(order.nextFollowUpAt).toLocaleDateString([], { day: "numeric", month: "short" })}
-                            </span>
-                          )}
-                        </div>
-                        <a href={`tel:${order.phone}`} className="mt-0.5 block text-[11px] font-semibold text-gray-500 hover:text-[#1F8FE0]">
-                          {order.phone}
-                        </a>
-                        <div className="mt-1 text-[11px] text-gray-500">
-                          #{order.id} · {order.packageName || order.productName || "No product"}
-                          {quantityForOrder(order) ? ` · ${quantityForOrder(order)} pcs` : ""} · {formatProductMoney(order.amount, order.currency)}
-                        </div>
-                        {/* Where the last call ended, so this one does not start
-                            from nothing. */}
-                        {order.callOutcome && (
-                          <div className="mt-1.5 rounded bg-gray-50 px-2 py-1 text-[11px] text-gray-600">
-                            {String(order.callOutcome).split("\n").slice(-1)[0]}
-                          </div>
-                        )}
-                        <div className="mt-2 flex items-center justify-between gap-2">
-                          <span className="truncate text-[10px] font-semibold text-gray-400">{order.status}</span>
-                          <button type="button" onClick={() => openFollowUpAttemptModal(order)}
-                            className="!min-h-0 shrink-0 rounded-md bg-[#1F8FE0] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#1560a8]">
-                            Log call
-                          </button>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
+                  )}
                 </div>
-              ))}
+                <p className="m-0 mt-1 text-sm font-medium text-slate-500">Focus on what needs your attention now.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* Sets every panel at once. A panel sorted on its own keeps
+                    that choice until this changes, which clears the overrides -
+                    otherwise the control at the top would appear to do nothing
+                    to a panel the rep had already touched. */}
+                <div className="relative">
+                  <ArrowUpDown className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <select
+                    aria-label="Sort every next-action panel"
+                    value={nextActionSort}
+                    onChange={(e) => { setNextActionSort(e.target.value as NextActionSortKey); setNextActionGroupSort({}); }}
+                    className="!min-h-0 h-10 appearance-none rounded-lg border border-slate-200 bg-white pl-9 pr-9 text-sm font-semibold text-slate-700"
+                  >
+                    <option value="oldest">Sort: Oldest first</option>
+                    <option value="newest">Sort: Newest first</option>
+                    <option value="value">Sort: Highest value</option>
+                    <option value="name">Sort: Customer A-Z</option>
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                </div>
+                <div className="relative">
+                  <button
+                    type="button"
+                    aria-label="Filter next actions"
+                    onClick={() => setNextActionFilterOpen((open) => !open)}
+                    className={`!min-h-0 inline-flex h-10 w-10 items-center justify-center rounded-lg border transition-colors ${nextActionFiltered ? "border-[#1F8FE0] bg-blue-50 text-[#1F8FE0]" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`}
+                  >
+                    <Filter className="h-4 w-4" />
+                  </button>
+                  {nextActionFilterOpen && (
+                    <>
+                      <div className="fixed inset-0 z-20" onClick={() => setNextActionFilterOpen(false)} />
+                      <div className="absolute right-0 z-30 mt-1 w-64 rounded-xl border border-slate-200 bg-white p-3 shadow-lg">
+                        {/* ⚠️ Narrows the WHOLE section, tab counts included. A
+                            tab still counting filtered-out orders would send the
+                            rep into an empty panel. */}
+                        <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400">Order status</span>
+                        <select
+                          aria-label="Filter by order status"
+                          value={nextActionStatusFilter}
+                          onChange={(e) => setNextActionStatusFilter(e.target.value)}
+                          className="!min-h-0 mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700"
+                        >
+                          <option value="all">All statuses</option>
+                          {nextActionModel.statuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                        </select>
+                        <label className="mt-3 flex items-center gap-2 text-sm font-semibold text-slate-700">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={nextActionNeverCalledOnly}
+                            onChange={(e) => setNextActionNeverCalledOnly(e.target.checked)}
+                          />
+                          Never called only ({nextActionModel.neverCalled})
+                        </label>
+                        {nextActionFiltered && (
+                          <button
+                            type="button"
+                            onClick={() => { setNextActionStatusFilter("all"); setNextActionNeverCalledOnly(false); }}
+                            className="!min-h-0 mt-3 w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                          >
+                            Clear filters
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
+
+            {/* One tab per pile that actually has orders in it, each carrying
+                its own count and its own colour, so the shape of the backlog is
+                readable before anything is opened. */}
+            {/* ⚠️ top offsets mirror the main scroll container's own pt-16 /
+                lg:pt-[5.5rem]: below lg it scrolls inside that div, at lg it
+                scrolls with the page under a fixed topbar, and the tab bar has
+                to clear the topbar in both. */}
+            <div className="sticky top-16 z-10 overflow-x-auto bg-white px-4 pb-1 pt-4 sm:px-5 lg:top-[5.5rem]">
+              <div className="inline-flex min-w-max divide-x divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                {[
+                  { key: "all", title: "All", count: nextActionModel.filteredCount, accent: "text-[#1F8FE0]", underline: "border-[#1F8FE0]", tabPill: "bg-[#1F8FE0] text-white" },
+                  ...nextActionModel.groups.map((group) => ({
+                    key: group.key, title: group.title, count: group.rows.length,
+                    accent: group.accent, underline: group.underline, tabPill: group.tabPill
+                  }))
+                ].map((tab) => {
+                  const active = nextActionActiveTab === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => { setNextActionTab(tab.key); if (tab.key !== "all") openNextActionStack(tab.key); }}
+                      className={`!min-h-0 inline-flex items-center gap-2 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-black transition-colors sm:px-5 ${active ? `${tab.underline} ${tab.accent}` : "border-transparent text-slate-600 hover:text-slate-900"}`}
+                    >
+                      {tab.title}
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-black tabular-nums ${active ? tab.tabPill : "bg-slate-100 text-slate-600"}`}>
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {nextActionModel.filteredCount === 0 ? (
+              <p className="m-0 px-5 py-12 text-center text-sm font-semibold text-slate-400">
+                No open orders match this filter.
+              </p>
+            ) : (
+              <div className="space-y-4 p-4 sm:p-5">
+                {nextActionModel.groups
+                  .filter((group) => nextActionActiveTab === "all" || nextActionActiveTab === group.key)
+                  .map((group) => renderNextActionPanel(group))}
+              </div>
+            )}
           </section>
         )}
 
