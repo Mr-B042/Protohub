@@ -20,6 +20,7 @@ import { runAsSingleton } from "./lib/runtime-lease.js";
 import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
 import { runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
 import { syncRecoveryNextActionReminders } from "./lib/recovery-next-action-reminders.js";
+import { runAgentStockDriftCheck } from "./lib/agent-stock-drift-check.js";
 import { pruneOldCartJourneyEvents } from "./lib/cart-journey.js";
 import { dropDueDailySalaryForAllOrgs } from "./lib/salary-spread.js";
 import { supabase } from "./lib/supabase.js";
@@ -435,6 +436,27 @@ cron.schedule("30 2 * * *", async () => {
   logger.info("cron: pruning old cart journey events");
   try { const deleted = await pruneOldCartJourneyEvents(); logger.info("cron: cart journey prune done", { deleted }); }
   catch (e) { logger.error("cron: cart journey prune crashed", { error: (e as Error).message }); }
+});
+}
+
+// ── Agent stock drift check — daily 03:00 UTC (04:00 Lagos) ──
+//
+// ⚠️ Does every hub balance still match the ledger behind it? Nine units left
+// one hub in four seconds on 2026-08-26 with no movement, no order and no
+// waybill recording it, and nobody noticed until a physical count came up
+// short. This is the query that would have caught it the next morning.
+//
+// Runs after the nightly prune and before the working day, and alerts only on
+// drift that CHANGED against the accepted baseline - see migration 238 for why
+// alerting on drift itself would be noise nobody reads.
+if (ENABLE_BACKGROUND_JOBS) {
+cron.schedule("0 3 * * *", async () => {
+  logger.info("cron: agent stock drift check");
+  try {
+    const result = await runAgentStockDriftCheck();
+    if (result.flagged > 0) logger.warn("cron: agent stock drift found", result);
+    else logger.info("cron: agent stock drift check clean", result);
+  } catch (e) { logger.error("cron: agent stock drift check crashed", { error: (e as Error).message }); }
 });
 }
 
