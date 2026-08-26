@@ -34,6 +34,8 @@ type DraftTextareaProps = {
   autoFocus?: boolean;
   /** Single-line fields have the same problem; they just need an <input>. */
   as?: "textarea" | "input";
+  /** Keep high-latency parent forms out of the keystroke path. */
+  commitOnChange?: boolean;
   /**
    * Render the "n / max" counter here rather than in the parent.
    *
@@ -52,7 +54,7 @@ const COMMIT_DELAY_MS = 250;
 
 function DraftTextareaInner({
   value, onCommit, liveRef, placeholder, rows, maxLength, className, disabled, autoFocus,
-  as = "textarea", showCount, ...rest
+  as = "textarea", showCount, commitOnChange = true, ...rest
 }: DraftTextareaProps) {
   const [draft, setDraft] = useState(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,11 +98,13 @@ function DraftTextareaInner({
     // Undebounced, no render: validation can read this the instant it is typed.
     if (liveRef) liveRef.current = next;
     setDraft(next);
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      timer.current = null;
-      commitRef.current(latest.current);
-    }, COMMIT_DELAY_MS);
+    if (commitOnChange) {
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => {
+        timer.current = null;
+        commitRef.current(latest.current);
+      }, COMMIT_DELAY_MS);
+    }
   };
 
   const shared = {

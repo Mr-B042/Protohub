@@ -103789,7 +103789,7 @@ ${waybillLineItems(w).length > 1
 	                  )}
 	                  <label className="flex flex-col gap-1 sm:col-span-2">
 	                    <span className="text-xs font-bold text-gray-600">What did the customer say?</span>
-	                    <DraftTextarea rows={2} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.outcomeNote}
+                    <DraftTextarea rows={2} commitOnChange={false} className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.outcomeNote}
 	                      onCommit={(next) => setCartAttemptDraft((v) => {
 	                        const asksForLater = /\b(?:tomorrow|today|next\s+(?:week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|in\s+\d+\s+days?)\b/i.test(next);
 	                        if (asksForLater && !["Rescheduled", "Not interested", "Wrong number"].includes(v.outcomeCode)) {
