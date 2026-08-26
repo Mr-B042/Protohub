@@ -19,6 +19,7 @@ import { startWhatsAppRuntime } from "./lib/whatsapp-runtime.js";
 import { runAsSingleton } from "./lib/runtime-lease.js";
 import { runCartAutoSubmit } from "./lib/cart-auto-submit.js";
 import { runFollowUpCloseAllOrgs } from "./lib/follow-up-kpi.js";
+import { syncRecoveryNextActionReminders } from "./lib/recovery-next-action-reminders.js";
 import { pruneOldCartJourneyEvents } from "./lib/cart-journey.js";
 import { dropDueDailySalaryForAllOrgs } from "./lib/salary-spread.js";
 import { supabase } from "./lib/supabase.js";
@@ -402,6 +403,20 @@ cron.schedule("*/2 * * * *", async () => {
 }
 
 // ── Follow-up KPI nightly close — 22:00 Africa/Lagos (21:00 UTC) ──
+// Recovery callbacks. A rep promising "I'll call you Thursday" had nothing
+// reminding them: the order follow-up notifier fires on the DELIVERY schedule
+// and skips Failed/Cancelled, which is every order a Recovery Rep owns.
+// Business hours only - a callback reminder at 3am helps nobody and trains
+// people to silence the app.
+if (ENABLE_BACKGROUND_JOBS) {
+cron.schedule("*/15 7-18 * * 1-6", async () => {
+  try {
+    const { sent } = await syncRecoveryNextActionReminders();
+    if (sent > 0) logger.info("cron: recovery next-action reminders", { sent });
+  } catch (e) { logger.error("cron: recovery next-action reminders crashed", { error: (e as Error).message }); }
+});
+}
+
 // After the working day ends, record a pending ₦50 miss for every due-but-
 // unattended follow-up. Sundays are skipped inside the job.
 if (ENABLE_BACKGROUND_JOBS) {

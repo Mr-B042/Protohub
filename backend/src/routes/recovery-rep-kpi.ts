@@ -517,6 +517,109 @@ async function openClaimCount(orgId: string, repId: string) {
   return count ?? 0;
 }
 
+// ── GET /api/recovery-rep-kpi/day-activity?repId=&day= ──
+//
+// What a day's numbers are actually MADE of. "11 follow-ups" says a rep was
+// busy; it does not say which customers, what was said, or whether anyone was
+// reached - which is the only version of the figure a supervisor can act on or
+// defend.
+router.get("/day-activity", requireRole("Owner", "Admin", "Manager", "Recovery Rep"), async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const scopeRole = req.user!.effectiveUserRole ?? req.user!.role;
+    const scopeId = req.user!.effectiveUserId ?? req.user!.id;
+    const repId = scopeRole === "Recovery Rep" ? scopeId : (typeof req.query.repId === "string" ? req.query.repId : "");
+    const day = typeof req.query.day === "string" && DATE_KEY_PATTERN.test(req.query.day) ? req.query.day : "";
+    if (!repId || !day) { res.json({ day, followUps: [], retention: [], claimed: [], delivered: [] }); return; }
+
+    const next = addDaysToDateKey(day, 1);
+    const [attempts, touches, claimedRows, deliveredRows] = await Promise.all([
+      supabase.from("order_contact_attempts")
+        .select("order_id, attempted_at, channel, outcome_code, outcome_note, customer_reached, next_action_at")
+        .eq("org_id", orgId).eq("rep_id", repId)
+        .gte("attempted_at", `${day}T00:00:00`).lt("attempted_at", `${next}T00:00:00`)
+        .order("attempted_at", { ascending: true }).limit(REPORT_ROW_CEILING),
+      supabase.from("customer_retention_touchpoints")
+        .select("order_id, logged_at, stage, satisfaction_outcome, retention_outcome, customer_response, reach_status")
+        .eq("org_id", orgId).eq("logged_by", repId)
+        .gte("logged_at", `${day}T00:00:00`).lt("logged_at", `${next}T00:00:00`)
+        .order("logged_at", { ascending: true }).limit(REPORT_ROW_CEILING),
+      supabase.from("orders").select("id, customer, phone, status, amount, assigned_at")
+        .eq("org_id", orgId).eq("assigned_rep_id", repId)
+        .gte("assigned_at", `${day}T00:00:00`).lt("assigned_at", `${next}T00:00:00`)
+        .limit(REPORT_ROW_CEILING),
+      supabase.from("orders").select("id, customer, amount")
+        .eq("org_id", orgId).eq("assigned_rep_id", repId).eq("status", "Delivered")
+        .eq("delivered_date", day).neq("review_hold", true).limit(REPORT_ROW_CEILING)
+    ]);
+
+    // Names for the order ids that turn up in the logs.
+    const orderIds = [...new Set([
+      ...((attempts.data ?? []) as any[]).map((row) => row.order_id),
+      ...((touches.data ?? []) as any[]).map((row) => row.order_id)
+    ].filter(Boolean))] as string[];
+    const nameById = new Map<string, { customer: string; phone: string; status: string }>();
+    if (orderIds.length > 0) {
+      const { data: orderRows } = await supabase.from("orders")
+        .select("id, customer, phone, status").eq("org_id", orgId).in("id", orderIds)
+        .limit(REPORT_ROW_CEILING);
+      ((orderRows ?? []) as any[]).forEach((row) => nameById.set(row.id, {
+        customer: row.customer ?? "", phone: row.phone ?? "", status: row.status ?? ""
+      }));
+    }
+
+    // ⚠️ IDENTICAL ROWS ARE COLLAPSED, not listed. The log holds real duplicate
+    // submissions - one order carries five rows at the same second - and
+    // printing each would make a double-submitted save look like five calls.
+    // They are merged and the repeat count kept, so the padding is visible
+    // instead of being either hidden or counted as work.
+    const merged = new Map<string, any>();
+    ((attempts.data ?? []) as any[]).forEach((row) => {
+      const key = `${row.order_id}|${row.attempted_at}|${row.outcome_code ?? ""}`;
+      const found = merged.get(key);
+      if (found) { found.repeats += 1; return; }
+      const order = nameById.get(row.order_id);
+      merged.set(key, {
+        orderId: row.order_id,
+        customer: order?.customer ?? "Unknown",
+        phone: order?.phone ?? "",
+        status: order?.status ?? "",
+        at: row.attempted_at,
+        channel: row.channel ?? "call",
+        // The rep types free text into "Describe the outcome", so outcome_code
+        // usually holds a sentence rather than a code. Show whichever is filled.
+        outcome: String(row.outcome_code ?? "").trim(),
+        note: String(row.outcome_note ?? "").trim(),
+        reached: Boolean(row.customer_reached),
+        nextActionAt: row.next_action_at ?? null,
+        repeats: 1
+      });
+    });
+
+    res.json({
+      day,
+      followUps: [...merged.values()],
+      retention: ((touches.data ?? []) as any[]).map((row) => ({
+        orderId: row.order_id,
+        customer: nameById.get(row.order_id)?.customer ?? "Unknown",
+        at: row.logged_at,
+        stage: row.stage ?? "",
+        outcome: row.retention_outcome ?? row.satisfaction_outcome ?? row.reach_status ?? "",
+        response: String(row.customer_response ?? "").trim()
+      })),
+      claimed: ((claimedRows.data ?? []) as any[]).map((row) => ({
+        orderId: row.id, customer: row.customer ?? "", phone: row.phone ?? "",
+        status: row.status ?? "", amount: Number(row.amount ?? 0)
+      })),
+      delivered: ((deliveredRows.data ?? []) as any[]).map((row) => ({
+        orderId: row.id, customer: row.customer ?? "", amount: Number(row.amount ?? 0)
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message ?? "Could not load the day's activity." });
+  }
+});
+
 // ── GET /api/recovery-rep-kpi/follow-up-pairs?repId=&dateFrom=&dateTo= ──
 //
 // For each of the rep's orders: the newest attempt THEY logged, and the newest
