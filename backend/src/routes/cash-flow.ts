@@ -147,9 +147,10 @@ async function loadExpenses(orgId: string, fromKey: string, toKey: string): Prom
     .limit(REPORT_ROW_CEILING);
   return ((data ?? []) as any[]).map((row) => ({
     id: `expense-${row.id}`,
-    // expenses carry a plain date, so they are pinned to 09:00 Lagos purely so
-    // they sort sensibly against timestamped remittances on the same day.
-    at: row.created_at ?? `${row.date}T09:00:00+01:00`,
+    // The plain accounting date is authoritative. created_at can be days
+    // later (backfills/imports), which would move the spend into the wrong
+    // trend day and running-balance position.
+    at: `${row.date}T09:00:00+01:00`,
     direction: "out" as const,
     category: cashOutGroupFor(row.category),
     description: String(row.description ?? row.category ?? "Expense"),
@@ -210,21 +211,31 @@ async function resolveOpeningCash(orgId: string, periodStartIso: string) {
   // org that has not added any. Letting both run would put two different
   // "opening cash" figures on one page.
   const { data: accountRows } = await supabase.from("bank_accounts")
-    .select("opening_balance, opening_balance_date, created_at")
+    .select("id, opening_balance, opening_balance_date, created_at")
     .eq("org_id", orgId).eq("active", true);
   const accounts = (accountRows ?? []) as any[];
   if (accounts.length > 0) {
-    const baseline = accounts.reduce((sum, row) => sum + Number(row.opening_balance ?? 0), 0);
-    // Movements are counted from the EARLIEST account's effective date, so an
-    // account added later does not double-count what came before it.
+    // Reconstruct each account independently. Summing all opening balances
+    // first and drifting from the earliest account incorrectly includes an
+    // account that did not exist yet in an earlier period.
+    const movements = await loadAllMovements(orgId, periodStartIso);
+    const reconstructed = accounts.map((row) => {
+      const effectiveKey = row.opening_balance_date ?? String(row.created_at ?? "").slice(0, 10);
+      const effectiveIso = effectiveKey ? startOfLagosDay(effectiveKey) : periodStartIso;
+      if (effectiveIso > periodStartIso) return 0;
+      const movementTotal = movements
+        .filter((movement: any) => movement.accountId === row.id && movement.at >= effectiveIso)
+        .reduce((sum: number, movement: any) => sum + movement.cashIn - movement.cashOut, 0);
+      return Number(row.opening_balance ?? 0) + movementTotal;
+    });
+    const baseline = reconstructed.reduce((sum, amount) => sum + amount, 0);
     const dates = accounts
       .map((row) => row.opening_balance_date ?? String(row.created_at ?? "").slice(0, 10))
-      .filter(Boolean)
+      .filter((date) => date && startOfLagosDay(date) <= periodStartIso)
       .sort();
     const baselineIso = dates.length > 0 ? startOfLagosDay(dates[0]) : periodStartIso;
-    const drift = baselineIso < periodStartIso ? await netBetween(orgId, baselineIso, periodStartIso) : 0;
     return {
-      amount: baseline + drift,
+      amount: baseline,
       anchored: true,
       // ⚠️ DERIVED, not counted. This week was never opened, so its figure is
       // recomputed from the account opening balances every time it is viewed -
@@ -506,18 +517,20 @@ async function loadAllMovements(orgId: string, untilIso?: string) {
   // different moments and manufacture a variance out of thin air.
   const untilKey = untilIso ? lagosDayOf(new Date(new Date(untilIso).getTime() - 1).toISOString()) : null;
   const remitQuery = supabase.from("remittance_transactions")
-    .select("bank_account_id, delta_amount").eq("org_id", orgId).limit(REPORT_ROW_CEILING);
+    .select("bank_account_id, delta_amount, received_at").eq("org_id", orgId).limit(REPORT_ROW_CEILING);
   const spendQuery = supabase.from("expenses")
-    .select("bank_account_id, amount").eq("org_id", orgId).limit(REPORT_ROW_CEILING);
+    .select("bank_account_id, amount, date").eq("org_id", orgId).limit(REPORT_ROW_CEILING);
   if (untilIso) remitQuery.lt("received_at", untilIso);
   if (untilKey) spendQuery.lte("date", untilKey);
   const [{ data: remits }, { data: spends }] = await Promise.all([remitQuery, spendQuery]);
   return [
     ...((remits ?? []) as any[]).map((row) => ({
-      accountId: row.bank_account_id ?? null, cashIn: Number(row.delta_amount ?? 0), cashOut: 0
+      accountId: row.bank_account_id ?? null, cashIn: Number(row.delta_amount ?? 0), cashOut: 0,
+      at: row.received_at
     })),
     ...((spends ?? []) as any[]).map((row) => ({
-      accountId: row.bank_account_id ?? null, cashIn: 0, cashOut: Number(row.amount ?? 0)
+      accountId: row.bank_account_id ?? null, cashIn: 0, cashOut: Number(row.amount ?? 0),
+      at: `${row.date}T09:00:00+01:00`
     }))
   ];
 }
