@@ -60521,6 +60521,7 @@ ${waybillLineItems(w).length > 1
                     cutoffHour={24}
                     cutoffLabel="midnight"
                     rehearsal={penalties.today.rehearsal}
+                    progressPercent={penalties.today.cartsDue > 0 ? ((penalties.today.cartsDue - remaining) / penalties.today.cartsDue) * 100 : 100}
                   />
                 </div>
               );
@@ -60543,6 +60544,7 @@ ${waybillLineItems(w).length > 1
                     cutoffHour={24}
                     cutoffLabel="midnight"
                     rehearsal={!penalties.phase.active}
+                    progressPercent={(() => { const due = penalties.repsAtRiskToday.reduce((sum, rep) => sum + rep.cartsDue, 0); return due > 0 ? ((due - teamCarts) / due) * 100 : 100; })()}
                   />
                 </div>
               );
@@ -60590,6 +60592,9 @@ ${waybillLineItems(w).length > 1
               misses={penalties.owedThisWeek ?? penalties.misses}
               todayKey={penalties.todayKey}
               personal={Boolean(penalties.today)}
+              canReview={currentRole === "Owner"}
+              saving={cartLogSaving}
+              onReview={reviewCartLogPenalty}
             />
 
             {penalties.byRep.filter((rep) => rep.missedCount > 0).length > 0 && (
@@ -60606,11 +60611,11 @@ ${waybillLineItems(w).length > 1
               </ul>
             )}
 
-            {currentRole === "Owner" && penalties.misses.filter((row) => row.status === "pending").length > 0 && (
+            {false && currentRole === "Owner" && (penalties?.misses ?? []).filter((row) => row.status === "pending").length > 0 && (
               <div className="mt-2.5 rounded-lg border border-rose-200 bg-white px-3 py-2">
                 <p className="m-0 text-[10px] font-black uppercase tracking-wide text-gray-500">Awaiting your decision</p>
                 <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
-                  {penalties.misses.filter((row) => row.status === "pending").slice(0, 6).map((row) => (
+                  {(penalties?.misses ?? []).filter((row) => row.status === "pending").slice(0, 6).map((row) => (
                     <li key={`${row.repId}-${row.missDate}`} className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-[12px] font-semibold text-gray-700">
                         {row.repName} · {new Date(`${row.missDate}T12:00:00Z`).toLocaleDateString("en-NG", { weekday: "short", day: "numeric", month: "short" })}

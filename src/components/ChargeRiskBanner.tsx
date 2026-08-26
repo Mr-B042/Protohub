@@ -14,6 +14,8 @@ type Props = {
   cutoffLabel: string;
   /** Before go-live: same banner, but nothing can actually be charged. */
   rehearsal?: boolean;
+  /** Optional completion progress for the current day's assigned carts. */
+  progressPercent?: number;
 };
 
 /**
@@ -27,7 +29,7 @@ type Props = {
  * the banner alone and never the table beneath it.
  */
 export default function ChargeRiskBanner({
-  label, amount, detail, cutoffHour, cutoffLabel, rehearsal
+  label, amount, detail, cutoffHour, cutoffLabel, rehearsal, progressPercent
 }: Props) {
   const [remaining, setRemaining] = useState(() => msUntilLagosHour(Date.now(), cutoffHour));
 
@@ -80,6 +82,11 @@ export default function ChargeRiskBanner({
               ? (rehearsal ? "Practice only — nothing is recorded." : "Pending fees can now be recorded.")
               : `Closes at ${cutoffLabel} today.`}
           </p>
+          {typeof progressPercent === "number" && (
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-rose-100 dark:bg-rose-950/60" aria-label={`${Math.round(progressPercent)}% of carts logged`}>
+              <div className="h-full rounded-full bg-rose-600 transition-[width] duration-500" style={{ width: `${Math.min(100, Math.max(0, progressPercent))}%` }} />
+            </div>
+          )}
         </div>
       </div>
     </div>

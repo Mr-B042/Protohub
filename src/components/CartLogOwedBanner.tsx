@@ -1,112 +1,26 @@
-import { AlertTriangle, Lock } from "lucide-react";
+import React from "react";
+import { AlertTriangle, Check, ChevronDown, Clock, FileText, Lock, Shield, ShoppingCart, X } from "lucide-react";
 import type { CartLogMiss } from "../lib/api";
 
-type Props = {
-  misses: CartLogMiss[];
-  /** Lagos today. Everything on or after this is the countdown's job, not ours. */
-  todayKey: string;
-  /** True when the view is scoped to one rep, so it can say "you". */
-  personal: boolean;
-};
+type Props = { misses: CartLogMiss[]; todayKey: string; personal: boolean; canReview?: boolean; saving?: boolean; onReview?: (body: { repId: string; missDate: string; status: "approved" | "waived"; note: string }) => void };
 
-/**
- * What is already owed for days that have CLOSED.
- *
- * ⚠️ Deliberately separate from the countdown banner. That one is about a day
- * a rep can still rescue; this one is about days they cannot. Reps were only
- * told about today, so a Monday that closed with forty carts unlogged showed
- * up as a small grey chip reading "1 day" and nothing about it said "you owe
- * ₦20,000" - which is the fact they needed.
- *
- * ⚠️ Nothing here is money taken. Every row is pending the Owner's decision
- * and says so, because at these amounts an unqualified "you owe" would be a
- * false statement about someone's pay.
- */
-export default function CartLogOwedBanner({ misses, todayKey, personal }: Props) {
-  // Closed days only, and never a waived one - a waived day is settled and
-  // re-listing it would look like the decision had been reversed.
+/** Closed penalty days with transparent evidence and Owner decisions. */
+export default function CartLogOwedBanner({ misses, todayKey, personal, canReview = false, saving = false, onReview }: Props) {
   const closed = (misses ?? []).filter((row) => row.missDate < todayKey && row.status !== "waived");
-  if (closed.length === 0) return null;
-
-  const total = closed.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
-  const approved = closed.filter((row) => row.status === "approved");
-  const approvedTotal = approved.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
-  const dayCount = new Set(closed.map((row) => row.missDate)).size;
-  const money = (value: number) => `₦ ${Math.max(0, Math.round(value)).toLocaleString("en-NG")}`;
-
-  const dayLabel = (key: string) => {
-    const date = new Date(`${key}T12:00:00Z`);
-    return {
-      weekday: date.toLocaleDateString("en-NG", { weekday: "long" }),
-      date: date.toLocaleDateString("en-NG", { day: "numeric", month: "short" })
-    };
-  };
-
-  // Newest first: the most recent closed day is the one still fresh enough to
-  // argue about, and the one a rep is most likely to be looking for.
-  const rows = [...closed].sort((left, right) => right.missDate.localeCompare(left.missDate));
-
-  return (
-    <div className="mt-3 overflow-hidden rounded-2xl border-2 border-rose-300 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-rose-50 to-white px-4 py-3.5">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-rose-600 text-white shadow-sm">
-            <AlertTriangle className="h-5 w-5" />
-          </span>
-          <div className="min-w-0">
-            <p className="m-0 text-[11px] font-black uppercase tracking-[0.14em] text-rose-700">
-              {personal ? "Already owed — days that have closed" : "Already owed by the team"}
-            </p>
-            <p className="m-0 mt-0.5 text-2xl font-black leading-tight tracking-tight text-rose-900">
-              {money(total)}
-              <span className="ml-2 text-sm font-bold text-rose-700">
-                across {dayCount} closed day{dayCount === 1 ? "" : "s"}
-              </span>
-            </p>
-          </div>
-        </div>
-        <p className="m-0 max-w-xs text-[11px] font-semibold leading-relaxed text-rose-800">
-          {personal
-            ? "These days are finished — logging now cannot clear them. Clear today's board before midnight so tomorrow is not on this list."
-            : "These days are finished. Approve or waive each one below."}
-        </p>
-      </div>
-
-      <ul className="m-0 list-none divide-y divide-rose-100 p-0">
-        {rows.map((row) => {
-          const label = dayLabel(row.missDate);
-          const settled = row.status === "approved";
-          return (
-            <li key={`${row.repId}-${row.missDate}`}
-              className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
-              <span className="min-w-0">
-                <span className="text-sm font-black text-slate-900">
-                  {label.weekday}
-                  <span className="ml-1.5 font-bold text-slate-400">{label.date}</span>
-                </span>
-                <span className="mt-0.5 block text-[11px] font-semibold text-slate-500">
-                  {!personal && <span className="font-black text-slate-700">{row.repName} · </span>}
-                  {row.cartsMissed} of {row.cartsDue} cart{row.cartsDue === 1 ? "" : "s"} left unlogged
-                </span>
-              </span>
-              <span className="flex shrink-0 items-center gap-2">
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
-                  settled ? "bg-rose-600 text-white" : "bg-amber-100 text-amber-800"}`}>
-                  {settled ? "Charged" : "Pending review"}
-                </span>
-                <span className="text-base font-black tabular-nums text-rose-700">{money(row.amount)}</span>
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-
-      <p className="m-0 flex items-center gap-2 border-t border-rose-100 bg-rose-50/60 px-4 py-2.5 text-[11px] font-semibold text-rose-900">
-        <Lock className="h-3.5 w-3.5 shrink-0" />
-        {approvedTotal > 0
-          ? `${money(approvedTotal)} has been approved by the Owner. The rest is pending and is not deducted from anyone's pay until they decide.`
-          : "Nothing here is deducted from anyone's pay unless the Owner approves it."}
-      </p>
-    </div>
-  );
+  if (!closed.length) return null;
+  const first = [...closed].sort((a, b) => b.missDate.localeCompare(a.missDate))[0];
+  const [open, setOpen] = React.useState(first ? `${first.repId}-${first.missDate}` : null);
+  const total = closed.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const pending = closed.filter((r) => r.status === "pending");
+  const approvedTotal = closed.filter((r) => r.status === "approved").reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const dayCount = new Set(closed.map((r) => r.missDate)).size;
+  const money = (v: number) => `₦${Math.max(0, Math.round(v)).toLocaleString("en-NG")}`;
+  const dateLabel = (key: string) => { const d = new Date(`${key}T12:00:00Z`); return { weekday: d.toLocaleDateString("en-NG", { weekday: "long" }), date: d.toLocaleDateString("en-NG", { day: "numeric", month: "short" }) }; };
+  const review = (row: CartLogMiss, status: "approved" | "waived") => onReview?.({ repId: row.repId, missDate: row.missDate, status, note: "Reviewed from Already owed by the team." });
+  return <div className="mt-3 overflow-hidden rounded-2xl border-2 border-rose-200 bg-white shadow-sm">
+    <div className="flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-rose-50 to-white px-4 py-4"><div className="flex items-center gap-3"><span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-600 text-white"><AlertTriangle className="h-6 w-6" /></span><div><p className="m-0 text-[11px] font-black uppercase tracking-[0.14em] text-rose-700">{personal ? "Already owed — closed days" : "Already owed by the team"}</p><p className="m-0 text-2xl font-black text-rose-900">{money(total)} <span className="text-sm font-bold text-rose-700">across {dayCount} closed day{dayCount === 1 ? "" : "s"}</span></p></div></div><p className="m-0 max-w-xs text-[11px] font-semibold leading-relaxed text-rose-800">{canReview ? "These days are finished. Approve or waive each one below." : "These days are finished — logging now cannot clear them."}</p></div>
+    <div className="grid gap-2 border-b border-rose-100 p-3 sm:grid-cols-3"><div className="flex items-center gap-2 rounded-xl border border-rose-100 p-2.5"><FileText className="h-5 w-5 text-rose-600" /><span><b className="block text-xs">Policy</b><small className="text-[11px] text-slate-500">₦500 per cart not logged before close.</small></span></div><div className="flex items-center gap-2 rounded-xl border border-rose-100 p-2.5"><Shield className="h-5 w-5 text-rose-600" /><span><b className="block text-xs">Why we charge</b><small className="text-[11px] text-slate-500">To enforce daily follow-up discipline.</small></span></div><div className="flex items-center gap-2 rounded-xl border border-rose-100 p-2.5"><Lock className="h-5 w-5 text-rose-600" /><span><b className="block text-xs">Fairness</b><small className="text-[11px] text-slate-500">Nothing is deducted unless approved.</small></span></div></div>
+    <ul className="m-0 list-none divide-y divide-rose-100 p-0">{[...closed].sort((a, b) => b.missDate.localeCompare(a.missDate)).map((row) => { const key = `${row.repId}-${row.missDate}`; const expanded = open === key; const l = dateLabel(row.missDate); const charged = row.status === "approved"; return <li key={key}><button type="button" onClick={() => setOpen(expanded ? null : key)} className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 text-left hover:bg-rose-50/40"><span><b className="text-sm text-slate-900">{l.weekday} <span className="font-bold text-slate-400">{l.date}</span></b><span className="mt-0.5 block text-[11px] font-semibold text-slate-500">{!personal && <b className="text-slate-700">{row.repName} · </b>}{row.cartsMissed} of {row.cartsDue} carts had no required follow-up logged</span></span><span className="flex items-center gap-2"><span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${charged ? "bg-rose-600 text-white" : "bg-amber-100 text-amber-800"}`}>{charged ? "Charged" : "Pending review"}</span><b className="text-base text-rose-700">{money(row.amount)}</b><ChevronDown className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} /></span></button>{expanded && <div className="mx-3 mb-3 rounded-xl border border-rose-100 bg-rose-50/30 p-3"><div className="grid gap-2 text-[11px] sm:grid-cols-4"><span><ShoppingCart className="mr-1 inline h-4 w-4 text-rose-600" /><b>{row.cartsMissed} affected carts</b><small className="block pl-5 text-slate-500">Out of {row.cartsDue} assigned</small></span><span><Clock className="mr-1 inline h-4 w-4 text-rose-600" /><b>Day closed</b><small className="block pl-5 text-slate-500">11:59 PM, {l.date}</small></span><span><b>Charge per violation</b><small className="block text-slate-500">₦500 per cart</small></span><span><b>Potential charge</b><small className="block text-rose-700">{row.cartsMissed} × ₦500 = {money(row.amount)}</small></span></div><div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-rose-100 pt-3"><span className="text-[11px] text-slate-500">Evidence: {row.cartsLogged} follow-up{row.cartsLogged === 1 ? "" : "s"} logged before close; {row.cartsMissed} missing.</span>{canReview && row.status === "pending" && <span className="flex gap-2"><button type="button" disabled={saving} onClick={() => review(row, "waived")} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 disabled:opacity-50"><X className="h-3.5 w-3.5" /> Waive</button><button type="button" disabled={saving} onClick={() => review(row, "approved")} className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"><Check className="h-3.5 w-3.5" /> Approve charge</button></span>}</div></div>}</li>; })}</ul>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rose-100 bg-rose-50/60 px-4 py-3"><span className="flex items-center gap-2 text-[11px] font-semibold text-rose-900"><Lock className="h-4 w-4" />{approvedTotal ? `${money(approvedTotal)} approved by the Owner.` : "Nothing here is deducted unless the Owner approves it."}</span>{canReview && pending.length > 0 && <span className="text-[11px] font-bold text-rose-700">{pending.length} pending decision{pending.length === 1 ? "" : "s"}</span>}</div>
+  </div>;
 }
