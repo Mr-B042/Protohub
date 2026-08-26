@@ -9664,9 +9664,20 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
 }
 .cart-countdown-critical { animation: cartCountdownCritical 1s ease-out infinite; }
 
+/* Today, on the recovery calendar. Violet rather than the red/amber the day
+   statuses already use - "this is now" is a different kind of fact from "this
+   day went badly", and reusing a status colour would say the wrong thing. Slow
+   and soft: it marks a position, it does not demand action. */
+@keyframes calendarTodayPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.45); }
+  50%      { box-shadow: 0 0 0 6px rgba(139, 92, 246, 0); }
+}
+.calendar-today { animation: calendarTodayPulse 2s ease-out infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .cart-urgent-promise,
   .cart-urgent-gap,
   .cart-penalty-risk,
-  .cart-countdown-critical { animation: none; }
+  .cart-countdown-critical,
+  .calendar-today { animation: none; }
 }

@@ -32546,18 +32546,28 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     if (!recoveryRepViewingId) { setRecoveryCalendar(null); return; }
     const bounds = periodBoundsForQuery(recoveryBonusPeriod, recoveryBonusDateRange);
     if (!bounds) { setRecoveryCalendar(null); return; }
-    const key = `${recoveryRepViewingId}|${bounds.dateFrom}|${bounds.dateTo}`;
+    // ⚠️ Fetch the WHOLE MONTH the range sits in, not just the range. A one-day
+    // window used to render a calendar with a single cell in it, which is not a
+    // calendar. The grid shows every day of the month and greys the ones
+    // outside the selection; the metric cards still count only the selection,
+    // computed from these same rows so the two can never disagree.
+    const monthFrom = `${bounds.dateFrom.slice(0, 7)}-01`;
+    const monthEndDate = new Date(`${bounds.dateTo.slice(0, 7)}-01T00:00:00Z`);
+    monthEndDate.setUTCMonth(monthEndDate.getUTCMonth() + 1);
+    monthEndDate.setUTCDate(0);
+    const monthTo = monthEndDate.toISOString().slice(0, 10);
+    const key = `${recoveryRepViewingId}|${monthFrom}|${monthTo}`;
     // ⚠️ ONLY a range that has fully ended may be cached. A range containing
     // today keeps changing as the rep works, and caching it froze the calendar
     // at whatever today looked like when the page opened - Delight logged 26
     // orders and her cell still read 0. Past days are immutable; today is not.
-    const isSettledRange = bounds.dateTo < formatDateKey(new Date());
+    const isSettledRange = monthTo < formatDateKey(new Date());
     const cached = isSettledRange ? recoveryCalendarCache.current.get(key) : undefined;
     if (cached) { setRecoveryCalendar(cached); return; }
     const requestId = ++recoveryCalendarRequestId.current;
     try {
       const result = await recoveryRepKpiApi.calendar({
-        repId: recoveryRepViewingId, dateFrom: bounds.dateFrom, dateTo: bounds.dateTo
+        repId: recoveryRepViewingId, dateFrom: monthFrom, dateTo: monthTo
       });
       if (isSettledRange) recoveryCalendarCache.current.set(key, result);
       if (requestId !== recoveryCalendarRequestId.current) return;
@@ -66324,6 +66334,10 @@ ${waybillLineItems(w).length > 1
                     {recoveryCalendar ? (
                       <RecoveryBonusCalendar
                         view={recoveryCalendar}
+                        range={(() => {
+                          const b = periodBoundsForQuery(recoveryBonusPeriod, recoveryBonusDateRange);
+                          return b ? { start: b.dateFrom, end: b.dateTo } : null;
+                        })()}
                         loading={recoveryBonusLoading}
                         formatMoney={formatMoney}
                       />
