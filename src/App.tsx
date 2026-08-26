@@ -103817,9 +103817,13 @@ ${waybillLineItems(w).length > 1
                         return { ...v, outcomeNote: next };
                       })} />
 	                  </label>
-	                  <label className="flex flex-col gap-1">
-	                    <span className="text-xs font-bold text-gray-600">Call them again on</span>
-	                    <input type="date" className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.nextActionAt}
+                  <label className="flex flex-col gap-1">
+                    <span className="flex items-center gap-2 text-xs font-bold text-gray-700 dark:text-slate-200">
+                      Schedule callback reminder
+                      {cartAttemptDraft.nextActionAt && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">Reminder scheduled</span>}
+                    </span>
+                    <span className="text-[11px] text-gray-500 dark:text-slate-400">Choose a date if the customer asked you to call later.</span>
+                    <input type="date" aria-label="Schedule callback reminder date" className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark]" value={cartAttemptDraft.nextActionAt}
 	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, nextActionAt: e.target.value }))} />
 	                  </label>
 	                  <label className="flex items-center gap-2 self-end text-xs font-semibold text-gray-700">
