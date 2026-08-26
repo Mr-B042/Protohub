@@ -38144,7 +38144,7 @@ ${waybillLineItems(w).length > 1
       return roleRank(a.role) - roleRank(b.role) || a.name.localeCompare(b.name);
     });
   useEffect(() => {
-    if (orderWorkspacePage !== "Follow-up Queue") return;
+    if (orderWorkspacePage !== "Follow-up Queue" || followUpView === "carts") return;
     loadFollowUpKpi();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderWorkspacePage, responseTick, currentRole, currentManagedUser?.id]);
@@ -46855,10 +46855,12 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     // The Follow-up Queue owns the Cart Follow-ups tab; the workspace and the
     // carts page both show how many are waiting, so all three need the list.
-    if (activePage !== "Follow-up Queue" && activePage !== "Abandoned Carts" && activePage !== "Sales Rep Workspace") return;
+    const cartSurface = activePage === "Abandoned Carts" || activePage === "Sales Rep Workspace"
+      || (activePage === "Follow-up Queue" && followUpView === "carts");
+    if (!cartSurface) return;
     void loadCartFollowUps();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, currentRole]);
+  }, [activePage, currentRole, followUpView]);
 
   useEffect(() => {
     if (activePage !== "Personal Delivery Agents") return;
