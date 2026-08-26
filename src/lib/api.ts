@@ -3229,6 +3229,7 @@ export type CartLogMiss = {
   cartsDue: number; cartsLogged: number; cartsMissed: number; amount: number;
   status: "pending" | "approved" | "waived";
   reviewedByName: string; reviewedAt: string | null; reviewNote: string;
+  affectedCarts?: Array<{ id: string; customer: string; phone: string; productName: string; assignedAt: string | null; reason: string }>;
 };
 
 export type CartLogPenaltiesView = {

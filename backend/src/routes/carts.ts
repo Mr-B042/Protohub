@@ -2364,6 +2364,14 @@ router.get("/log-penalties",
         touched.forEach((cartId) => { if (dueIds.has(cartId)) count += 1; });
         return count;
       };
+      const affectedCartsFor = (repId: string, dateKey: string, dueIds: Set<string>) => {
+        const touched = loggedCarts.get(`${repId}|${dateKey}`) ?? new Set<string>();
+        return openCarts.filter((cart) => cart.assigned_rep_id === repId && dueIds.has(cart.id) && !touched.has(cart.id)).map((cart) => ({
+          id: String(cart.id), customer: String(cart.customer ?? "Unknown customer"), phone: String(cart.phone ?? ""),
+          productName: String(cart.product_name ?? cart.package_name ?? "Cart"), assignedAt: cart.assigned_at ?? cart.created_at ?? null,
+          reason: "No follow-up activity logged"
+        }));
+      };
       repIds.forEach((repId) => {
         const theirCarts = openCarts.filter((row) => row.assigned_rep_id === repId);
         days.forEach((dateKey) => {
@@ -2406,6 +2414,7 @@ router.get("/log-penalties",
             reviewedByName: decision?.reviewed_by_name ?? "",
             reviewedAt: decision?.reviewed_at ?? null,
             reviewNote: decision?.review_note ?? ""
+            ,affectedCarts: affectedCartsFor(input.repId, input.dateKey, new Set(openCarts.filter((row) => row.assigned_rep_id === input.repId && lagosDateKey(row.assigned_at ?? row.created_at) <= input.dateKey).map((row) => row.id)))
           };
         })
         .sort((left, right) => right.missDate.localeCompare(left.missDate));
@@ -2469,6 +2478,7 @@ router.get("/log-penalties",
               reviewedByName: decision?.reviewed_by_name ?? "",
               reviewedAt: decision?.reviewed_at ?? null,
               reviewNote: decision?.review_note ?? ""
+              ,affectedCarts: affectedCartsFor(input.repId, input.dateKey, new Set(openCarts.filter((row) => row.assigned_rep_id === input.repId && lagosDateKey(row.assigned_at ?? row.created_at) <= input.dateKey).map((row) => row.id)))
             };
           })
           .sort((left, right) => right.missDate.localeCompare(left.missDate));
