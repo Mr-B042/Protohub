@@ -2128,7 +2128,26 @@ export type RecoveryFollowUpPairs = Record<string, {
   prior: RecoveryFollowUpEntry | null;
 }>;
 
+export type RecoveryDayActivity = {
+  day: string;
+  followUps: Array<{
+    orderId: string; customer: string; phone: string; status: string;
+    at: string; channel: string; outcome: string; note: string;
+    reached: boolean; nextActionAt: string | null;
+    /** Identical saves collapsed into one row - see the endpoint's warning. */
+    repeats: number;
+  }>;
+  retention: Array<{ orderId: string; customer: string; at: string; stage: string; outcome: string; response: string }>;
+  claimed: Array<{ orderId: string; customer: string; phone: string; status: string; amount: number }>;
+  delivered: Array<{ orderId: string; customer: string; amount: number }>;
+};
+
 export const recoveryRepKpiApi = {
+  dayActivity: (day: string, repId?: string) => {
+    const qs = new URLSearchParams({ day });
+    if (repId) qs.set("repId", repId);
+    return get<RecoveryDayActivity>(`/api/recovery-rep-kpi/day-activity?${qs.toString()}`);
+  },
   followUpPairs: (repId?: string) =>
     get<{ pairs: RecoveryFollowUpPairs }>(
       `/api/recovery-rep-kpi/follow-up-pairs${repId ? `?repId=${encodeURIComponent(repId)}` : ""}`),

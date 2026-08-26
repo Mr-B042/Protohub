@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Phone, RefreshCw, CheckSquare, Inbox, TrendingUp, TrendingDown, Info, X } from "lucide-react";
-import type { RecoveryCalendarDay, RecoveryCalendarView } from "../lib/api";
+import type { RecoveryCalendarDay, RecoveryCalendarView, RecoveryDayActivity } from "../lib/api";
 
 type Props = {
   view: RecoveryCalendarView;
@@ -8,6 +8,8 @@ type Props = {
   range?: { start: string; end: string } | null;
   loading?: boolean;
   formatMoney: (value: number) => string;
+  /** Fetches what a day's counts are actually made of. */
+  loadDayActivity?: (day: string) => Promise<RecoveryDayActivity>;
 };
 
 /**
@@ -56,11 +58,29 @@ const WEEKDAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "F
 const dayNumber = (key: string) => Number(key.slice(8, 10));
 const monthTitle = (key: string) =>
   new Date(`${key}T12:00:00Z`).toLocaleDateString("en-NG", { month: "long", year: "numeric" });
+const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const longDate = (key: string) =>
   new Date(`${key}T12:00:00Z`).toLocaleDateString("en-NG", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
-export default function RecoveryBonusCalendar({ view, range, loading, formatMoney }: Props) {
+export default function RecoveryBonusCalendar({ view, range, loading, formatMoney, loadDayActivity }: Props) {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [activity, setActivity] = useState<RecoveryDayActivity | null>(null);
+  const [activityLoading, setActivityLoading] = useState(false);
+
+  // Loaded per day, on demand. A month of activity fetched up front would be
+  // thousands of rows for a panel that shows one day at a time.
+  useEffect(() => {
+    if (!selectedDay || !loadDayActivity) { setActivity(null); return; }
+    let cancelled = false;
+    setActivityLoading(true);
+    setActivity(null);
+    loadDayActivity(selectedDay)
+      .then((result) => { if (!cancelled) setActivity(result); })
+      .catch(() => { if (!cancelled) setActivity(null); })
+      .finally(() => { if (!cancelled) setActivityLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDay]);
   const targets = view.targets ?? { followUp: 0, retention: 0, delivered: 0, claimed: 0 };
   const todayKey = new Date().toISOString().slice(0, 10);
 
@@ -244,10 +264,20 @@ export default function RecoveryBonusCalendar({ view, range, loading, formatMone
                           : <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />}
                       </span>
 
-                      {/* Three micro-bars instead of "F: 4 R: 7 D: 1". The
-                          shape of a day is readable at a glance across a whole
-                          month; the raw triplet needed reading one cell at a
-                          time. Numbers stay underneath rather than being lost. */}
+                      {/* ⚠️ A rest day draws NO bars and NO zeros. Rendering
+                          "0 0 0 0" in the same shape as a worked day is exactly
+                          why Sundays read as missed days - the cell looked like
+                          a failure that happened to be grey. It says Rest on a
+                          hatch instead, which cannot be mistaken for a blank
+                          no-data cell either. */}
+                      {row.status === "rest" ? (
+                        <span className="flex h-[42px] items-center justify-center">
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:bg-slate-800 dark:text-slate-500">
+                            Rest
+                          </span>
+                        </span>
+                      ) : (
+                      <>
                       <span className="flex h-6 items-end gap-1">
                         {METRICS.map((metric) => {
                           const value = row[metric.key];
@@ -268,6 +298,8 @@ export default function RecoveryBonusCalendar({ view, range, loading, formatMone
                             <span key={metric.key} className={metric.text}>{row[metric.key]}</span>
                           ))}
                       </span>
+                      </>
+                      )}
                     </button>
                   );
                 })}
@@ -317,6 +349,85 @@ export default function RecoveryBonusCalendar({ view, range, loading, formatMone
                   );
                 })}
               </div>
+
+              {/* ── What the numbers are made of ─────────── */}
+              {loadDayActivity && selected.status !== "rest" && (
+                <div className="mt-4 border-t border-sky-200/70 pt-3">
+                  {activityLoading ? (
+                    <p className="m-0 py-3 text-center text-xs font-semibold text-slate-400">Loading the day's activity…</p>
+                  ) : !activity || (activity.followUps.length === 0 && activity.retention.length === 0
+                      && activity.claimed.length === 0 && activity.delivered.length === 0) ? (
+                    <p className="m-0 py-3 text-center text-xs font-semibold text-slate-400">Nothing was logged on this day.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {activity.followUps.length > 0 && (
+                        <div>
+                          <p className="m-0 flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                            <Phone className="h-3.5 w-3.5 text-emerald-600" />
+                            Follow-ups · {activity.followUps.length}
+                            {/* Reached matters more than attempted: a day of
+                                calls nobody answered is not the same day. */}
+                            <span className="font-bold normal-case tracking-normal text-slate-400">
+                              {activity.followUps.filter((row) => row.reached).length} reached
+                            </span>
+                          </p>
+                          <ul className="m-0 mt-1.5 max-h-64 list-none space-y-1.5 overflow-y-auto p-0">
+                            {activity.followUps.map((row, index) => (
+                              <li key={`${row.orderId}-${row.at}-${index}`}
+                                className="rounded-lg border border-slate-200/80 bg-white px-2.5 py-2">
+                                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                                  <span className="text-xs font-black text-slate-900">
+                                    <span className="text-[#1F8FE0]">{row.orderId}</span> {row.customer}
+                                  </span>
+                                  <span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400">
+                                    {row.channel}
+                                    {row.repeats > 1 && (
+                                      <span className="rounded bg-amber-100 px-1 py-0.5 font-black text-amber-800"
+                                        title="Identical saves collapsed - the same log was submitted more than once">
+                                        ×{row.repeats} duplicate
+                                      </span>
+                                    )}
+                                    {clock(row.at)}
+                                  </span>
+                                </div>
+                                {(row.outcome || row.note) && (
+                                  <p className="m-0 mt-0.5 text-[11px] font-medium leading-snug text-slate-600">
+                                    {row.outcome || row.note}
+                                  </p>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {[
+                        { rows: activity.retention, icon: <RefreshCw className="h-3.5 w-3.5 text-sky-600" />, label: "Retention touches",
+                          line: (row: any) => row.outcome || row.response || row.stage },
+                        { rows: activity.claimed, icon: <Inbox className="h-3.5 w-3.5 text-amber-600" />, label: "Claimed",
+                          line: (row: any) => row.status },
+                        { rows: activity.delivered, icon: <CheckSquare className="h-3.5 w-3.5 text-violet-600" />, label: "Delivered",
+                          line: (row: any) => formatMoney(row.amount) }
+                      ].filter((group) => group.rows.length > 0).map((group) => (
+                        <div key={group.label}>
+                          <p className="m-0 flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                            {group.icon}{group.label} · {group.rows.length}
+                          </p>
+                          <ul className="m-0 mt-1.5 flex list-none flex-wrap gap-1.5 p-0">
+                            {group.rows.map((row: any, index: number) => (
+                              <li key={`${row.orderId}-${index}`}
+                                className="rounded-lg border border-slate-200/80 bg-white px-2 py-1 text-[11px] font-bold text-slate-700">
+                                <span className="text-[#1F8FE0]">{row.orderId}</span> {row.customer}
+                                <span className="ml-1 font-semibold text-slate-400">{group.line(row)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

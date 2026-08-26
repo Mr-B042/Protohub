@@ -66333,6 +66333,7 @@ ${waybillLineItems(w).length > 1
                   <div className={`mt-4 min-w-0 transition-opacity ${recoveryBonusLoading ? "opacity-50" : "opacity-100"}`}>
                     {recoveryCalendar ? (
                       <RecoveryBonusCalendar
+                        loadDayActivity={(day) => recoveryRepKpiApi.dayActivity(day, recoveryRepViewingId ?? undefined)}
                         view={recoveryCalendar}
                         range={(() => {
                           const b = periodBoundsForQuery(recoveryBonusPeriod, recoveryBonusDateRange);
