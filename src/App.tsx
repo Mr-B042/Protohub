@@ -12362,7 +12362,9 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [followUpSearch, setFollowUpSearch] = useState("");
   const [followUpClockNow, setFollowUpClockNow] = useState(() => Date.now());
   const [cellEditor, setCellEditor] = useState<{ orderId: string; date: string; customer: string; top: number; left: number; maxHeight: number; chase?: boolean; targetSlot?: "morning" | "later" | null } | null>(null);
-  const [cellEditorText, setCellEditorText] = useState("");
+  // Keep Daily Log typing out of App state. App is intentionally broad and a
+  // controlled textarea here rerendered the entire follow-up grid per letter.
+  const cellEditorTextRef = useRef("");
   const [cellEditorChannels, setCellEditorChannels] = useState<string[]>(["call"]);
   const [cellEditorPromised, setCellEditorPromised] = useState("");
   const [cellEditorPeriod, setCellEditorPeriod] = useState<"morning" | "afternoon" | "evening">("morning");
@@ -12405,6 +12407,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [followUpTagForOffer, setFollowUpTagForOffer] = useState(false);
   const [followUpAttemptRecoveryBucket, setFollowUpAttemptRecoveryBucket] = useState<FollowUpRecoveryBucket | "">("");
   const [followUpAttemptNote, setFollowUpAttemptNote] = useState("");
+  const followUpAttemptNoteRef = useRef("");
   const [followUpAttemptTaskId, setFollowUpAttemptTaskId] = useState("");
   const [followUpNextActionEnabled, setFollowUpNextActionEnabled] = useState(false);
   const [followUpNextActionType, setFollowUpNextActionType] = useState<FollowUpTask["taskType"]>("callback");
@@ -38087,6 +38090,7 @@ ${waybillLineItems(w).length > 1
     setFollowUpTagForOffer(false);
     setFollowUpAttemptRecoveryBucket("");
     setFollowUpAttemptNote("");
+    followUpAttemptNoteRef.current = "";
     setFollowUpAttemptTaskId(task?.id ?? "");
     setFollowUpNextActionEnabled(false);
     setFollowUpNextActionType("callback");
@@ -38205,7 +38209,7 @@ ${waybillLineItems(w).length > 1
     const left = Math.max(margin, Math.min(rect.left, viewportWidth - popoverWidth - margin));
     const selectedSlot = chase ? (targetSlot ?? "morning") : null;
     setCellEditor({ orderId, date, customer, top, left, maxHeight, chase, targetSlot: selectedSlot });
-    setCellEditorText("");
+    cellEditorTextRef.current = "";
     // Unreachable → all channels expected this round; otherwise just Call.
     setCellEditorChannels(chase ? ["call", "sms", "whatsapp_text", "whatsapp_beep"] : ["call"]);
     setCellEditorPromised("");
@@ -38215,7 +38219,7 @@ ${waybillLineItems(w).length > 1
   const FU_PERIOD_TIME: Record<string, string> = { morning: "09:00", afternoon: "13:30", evening: "16:30" };
   const saveCellLog = async () => {
     if (!cellEditor) return;
-    const text = cellEditorText.trim();
+    const text = cellEditorTextRef.current.trim();
     if (!text) { showToast("Type what happened first."); return; }
     // Anti-gaming: block logging the Afternoon/Evening slot before noon (today only).
     if (cellEditor.chase && (cellEditor.targetSlot ?? "morning") === "later"
@@ -38237,7 +38241,7 @@ ${waybillLineItems(w).length > 1
         slot: cellEditor.chase ? (cellEditor.targetSlot ?? "morning") : null
       });
       setCellEditor(null);
-      setCellEditorText("");
+      cellEditorTextRef.current = "";
       setCellEditorPromised("");
       setCellEditorTag("");
       loadFollowUpKpi();
@@ -38327,13 +38331,13 @@ ${waybillLineItems(w).length > 1
         attemptType: followUpAttemptType,
         outcomeCode: outcomeText.trim(),
         recoveryBucket: followUpAttemptRecoveryBucket || null,
-        outcomeNote: followUpAttemptNote.trim() || null,
+        outcomeNote: followUpAttemptNoteRef.current.trim() || followUpAttemptNote.trim() || null,
         // Only creates the follow-up task when the rep asked for a reminder;
         // "schedule but don't remind me" would otherwise silently make the
         // order look due to everyone else.
         nextActionType: followUpNextActionEnabled && followUpReminderSet ? followUpNextActionType : null,
         nextActionAt: followUpNextActionEnabled ? nextActionMoment.iso ?? null : null,
-        nextActionNote: followUpNextActionEnabled ? (followUpNextActionNote.trim() || followUpAttemptNote.trim() || outcomeText.trim()) : null,
+        nextActionNote: followUpNextActionEnabled ? (followUpNextActionNote.trim() || followUpAttemptNoteRef.current.trim() || followUpAttemptNote.trim() || outcomeText.trim()) : null,
         attemptedAt: attemptedMoment.iso ?? null,
         contactPerson: followUpContactPerson || null,
         reminderSet: followUpNextActionEnabled && followUpReminderSet,
@@ -73277,9 +73281,10 @@ ${waybillLineItems(w).length > 1
                               <span className="rounded-full bg-[#1F8FE0] px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-white">Required</span>
                             </div>
                             <textarea
+                              key={`${cellEditor.orderId}|${cellEditor.date}|${cellEditor.targetSlot ?? "single"}`}
                               autoFocus
-                              value={cellEditorText}
-                              onChange={(e) => setCellEditorText(e.target.value)}
+                              defaultValue=""
+                              onChange={(e) => { cellEditorTextRef.current = e.target.value; }}
                               onKeyDown={(e) => {
                                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveCellLog(); }
                                 if (e.key === "Escape") setCellEditor(null);
@@ -99848,6 +99853,8 @@ ${waybillLineItems(w).length > 1
                       <DraftTextarea
                         value={followUpAttemptNote}
                         onCommit={setFollowUpAttemptNote}
+                        liveRef={followUpAttemptNoteRef}
+                        commitOnChange={false}
                         maxLength={500}
                         rows={3}
                         showCount
