@@ -60397,6 +60397,7 @@ ${waybillLineItems(w).length > 1
       : cartGridDayFilter === "unrecorded"
         ? weekScoped.filter((row) => !row.assignedAt)
         : weekScoped.filter((row) => assignedDayKey(row) === cartGridDayFilter);
+    const actionRows = rows.filter((row) => Boolean(row.needsLog) && !row.closed);
     // The day chips filter on the day a cart was ASSIGNED, which is the right
     // question for "what did I hand out on Tuesday" and the wrong one for a
     // backlog: a cart assigned in July is excluded from every chip, so picking
@@ -60775,6 +60776,17 @@ ${waybillLineItems(w).length > 1
             >
               Show all {weekScoped.length} carts
             </button>
+          </div>
+        )}
+
+        {penalties?.today?.status === "missed" && actionRows.length > 0 && (
+          <div className="border-b border-rose-200 bg-gradient-to-r from-rose-50/70 to-white px-4 py-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div><p className="m-0 text-sm font-black uppercase tracking-wide text-rose-700">{actionRows.length} unlogged cart{actionRows.length === 1 ? "" : "s"} need action</p><p className="m-0 text-[11px] font-semibold text-slate-500">Open any cart to log a call, WhatsApp, SMS, or outcome. Logging removes its pending charge automatically.</p></div>
+              <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600">Sort by: Oldest first</span>
+            </div>
+            <div className="overflow-x-auto rounded-xl border border-rose-100 bg-white"><table className="w-full min-w-[980px] text-left text-xs"><thead className="bg-rose-50/60 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="px-3 py-2">Cart / Customer</th><th className="px-3 py-2">Assigned time</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Item</th><th className="px-3 py-2">Potential charge</th><th className="px-3 py-2" /></tr></thead><tbody>{actionRows.map((row) => <tr key={`action-${row.id}`} className="border-t border-rose-50"><td className="px-3 py-2.5"><b className="block">#{String(row.id).slice(0, 8)} · {row.customer || "No name given"}</b><span className="text-slate-400">{row.state || row.city || "—"}</span></td><td className="px-3 py-2.5 text-slate-600">{row.assignedAt ? new Date(row.assignedAt).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" }) : "—"}</td><td className="px-3 py-2.5"><span className="rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black uppercase text-rose-700">Unlogged</span><span className="block text-[11px] text-slate-500">No activity logged</span></td><td className="px-3 py-2.5 text-slate-600">{row.productName || "Cart"}</td><td className="px-3 py-2.5 font-black text-rose-700">{naira(penalties.missAmount)}</td><td className="px-3 py-2.5"><button type="button" onClick={() => { setSelectedCartId(row.id); setModal("cartDetails"); }} className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-bold text-gray-700 hover:border-blue-300 hover:text-blue-600">Open &amp; Log Activity →</button></td></tr>)}</tbody></table></div>
+            <p className="m-0 mt-2 rounded-lg bg-white/80 px-2 py-1.5 text-[11px] font-semibold text-slate-500">Act now to avoid charges. Once logged, the charge is removed automatically.</p>
           </div>
         )}
 
