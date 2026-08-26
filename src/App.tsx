@@ -100,6 +100,7 @@ import {
   X,
   Zap,
   ChevronDown,
+  ThumbsUp,
   ChevronUp,
   MapPin,
   Mail,
@@ -12957,11 +12958,14 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [pendingSalesExpansionAction, setPendingSalesExpansionAction] = useState<PendingSalesExpansionAction | null>(null);
   const [repOrderStatusTab, setRepOrderStatusTab] = useState<RepOrderStatusTab>("All Orders");
   const [repProductSearch, setRepProductSearch] = useState("");
-  const [repProductSort, setRepProductSort] = useState("Name A-Z");
+  const [repProductSort, setRepProductSort] = useState("Best match");
   const [repProductState, setRepProductState] = useState("Lagos");
   const [repProductView, setRepProductView] = useState<"recommended" | "all" | "low" | "unavailable">("recommended");
   const [repProductBuyingId, setRepProductBuyingId] = useState("");
   const [repProductGuideId, setRepProductGuideId] = useState("");
+  // The grid previews six and expands on demand - the full catalogue pushed
+  // the cross-sell rail off the bottom of a call-length screen.
+  const [repProductShowAll, setRepProductShowAll] = useState(false);
   const [repProductFiltersOpen, setRepProductFiltersOpen] = useState(false);
   void repProductBuyingId;
   const [repCartSearch, setRepCartSearch] = useState("");
@@ -68646,7 +68650,7 @@ ${waybillLineItems(w).length > 1
 
     return (
       <div className="space-y-6">
-        <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+        {repConsoleTab !== "Products & Stock" && <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="space-y-1">
             <nav className="flex items-center gap-2 text-sm font-medium text-gray-500 mb-1">
               <span>Dashboard</span>
@@ -68678,12 +68682,12 @@ ${waybillLineItems(w).length > 1
               </div>
             </div>
           )}
-        </header>
+        </header>}
 
         {/* Carts assigned to this rep are work they would otherwise never know
             about - the cart list is a different page. Surfacing the count here,
             on the page they actually land on, is the whole point. */}
-        {(() => {
+        {repConsoleTab !== "Products & Stock" && (() => {
           if (!cartFollowUpIsOwnWork || cartFollowUps.length === 0) return null;
           const open = cartFollowUps.filter((row) => !row.convertedOrderId).length;
           const uncalled = cartFollowUps.filter((row) => row.attempts === 0).length;
@@ -68713,7 +68717,7 @@ ${waybillLineItems(w).length > 1
           );
         })()}
 
-        <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar max-w-full" aria-label="Sales rep workspace sections">
+        {repConsoleTab !== "Products & Stock" && <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar max-w-full" aria-label="Sales rep workspace sections">
           {repConsoleTabs.filter((tab) => tab !== "Products & Stock" && (tab !== "Upsell & Cross-sell Log" || (currentRole === "Sales Rep" && salesExpansionFeatureEnabled))).map((tab) => (
             <button
               key={tab}
@@ -68728,7 +68732,7 @@ ${waybillLineItems(w).length > 1
               )}
             </button>
           ))}
-        </nav>
+        </nav>}
 
         {repConsoleTab === "Dashboard" ? (
           <div className="space-y-6">
@@ -69404,7 +69408,12 @@ ${waybillLineItems(w).length > 1
               const matchesSearch = !repProductSearch.trim() || `${product.name} ${product.sku} ${product.description ?? ""}`.toLowerCase().includes(repProductSearch.trim().toLowerCase());
               const matchesView = repProductView === "all" || (repProductView === "low" ? stock > 0 && stock <= smartStockLowStockThreshold : repProductView === "unavailable" ? stock <= 0 : stock > smartStockLowStockThreshold);
               return matchesSearch && matchesView;
-            }).sort((a, b) => repProductSort === "Stock" ? stockInState(b) - stockInState(a) : repProductSort === "Price" ? (primaryPricing(a)?.sellingPrice ?? 0) - (primaryPricing(b)?.sellingPrice ?? 0) : a.name.localeCompare(b.name));
+            }).sort((a, b) => repProductSort === "Stock" ? stockInState(b) - stockInState(a)
+              : repProductSort === "Price" ? (primaryPricing(a)?.sellingPrice ?? 0) - (primaryPricing(b)?.sellingPrice ?? 0)
+              : repProductSort === "Name A-Z" ? a.name.localeCompare(b.name)
+              // Best match: what the rep can actually sell today, then what
+              // actually moves. Alphabetical led with whatever starts "2-in-1".
+              : (Number(stockInState(b) > 0) - Number(stockInState(a) > 0)) || (b.unitsSold - a.unitsSold) || a.name.localeCompare(b.name));
             const totalAvailable = active.reduce((sum, product) => sum + stockInState(product), 0);
             const buyingProduct = active.find((product) => product.id === repProductBuyingId) ?? active[0] ?? null;
             const explicitCrossSellIds = new Set([
@@ -69426,43 +69435,365 @@ ${waybillLineItems(w).length > 1
               return { state, quantity };
             }).filter((row) => row.quantity > 0).sort((a, b) => b.quantity - a.quantity);
             const guideProduct = active.find((product) => product.id === repProductGuideId) ?? null;
+            const companyUnitsAvailable = active.reduce((sum, product) => sum + totalProductStockLive(product), 0);
+            const repProductVisible = repProductShowAll ? filtered.length : 6;
+            const shownIds = new Set(filtered.slice(0, repProductVisible).map((product) => product.id));
+            // Genuinely OTHER: stocked here, but not already a card above. A
+            // strip repeating the grid it sits under is just a longer page.
+            const otherProducts = active.filter((product) => stockInState(product) > 0 && !shownIds.has(product.id));
+            const viewHeading = repProductView === "low" ? "Low stock"
+              : repProductView === "unavailable" ? "Unavailable"
+              : repProductView === "all" ? "All products" : "Products ready to sell";
+            const viewSubheading = repProductView === "low" ? "Confirm these before promising delivery"
+              : repProductView === "unavailable" ? "Out of stock - offer an alternative"
+              : repProductView === "all" ? "Everything in the catalogue" : "High availability and strong demand";
             return <>
+              {/* ── Headline counts ─────────────────────────────
+                  ⚠️ The tile's big number is what the rep can sell in the
+                  CHOSEN STATE; the sub-line carries the company figure. The
+                  mockup labelled this one "Total across all states", which
+                  would have put a company number under a state-scoped tile
+                  sitting beside three state-scoped ones. Both are shown
+                  instead, each said out loud, rather than one number that
+                  means whichever the reader assumes. */}
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                {[{ label: "Active Products", value: active.length, tone: "blue" }, { label: "Units Available", value: totalAvailable.toLocaleString(), tone: "green" }, { label: "Low Stock", value: low.length, tone: "amber" }, { label: "Out of Stock", value: unavailable.length, tone: "red" }].map((stat) => <article key={stat.label} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-[#0c1722]"><span className={`text-[11px] font-black uppercase tracking-wide ${stat.tone === "green" ? "text-emerald-600" : stat.tone === "amber" ? "text-amber-600" : stat.tone === "red" ? "text-rose-600" : "text-blue-600"}`}>{stat.label}</span><strong className="mt-1 block text-2xl font-black text-gray-900 dark:text-slate-100">{stat.value}</strong></article>)}
+                {[
+                  { label: "Active Products", value: active.length.toLocaleString(), hint: "Products you can sell",
+                    icon: <Package className="h-5 w-5" />, tone: "bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300" },
+                  { label: "Units Available", value: totalAvailable.toLocaleString(), hint: `${companyUnitsAvailable.toLocaleString()} across all states`,
+                    icon: <Boxes className="h-5 w-5" />, tone: "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300" },
+                  { label: "Low Stock", value: low.length.toLocaleString(), hint: "Need attention",
+                    icon: <AlertTriangle className="h-5 w-5" />, tone: "bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300" },
+                  { label: "Out of Stock", value: unavailable.length.toLocaleString(), hint: `Unavailable in ${repProductState}`,
+                    icon: <CircleX className="h-5 w-5" />, tone: "bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-300" }
+                ].map((stat) => (
+                  <article key={stat.label} className="flex items-center gap-3 rounded-2xl border border-gray-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] dark:border-slate-700 dark:bg-[#0c1722] dark:ring-0">
+                    <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${stat.tone}`}>{stat.icon}</span>
+                    <span className="min-w-0">
+                      <strong className="block text-2xl font-black leading-none tracking-tight tabular-nums text-gray-900 dark:text-slate-100">{stat.value}</strong>
+                      <span className="mt-1 block truncate text-[12px] font-bold text-gray-700 dark:text-slate-300">{stat.label}</span>
+                      <span className="block truncate text-[11px] font-medium text-gray-400 dark:text-slate-500">{stat.hint}</span>
+                    </span>
+                  </article>
+                ))}
               </div>
-              <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-[#0c1722]">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                  <label className="flex-1"><span className="mb-1 block text-xs font-black text-gray-700 dark:text-slate-200">Customer delivery state</span><select className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100" value={repProductState} onChange={(e) => setRepProductState(e.target.value)}>{states.map((state) => <option key={state}>{state}</option>)}</select></label>
-                  <label className="flex-[2]"><span className="mb-1 block text-xs font-black text-gray-700 dark:text-slate-200">Search products</span><input className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100" value={repProductSearch} onChange={(e) => setRepProductSearch(e.target.value)} placeholder="Product, SKU, category..." /></label>
-                  <select className="h-10 rounded-lg border border-gray-200 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100" value={repProductSort} onChange={(e) => setRepProductSort(e.target.value)} aria-label="Sort products"><option>Name A-Z</option><option>Price</option><option>Stock</option></select>
-                  <button type="button" onClick={() => setRepProductFiltersOpen((open) => !open)} className="h-10 rounded-lg border border-gray-200 bg-white px-4 text-sm font-black text-gray-700 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200"><Filter className="mr-1 inline h-4 w-4" /> Filters</button>
+
+              {/* ⚠️ The rail is a COLUMN, not a footer. It answers "what else
+                  can I sell this caller" while the rep is still looking at the
+                  grid - underneath the products it was scrolled past during the
+                  call it was meant to help with. It sticks on desktop and
+                  stacks under the grid on narrow screens. */}
+              <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_21rem]">
+                <div className="min-w-0 space-y-4">
+                  <section className="rounded-2xl border border-gray-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] dark:border-slate-700 dark:bg-[#0c1722] dark:ring-0">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                      <label className="min-w-0 flex-1">
+                        <span className="mb-1 block text-xs font-black text-gray-700 dark:text-slate-200">Customer delivery state</span>
+                        <span className="relative block">
+                          <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#1F8FE0]" />
+                          <select className="h-10 w-full appearance-none rounded-lg border border-gray-200 bg-white pl-9 pr-8 text-sm font-semibold text-gray-800 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"
+                            value={repProductState} onChange={(e) => setRepProductState(e.target.value)}>
+                            {states.map((state) => <option key={state}>{state}</option>)}
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                        </span>
+                      </label>
+                      <label className="min-w-0 flex-[2]">
+                        <span className="mb-1 block text-xs font-black text-gray-700 dark:text-slate-200">Search products</span>
+                        <span className="relative block">
+                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                          <input className="h-10 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"
+                            value={repProductSearch} onChange={(e) => setRepProductSearch(e.target.value)} placeholder="Search by product name, SKU, category..." />
+                        </span>
+                      </label>
+                      <label className="min-w-0">
+                        <span className="mb-1 block text-xs font-black text-gray-700 dark:text-slate-200">Sort by</span>
+                        <span className="relative block">
+                          <select className="h-10 w-full appearance-none rounded-lg border border-gray-200 bg-white pl-3 pr-8 text-sm font-semibold text-gray-800 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"
+                            value={repProductSort} onChange={(e) => setRepProductSort(e.target.value)} aria-label="Sort products">
+                            <option>Best match</option><option>Name A-Z</option><option>Price</option><option>Stock</option>
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                        </span>
+                      </label>
+                      <button type="button" onClick={() => setRepProductFiltersOpen((open) => !open)}
+                        className={`h-10 shrink-0 rounded-lg border px-4 text-sm font-black transition-colors ${repProductFiltersOpen ? "border-[#1F8FE0] bg-blue-50 text-[#1F8FE0] dark:bg-blue-500/15" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200"}`}>
+                        <Filter className="mr-1.5 inline h-4 w-4" />Filters
+                      </button>
+                    </div>
+                    {repProductFiltersOpen && (
+                      <div className="mt-3 flex flex-wrap gap-2 rounded-lg bg-gray-50 p-3 dark:bg-slate-900">
+                        <button type="button" onClick={() => setRepProductView("recommended")} className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-bold dark:border-slate-600 dark:bg-slate-950">In stock for {repProductState}</button>
+                        <button type="button" onClick={() => setRepProductView("low")} className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">Needs stock confirmation</button>
+                        <button type="button" onClick={() => { setRepProductSearch(""); setRepProductView("all"); }} className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">Clear filters</button>
+                      </div>
+                    )}
+
+                    {/* Every tab carries its own count, so the rep can see how
+                        much is wrong before clicking into it. */}
+                    <div className="mt-4 flex gap-1 overflow-x-auto border-b border-gray-100 dark:border-slate-700">
+                      {([
+                        ["recommended", "Recommended to Cross-sell", <Sparkles key="i" className="h-4 w-4" />, null],
+                        ["all", "All Products", <Package key="i" className="h-4 w-4" />, active.length],
+                        ["low", "Low Stock", <AlertTriangle key="i" className="h-4 w-4" />, low.length],
+                        ["unavailable", "Unavailable", <CircleX key="i" className="h-4 w-4" />, unavailable.length]
+                      ] as const).map(([key, label, icon, count]) => {
+                        const on = repProductView === key;
+                        return (
+                          <button key={key} type="button" onClick={() => setRepProductView(key)}
+                            className={`!min-h-0 -mb-px inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-black transition-colors ${
+                              on ? "border-[#1F8FE0] text-[#1F8FE0]" : "border-transparent text-gray-500 hover:text-gray-700 dark:text-slate-400"}`}>
+                            {icon}{label}
+                            {count !== null && (
+                              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black tabular-nums ${
+                                on ? "bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300" : "bg-gray-100 text-gray-500 dark:bg-slate-800 dark:text-slate-400"}`}>{count}</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-start gap-2.5">
+                        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300"><ThumbsUp className="h-4 w-4" /></span>
+                        <span className="min-w-0">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <h2 className="m-0 text-base font-black text-gray-900 dark:text-slate-100">{viewHeading} in {repProductState}</h2>
+                            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-black tabular-nums text-gray-600 dark:bg-slate-800 dark:text-slate-300">{filtered.length}</span>
+                          </span>
+                          <span className="mt-0.5 block text-[11px] font-medium text-gray-500 dark:text-slate-400">{viewSubheading}</span>
+                        </span>
+                      </div>
+                      {filtered.length > repProductVisible && (
+                        <button type="button" onClick={() => setRepProductShowAll(true)}
+                          className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-black text-gray-700 hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200">
+                          View all ({filtered.length}) <ArrowRight className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-3">{filtered.slice(0, repProductVisible).map((product) => {
+                      const stock = stockInState(product); const pricing = primaryPricing(product); const lowItem = stock > 0 && stock <= smartStockLowStockThreshold;
+                      const imageUrl = product.packages.find((pkg) => pkg.imageUrl)?.imageUrl;
+                      const pairIds = new Set([...(product.crossSellProductIds ?? []), ...product.packages.flatMap((pkg) => (pkg.companionProducts ?? []).filter(companionIsActive).map((companion) => companion.productId))]);
+                      const pairs = active.filter((candidate) => pairIds.has(candidate.id));
+                      const fastMoving = product.unitsSold > 0;
+                      const match = stock <= 0 ? { label: "Unavailable", tone: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" }
+                        : lowItem ? { label: "Low Stock", tone: "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300" }
+                        : pairIds.size > 0 ? { label: "High Match", tone: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" }
+                        : { label: "Good Match", tone: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300" };
+                      return (
+                        <article key={product.id} className="flex flex-col rounded-2xl border border-gray-200/80 bg-white p-3.5 shadow-sm ring-1 ring-slate-900/[0.02] transition-shadow hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:ring-0">
+                          <span className={`self-start rounded-md px-2 py-0.5 text-[10px] font-black ${match.tone}`}>{match.label}</span>
+                          <div className="mt-2.5 flex gap-3">
+                            {imageUrl
+                              ? <img src={imageUrl} alt="" className="h-[4.5rem] w-[4.5rem] shrink-0 rounded-xl border border-gray-100 bg-gray-50 object-contain dark:border-slate-700 dark:bg-slate-950" />
+                              : <span className="flex h-[4.5rem] w-[4.5rem] shrink-0 items-center justify-center rounded-xl border border-gray-100 bg-gray-50 text-gray-300 dark:border-slate-700 dark:bg-slate-950"><Package className="h-7 w-7" /></span>}
+                            <span className="min-w-0 flex-1">
+                              <h3 className="m-0 text-sm font-black leading-tight text-gray-900 dark:text-slate-100">{product.name}</h3>
+                              <span className="mt-0.5 block truncate text-[11px] font-medium text-gray-400 dark:text-slate-500">{product.description || "Product"}</span>
+                              <span className="mt-1.5 block text-[10px] font-bold uppercase tracking-wide text-gray-400">From</span>
+                              <strong className="block text-[17px] font-black leading-none tracking-tight text-gray-900 dark:text-slate-100">{formatProductMoney(pricing?.sellingPrice ?? 0, pricing?.currency ?? "NGN")}</strong>
+                            </span>
+                          </div>
+                          <p className={`mt-3 flex items-center gap-1.5 text-xs font-black ${stock <= 0 ? "text-rose-600" : lowItem ? "text-amber-600" : "text-emerald-600"}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${stock <= 0 ? "bg-rose-500" : lowItem ? "bg-amber-500" : "bg-emerald-500"}`} />
+                            {repProductState}: {stock <= 0 ? "Out of stock" : `${stock.toLocaleString()} units`}
+                          </p>
+                          <p className="mt-1 text-[11px] font-semibold text-gray-400 dark:text-slate-500">Company stock: {totalProductStockLive(product).toLocaleString()}</p>
+                          <div className="mt-2.5 flex flex-wrap gap-1.5">
+                            <span className={`rounded-md px-2 py-1 text-[10px] font-black ${lowItem ? "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300" : stock > 0 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"}`}>
+                              {lowItem ? "Low stock" : stock > 0 ? "High availability" : "Find another state"}
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-black text-gray-500 dark:text-slate-400">
+                              {lowItem ? <><AlertTriangle className="h-3 w-3 text-amber-500" />Confirm before promising</>
+                                : fastMoving ? <><Flame className="h-3 w-3 text-orange-500" />Fast moving</>
+                                : <><BarChart3 className="h-3 w-3 text-sky-500" />Consistent demand</>}
+                            </span>
+                          </div>
+                          {/* Faces, not a comma list: a rep glancing mid-call
+                              recognises the product they are about to offer
+                              faster than they read its name. */}
+                          <div className="mt-3 min-h-[3.25rem]">
+                            <span className="text-[10px] font-black uppercase tracking-wide text-gray-400">Pairs well with</span>
+                            {pairs.length > 0 ? (
+                              <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                {pairs.slice(0, 3).map((pair) => {
+                                  const pairImage = pair.packages.find((pkg) => pkg.imageUrl)?.imageUrl;
+                                  return (
+                                    <button key={pair.id} type="button" title={pair.name} onClick={() => setRepProductGuideId(pair.id)}
+                                      className="!min-h-0 h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 transition-colors hover:border-[#1F8FE0] dark:border-slate-700 dark:bg-slate-950">
+                                      {pairImage
+                                        ? <img src={pairImage} alt={pair.name} className="h-full w-full object-contain" />
+                                        : <span className="flex h-full w-full items-center justify-center text-[10px] font-black text-gray-400">{pair.name.slice(0, 2).toUpperCase()}</span>}
+                                    </button>
+                                  );
+                                })}
+                                {pairs.length > 3 && (
+                                  <span className="inline-flex h-9 items-center rounded-lg bg-gray-100 px-2 text-[11px] font-black text-gray-500 dark:bg-slate-800 dark:text-slate-400">+{pairs.length - 3}</span>
+                                )}
+                              </span>
+                            ) : <p className="m-0 mt-1.5 text-[11px] font-semibold text-gray-400">No configured pair yet</p>}
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <button type="button" onClick={() => setRepProductGuideId(product.id)}
+                              className="!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-black text-gray-700 hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200">
+                              <BookOpen className="h-3.5 w-3.5" />View guide
+                            </button>
+                            <button type="button" onClick={() => { if (stock <= 0) { setRepProductView("recommended"); showToast(`Showing available alternatives in ${repProductState}.`); } else { setRepProductBuyingId(product.id); showToast(`${product.name} selected. The panel on the right now ranks what pairs with it.`); } }}
+                              className={`!min-h-0 inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-black text-white transition-opacity hover:opacity-90 ${stock <= 0 ? "bg-amber-500" : "bg-[#1F8FE0]"}`}>
+                              {stock <= 0 ? "Check stock" : <>Cross-sell <ArrowRight className="h-3.5 w-3.5" /></>}
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}</div>
+                    {filtered.length === 0 && (
+                      <p className="m-0 py-10 text-center text-sm font-semibold text-gray-400">Nothing matches that search in {repProductState}.</p>
+                    )}
+                    {repProductShowAll && filtered.length > 6 && (
+                      <button type="button" onClick={() => setRepProductShowAll(false)}
+                        className="!min-h-0 mt-3 w-full rounded-lg border border-gray-200 bg-white py-2 text-xs font-black text-gray-500 hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-400">Show less</button>
+                    )}
+                  </section>
+
+                  <section className="rounded-2xl border border-gray-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] dark:border-slate-700 dark:bg-[#0c1722] dark:ring-0">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300"><Boxes className="h-4 w-4" /></span>
+                        <h3 className="m-0 text-base font-black text-gray-900 dark:text-slate-100">Other products available in {repProductState}
+                          <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-black tabular-nums text-gray-600 dark:bg-slate-800 dark:text-slate-300">{otherProducts.length}</span>
+                        </h3>
+                      </div>
+                      <button type="button" onClick={() => { setRepProductView("all"); setRepProductShowAll(true); }}
+                        className="!min-h-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-black text-gray-700 hover:bg-gray-50 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200">
+                        View all products <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+                      {otherProducts.slice(0, 4).map((product) => {
+                        const pricing = primaryPricing(product);
+                        const imageUrl = product.packages.find((pkg) => pkg.imageUrl)?.imageUrl;
+                        return (
+                          <button key={product.id} type="button" onClick={() => setRepProductGuideId(product.id)}
+                            className="!min-h-0 flex items-center gap-2.5 rounded-xl border border-gray-200 bg-white p-2.5 text-left transition-colors hover:border-[#1F8FE0] dark:border-slate-700 dark:bg-slate-950">
+                            {imageUrl
+                              ? <img src={imageUrl} alt="" className="h-10 w-10 shrink-0 rounded-lg border border-gray-100 bg-gray-50 object-contain dark:border-slate-700" />
+                              : <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-50 text-gray-300 dark:bg-slate-900"><Package className="h-5 w-5" /></span>}
+                            <span className="min-w-0">
+                              <strong className="block truncate text-xs font-black text-gray-900 dark:text-slate-100">{product.name}</strong>
+                              <span className="block text-[11px] font-black text-gray-700 dark:text-slate-300">{formatProductMoney(pricing?.sellingPrice ?? 0, pricing?.currency ?? "NGN")}</span>
+                              <span className="mt-0.5 flex items-center gap-1 text-[10px] font-black text-emerald-600">
+                                <span className="h-1 w-1 rounded-full bg-emerald-500" />{stockInState(product).toLocaleString()} units
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                      {otherProducts.length === 0 && <p className="m-0 col-span-full py-4 text-center text-xs font-semibold text-gray-400">Nothing else is stocked in {repProductState}.</p>}
+                    </div>
+                  </section>
                 </div>
-                {repProductFiltersOpen && <div className="mt-3 flex flex-wrap gap-2 rounded-lg bg-gray-50 p-3 dark:bg-slate-900"><button type="button" onClick={() => setRepProductView("recommended")} className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-bold dark:border-slate-600 dark:bg-slate-950">In stock for {repProductState}</button><button type="button" onClick={() => setRepProductView("low")} className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">Needs stock confirmation</button><button type="button" onClick={() => { setRepProductSearch(""); setRepProductView("all"); }} className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">Clear filters</button></div>}
-                <div className="mt-4 flex gap-2 overflow-x-auto border-b border-gray-100 pb-2 dark:border-slate-700">{([["recommended", "Recommended to Cross-sell"], ["all", "All Products"], ["low", "Low Stock"], ["unavailable", "Unavailable"]] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setRepProductView(key)} className={`whitespace-nowrap px-3 py-2 text-sm font-black ${repProductView === key ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 dark:text-slate-400"}`}>{label}</button>)}</div>
-                <h2 className="mt-5 text-base font-black text-gray-900 dark:text-slate-100">Products ready to sell in {repProductState} <span className="text-blue-600">— {filtered.length}</span></h2>
-                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{filtered.map((product) => {
-                  const stock = stockInState(product); const pricing = primaryPricing(product); const lowItem = stock > 0 && stock <= smartStockLowStockThreshold;
-                  const imageUrl = product.packages.find((pkg) => pkg.imageUrl)?.imageUrl;
-                  const pairIds = new Set([...(product.crossSellProductIds ?? []), ...product.packages.flatMap((pkg) => (pkg.companionProducts ?? []).filter(companionIsActive).map((companion) => companion.productId))]);
-                  const pairs = active.filter((candidate) => pairIds.has(candidate.id)).slice(0, 3);
-                  const fastMoving = product.unitsSold > 0;
-                  return <article key={product.id} className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-slate-700 dark:bg-slate-900">
-                    <div className="flex items-start justify-between gap-2"><span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${stock <= 0 ? "bg-rose-100 text-rose-700" : lowItem ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{stock <= 0 ? "Unavailable" : lowItem ? "Low stock" : pairIds.size > 0 ? "High match" : "Good match"}</span></div>
-                    <div className="mt-3 flex gap-3">{imageUrl ? <img src={imageUrl} alt="" className="h-20 w-20 rounded-lg border border-gray-200 bg-white object-contain" /> : <div className="flex h-20 w-20 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-300"><Package className="h-8 w-8" /></div>}<div><h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">{product.name}</h3><p className="mt-1 text-[11px] text-gray-500 dark:text-slate-400">{product.description || "Product"}</p><strong className="mt-2 block text-lg text-blue-700 dark:text-blue-300">{formatProductMoney(pricing?.sellingPrice ?? 0, pricing?.currency ?? "NGN")}</strong></div></div>
-                    <p className={`mt-3 text-xs font-black ${stock <= 0 ? "text-rose-600" : lowItem ? "text-amber-600" : "text-emerald-600"}`}>{repProductState}: {stock <= 0 ? "Out of stock" : `${stock.toLocaleString()} units available`}</p><p className="mt-1 text-[11px] font-semibold text-gray-500 dark:text-slate-400">Company stock: {totalProductStockLive(product).toLocaleString()}</p>
-                    <div className="mt-3 flex flex-wrap gap-1.5"><span className={`rounded-full px-2 py-1 text-[10px] font-black ${lowItem ? "bg-amber-100 text-amber-700" : stock > 0 ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{lowItem ? "Confirm before promising" : stock > 0 ? "Good availability" : "Find another state"}</span>{fastMoving && <span className="rounded-full bg-blue-100 px-2 py-1 text-[10px] font-black text-blue-700">Fast moving</span>}</div>
-                    <div className="mt-3 min-h-[38px]"><span className="text-[10px] font-black uppercase text-gray-400">Pairs well with</span><p className="mt-1 text-[11px] font-semibold text-gray-600 dark:text-slate-300">{pairs.length ? pairs.map((pair) => pair.name).join(" · ") : "No configured pair yet"}</p></div>
-                    <div className="mt-4 grid grid-cols-2 gap-2"><button type="button" onClick={() => setRepProductGuideId(product.id)} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-black text-gray-700 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200">View guide</button><button type="button" onClick={() => { if (stock <= 0) { setRepProductView("recommended"); showToast(`Showing available alternatives in ${repProductState}.`); } else { setRepProductBuyingId(product.id); showToast(`${product.name} selected. Choose a recommended add-on from the panel below.`); } }} className={`rounded-lg px-3 py-2 text-xs font-black text-white ${stock <= 0 ? "bg-amber-500" : "bg-[#1F8FE0]"}`}>{stock <= 0 ? "Find alternative" : "Cross-sell →"}</button></div>
-                  </article>;
-                })}</div>
-                <div className="mt-5 grid gap-4 lg:grid-cols-[1.15fr_.85fr]">
-                  <aside className="rounded-xl border border-blue-200 bg-blue-50/60 p-4 dark:border-blue-400/25 dark:bg-blue-500/10"><h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">What can I sell to this customer?</h3><p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Live options ranked by product fit and stock in {repProductState}.</p><label className="mt-3 block text-xs font-black text-gray-700 dark:text-slate-200">Customer state<select className="mt-1 h-10 w-full rounded-lg border border-blue-200 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100" value={repProductState} onChange={(e) => setRepProductState(e.target.value)}>{states.map((state) => <option key={state}>{state}</option>)}</select></label><label className="mt-3 block text-xs font-black text-gray-700 dark:text-slate-200">Currently buying<select className="mt-1 h-10 w-full rounded-lg border border-blue-200 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100" value={buyingProduct?.id ?? ""} onChange={(e) => setRepProductBuyingId(e.target.value)}>{active.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label><button type="button" onClick={() => showToast(`${recommendations.length} best options found in ${repProductState}.`)} className="mt-3 w-full rounded-lg bg-[#1F8FE0] px-3 py-2.5 text-xs font-black text-white">Show best options</button><div className="mt-4 space-y-2">{recommendations.map((row, index) => <button type="button" onClick={() => setRepProductGuideId(row.product.id)} key={row.product.id} className="flex w-full items-center justify-between gap-3 rounded-lg bg-white p-3 text-left dark:bg-slate-900"><div><span className="text-[10px] font-black text-blue-600">#{index + 1} {row.explicit || row.score >= 1000 ? "Strong match" : "Available match"}</span><strong className="block text-sm text-gray-900 dark:text-slate-100">{row.product.name}</strong></div><span className="text-xs font-black text-emerald-600">{row.stock} available</span></button>)}</div></aside>
-                  <aside className="rounded-xl border border-gray-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"><h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Stock by state{buyingProduct ? ` — ${buyingProduct.name}` : ""}</h3><div className="mt-3 space-y-2">{stockAcrossStates.slice(0, 8).map((row) => <div key={row.state} className="flex items-center justify-between border-b border-gray-100 pb-2 text-xs dark:border-slate-700"><span className="font-bold text-gray-600 dark:text-slate-300">{row.state}</span><strong className="text-emerald-600">{row.quantity.toLocaleString()}</strong></div>)}{stockAcrossStates.length === 0 && <p className="text-xs text-gray-500">No state stock is currently available.</p>}</div><div className="mt-4 rounded-lg bg-gray-50 p-3 dark:bg-slate-950"><span className="text-[10px] font-black uppercase text-gray-400">Selling guide</span><p className="mt-1 text-xs font-semibold text-gray-700 dark:text-slate-300">Lead with the customer&apos;s need, confirm {repProductState} stock before promising delivery, then offer the strongest available match above.</p></div></aside>
+
+                {/* ⚠️ sticky, so no ancestor here may clip. A section card with
+                    overflow-hidden anywhere above this silently kills position:
+                    sticky - no error, the rail just stops following. */}
+                <div className="space-y-3 xl:sticky xl:top-20">
+                  <aside className="rounded-2xl border border-blue-200/70 bg-gradient-to-b from-blue-50/80 to-white p-4 shadow-sm dark:border-blue-400/25 dark:from-blue-500/10 dark:to-transparent">
+                    <div className="flex items-start gap-2.5">
+                      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#1F8FE0] text-white"><Target className="h-[18px] w-[18px]" /></span>
+                      <div className="min-w-0">
+                        <h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">What can I sell to this customer?</h3>
+                        <p className="m-0 mt-0.5 text-[11px] font-medium leading-snug text-gray-500 dark:text-slate-400">Get smart cross-sell suggestions based on availability.</p>
+                      </div>
+                    </div>
+                    <label className="mt-3 block">
+                      <span className="text-[11px] font-black text-gray-700 dark:text-slate-200">Customer state</span>
+                      <span className="relative mt-1 block">
+                        <select className="h-10 w-full appearance-none rounded-lg border border-blue-200 bg-white pl-3 pr-8 text-sm font-semibold dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"
+                          value={repProductState} onChange={(e) => setRepProductState(e.target.value)}>
+                          {states.map((state) => <option key={state}>{state}</option>)}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      </span>
+                    </label>
+                    <label className="mt-2.5 block">
+                      <span className="text-[11px] font-black text-gray-700 dark:text-slate-200">Currently buying</span>
+                      <span className="relative mt-1 block">
+                        <select className="h-10 w-full appearance-none rounded-lg border border-blue-200 bg-white pl-3 pr-8 text-sm font-semibold dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100"
+                          value={buyingProduct?.id ?? ""} onChange={(e) => setRepProductBuyingId(e.target.value)}>
+                          {active.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      </span>
+                    </label>
+                    <button type="button" onClick={() => { setRepProductView("recommended"); showToast(recommendations.length > 0 ? `${recommendations.length} best options found in ${repProductState}.` : `Nothing else is stocked in ${repProductState} to pair with this.`); }}
+                      className="!min-h-0 mt-3 w-full rounded-lg bg-[#1F8FE0] px-3 py-2.5 text-xs font-black text-white transition-opacity hover:opacity-90">Show best options</button>
+                  </aside>
+
+                  <aside className="rounded-2xl border border-gray-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] dark:border-slate-700 dark:bg-[#0c1722] dark:ring-0">
+                    <div className="flex items-center gap-2.5">
+                      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300"><Sparkles className="h-4 w-4" /></span>
+                      <h3 className="m-0 text-sm font-black text-violet-700 dark:text-violet-300">Best cross-sells in {repProductState}</h3>
+                    </div>
+                    <div className="mt-3 space-y-1.5">
+                      {recommendations.map((row, index) => (
+                        <button key={row.product.id} type="button" onClick={() => setRepProductGuideId(row.product.id)}
+                          className="!min-h-0 flex w-full items-center gap-2.5 rounded-xl border border-transparent p-2 text-left transition-colors hover:border-gray-200 hover:bg-gray-50 dark:hover:border-slate-700 dark:hover:bg-slate-900">
+                          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gray-100 text-[11px] font-black text-gray-500 dark:bg-slate-800 dark:text-slate-400">{index + 1}</span>
+                          <span className="min-w-0 flex-1">
+                            <strong className="block truncate text-[13px] font-black text-gray-900 dark:text-slate-100">{row.product.name}</strong>
+                            <span className="block text-[11px] font-semibold text-gray-500 dark:text-slate-400">{row.stock.toLocaleString()} units available</span>
+                          </span>
+                          <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-black ${row.explicit ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300"}`}>
+                            {row.explicit ? "High Match" : "Good Match"}
+                          </span>
+                        </button>
+                      ))}
+                      {recommendations.length === 0 && <p className="m-0 py-3 text-center text-[11px] font-semibold text-gray-400">Nothing else is stocked in {repProductState} to pair with this.</p>}
+                    </div>
+                    {recommendations.length > 0 && (
+                      <button type="button" onClick={() => setRepProductView("recommended")}
+                        className="!min-h-0 mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg py-2 text-[11px] font-black text-[#1F8FE0] hover:bg-blue-50 dark:hover:bg-blue-500/10">
+                        View all cross-sell options <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </aside>
+
+                  <aside className="rounded-2xl border border-gray-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] dark:border-slate-700 dark:bg-[#0c1722] dark:ring-0">
+                    <h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Stock by state{buyingProduct ? ` (${buyingProduct.name})` : ""}</h3>
+                    <div className="mt-3 space-y-2">
+                      {stockAcrossStates.slice(0, 8).map((row) => {
+                        // Same thresholds as the product cards, so a state
+                        // reading amber here cannot read green over there.
+                        const tone = row.quantity <= 0 ? "bg-gray-300" : row.quantity <= smartStockLowStockThreshold ? "bg-amber-500" : "bg-emerald-500";
+                        const text = row.quantity <= 0 ? "text-gray-400" : row.quantity <= smartStockLowStockThreshold ? "text-amber-600" : "text-gray-900 dark:text-slate-100";
+                        return (
+                          <button key={row.state} type="button" onClick={() => setRepProductState(row.state)}
+                            className="!min-h-0 flex w-full items-center justify-between gap-3 rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-gray-50 dark:hover:bg-slate-900">
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className={`h-2 w-2 shrink-0 rounded-full ${tone}`} />
+                              <span className="truncate text-[12px] font-semibold text-gray-600 dark:text-slate-300">{row.state}</span>
+                            </span>
+                            <strong className={`shrink-0 text-[13px] font-black tabular-nums ${text}`}>{row.quantity.toLocaleString()}</strong>
+                          </button>
+                        );
+                      })}
+                      {stockAcrossStates.length === 0 && <p className="m-0 text-[11px] font-semibold text-gray-400">No state stock is currently available.</p>}
+                    </div>
+                    <div className="mt-3 flex items-center justify-between border-t border-gray-100 pt-3 dark:border-slate-700">
+                      <span className="text-[12px] font-black text-gray-700 dark:text-slate-200">Total company stock</span>
+                      <strong className="text-[14px] font-black tabular-nums text-gray-900 dark:text-slate-100">{buyingProduct ? totalProductStockLive(buyingProduct).toLocaleString() : "—"}</strong>
+                    </div>
+                  </aside>
                 </div>
+              </div>
                 {guideProduct && <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/50 p-2 sm:items-center sm:p-6" onClick={() => setRepProductGuideId("")}><section className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><span className="text-[10px] font-black uppercase tracking-widest text-blue-600">Selling guide</span><h2 className="mt-1 text-xl font-black text-gray-900 dark:text-slate-100">{guideProduct.name}</h2><p className="mt-1 text-sm text-gray-500 dark:text-slate-400">{guideProduct.description || "No product description has been added yet."}</p></div><button type="button" onClick={() => setRepProductGuideId("")} className="rounded-lg border border-gray-200 p-2 dark:border-slate-700"><X className="h-4 w-4" /></button></div><div className="mt-5 grid gap-4 sm:grid-cols-2"><article className="rounded-xl bg-gray-50 p-4 dark:bg-slate-950"><h3 className="text-xs font-black uppercase text-gray-400">Packages &amp; prices</h3><div className="mt-2 space-y-2">{guideProduct.packages.filter((pkg) => pkg.active).map((pkg) => <div key={pkg.id} className="flex justify-between gap-3 text-sm"><span className="font-bold text-gray-700 dark:text-slate-200">{pkg.name} · {pkg.quantity} pcs</span><strong className="text-blue-600">{formatProductMoney(pkg.price, pkg.currency)}</strong></div>)}{!guideProduct.packages.some((pkg) => pkg.active) && <p className="text-xs text-gray-500">No active packages configured.</p>}</div></article><article className="rounded-xl bg-gray-50 p-4 dark:bg-slate-950"><h3 className="text-xs font-black uppercase text-gray-400">Stock by state</h3><div className="mt-2 flex flex-wrap gap-2">{states.map((state) => { const quantity = inventoryStateHubRows.filter((row) => normalizeAgentState(row.location.state) === normalizeAgentState(state)).reduce((sum, row) => { const stock = stockRowsForStateHub(row.agent, row.location).find((item) => item.productId === guideProduct.id); return sum + Math.max(0, Number(stock?.quantity ?? 0) - Number(stock?.defective ?? 0) - Number(stock?.missing ?? 0)); }, 0); return <span key={state} className={`rounded-full px-2.5 py-1 text-xs font-black ${quantity > 0 ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-400"}`}>{state} {quantity}</span>; })}</div></article><article className="rounded-xl bg-blue-50 p-4 dark:bg-blue-500/10"><h3 className="text-xs font-black uppercase text-blue-600">Selling points</h3><ul className="mt-2 space-y-1 text-sm font-semibold text-gray-700 dark:text-slate-200"><li>• Confirm the customer&apos;s main need first.</li><li>• Quote the active package that best fits their budget.</li><li>• Confirm {repProductState} availability before promising delivery.</li></ul></article><article className="rounded-xl bg-violet-50 p-4 dark:bg-violet-500/10"><h3 className="text-xs font-black uppercase text-violet-600">Short sales script</h3><p className="mt-2 text-sm font-semibold leading-relaxed text-gray-700 dark:text-slate-200">“Based on what you need, {guideProduct.name} is a good fit. We currently have stock serving {repProductState}. Would you like the best-value package, and may I also show you an item customers commonly buy with it?”</p></article></div></section></div>}
-                <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-center justify-between"><h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Other products available in {repProductState}</h3><button type="button" onClick={() => setRepProductView("all")} className="text-xs font-black text-blue-600">View all products →</button></div><div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">{active.filter((product) => stockInState(product) > 0).slice(0, 4).map((product) => <button key={product.id} type="button" onClick={() => setRepProductGuideId(product.id)} className="rounded-lg border border-gray-200 bg-white p-3 text-left dark:border-slate-700 dark:bg-slate-950"><strong className="block truncate text-xs text-gray-900 dark:text-slate-100">{product.name}</strong><span className="mt-1 block text-[10px] font-black text-emerald-600">{repProductState}: {stockInState(product)} units</span></button>)}</div></div>
-                <footer className="mt-4 flex flex-wrap items-center justify-center gap-3 text-[11px] font-semibold text-gray-400"><span>Stock refreshes from live inventory</span><span>•</span><span>Last updated {new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span></footer>
-              </section>
+              <footer className="flex flex-wrap items-center justify-center gap-3 pt-1 text-[11px] font-semibold text-gray-400">
+                <span className="inline-flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />Stock refreshes from live inventory</span>
+                <span className="text-gray-300">|</span>
+                <span>Last updated: {new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>
+              </footer>
             </>;
           })()}
           {renderRepWorkspaceFilters()}
