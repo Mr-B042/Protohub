@@ -665,7 +665,7 @@ function waybillLineItems(w: WaybillRecord): WaybillItem[] {
   }
   return [{ productId: w.productId, productName: w.productName, quantity: w.quantity }];
 }
-type RepConsoleTab = "Dashboard" | "Bonuses" | "Upsell & Cross-sell Log" | "Products" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
+type RepConsoleTab = "Dashboard" | "Bonuses" | "Upsell & Cross-sell Log" | "Products & Stock" | "Orders" | "Scheduled Deliveries" | "Abandoned Carts" | "Customers" | "Leaderboard" | "Notifications" | "Settings";
 type SalesRepsPageTab = "Overview" | "Bonuses";
 type CustomerFlag = { flagged: boolean; reason: string; flaggedAt: string };
 type CallOutcome = string;
@@ -2403,7 +2403,7 @@ const embedMetaTrackingModeOptions: Array<{ value: EmbedMetaTrackingMode; label:
   { value: "off", label: "Off", hint: "Do not fire Protohub Meta browser/CAPI tracking from this link." }
 ];
 const stockMovementTypes: ("All Types" | StockMovementType)[] = ["All Types", "Stock Added", "Distributed to Agent", "Order Fulfilled", "Return", "Correction", "Waybill Out", "Waybill In", "Status Reversal"];
-const repConsoleTabs: RepConsoleTab[] = ["Dashboard", "Bonuses", "Upsell & Cross-sell Log", "Products", "Orders", "Scheduled Deliveries", "Abandoned Carts", "Customers", "Leaderboard", "Notifications", "Settings"];
+const repConsoleTabs: RepConsoleTab[] = ["Dashboard", "Bonuses", "Upsell & Cross-sell Log", "Products & Stock", "Orders", "Scheduled Deliveries", "Abandoned Carts", "Customers", "Leaderboard", "Notifications", "Settings"];
 const repOrderStatusTabs: RepOrderStatusTab[] = ["All Orders", "Pending", "Confirmed", "Follow-up"];
 const repChangeStatuses: Exclude<OrderStatus, "All Orders" | "New">[] = ["Confirmed", "In Process", "Dispatched", "Delivered", "Cancelled", "Postponed", "Failed"];
 const statusChangeActions: OrderStatusAction[] = [...repChangeStatuses, "Reschedule"];
@@ -26190,7 +26190,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     const routeToTab: Record<string, RepConsoleTab> = {
       bonuses: "Bonuses",
       "upsell-cross-sell-log": "Upsell & Cross-sell Log",
-      products: "Products",
+      products: "Products & Stock",
       orders: "Orders",
       "scheduled-deliveries": "Scheduled Deliveries",
       "abandoned-carts": "Abandoned Carts",
@@ -38442,7 +38442,7 @@ ${waybillLineItems(w).length > 1
     // Map a workspace tab back to its hash section (Dashboard = the base hash).
     const repTabToSection: Partial<Record<RepConsoleTab, string>> = {
       "Upsell & Cross-sell Log": "upsell-cross-sell-log",
-      Products: "products",
+      "Products & Stock": "products",
       Orders: "orders",
       "Scheduled Deliveries": "scheduled-deliveries",
       "Abandoned Carts": "abandoned-carts",
@@ -69371,7 +69371,7 @@ ${waybillLineItems(w).length > 1
           renderRepBonusTab()
         ) : repConsoleTab === "Upsell & Cross-sell Log" ? (
           renderSalesExpansionTab()
-        ) : repConsoleTab === "Products" ? (
+        ) : repConsoleTab === "Products & Stock" ? (
           <div className="space-y-6">
           <header>
             <h1 className="m-0 text-2xl font-black text-gray-900 dark:text-slate-100">Products &amp; Stock</h1>
