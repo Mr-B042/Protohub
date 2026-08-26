@@ -1835,12 +1835,14 @@ router.get("/follow-up-grid",
           }
           const order = orderByCart.get(row.id) ?? null;
           // Same rule as the overview endpoint: a cart stops asking for logs
-          // once the order landed, the customer said no, or the number was
-          // never theirs. Everything else stays workable and keeps asking.
+          // once the order landed, the customer said no, the customer showed
+          // interest, or the number was never theirs. Rescheduled is also
+          // treated as closed for legacy rows so it cannot keep prompting.
           const latestEver = latestEverByCart.get(row.id) ?? null;
           const lastOutcomeCode = latestEver?.outcome_code ?? null;
           const closedReason = order?.status === "Delivered" ? "Delivered"
             : lastOutcomeCode === "Interested" ? "Interested"
+            : lastOutcomeCode === "Rescheduled" ? "Rescheduled"
             : (lastOutcomeCode === "Not interested" || row.status === "Not interested") ? "Not interested"
             : lastOutcomeCode === "Wrong number" ? "Wrong number"
             : null;
@@ -1971,8 +1973,9 @@ router.get("/follow-up-overview",
           const order = orderByCart.get(row.id) ?? null;
 
           // A cart stops asking for follow-up logs once it has actually
-          // finished: the order landed, the customer said no, or the number was
-          // never theirs. Everything else - price concern, call back, silence -
+          // finished: the order landed, the customer said no, showed interest,
+          // was rescheduled, or the number was never theirs. Everything else -
+          // price concern, call back, silence -
           // is still workable and keeps asking, because those are the ones a
           // rep is supposed to come back to.
           //
@@ -1981,6 +1984,8 @@ router.get("/follow-up-overview",
           // next month must be recordable without an admin unpicking anything.
           const lastOutcomeCode = latest?.outcome_code ?? null;
           const closedReason = order?.status === "Delivered" ? "Delivered"
+            : lastOutcomeCode === "Interested" ? "Interested"
+            : lastOutcomeCode === "Rescheduled" ? "Rescheduled"
             : (lastOutcomeCode === "Not interested" || row.status === "Not interested") ? "Not interested"
             : lastOutcomeCode === "Wrong number" ? "Wrong number"
             : null;

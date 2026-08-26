@@ -27,9 +27,9 @@ const CART_NOTIFICATION_TYPE = "needs_attention" as const;
 const CART_QUEUE_LINK = "#/dashboard/admin/follow-up-queue";
 
 // Outcomes that finish a cart. Same list the follow-up grid closes on: the
-// order landed, they said no, or the number was never theirs. Anything else is
-// still workable and still worth a nudge.
-const CLOSING_OUTCOMES = new Set(["Not interested", "Wrong number"]);
+// order landed, they said no, showed interest, were rescheduled, or the number
+// was never theirs. Anything else is still workable and still worth a nudge.
+const CLOSING_OUTCOMES = new Set(["Interested", "Rescheduled", "Not interested", "Wrong number"]);
 const CLOSING_CART_STATUSES = new Set(["Converted", "Not interested"]);
 
 type CartRow = {
