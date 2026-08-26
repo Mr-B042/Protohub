@@ -103774,7 +103774,7 @@ ${waybillLineItems(w).length > 1
 	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.outcomeCode}
 	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, outcomeCode: e.target.value }))}>
 	                      {["Interested", "Wants to order now", "Asked to call back", "Price concern",
-	                        "Unresponsive", "Number not reachable", "Wrong number", "Not interested", "Other"].map((o) => (
+                        "Rescheduled", "Unresponsive", "Number not reachable", "Wrong number", "Not interested", "Other"].map((o) => (
 	                        <option key={o} value={o}>{o}</option>
 	                      ))}
 	                    </select>

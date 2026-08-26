@@ -1645,14 +1645,15 @@ const CART_OUTCOME_STATUS: Record<string, string> = {
   "Interested": "Contacted",
   "Wants to order now": "Contacted",
   "Asked to call back": "Contacted",
-  "Price concern": "Contacted"
+  "Price concern": "Contacted",
+  "Rescheduled": "Contacted"
 };
 
 const AttemptSchema = z.object({
   channel: z.enum(["Call", "WhatsApp", "SMS", "Email", "Other"]).default("Call"),
   outcomeCode: z.enum([
     "Interested", "Not interested", "Unresponsive", "Number not reachable",
-    "Asked to call back", "Wants to order now", "Price concern", "Wrong number", "Other"
+    "Asked to call back", "Wants to order now", "Price concern", "Rescheduled", "Wrong number", "Other"
   ]),
   customOutcome: z.string().trim().max(160).optional(),
   outcomeNote: z.string().trim().max(1000).optional(),
