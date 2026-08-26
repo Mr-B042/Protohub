@@ -101,6 +101,7 @@ import {
   Zap,
   ChevronDown,
   ThumbsUp,
+  LayoutGrid,
   ChevronUp,
   MapPin,
   Mail,
@@ -69442,6 +69443,8 @@ ${waybillLineItems(w).length > 1
             const viewHeading = repProductView === "low" ? "Low stock"
               : repProductView === "unavailable" ? "Unavailable"
               : repProductView === "all" ? "All products" : "Products ready to sell";
+            const namedStateStock = stockAcrossStates.slice(0, 5).reduce((sum, row) => sum + row.quantity, 0);
+            const otherStatesStock = Math.max(0, (buyingProduct ? totalProductStockLive(buyingProduct) : 0) - namedStateStock);
             const viewSubheading = repProductView === "low" ? "Confirm these before promising delivery"
               : repProductView === "unavailable" ? "Out of stock - offer an alternative"
               : repProductView === "all" ? "Everything in the catalogue" : "High availability and strong demand";
@@ -69466,7 +69469,7 @@ ${waybillLineItems(w).length > 1
                     icon: <CircleX className="h-5 w-5" />, tone: "bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-300" }
                 ].map((stat) => (
                   <article key={stat.label} className="flex items-center gap-3 rounded-2xl border border-gray-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] dark:border-slate-700 dark:bg-[#0c1722] dark:ring-0">
-                    <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${stat.tone}`}>{stat.icon}</span>
+                    <span className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${stat.tone}`}>{stat.icon}</span>
                     <span className="min-w-0">
                       <strong className="block text-2xl font-black leading-none tracking-tight tabular-nums text-gray-900 dark:text-slate-100">{stat.value}</strong>
                       <span className="mt-1 block truncate text-[12px] font-bold text-gray-700 dark:text-slate-300">{stat.label}</span>
@@ -69532,7 +69535,7 @@ ${waybillLineItems(w).length > 1
                     <div className="mt-4 flex gap-1 overflow-x-auto border-b border-gray-100 dark:border-slate-700">
                       {([
                         ["recommended", "Recommended to Cross-sell", <Sparkles key="i" className="h-4 w-4" />, null],
-                        ["all", "All Products", <Package key="i" className="h-4 w-4" />, active.length],
+                        ["all", "All Products", <LayoutGrid key="i" className="h-4 w-4" />, active.length],
                         ["low", "Low Stock", <AlertTriangle key="i" className="h-4 w-4" />, low.length],
                         ["unavailable", "Unavailable", <CircleX key="i" className="h-4 w-4" />, unavailable.length]
                       ] as const).map(([key, label, icon, count]) => {
@@ -69738,7 +69741,7 @@ ${waybillLineItems(w).length > 1
                       {recommendations.map((row, index) => (
                         <button key={row.product.id} type="button" onClick={() => setRepProductGuideId(row.product.id)}
                           className="!min-h-0 flex w-full items-center gap-2.5 rounded-xl border border-transparent p-2 text-left transition-colors hover:border-gray-200 hover:bg-gray-50 dark:hover:border-slate-700 dark:hover:bg-slate-900">
-                          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gray-100 text-[11px] font-black text-gray-500 dark:bg-slate-800 dark:text-slate-400">{index + 1}</span>
+                          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-50 text-[11px] font-black text-[#1F8FE0] dark:bg-blue-500/15 dark:text-blue-300">{index + 1}</span>
                           <span className="min-w-0 flex-1">
                             <strong className="block truncate text-[13px] font-black text-gray-900 dark:text-slate-100">{row.product.name}</strong>
                             <span className="block text-[11px] font-semibold text-gray-500 dark:text-slate-400">{row.stock.toLocaleString()} units available</span>
@@ -69761,7 +69764,7 @@ ${waybillLineItems(w).length > 1
                   <aside className="rounded-2xl border border-gray-200/80 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.02] dark:border-slate-700 dark:bg-[#0c1722] dark:ring-0">
                     <h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Stock by state{buyingProduct ? ` (${buyingProduct.name})` : ""}</h3>
                     <div className="mt-3 space-y-2">
-                      {stockAcrossStates.slice(0, 8).map((row) => {
+                      {stockAcrossStates.slice(0, 5).map((row) => {
                         // Same thresholds as the product cards, so a state
                         // reading amber here cannot read green over there.
                         const tone = row.quantity <= 0 ? "bg-gray-300" : row.quantity <= smartStockLowStockThreshold ? "bg-amber-500" : "bg-emerald-500";
@@ -69777,6 +69780,22 @@ ${waybillLineItems(w).length > 1
                           </button>
                         );
                       })}
+                      {/* ⚠️ Everything the list above does NOT name, derived
+                          from the company total rather than summed from the
+                          rows - so this line plus the rows always equal the
+                          total underneath them, and a state missing from the
+                          picker cannot quietly vanish from the page. Clamped:
+                          hub sums have run ahead of the company figure before,
+                          and a negative "Other States" would be nonsense. */}
+                      {otherStatesStock > 0 && (
+                        <div className="flex items-center justify-between gap-3 px-1 py-0.5">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="h-2 w-2 shrink-0 rounded-full bg-gray-300 dark:bg-slate-600" />
+                            <span className="truncate text-[12px] font-semibold text-gray-500 dark:text-slate-400">Other States</span>
+                          </span>
+                          <strong className="shrink-0 text-[13px] font-black tabular-nums text-gray-500 dark:text-slate-400">{otherStatesStock.toLocaleString()}</strong>
+                        </div>
+                      )}
                       {stockAcrossStates.length === 0 && <p className="m-0 text-[11px] font-semibold text-gray-400">No state stock is currently available.</p>}
                     </div>
                     <div className="mt-3 flex items-center justify-between border-t border-gray-100 pt-3 dark:border-slate-700">
