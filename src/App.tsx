@@ -8459,6 +8459,17 @@ export function App({ onLogout }: { onLogout?: () => void }) {
    */
   const [cartFollowUpQueue, setCartFollowUpQueue] = useState<CartFollowUpRow[]>([]);
   const [cartFollowUpQueueTotal, setCartFollowUpQueueTotal] = useState(0);
+  const [cartFollowUpLogged, setCartFollowUpLogged] = useState(0);
+  /**
+   * Carts skipped at least once in this run.
+   *
+   * ⚠️ A skip sends the cart to the BACK, not away - a "call me at 4pm" gets a
+   * second pass in the same session. Tracked so it only goes round ONCE:
+   * without this, a rep who skips everything loops forever.
+   */
+  const [cartFollowUpSkipped, setCartFollowUpSkipped] = useState<Set<string>>(new Set());
+  /** True only while a "Work through" run is on screen. */
+  const [cartFollowUpRunActive, setCartFollowUpRunActive] = useState(false);
   const [cartFollowUpRep, setCartFollowUpRep] = useState<string>("All reps");
   const [cartFollowUpFilter, setCartFollowUpFilter] = useState<string>("All");
   // The whole cart, not just its id: the rep making the call needs the number,
@@ -12164,11 +12175,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   // closed "Log all" would hijack the next unrelated single follow-up and
   // march the rep through carts they never asked to work.
   useEffect(() => {
-    if (modal !== "cartFollowUp" && cartFollowUpQueueTotal > 0) {
-      setCartFollowUpQueue([]);
-      setCartFollowUpQueueTotal(0);
-    }
-  }, [modal, cartFollowUpQueueTotal]);
+    if (modal !== "cartFollowUp") setCartFollowUpRunActive(false);
+  }, [modal]);
   const [toast, setToast] = useState("");
   // Error-shaped toast messages ("Failed to...", "Cannot...", etc.) get a
   // centered, manually-dismissed card instead of the small bottom-right
@@ -40999,7 +41007,8 @@ ${waybillLineItems(w).length > 1
   const openCartFollowUpFromGrid = (row: CartGridRow) =>
     openCartFollowUpModal(cartFollowUpRowFromGrid(row));
 
-  const openCartFollowUpModal = (cart: CartFollowUpRow) => {
+  const openCartFollowUpModal = (cart: CartFollowUpRow, inRun = false) => {
+    setCartFollowUpRunActive(inRun);
     setCartAttemptCart(cart);
     setCartAttemptDraft({
       channel: "Call", outcomeCode: "Interested", customOutcome: "", outcomeNote: "",
@@ -41017,6 +41026,48 @@ ${waybillLineItems(w).length > 1
       .finally(() => setCartAttemptHistoryLoading(false));
   };
 
+  /**
+   * Move a run on by one cart, or finish it.
+   *
+   * ⚠️ The run ends by telling the rep what is STILL EXPOSED. The whole feature
+   * exists to stop a ₦500-per-cart charge, so nobody should leave it without
+   * knowing what they are still on the hook for today.
+   */
+  const advanceCartRun = (queue: CartFollowUpRow[], logged: number, skipped: Set<string>) => {
+    const next = queue[0];
+    if (next) {
+      setCartFollowUpQueue(queue.slice(1));
+      openCartFollowUpModal(next, true);
+      return;
+    }
+    setModal(null);
+    setCartAttemptCart(null);
+    setCartFollowUpRunActive(false);
+    setCartFollowUpQueue([]);
+    setCartFollowUpQueueTotal(0);
+    setCartFollowUpLogged(0);
+    setCartFollowUpSkipped(new Set());
+    const rate = Number(cartLogPenalties?.missAmount ?? 0);
+    const atRisk = skipped.size * rate;
+    showToast(skipped.size > 0
+      ? `${logged} logged. ${skipped.size} skipped — still at risk${rate > 0 ? `, ${naira(atRisk)} today` : ""}.`
+      : `All ${logged} carts logged.`);
+  };
+
+  /** Skip writes NOTHING. It is the escape hatch that stops a rep who cannot
+   *  reach a customer from inventing an outcome to get past the screen. */
+  const skipCartInRun = () => {
+    if (!cartAttemptCart) return;
+    const id = cartAttemptCart.id;
+    const seen = cartFollowUpSkipped.has(id);
+    const skipped = new Set(cartFollowUpSkipped).add(id);
+    setCartFollowUpSkipped(skipped);
+    // Second time round it drops out, otherwise a rep skipping everything
+    // would cycle the same carts forever.
+    const queue = seen ? cartFollowUpQueue : [...cartFollowUpQueue, cartAttemptCart];
+    advanceCartRun(queue, cartFollowUpLogged, skipped);
+  };
+
   const saveCartFollowUp = async () => {
     if (!cartAttemptCart) return;
     if (cartAttemptDraft.outcomeCode === "Other" && !cartAttemptDraft.customOutcome.trim()) {
@@ -41032,29 +41083,19 @@ ${waybillLineItems(w).length > 1
         customerReached: cartAttemptDraft.customerReached,
         nextActionAt: cartAttemptDraft.nextActionAt || undefined
       });
-      // ⚠️ Advance the run BEFORE closing. A "Log all" that stops after one
-      // cart is the bug this replaced; the modal only closes when the queue is
-      // actually empty.
-      const remaining = cartFollowUpQueue;
-      const nextCart = remaining[0];
-      if (nextCart) {
-        setCartFollowUpQueue(remaining.slice(1));
-        const done = cartFollowUpQueueTotal - remaining.length;
-        showToast(`Logged ${done} of ${cartFollowUpQueueTotal}. Next: ${nextCart.customer || "no name given"}.`);
-        openCartFollowUpModal(nextCart);
+      if (cartFollowUpRunActive) {
+        const logged = cartFollowUpLogged + 1;
+        setCartFollowUpLogged(logged);
+        const next = cartFollowUpQueue[0];
+        if (next) showToast(`${logged} of ${cartFollowUpQueueTotal} logged. Next: ${next.customer || "no name given"}.`);
+        advanceCartRun(cartFollowUpQueue, logged, cartFollowUpSkipped);
       } else {
         setModal(null);
         setCartAttemptCart(null);
-        if (cartFollowUpQueueTotal > 0) {
-          setCartFollowUpQueue([]);
-          setCartFollowUpQueueTotal(0);
-          showToast(`All ${cartFollowUpQueueTotal} carts logged.`);
-        } else {
-          // Say when the cart's status moved, so nobody is surprised later.
-          showToast(result.statusMovedTo
-            ? `Logged. The cart is now "${result.statusMovedTo}".`
-            : "Follow-up logged.");
-        }
+        // Say when the cart's status moved, so nobody is surprised later.
+        showToast(result.statusMovedTo
+          ? `Logged. The cart is now "${result.statusMovedTo}".`
+          : "Follow-up logged.");
       }
       // Patch the one cart rather than refetching the whole list - the server
       // has already applied the same status move.
@@ -60858,13 +60899,34 @@ ${waybillLineItems(w).length > 1
               <div className="flex flex-wrap gap-2">
                 <select value={cartPenaltySort} onChange={(event) => setCartPenaltySort(event.target.value as "oldest" | "newest")} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600"><option value="oldest">Sort by: Oldest first</option><option value="newest">Sort by: Newest first</option></select>
                 <button type="button" onClick={() => setCartPenaltyShowFilters((value) => !value)} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600">⚲ Filters</button>
-                <button type="button" onClick={() => { if (visibleActionRows.length === 0) return; setCartPenaltySelectedIds(new Set(visibleActionRows.map((row) => row.id))); setCartFollowUpQueueTotal(visibleActionRows.length); setCartFollowUpQueue(visibleActionRows.slice(1).map((row) => cartFollowUpRowFromGrid(row))); openCartFollowUpFromGrid(visibleActionRows[0]); }} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-black text-white">Log all {actionRows.length} carts now</button>
+                {(() => {
+                  // Resuming re-checks the saved queue against what is STILL
+                  // unlogged, so carts cleared elsewhere drop out instead of
+                  // being presented to the rep a second time.
+                  const stillUnlogged = new Set(visibleActionRows.map((row) => row.id));
+                  const resumable = cartFollowUpQueue.filter((cart) => stillUnlogged.has(cart.id));
+                  const startRun = () => {
+                    if (visibleActionRows.length === 0) return;
+                    setCartFollowUpQueueTotal(visibleActionRows.length);
+                    setCartFollowUpLogged(0);
+                    setCartFollowUpSkipped(new Set());
+                    setCartFollowUpQueue(visibleActionRows.slice(1).map((row) => cartFollowUpRowFromGrid(row)));
+                    openCartFollowUpModal(cartFollowUpRowFromGrid(visibleActionRows[0]), true);
+                  };
+                  const resumeRun = () => {
+                    setCartFollowUpQueue(resumable.slice(1));
+                    openCartFollowUpModal(resumable[0], true);
+                  };
+                  return resumable.length > 0
+                    ? <button type="button" onClick={resumeRun} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-black text-white">Resume — {resumable.length} cart{resumable.length === 1 ? "" : "s"} left</button>
+                    : <button type="button" onClick={startRun} disabled={visibleActionRows.length === 0} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-black text-white disabled:opacity-40">Work through {visibleActionRows.length} cart{visibleActionRows.length === 1 ? "" : "s"}</button>;
+                })()}
               </div>
             </div>
             {cartPenaltyShowFilters && <div className="mb-2 flex flex-wrap gap-2 rounded-xl border border-rose-100 bg-white p-2"><select value={cartPenaltySource} onChange={(event) => setCartPenaltySource(event.target.value)} className="rounded-lg border px-3 py-1.5 text-xs"><option>All sources</option>{actionSources.map((value) => <option key={value}>{value}</option>)}</select><select value={cartPenaltyLocation} onChange={(event) => setCartPenaltyLocation(event.target.value)} className="rounded-lg border px-3 py-1.5 text-xs"><option>All locations</option>{actionLocations.map((value) => <option key={value}>{value}</option>)}</select><button type="button" onClick={() => { setCartPenaltySource("All sources"); setCartPenaltyLocation("All locations"); }} className="text-xs font-bold text-rose-700">Clear filters</button></div>}
             <div className="overflow-x-auto rounded-xl border border-rose-100 bg-white"><table className="w-full min-w-[1080px] text-left text-xs"><thead className="bg-rose-50/60 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="px-3 py-2"><input type="checkbox" checked={visibleActionRows.length > 0 && visibleActionRows.every((row) => cartPenaltySelectedIds.has(row.id))} onChange={(event) => setCartPenaltySelectedIds(event.target.checked ? new Set(visibleActionRows.map((row) => row.id)) : new Set())} aria-label="Select all unlogged carts" /></th><th className="px-3 py-2">Cart / Customer</th><th className="px-3 py-2">Assigned time</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Item / Source</th><th className="px-3 py-2">Potential charge</th><th className="px-3 py-2" /></tr></thead><tbody>{visibleActionRows.map((row) => <tr key={`action-${row.id}`} className="border-t border-rose-50"><td className="px-3 py-2.5"><input type="checkbox" checked={cartPenaltySelectedIds.has(row.id)} onChange={(event) => setCartPenaltySelectedIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.customer}`} /></td><td className="px-3 py-2.5"><b className="block">#{String(row.id).slice(0, 8)} · {row.customer || "No name given"}</b><span className="text-slate-400">{row.state || row.city || "—"}</span></td><td className="px-3 py-2.5 text-slate-600">{row.assignedAt ? new Date(row.assignedAt).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" }) : "—"}</td><td className="px-3 py-2.5"><span className="rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black uppercase text-rose-700">Unlogged</span><span className="block text-[11px] text-slate-500">No activity logged</span></td><td className="px-3 py-2.5 text-slate-600"><span className="block">{row.productName || "Cart"}{row.quantity ? ` (${row.quantity}pcs)` : ""}</span><span className="text-slate-400">Source: {row.source || "Unknown"}</span></td><td className="px-3 py-2.5 font-black text-rose-700">{naira(penalties.missAmount)}</td><td className="px-3 py-2.5"><button type="button" onClick={() => openCartFollowUpFromGrid(row)} className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-bold text-gray-700 hover:border-blue-300 hover:text-blue-600">Open &amp; Log Activity →</button></td></tr>)}</tbody></table>{visibleActionRows.length === 0 && <p className="m-0 p-6 text-center text-xs text-slate-500">No unlogged carts match these filters.</p>}</div>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/80 px-2 py-1.5 text-[11px] font-semibold text-slate-500"><span>🛡 Act now to avoid charges. Once logged, the charge is removed automatically.</span><span className="flex gap-3"><button type="button" onClick={() => setCartPenaltyShowHelp((value) => !value)} className="font-black text-rose-700">How it works</button><button type="button" onClick={() => setCartPenaltyShowPolicy((value) => !value)} className="font-black text-rose-700">View penalty policy →</button></span></div>
-            {cartPenaltyShowHelp && <p className="m-0 mt-2 rounded-lg border border-rose-100 bg-white p-3 text-xs text-slate-600">Open each cart and record a call, WhatsApp, SMS, or outcome. The cart disappears from this risk list after a valid activity is saved. “Log all” selects the full queue and starts with the oldest visible cart; each cart still requires a truthful outcome.</p>}
+            {cartPenaltyShowHelp && <p className="m-0 mt-2 rounded-lg border border-rose-100 bg-white p-3 text-xs text-slate-600">Open each cart and record a call, WhatsApp, SMS, or outcome. The cart disappears from this risk list after a valid activity is saved. “Work through” walks the visible carts one at a time, oldest first — each still needs its own truthful outcome. Skip a cart you genuinely cannot reach and it comes back at the end of the run; skipping writes nothing and does not clear the charge.</p>}
           </div>
         )}
 
@@ -104380,6 +104442,12 @@ ${waybillLineItems(w).length > 1
 	                </p>
 	                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
 	                  <button className="!min-h-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700" onClick={closeModal}>Cancel</button>
+	                  {cartFollowUpRunActive && (
+	                    <button className="!min-h-0 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-800" onClick={skipCartInRun}
+	                      title="Come back to this one at the end of the run. Nothing is logged, so the charge still stands.">
+	                      Skip for now
+	                    </button>
+	                  )}
 	                  <button className="!min-h-0 rounded-lg bg-[#1F8FE0] px-4 py-2 text-sm font-medium text-white" onClick={saveCartFollowUp}>
 	                    Save follow-up
 	                  </button>
