@@ -2746,10 +2746,8 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   "Viewer": [
     "Orders", "Follow-up Queue", "Closed Orders", "Customers", "Notifications", "Settings", "WhatsApp"
   ],
-  // Recovery-only rep - own dashboard (which carries their KPI/net-contribution
-  // view directly), not the normal Sales Rep Workspace/Bonuses tab/Call Rep
-  // Console (those all assume the normal Sales Bonus Engine + fresh-lead
-  // calling queue, neither of which this role uses).
+  // Recovery reps can also use the state-aware product intelligence page, but
+  // remain scoped to their own recovery work everywhere else.
   "Recovery Rep": [
     // Follow-up Queue is here because the N50-a-day KPI already charges a
     // Recovery Rep the moment a claimed order is revived to New/Confirmed/
@@ -2757,7 +2755,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
     // Blessing had N250 recorded against one order on a screen she could not
     // open. GET /api/orders scopes a frontline rep to their own orders, and
     // the follow-up board/grid scope by rep too, so they see only theirs.
-    "Recovery Rep Dashboard", "Follow-up Queue", "Customers", "Notifications", "Settings", "WhatsApp"
+    "Recovery Rep Dashboard", "Sales Rep Workspace", "Products & Stock", "Follow-up Queue", "Customers", "Notifications", "Settings", "WhatsApp"
   ],
   // A Personal Delivery Agent is an outside individual, not staff. They get
   // their own portal and nothing else - no customer list, no company data.
