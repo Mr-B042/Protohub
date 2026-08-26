@@ -38152,7 +38152,10 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     if (orderWorkspacePage !== "Follow-up Queue" || followUpView !== "grid") return;
     setFollowUpClockNow(Date.now());
-    const timer = window.setInterval(() => setFollowUpClockNow(Date.now()), 1000);
+    // This state belongs to the 105k-line App component. A one-second tick made
+    // the entire queue rerender continuously and could stall typing on phones.
+    // Minute precision is enough for the charge window and slot unlock rules.
+    const timer = window.setInterval(() => setFollowUpClockNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, [orderWorkspacePage, followUpView]);
   useEffect(() => {
@@ -72695,11 +72698,10 @@ ${waybillLineItems(w).length > 1
                 const chargeCountdown = (() => {
                   if (msToCharge == null) return "today";
                   if (msToCharge <= 0) return "charge window reached";
-                  const totalSeconds = Math.max(0, Math.ceil(msToCharge / 1000));
-                  const hours = Math.floor(totalSeconds / 3600);
-                  const minutes = Math.floor((totalSeconds % 3600) / 60);
-                  const seconds = totalSeconds % 60;
-                  return hours > 0 ? `${hours}h ${minutes}m ${seconds}s` : `${minutes}m ${seconds}s`;
+                  const totalMinutes = Math.max(0, Math.ceil(msToCharge / 60_000));
+                  const hours = Math.floor(totalMinutes / 60);
+                  const minutes = totalMinutes % 60;
+                  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
                 })();
                 const riskOrdersCount = grid ? (grid.rows ?? []).filter((row: any) => {
                   const cell = todayKey ? row.cells?.[todayKey] : null;
@@ -73346,7 +73348,8 @@ ${waybillLineItems(w).length > 1
                 );
               })()}
               {dataLoading && !(orderWorkspacePage === "Follow-up Queue" && followUpView === "carts") && <TableSkeleton cols={8} rows={6} />}
-              <div className={dataLoading || (orderWorkspacePage === "Follow-up Queue" && followUpView !== "list") ? "hidden" : "space-y-6 lg:space-y-8"}>
+              {!dataLoading && (orderWorkspacePage !== "Follow-up Queue" || followUpView === "list") && (
+              <div className="space-y-6 lg:space-y-8">
               {/* Period + date + currency controls */}
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
@@ -74122,6 +74125,7 @@ ${waybillLineItems(w).length > 1
                 </div>
               </section>
               </div>
+              )}
             </div>
           ) : activePage === "Manager Dashboard" && (currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") ? (
               <div className="space-y-6">
