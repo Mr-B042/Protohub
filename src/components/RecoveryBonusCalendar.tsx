@@ -4,6 +4,8 @@ import type { RecoveryCalendarDay, RecoveryCalendarView } from "../lib/api";
 
 type Props = {
   view: RecoveryCalendarView;
+  /** The SELECTED window inside the month(s) on screen. Null = whole payload. */
+  range?: { start: string; end: string } | null;
   loading?: boolean;
   formatMoney: (value: number) => string;
 };
@@ -57,7 +59,7 @@ const monthTitle = (key: string) =>
 const longDate = (key: string) =>
   new Date(`${key}T12:00:00Z`).toLocaleDateString("en-NG", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
-export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Props) {
+export default function RecoveryBonusCalendar({ view, range, loading, formatMoney }: Props) {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const targets = view.targets ?? { followUp: 0, retention: 0, delivered: 0, claimed: 0 };
   const todayKey = new Date().toISOString().slice(0, 10);
@@ -70,8 +72,49 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
   }, [view.days]);
 
   const selected = view.days.find((row) => row.day === selectedDay) ?? null;
-  const judged = view.belowTargetDays + view.aboveTargetDays;
-  const hitRate = judged > 0 ? Math.round((view.aboveTargetDays / judged) * 100) : null;
+
+  const inRange = (day: string) => !range || (day >= range.start && day <= range.end);
+
+  /**
+   * ⚠️ Every headline figure is recomputed from the SELECTED days.
+   *
+   * The payload now covers the whole month so the grid can be a grid, but the
+   * cards must still answer for the window the rep chose. Both are derived from
+   * the same day rows, so a card can never disagree with the cells above it.
+   */
+  const scoped = useMemo(() => {
+    const days = view.days.filter((row) => inRange(row.day));
+    const judgedDays = days.filter((row) => row.status !== "rest" && row.status !== "none");
+    const claimTarget = view.targets?.claimed ?? 0;
+    return {
+      followUp: days.reduce((sum, row) => sum + row.followUp, 0),
+      retention: days.reduce((sum, row) => sum + row.retention, 0),
+      delivered: days.reduce((sum, row) => sum + row.delivered, 0),
+      claimed: days.reduce((sum, row) => sum + row.claimed, 0),
+      above: days.filter((row) => row.status === "above").length,
+      below: days.filter((row) => row.status === "below" || row.status === "critical").length,
+      claimMet: claimTarget > 0 ? judgedDays.filter((row) => row.claimed >= claimTarget).length : 0,
+      claimMissed: claimTarget > 0
+        ? judgedDays.filter((row) => !row.claimCapped && row.claimed < claimTarget).length : 0,
+      claimAtCap: judgedDays.filter((row) => row.claimCapped).length
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view.days, view.targets, range?.start, range?.end]);
+
+  const judged = scoped.below + scoped.above;
+  const hitRate = judged > 0 ? Math.round((scoped.above / judged) * 100) : null;
+
+  // One grid per calendar month, so a range spanning months reads as months
+  // rather than one continuous run of numbers under the wrong weekday columns.
+  const monthGroups = useMemo(() => {
+    const byMonth = new Map<string, typeof view.days>();
+    view.days.forEach((row) => {
+      const monthKey = row.day.slice(0, 7);
+      const bucket = byMonth.get(monthKey);
+      if (bucket) bucket.push(row); else byMonth.set(monthKey, [row]);
+    });
+    return [...byMonth.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [view.days]);
 
   const ratio = (value: number, target: number) => (target > 0 ? Math.min(1, value / target) : 0);
 
@@ -80,9 +123,7 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
       {/* ── Metric strip ─────────────────────────────────── */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {METRICS.map((metric) => {
-          const total = metric.key === "followUp" ? view.followUpTotal
-            : metric.key === "retention" ? view.retentionTotal
-              : metric.key === "claimed" ? view.claimedTotal : view.deliveredTotal;
+          const total = scoped[metric.key];
           const perDayTarget = targets[metric.key];
           const Icon = metric.key === "followUp" ? Phone
             : metric.key === "retention" ? RefreshCw
@@ -107,8 +148,8 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
               </p>
               <p className="m-0 mt-2 text-[11px] font-semibold text-slate-500">
                 {metric.key === "claimed" && perDayTarget > 0
-                  ? `${view.claimDaysMet} of ${view.claimDaysMet + view.claimDaysMissed} days hit ${perDayTarget}${
-                      view.claimDaysAtCap > 0 ? ` · ${view.claimDaysAtCap} excused at cap` : ""}`
+                  ? `${scoped.claimMet} of ${scoped.claimMet + scoped.claimMissed} days hit ${perDayTarget}${
+                      scoped.claimAtCap > 0 ? ` · ${scoped.claimAtCap} excused at cap` : ""}`
                   : perDayTarget > 0 ? `${perDayTarget} a day is target` : "No daily target set"}
               </p>
             </div>
@@ -126,7 +167,7 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
             </span>
           </div>
           <p className="m-0 mt-2 text-4xl font-black leading-none tracking-tight tabular-nums text-white">
-            {view.aboveTargetDays}<span className="text-xl text-slate-500"> / {judged}</span>
+            {scoped.above}<span className="text-xl text-slate-500"> / {judged}</span>
           </p>
           {/* One bar, both figures. Two separate cards for "above" and "below"
               made a reader do the division themselves. */}
@@ -135,7 +176,7 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
               style={{ width: `${hitRate ?? 0}%` }} />
           </div>
           <p className="m-0 mt-1.5 text-[11px] font-semibold text-slate-400">
-            {hitRate === null ? "Nothing judged yet" : `${hitRate}% of judged days · ${view.belowTargetDays} short`}
+            {hitRate === null ? "Nothing judged yet" : `${hitRate}% of judged days · ${scoped.below} short`}
           </p>
         </div>
       </div>
@@ -156,21 +197,29 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
             </div>
           </div>
 
-          <div className="mt-4 overflow-x-auto">
-            <div className="min-w-[560px]">
+          <div className="mt-4 space-y-6 overflow-x-auto">
+            {monthGroups.map(([monthKey, monthDays]) => (
+            <div key={monthKey} className="min-w-[560px]">
+              {monthGroups.length > 1 && (
+                <p className="m-0 mb-2 text-xs font-black tracking-tight text-slate-700">{monthTitle(monthDays[0].day)}</p>
+              )}
               <div className="grid grid-cols-7 gap-1.5">
                 {WEEKDAYS.map((initial, index) => (
-                  <div key={index} title={WEEKDAY_FULL[index]}
+                  <div key={`${monthKey}-${index}`} title={WEEKDAY_FULL[index]}
                     className="pb-1 text-center text-[10px] font-black uppercase tracking-wider text-slate-400">
                     {initial}
                   </div>
                 ))}
-                {Array.from({ length: lead }).map((_, index) => <div key={`lead-${index}`} />)}
-                {view.days.map((row) => {
+                {Array.from({ length: new Date(`${monthDays[0].day}T00:00:00Z`).getUTCDay() })
+                  .map((_, index) => <div key={`lead-${monthKey}-${index}`} />)}
+                {monthDays.map((row) => {
                   const tone = STATUS[row.status];
                   const isSelected = row.day === selectedDay;
                   const isToday = row.day === todayKey;
                   const empty = row.status === "none";
+                  // Outside the chosen window: still shown, so the month reads
+                  // as a month, but visibly not part of what the cards count.
+                  const outside = !inRange(row.day);
                   return (
                     <button
                       key={row.day}
@@ -178,14 +227,21 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
                       onClick={() => setSelectedDay(isSelected ? null : row.day)}
                       title={`${longDate(row.day)} — ${tone.label}`}
                       className={`!min-h-0 group relative flex flex-col gap-1.5 rounded-xl border p-2 text-left ring-2 ring-transparent transition-all hover:-translate-y-0.5 hover:shadow-md ${tone.cell} ${tone.ring} ${
+                        outside ? "opacity-40 saturate-50" : ""} ${
+                        isToday ? "calendar-today !border-violet-400" : ""} ${
                         isSelected ? "!ring-sky-500 shadow-md -translate-y-0.5" : ""}`}
                     >
                       <span className="flex items-center justify-between">
                         <span className={`text-[13px] font-black tabular-nums ${
-                          isToday ? "text-sky-600 dark:text-sky-400" : "text-slate-700 dark:text-slate-200"}`}>
+                          isToday ? "text-violet-700 dark:text-violet-300" : "text-slate-700 dark:text-slate-200"}`}>
                           {dayNumber(row.day)}
                         </span>
-                        <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
+                        {/* Today is marked even when it is outside the window,
+                            so a rep stepping back through the month never loses
+                            track of where "now" is. */}
+                        {isToday
+                          ? <span className="h-2 w-2 rounded-full bg-violet-500 ring-2 ring-violet-200" title="Today" />
+                          : <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />}
                       </span>
 
                       {/* Three micro-bars instead of "F: 4 R: 7 D: 1". The
@@ -217,6 +273,7 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
                 })}
               </div>
             </div>
+            ))}
           </div>
 
           {/* ── Selected day ─────────────────────────────── */}
