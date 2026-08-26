@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  buildRecoveryCalendar, calendarDayKeys, CRITICAL_ATTAINMENT, dayAttainment, dayStatus,
+  atClaimCap, buildRecoveryCalendar, calendarDayKeys, CRITICAL_ATTAINMENT, dayAttainment, dayStatus,
   isRestDay, type RecoveryDayCounts, type RecoveryDayTargets
 } from "./recovery-calendar.js";
 
@@ -68,9 +68,9 @@ test("days with no row still appear, as zero days", () => {
 // excludes the very worst days.
 test("critical days are counted inside below-target days", () => {
   const byDay = new Map([
-    ["2026-08-20", { day: "2026-08-20", followUp: 0, retention: 0, delivered: 0, claimed: 0 }],
-    ["2026-08-21", { day: "2026-08-21", followUp: 7, retention: 10, delivered: 1, claimed: 0 }],
-    ["2026-08-22", { day: "2026-08-22", followUp: 10, retention: 10, delivered: 1, claimed: 0 }]
+    ["2026-08-20", { day: "2026-08-20", followUp: 0, retention: 0, delivered: 0, claimed: 10 }],
+    ["2026-08-21", { day: "2026-08-21", followUp: 7, retention: 10, delivered: 1, claimed: 10 }],
+    ["2026-08-22", { day: "2026-08-22", followUp: 10, retention: 10, delivered: 1, claimed: 10 }]
   ]);
   const summary = buildRecoveryCalendar(
     ["2026-08-20", "2026-08-21", "2026-08-22"], byDay, TARGETS, TODAY
@@ -148,12 +148,36 @@ test("Sundays and future days are outside the claim tally", () => {
   assert.equal(summary.claimDaysMissed, 0);
 });
 
-// ⚠️ Claiming is deliberately excluded from the day's colour: a rep holding the
-// full claim cap cannot claim, and painting that red punishes correct work.
-test("claiming nothing does not make a fully worked day look bad", () => {
-  const worked = counts({ claimed: 0 });
-  assert.equal(dayAttainment(worked, TARGETS), 1);
-  assert.equal(dayStatus(worked, TARGETS, TODAY), "above");
+// ⚠️ Claiming now counts toward the day's colour - Bright asked for it -
+// EXCEPT when the board was already full, because a rep at the cap cannot
+// claim and must not be marked down for it.
+test("claiming nothing is a miss when the rep had room to claim", () => {
+  const idle = counts({ claimed: 0, heldAtStart: 5 });
+  assert.equal(dayAttainment(idle, TARGETS, 20), 0);
+  assert.equal(dayStatus(idle, TARGETS, TODAY, 20), "critical");
+});
+
+test("claiming nothing AT THE CAP is excused, not punished", () => {
+  const full = counts({ claimed: 0, heldAtStart: 20 });
+  assert.equal(atClaimCap(full, 20), true);
+  assert.equal(dayAttainment(full, TARGETS, 20), 1);
+  assert.equal(dayStatus(full, TARGETS, TODAY, 20), "above");
+});
+
+test("a capped day counts as neither met nor missed", () => {
+  const byDay = new Map([
+    ["2026-08-20", { day: "2026-08-20", followUp: 10, retention: 10, delivered: 1, claimed: 0, heldAtStart: 20 }]
+  ]);
+  const summary = buildRecoveryCalendar(["2026-08-20"], byDay, TARGETS, TODAY, 20);
+  assert.equal(summary.claimDaysAtCap, 1);
+  assert.equal(summary.claimDaysMet, 0);
+  assert.equal(summary.claimDaysMissed, 0);
+});
+
+// With no cap configured there is nothing to excuse a rep on.
+test("without a cap every short day is a real miss", () => {
+  assert.equal(atClaimCap(counts({ heldAtStart: 999 }), 0), false);
+  assert.equal(dayStatus(counts({ claimed: 0, heldAtStart: 999 }), TARGETS, TODAY, 0), "critical");
 });
 
 test("with no claim target set the tallies stay at zero rather than counting every day", () => {

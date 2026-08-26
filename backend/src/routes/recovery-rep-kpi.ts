@@ -10,20 +10,7 @@ import { scoreOrderDocumentation, type DocumentationScoreOrder } from "../lib/re
 import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { buildRecoveryCalendar, calendarDayKeys } from "../lib/recovery-calendar.js";
 
-/**
- * One recovered delivery a day. No settings column exists for it yet;
- * loadKpiSettings reads select("*") so adding one later starts overriding this
- * without any further change here.
- */
-const DEFAULT_DAILY_DELIVERED_TARGET = 1;
 
-/**
- * Orders a recovery rep is expected to CLAIM each working day.
- *
- * No settings column yet; loadKpiSettings reads select("*") so adding
- * daily_claim_target later starts overriding this with no change here.
- */
-const DEFAULT_DAILY_CLAIM_TARGET = 10;
 
 const router = Router();
 router.use(requireAuth);
@@ -44,6 +31,8 @@ const DEFAULT_KPI_SETTINGS = {
   // Migration 185 - minimum orders to pick up and work each day.
   dailyFollowUpPickTarget: 10,
   dailyRetentionPickTarget: 10,
+  dailyClaimTarget: 10,
+  dailyDeliveredTarget: 1,
   // Migration 205 - how many unfinished orders one rep may hold at once.
   maxOpenClaims: 20
 };
@@ -69,6 +58,8 @@ async function loadKpiSettings(orgId: string) {
     monthlyRecoveredTarget: Number(data.monthly_recovered_target ?? DEFAULT_KPI_SETTINGS.monthlyRecoveredTarget),
     dailyFollowUpPickTarget: Number(data.daily_follow_up_pick_target ?? DEFAULT_KPI_SETTINGS.dailyFollowUpPickTarget),
     dailyRetentionPickTarget: Number(data.daily_retention_pick_target ?? DEFAULT_KPI_SETTINGS.dailyRetentionPickTarget),
+    dailyClaimTarget: Number(data.daily_claim_target ?? DEFAULT_KPI_SETTINGS.dailyClaimTarget),
+    dailyDeliveredTarget: Number(data.daily_delivered_target ?? DEFAULT_KPI_SETTINGS.dailyDeliveredTarget),
     maxOpenClaims: Number(data.max_open_claims ?? DEFAULT_KPI_SETTINGS.maxOpenClaims)
   };
 }
@@ -598,7 +589,7 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
     const inclusiveEnd = addDaysToDateKey(exclusiveEnd, -1);
     const settings = await loadKpiSettings(orgId);
 
-    const [followUps, retentions, deliveries, claims] = await Promise.all([
+    const [followUps, retentions, deliveries, claims, everHeld] = await Promise.all([
       supabase.from("order_contact_attempts").select("order_id, attempted_at")
         .eq("org_id", orgId).eq("rep_id", repId)
         .gte("attempted_at", `${start}T00:00:00`).lt("attempted_at", `${exclusiveEnd}T00:00:00`)
@@ -625,6 +616,14 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
         .not("assigned_at", "is", null)
         .gte("assigned_at", `${start}T00:00:00`)
         .lt("assigned_at", `${exclusiveEnd}T00:00:00`)
+        .limit(REPORT_ROW_CEILING),
+      // ⚠️ EVERY order the rep has ever held, not just this range - what they
+      // were holding on 20 August depends on orders claimed long before it.
+      // For a Recovery Rep only Delivered closes an order, so an order is open
+      // on a day when it was claimed by then and not yet delivered.
+      supabase.from("orders").select("id, assigned_at, delivered_date, status")
+        .eq("org_id", orgId).eq("assigned_rep_id", repId)
+        .not("assigned_at", "is", null)
         .limit(REPORT_ROW_CEILING)
     ]);
 
@@ -657,13 +656,28 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
       if (row.id && row.assigned_at) bucket(lagosDateKey(row.assigned_at)).claimed.add(row.id);
     });
 
+    // What the rep was holding when each day began.
+    const heldRows = ((everHeld.data ?? []) as any[])
+      .filter((row) => row.assigned_at)
+      .map((row) => ({
+        claimedOn: lagosDateKey(row.assigned_at),
+        // Undelivered orders never close, so they count as held on every day
+        // from their claim onward.
+        closedOn: row.status === "Delivered" && row.delivered_date
+          ? String(row.delivered_date).slice(0, 10)
+          : null
+      }));
+    const heldAtStartOf = (day: string) => heldRows.filter((row) =>
+      row.claimedOn < day && (row.closedOn === null || row.closedOn >= day)).length;
+
     const countsByDay = new Map(
       [...seen.entries()].map(([day, sets]) => [day, {
         day,
         followUp: sets.followUp.size,
         retention: sets.retention.size,
         delivered: sets.delivered.size,
-        claimed: sets.claimed.size
+        claimed: sets.claimed.size,
+        heldAtStart: heldAtStartOf(day)
       }])
     );
     const targets = {
@@ -671,11 +685,18 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
       retention: settings.dailyRetentionPickTarget,
       // No column for this yet; loadKpiSettings reads select("*") so the
       // default simply applies until someone adds one.
-      delivered: DEFAULT_DAILY_DELIVERED_TARGET,
-      claimed: DEFAULT_DAILY_CLAIM_TARGET
+      delivered: settings.dailyDeliveredTarget,
+      claimed: settings.dailyClaimTarget
     };
+    const dayKeys = calendarDayKeys(start, inclusiveEnd);
+    dayKeys.forEach((day) => {
+      if (countsByDay.has(day)) return;
+      countsByDay.set(day, {
+        day, followUp: 0, retention: 0, delivered: 0, claimed: 0, heldAtStart: heldAtStartOf(day)
+      });
+    });
     const summary = buildRecoveryCalendar(
-      calendarDayKeys(start, inclusiveEnd), countsByDay, targets, lagosDateKey()
+      dayKeys, countsByDay, targets, lagosDateKey(), settings.maxOpenClaims
     );
 
     res.json({
@@ -684,6 +705,7 @@ router.get("/calendar", requireRole("Owner", "Admin", "Manager", "Recovery Rep")
       targets,
       bonusPerRecoveredOrder: settings.bonusPerRecoveredOrder,
       monthlyRecoveredTarget: settings.monthlyRecoveredTarget,
+      claimCap: settings.maxOpenClaims,
       ...summary
     });
   } catch (error: any) {
@@ -847,6 +869,8 @@ router.patch("/settings", requireRole("Owner"), async (req, res) => {
     monthly_recovered_target: Number(body.monthlyRecoveredTarget ?? DEFAULT_KPI_SETTINGS.monthlyRecoveredTarget),
     daily_follow_up_pick_target: Number(body.dailyFollowUpPickTarget ?? DEFAULT_KPI_SETTINGS.dailyFollowUpPickTarget),
     daily_retention_pick_target: Number(body.dailyRetentionPickTarget ?? DEFAULT_KPI_SETTINGS.dailyRetentionPickTarget),
+    daily_claim_target: Number(body.dailyClaimTarget ?? DEFAULT_KPI_SETTINGS.dailyClaimTarget),
+    daily_delivered_target: Number(body.dailyDeliveredTarget ?? DEFAULT_KPI_SETTINGS.dailyDeliveredTarget),
     updated_by: req.user!.id,
     updated_at: new Date().toISOString()
   };

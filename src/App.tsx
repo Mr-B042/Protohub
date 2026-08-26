@@ -12694,6 +12694,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     monthlyRecoveredTarget: number;
     dailyFollowUpPickTarget: number;
     dailyRetentionPickTarget: number;
+    dailyClaimTarget: number;
+    dailyDeliveredTarget: number;
   } | null>(null);
   const [recoveryRepSettingsSaving, setRecoveryRepSettingsSaving] = useState(false);
   // Customer Retention tab (post-delivery satisfaction/review/retention
@@ -46693,7 +46695,13 @@ ${waybillLineItems(w).length > 1
           weeklyRecoveredTarget: summary.recovery?.weeklyTarget ?? 15,
           monthlyRecoveredTarget: summary.recovery?.monthlyTarget ?? 60,
           dailyFollowUpPickTarget: summary.recovery?.dailyFollowUpTarget ?? 10,
-          dailyRetentionPickTarget: summary.recovery?.dailyRetentionTarget ?? 10
+          dailyRetentionPickTarget: summary.recovery?.dailyRetentionTarget ?? 10,
+          // ⚠️ Read from the CALENDAR's targets, not summary.recovery. The
+          // daily targets there are zeroed outside a single-day range on
+          // purpose, so seeding the editor from them would show 0 and quietly
+          // save 0 the moment the Owner pressed Save.
+          dailyClaimTarget: recoveryCalendar?.targets?.claimed ?? 10,
+          dailyDeliveredTarget: recoveryCalendar?.targets?.delivered ?? 1
         });
       }
     } catch (err: any) {
@@ -66133,7 +66141,9 @@ ${waybillLineItems(w).length > 1
                 ["weeklyRecoveredTarget", "Recovered orders target (per week)"],
                 ["monthlyRecoveredTarget", "Recovered orders target (per month)"],
                 ["dailyFollowUpPickTarget", "Minimum follow-up orders picked per day"],
-                ["dailyRetentionPickTarget", "Minimum retention customers picked per day"]
+                ["dailyRetentionPickTarget", "Minimum retention customers picked per day"],
+                ["dailyClaimTarget", "Minimum orders CLAIMED per day"],
+                ["dailyDeliveredTarget", "Minimum recovered deliveries per day"]
               ] as const).map(([key, label]) => (
                 <label key={key} className="space-y-1">
                   <span className="block text-xs font-bold uppercase tracking-wide text-gray-500">{label}</span>

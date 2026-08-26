@@ -2092,8 +2092,11 @@ export type RecoveryCalendarDay = {
   retention: number;
   delivered: number;
   claimed: number;
+  heldAtStart?: number;
   status: "none" | "rest" | "critical" | "below" | "above";
   attainment: number | null;
+  /** Board was full, so no claim was possible - not counted as a miss. */
+  claimCapped: boolean;
 };
 
 export type RecoveryCalendarView = {
@@ -2109,6 +2112,8 @@ export type RecoveryCalendarView = {
   claimedTotal: number;
   claimDaysMet: number;
   claimDaysMissed: number;
+  claimDaysAtCap: number;
+  claimCap: number;
   belowTargetDays: number;
   aboveTargetDays: number;
   restDays: number;

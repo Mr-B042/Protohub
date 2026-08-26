@@ -107,7 +107,8 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
               </p>
               <p className="m-0 mt-2 text-[11px] font-semibold text-slate-500">
                 {metric.key === "claimed" && perDayTarget > 0
-                  ? `${view.claimDaysMet} of ${view.claimDaysMet + view.claimDaysMissed} days hit ${perDayTarget}`
+                  ? `${view.claimDaysMet} of ${view.claimDaysMet + view.claimDaysMissed} days hit ${perDayTarget}${
+                      view.claimDaysAtCap > 0 ? ` · ${view.claimDaysAtCap} excused at cap` : ""}`
                   : perDayTarget > 0 ? `${perDayTarget} a day is target` : "No daily target set"}
               </p>
             </div>
@@ -225,7 +226,8 @@ export default function RecoveryBonusCalendar({ view, loading, formatMoney }: Pr
                 <div>
                   <p className="m-0 text-[13px] font-black text-slate-900 dark:text-slate-100">{longDate(selected.day)}</p>
                   <p className="m-0 mt-0.5 text-[11px] font-bold text-slate-500">
-                    {selected.status === "rest" ? "Sunday — a rest day. No target applied, and it counts against nothing."
+                    {selected.claimCapped ? `Board was full (${selected.heldAtStart ?? 0} of ${view.claimCap} held) — no claim was possible, so claiming is not judged today.`
+                      : selected.status === "rest" ? "Sunday — a rest day. No target applied, and it counts against nothing."
                       : selected.status === "none" ? "Nothing recorded for this day yet."
                         : selected.status === "above" ? "Every target met."
                           : `Short of target${selected.attainment !== null ? ` — reached ${Math.round(selected.attainment * 100)}% of the weakest one` : ""}.`}
