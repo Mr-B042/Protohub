@@ -8449,6 +8449,16 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [cartPenaltyShowPolicy, setCartPenaltyShowPolicy] = useState(false);
   const [cartPenaltyShowHelp, setCartPenaltyShowHelp] = useState(false);
   const [cartPenaltySelectedIds, setCartPenaltySelectedIds] = useState<Set<string>>(new Set());
+  /**
+   * Carts still to work in a "Log all" run, oldest first.
+   *
+   * ⚠️ WITHOUT THIS THE BUTTON LIED. "Log all 12 carts now" ticked twelve
+   * checkboxes, opened ONE cart, and closed on save - leaving eleven unlogged
+   * behind twelve ticks that read as done. At the ₦500-per-cart-per-day rate
+   * that is a rep being charged for work they believed they had finished.
+   */
+  const [cartFollowUpQueue, setCartFollowUpQueue] = useState<CartFollowUpRow[]>([]);
+  const [cartFollowUpQueueTotal, setCartFollowUpQueueTotal] = useState(0);
   const [cartFollowUpRep, setCartFollowUpRep] = useState<string>("All reps");
   const [cartFollowUpFilter, setCartFollowUpFilter] = useState<string>("All");
   // The whole cart, not just its id: the rep making the call needs the number,
@@ -12150,6 +12160,15 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     try { window.localStorage.setItem("protohub.density", density); } catch (_) { /* private mode */ }
   }, [density]);
   const [modal, setModal] = useState<ModalType>(null);
+  // ⚠️ Abandoning the run must end it. Otherwise a queue left over from a
+  // closed "Log all" would hijack the next unrelated single follow-up and
+  // march the rep through carts they never asked to work.
+  useEffect(() => {
+    if (modal !== "cartFollowUp" && cartFollowUpQueueTotal > 0) {
+      setCartFollowUpQueue([]);
+      setCartFollowUpQueueTotal(0);
+    }
+  }, [modal, cartFollowUpQueueTotal]);
   const [toast, setToast] = useState("");
   // Error-shaped toast messages ("Failed to...", "Cannot...", etc.) get a
   // centered, manually-dismissed card instead of the small bottom-right
@@ -40965,17 +40984,20 @@ ${waybillLineItems(w).length > 1
 
   // The grid carries a lighter row than the details table, so log-from-a-cell
   // reuses the full record both views already loaded.
-  const openCartFollowUpFromGrid = (row: CartGridRow) => {
+  const cartFollowUpRowFromGrid = (row: CartGridRow): CartFollowUpRow => {
     const full = cartFollowUps.find((cart) => cart.id === row.id);
-    openCartFollowUpModal(full ?? {
+    return full ?? {
       id: row.id, customer: row.customer, phone: row.phone, whatsapp: row.whatsapp,
       productName: row.packageName || row.productName, baseProductName: row.productName,
       packageName: row.packageName, amount: row.amount, currency: row.currency,
       city: row.city, state: row.state, status: row.status,
       repId: row.repId, repName: row.repName, createdAt: row.createdAt,
       lastActivity: row.createdAt, attempts: 0
-    });
+    };
   };
+
+  const openCartFollowUpFromGrid = (row: CartGridRow) =>
+    openCartFollowUpModal(cartFollowUpRowFromGrid(row));
 
   const openCartFollowUpModal = (cart: CartFollowUpRow) => {
     setCartAttemptCart(cart);
@@ -41010,12 +41032,30 @@ ${waybillLineItems(w).length > 1
         customerReached: cartAttemptDraft.customerReached,
         nextActionAt: cartAttemptDraft.nextActionAt || undefined
       });
-      setModal(null);
-      setCartAttemptCart(null);
-      // Say when the cart's status moved, so nobody is surprised later.
-      showToast(result.statusMovedTo
-        ? `Logged. The cart is now "${result.statusMovedTo}".`
-        : "Follow-up logged.");
+      // ⚠️ Advance the run BEFORE closing. A "Log all" that stops after one
+      // cart is the bug this replaced; the modal only closes when the queue is
+      // actually empty.
+      const remaining = cartFollowUpQueue;
+      const nextCart = remaining[0];
+      if (nextCart) {
+        setCartFollowUpQueue(remaining.slice(1));
+        const done = cartFollowUpQueueTotal - remaining.length;
+        showToast(`Logged ${done} of ${cartFollowUpQueueTotal}. Next: ${nextCart.customer || "no name given"}.`);
+        openCartFollowUpModal(nextCart);
+      } else {
+        setModal(null);
+        setCartAttemptCart(null);
+        if (cartFollowUpQueueTotal > 0) {
+          setCartFollowUpQueue([]);
+          setCartFollowUpQueueTotal(0);
+          showToast(`All ${cartFollowUpQueueTotal} carts logged.`);
+        } else {
+          // Say when the cart's status moved, so nobody is surprised later.
+          showToast(result.statusMovedTo
+            ? `Logged. The cart is now "${result.statusMovedTo}".`
+            : "Follow-up logged.");
+        }
+      }
       // Patch the one cart rather than refetching the whole list - the server
       // has already applied the same status move.
       if (result.statusMovedTo) {
@@ -60818,11 +60858,11 @@ ${waybillLineItems(w).length > 1
               <div className="flex flex-wrap gap-2">
                 <select value={cartPenaltySort} onChange={(event) => setCartPenaltySort(event.target.value as "oldest" | "newest")} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600"><option value="oldest">Sort by: Oldest first</option><option value="newest">Sort by: Newest first</option></select>
                 <button type="button" onClick={() => setCartPenaltyShowFilters((value) => !value)} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-600">⚲ Filters</button>
-                <button type="button" onClick={() => { setCartPenaltySelectedIds(new Set(actionRows.map((row) => row.id))); const first = visibleActionRows[0]; if (first) { setSelectedCartId(first.id); setModal("cartDetails"); } }} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-black text-white">Log all {actionRows.length} carts now</button>
+                <button type="button" onClick={() => { if (visibleActionRows.length === 0) return; setCartPenaltySelectedIds(new Set(visibleActionRows.map((row) => row.id))); setCartFollowUpQueueTotal(visibleActionRows.length); setCartFollowUpQueue(visibleActionRows.slice(1).map((row) => cartFollowUpRowFromGrid(row))); openCartFollowUpFromGrid(visibleActionRows[0]); }} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-black text-white">Log all {actionRows.length} carts now</button>
               </div>
             </div>
             {cartPenaltyShowFilters && <div className="mb-2 flex flex-wrap gap-2 rounded-xl border border-rose-100 bg-white p-2"><select value={cartPenaltySource} onChange={(event) => setCartPenaltySource(event.target.value)} className="rounded-lg border px-3 py-1.5 text-xs"><option>All sources</option>{actionSources.map((value) => <option key={value}>{value}</option>)}</select><select value={cartPenaltyLocation} onChange={(event) => setCartPenaltyLocation(event.target.value)} className="rounded-lg border px-3 py-1.5 text-xs"><option>All locations</option>{actionLocations.map((value) => <option key={value}>{value}</option>)}</select><button type="button" onClick={() => { setCartPenaltySource("All sources"); setCartPenaltyLocation("All locations"); }} className="text-xs font-bold text-rose-700">Clear filters</button></div>}
-            <div className="overflow-x-auto rounded-xl border border-rose-100 bg-white"><table className="w-full min-w-[1080px] text-left text-xs"><thead className="bg-rose-50/60 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="px-3 py-2"><input type="checkbox" checked={visibleActionRows.length > 0 && visibleActionRows.every((row) => cartPenaltySelectedIds.has(row.id))} onChange={(event) => setCartPenaltySelectedIds(event.target.checked ? new Set(visibleActionRows.map((row) => row.id)) : new Set())} aria-label="Select all unlogged carts" /></th><th className="px-3 py-2">Cart / Customer</th><th className="px-3 py-2">Assigned time</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Item / Source</th><th className="px-3 py-2">Potential charge</th><th className="px-3 py-2" /></tr></thead><tbody>{visibleActionRows.map((row) => <tr key={`action-${row.id}`} className="border-t border-rose-50"><td className="px-3 py-2.5"><input type="checkbox" checked={cartPenaltySelectedIds.has(row.id)} onChange={(event) => setCartPenaltySelectedIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.customer}`} /></td><td className="px-3 py-2.5"><b className="block">#{String(row.id).slice(0, 8)} · {row.customer || "No name given"}</b><span className="text-slate-400">{row.state || row.city || "—"}</span></td><td className="px-3 py-2.5 text-slate-600">{row.assignedAt ? new Date(row.assignedAt).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" }) : "—"}</td><td className="px-3 py-2.5"><span className="rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black uppercase text-rose-700">Unlogged</span><span className="block text-[11px] text-slate-500">No activity logged</span></td><td className="px-3 py-2.5 text-slate-600"><span className="block">{row.productName || "Cart"}{row.quantity ? ` (${row.quantity}pcs)` : ""}</span><span className="text-slate-400">Source: {row.source || "Unknown"}</span></td><td className="px-3 py-2.5 font-black text-rose-700">{naira(penalties.missAmount)}</td><td className="px-3 py-2.5"><button type="button" onClick={() => { setSelectedCartId(row.id); setModal("cartDetails"); }} className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-bold text-gray-700 hover:border-blue-300 hover:text-blue-600">Open &amp; Log Activity →</button></td></tr>)}</tbody></table>{visibleActionRows.length === 0 && <p className="m-0 p-6 text-center text-xs text-slate-500">No unlogged carts match these filters.</p>}</div>
+            <div className="overflow-x-auto rounded-xl border border-rose-100 bg-white"><table className="w-full min-w-[1080px] text-left text-xs"><thead className="bg-rose-50/60 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="px-3 py-2"><input type="checkbox" checked={visibleActionRows.length > 0 && visibleActionRows.every((row) => cartPenaltySelectedIds.has(row.id))} onChange={(event) => setCartPenaltySelectedIds(event.target.checked ? new Set(visibleActionRows.map((row) => row.id)) : new Set())} aria-label="Select all unlogged carts" /></th><th className="px-3 py-2">Cart / Customer</th><th className="px-3 py-2">Assigned time</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Item / Source</th><th className="px-3 py-2">Potential charge</th><th className="px-3 py-2" /></tr></thead><tbody>{visibleActionRows.map((row) => <tr key={`action-${row.id}`} className="border-t border-rose-50"><td className="px-3 py-2.5"><input type="checkbox" checked={cartPenaltySelectedIds.has(row.id)} onChange={(event) => setCartPenaltySelectedIds((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} aria-label={`Select ${row.customer}`} /></td><td className="px-3 py-2.5"><b className="block">#{String(row.id).slice(0, 8)} · {row.customer || "No name given"}</b><span className="text-slate-400">{row.state || row.city || "—"}</span></td><td className="px-3 py-2.5 text-slate-600">{row.assignedAt ? new Date(row.assignedAt).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit" }) : "—"}</td><td className="px-3 py-2.5"><span className="rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black uppercase text-rose-700">Unlogged</span><span className="block text-[11px] text-slate-500">No activity logged</span></td><td className="px-3 py-2.5 text-slate-600"><span className="block">{row.productName || "Cart"}{row.quantity ? ` (${row.quantity}pcs)` : ""}</span><span className="text-slate-400">Source: {row.source || "Unknown"}</span></td><td className="px-3 py-2.5 font-black text-rose-700">{naira(penalties.missAmount)}</td><td className="px-3 py-2.5"><button type="button" onClick={() => openCartFollowUpFromGrid(row)} className="rounded-lg border border-gray-200 bg-white px-3 py-2 font-bold text-gray-700 hover:border-blue-300 hover:text-blue-600">Open &amp; Log Activity →</button></td></tr>)}</tbody></table>{visibleActionRows.length === 0 && <p className="m-0 p-6 text-center text-xs text-slate-500">No unlogged carts match these filters.</p>}</div>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/80 px-2 py-1.5 text-[11px] font-semibold text-slate-500"><span>🛡 Act now to avoid charges. Once logged, the charge is removed automatically.</span><span className="flex gap-3"><button type="button" onClick={() => setCartPenaltyShowHelp((value) => !value)} className="font-black text-rose-700">How it works</button><button type="button" onClick={() => setCartPenaltyShowPolicy((value) => !value)} className="font-black text-rose-700">View penalty policy →</button></span></div>
             {cartPenaltyShowHelp && <p className="m-0 mt-2 rounded-lg border border-rose-100 bg-white p-3 text-xs text-slate-600">Open each cart and record a call, WhatsApp, SMS, or outcome. The cart disappears from this risk list after a valid activity is saved. “Log all” selects the full queue and starts with the oldest visible cart; each cart still requires a truthful outcome.</p>}
           </div>
@@ -97717,7 +97757,7 @@ ${waybillLineItems(w).length > 1
                 {modal === "updateStock" && "Update Stock"}
                 {modal === "addSalesRep" && "Add New Sales Representative"}
                 {modal === "addAgent" && "Add New Agent"}
-                {modal === "cartFollowUp" && `Log follow-up${cartAttemptCart ? ` — ${cartAttemptCart.customer}` : ""}`}
+                {modal === "cartFollowUp" && `Log follow-up${cartAttemptCart ? ` — ${cartAttemptCart.customer}` : ""}${cartFollowUpQueueTotal > 0 ? ` (${cartFollowUpQueueTotal - cartFollowUpQueue.length} of ${cartFollowUpQueueTotal})` : ""}`}
                 {modal === "addPersonalDeliveryAgent" && "Start Agent Application"}
                 {modal === "pdaGuarantor" && `Guarantor ${pdaGuarantorDraft?.slot ?? ""}`}
                 {modal === "pdaContact" && "Update the customer"}
