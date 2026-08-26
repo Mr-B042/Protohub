@@ -65678,8 +65678,13 @@ ${waybillLineItems(w).length > 1
     // as a flag on individual rows, so a commitment made on Monday had nowhere
     // to resurface on Thursday. Across the business 65 of 109 scheduled
     // follow-ups are already past their day.
-    const openStatuses = new Set(["New", "Confirmed", "In Process", "Dispatched", "Postponed"]);
-    const myOpenOrders = myOrders.filter((order) => openStatuses.has(order.status ?? ""));
+    // ⚠️ NOT the usual open-status list. That set is New/Confirmed/In Process/
+    // Dispatched/Postponed, which excludes Failed and Cancelled - i.e. every
+    // order a Recovery Rep owns. The whole Next actions section was therefore
+    // rendering nothing for the one role it was built for, hiding 12 overdue
+    // callbacks and 97 orders with no next action scheduled at all. Same rule
+    // as the list above: only Delivered is finished here.
+    const myOpenOrders = myOrders.filter((order) => order.status !== "Delivered");
     const nextActionGroups = (() => {
       const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
       const dayIndex = (iso: string) =>
