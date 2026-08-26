@@ -60397,7 +60397,14 @@ ${waybillLineItems(w).length > 1
       : cartGridDayFilter === "unrecorded"
         ? weekScoped.filter((row) => !row.assignedAt)
         : weekScoped.filter((row) => assignedDayKey(row) === cartGridDayFilter);
-    const actionRows = rows.filter((row) => Boolean(row.needsLog) && !row.closed);
+    // Today's penalty is based on whether THIS cart has an attempt today. The
+    // older needsLog flag means stale/overdue and can be false for a brand-new
+    // cart, which made the risk total say 4 while this action list showed 0.
+    const actionRows = weekScoped.filter((row) => {
+      if (row.closed) return false;
+      if (assignedDayKey(row) > todayKey) return false;
+      return (row.cells[todayKey]?.attempts ?? 0) === 0;
+    });
     // The day chips filter on the day a cart was ASSIGNED, which is the right
     // question for "what did I hand out on Tuesday" and the wrong one for a
     // backlog: a cart assigned in July is excluded from every chip, so picking
@@ -60779,7 +60786,7 @@ ${waybillLineItems(w).length > 1
           </div>
         )}
 
-        {penalties?.today?.status === "missed" && actionRows.length > 0 && (
+        {penalties && actionRows.length > 0 && (
           <div className="border-b border-rose-200 bg-gradient-to-r from-rose-50/70 to-white px-4 py-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div><p className="m-0 text-sm font-black uppercase tracking-wide text-rose-700">{actionRows.length} unlogged cart{actionRows.length === 1 ? "" : "s"} need action</p><p className="m-0 text-[11px] font-semibold text-slate-500">Open any cart to log a call, WhatsApp, SMS, or outcome. Logging removes its pending charge automatically.</p></div>
