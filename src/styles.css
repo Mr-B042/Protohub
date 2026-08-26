@@ -9674,6 +9674,29 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
 }
 .calendar-today { animation: calendarTodayPulse 2s ease-out infinite; }
 
+/* A rest day. Hatched rather than blank, because blank reads as "no data" -
+   which is the thing it must NOT be confused with. The stripe says the day was
+   deliberately empty; a plain grey cell full of zeros says the rep did nothing. */
+.calendar-rest {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(148, 163, 184, 0.10) 0,
+    rgba(148, 163, 184, 0.10) 4px,
+    transparent 4px,
+    transparent 9px
+  );
+}
+:root:not([data-theme="light"]) .calendar-rest,
+:root[data-theme="dark"] .calendar-rest {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(148, 163, 184, 0.16) 0,
+    rgba(148, 163, 184, 0.16) 4px,
+    transparent 4px,
+    transparent 9px
+  );
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cart-urgent-promise,
   .cart-urgent-gap,
