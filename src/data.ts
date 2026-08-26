@@ -38,6 +38,7 @@ import {
 
 export const navItems = [
   { label: "Dashboard", icon: LayoutDashboard, active: true },
+  { label: "Products & Stock", icon: Package },
   { label: "Manager Dashboard", icon: LayoutPanelTop },
   { label: "Orders", icon: ShoppingBag },
   { label: "Follow-up Queue", icon: CalendarClock },

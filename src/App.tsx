@@ -270,7 +270,7 @@ type Period = "Today" | "Yesterday" | "This Week" | "Last Week" | "This Month" |
 type CurrencyCode = "NGN" | "USD" | "GBP";
 type ProductCurrencyCode = "NGN" | "GHS" | "USD" | "GBP" | "EUR";
 type ModalType = "createTeam" | "editTeam" | "notifications" | "help" | "signout" | "carts" | "addProduct" | "updateStock" | "addSalesRep" | "addAgent" | "setRate" | "addExpense" | "addUser" | "editUser" | "resetUserPassword" | "deleteUser" | "productDetails" | "deleteProduct" | "addPricing" | "editPricing" | "addPackage" | "editPackage" | "deletePackage" | "createOrder" | "orderDetails" | "orderWorkflow" | "changeOrderStatus" | "salesExpansionLog" | "editOrderCustomer" | "editOrderItems" | "deleteOrder" | "reassignOrder" | "sendToAgent" | "scheduleOrder" | "logFollowUpAttempt" | "cartDetails" | "convertCart" | "assignCart" | "agentDetails" | "assignAgentStock" | "reconcileAgentStock" | "editAgent" | "deleteAgent" | "salesRepDetails" | "editSalesRep" | "recordRemittance" | "recordBatchRemittance" | "remittanceReceipts" | "bonusBreakdown" | "bonusSettings" | "stateAvailability" | "addCrossSell" | "addExtraItems" | "addFreeGift" | "salesBonusFullReport" | "manualBonus" | "addPenalty" | "editProduct" | "createWaybill" | "editWaybill" | "receiveWaybill" | "waybillDetails" | "expenseDetails" | "flagCustomer" | "newStockCount" | "stockCountEntry" | "adjustStockCount" | "cartFollowUp" | "addPersonalDeliveryAgent" | "pdaGuarantor" | "pdaContact" | "pdaDelivered" | "pdaFailed" | "pdaReschedule" | "pdaSendStock" | "pdaRemittance" | "pdaAssignOrder" | "pdaFeeRule" | "pdaIncident" | "pdaCodDiscrepancy" | "pdaReport" | "pdaReject" | "pdaStatusLink" | "pdaMediaViewer" | "pdaPortalCredentials" | null;
-type ActivePage = "Dashboard" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
+type ActivePage = "Dashboard" | "Products & Stock" | "Manager Dashboard" | "Orders" | "Follow-up Queue" | "Closed Orders" | "Abandoned Carts" | "Scheduled Deliveries" | "Deliveries" | "Inventory & Logistics Operations" | "Inventory" | "Sales Reps" | "Sales Teams" | "Sales Rep Bonuses" | "Sales Rep Workspace" | "Recovery Rep Dashboard" | "Head of Sales Rep" | "Upsell & Cross-sell Log" | "Bonuses" | "Call Rep Console" | "Weekend Stock Summary" | "Agents" | "Personal Delivery Agents" | "My Deliveries" | "Waybill" | "Payroll" | "Customers" | "Expenses" | "Finance & Accounting" | "Ad Tracking" | "Marketing" | "User Management" | "Round-Robin" | "Embed Form" | "Notifications" | "Settings" | "WhatsApp" | "Sales Closer Workspace" | "Sales Closers";
 type OrderStatus = "All Orders" | "New" | "Confirmed" | "In Process" | "Dispatched" | "Delivered" | "Cancelled" | "Postponed" | "Failed";
 type OrderStatusAction = Exclude<OrderStatus, "All Orders"> | "Reschedule";
 type PendingSalesExpansionAction =
@@ -2731,7 +2731,7 @@ const roleAllowedPages: Record<EditableUserRole, AccessiblePage[]> = {
   // currentAllowedPages), the same way extraPages layers on top of this
   // static list. Most Sales Reps must never see the page in their sidebar.
   "Sales Rep": [
-    "Sales Rep Workspace", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
+    "Sales Rep Workspace", "Products & Stock", "Bonuses", "Call Rep Console", "Weekend Stock Summary", "Personal Delivery Agents", "Notifications", "Settings", "WhatsApp"
   ],
   "Inventory Manager": [
     "Inventory & Logistics Operations", "Inventory", "Weekend Stock Summary", "Agents", "Waybill", "Expenses", "Notifications", "Settings", "WhatsApp"
@@ -2784,6 +2784,7 @@ const defaultLandingByRole: Record<EditableUserRole, AccessiblePage> = {
 
 const dashboardHashByPage: Record<ActivePage, string> = {
   Dashboard: "#/dashboard/admin",
+  "Products & Stock": "#/dashboard/sales-rep/products",
   "Manager Dashboard": "#/dashboard/admin/manager-overview",
   Orders: "#/dashboard/admin/orders",
   "Follow-up Queue": "#/dashboard/admin/follow-up-queue",
@@ -34109,6 +34110,14 @@ ${waybillLineItems(w).length > 1
         setHashRoute(nextHash);
       }
     };
+
+    if (label === "Products & Stock") {
+      setActivePage("Sales Rep Workspace");
+      setRepConsoleTab("Products & Stock");
+      syncHashRoute("#/dashboard/sales-rep/products");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
 
     if (label === "Dashboard") {
       syncAdminHash(label);
@@ -68703,7 +68712,7 @@ ${waybillLineItems(w).length > 1
         })()}
 
         <nav className="grid grid-cols-2 sm:flex items-center gap-1 bg-gray-100 p-1 rounded-lg w-full sm:w-fit overflow-x-auto no-scrollbar max-w-full" aria-label="Sales rep workspace sections">
-          {repConsoleTabs.filter((tab) => tab !== "Upsell & Cross-sell Log" || (currentRole === "Sales Rep" && salesExpansionFeatureEnabled)).map((tab) => (
+          {repConsoleTabs.filter((tab) => tab !== "Products & Stock" && (tab !== "Upsell & Cross-sell Log" || (currentRole === "Sales Rep" && salesExpansionFeatureEnabled))).map((tab) => (
             <button
               key={tab}
               className={`relative px-4 py-2 sm:py-1.5 rounded-md text-sm font-bold transition-all duration-200 whitespace-nowrap text-center ${repConsoleTab === tab ? "bg-white text-[#1F8FE0] shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200"}`}
@@ -69395,6 +69404,20 @@ ${waybillLineItems(w).length > 1
               return matchesSearch && matchesView;
             }).sort((a, b) => repProductSort === "Stock" ? stockInState(b) - stockInState(a) : repProductSort === "Price" ? (primaryPricing(a)?.sellingPrice ?? 0) - (primaryPricing(b)?.sellingPrice ?? 0) : a.name.localeCompare(b.name));
             const totalAvailable = active.reduce((sum, product) => sum + stockInState(product), 0);
+            const buyingProduct = active.find((product) => product.id === repProductBuyingId) ?? active[0] ?? null;
+            const buyingWords = new Set(`${buyingProduct?.name ?? ""} ${buyingProduct?.description ?? ""}`.toLowerCase().split(/\W+/).filter((word) => word.length > 3));
+            const recommendations = active.filter((product) => product.id !== buyingProduct?.id && stockInState(product) > 0).map((product) => {
+              const text = `${product.name} ${product.description ?? ""}`.toLowerCase();
+              const affinity = Array.from(buyingWords).filter((word) => text.includes(word)).length;
+              return { product, stock: stockInState(product), score: affinity * 1000 + Math.min(stockInState(product), 500) };
+            }).sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name)).slice(0, 3);
+            const stockAcrossStates = states.map((state) => {
+              const quantity = inventoryStateHubRows.filter((row) => normalizeAgentState(row.location.state) === normalizeAgentState(state)).reduce((sum, row) => {
+                const stock = buyingProduct ? stockRowsForStateHub(row.agent, row.location).find((item) => item.productId === buyingProduct.id) : null;
+                return sum + Math.max(0, Number(stock?.quantity ?? 0) - Number(stock?.defective ?? 0) - Number(stock?.missing ?? 0));
+              }, 0);
+              return { state, quantity };
+            }).filter((row) => row.quantity > 0).sort((a, b) => b.quantity - a.quantity);
             return <>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 {[{ label: "Active Products", value: active.length, tone: "blue" }, { label: "Units Available", value: totalAvailable.toLocaleString(), tone: "green" }, { label: "Low Stock", value: low.length, tone: "amber" }, { label: "Out of Stock", value: unavailable.length, tone: "red" }].map((stat) => <article key={stat.label} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-[#0c1722]"><span className={`text-[11px] font-black uppercase tracking-wide ${stat.tone === "green" ? "text-emerald-600" : stat.tone === "amber" ? "text-amber-600" : stat.tone === "red" ? "text-rose-600" : "text-blue-600"}`}>{stat.label}</span><strong className="mt-1 block text-2xl font-black text-gray-900 dark:text-slate-100">{stat.value}</strong></article>)}
@@ -69408,6 +69431,10 @@ ${waybillLineItems(w).length > 1
                 <div className="mt-4 flex gap-2 overflow-x-auto border-b border-gray-100 pb-2 dark:border-slate-700">{([["recommended", "Recommended to Cross-sell"], ["all", "All Products"], ["low", "Low Stock"], ["unavailable", "Unavailable"]] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setRepProductView(key)} className={`whitespace-nowrap px-3 py-2 text-sm font-black ${repProductView === key ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 dark:text-slate-400"}`}>{label}</button>)}</div>
                 <h2 className="mt-5 text-base font-black text-gray-900 dark:text-slate-100">Products ready to sell in {repProductState} <span className="text-blue-600">— {filtered.length}</span></h2>
                 <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{filtered.map((product) => { const stock = stockInState(product); const pricing = primaryPricing(product); const lowItem = stock > 0 && stock <= smartStockLowStockThreshold; return <article key={product.id} className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-start justify-between gap-2"><h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">{product.name}</h3><span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${stock <= 0 ? "bg-rose-100 text-rose-700" : lowItem ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{stock <= 0 ? "Unavailable" : lowItem ? "Low stock" : "High availability"}</span></div><p className="mt-2 text-xs text-gray-500 dark:text-slate-400">{product.description || "Product"}</p><strong className="mt-3 block text-lg text-blue-700 dark:text-blue-300">{formatProductMoney(pricing?.sellingPrice ?? 0, pricing?.currency ?? "NGN")}</strong><p className={`mt-2 text-xs font-black ${stock <= 0 ? "text-rose-600" : lowItem ? "text-amber-600" : "text-emerald-600"}`}>{repProductState}: {stock <= 0 ? "Out of stock" : `${stock.toLocaleString()} units available`}</p><p className="mt-1 text-[11px] font-semibold text-gray-500 dark:text-slate-400">Company stock: {totalProductStockLive(product).toLocaleString()}</p><button type="button" disabled={stock <= 0} onClick={() => { setRepProductBuyingId(product.id); showToast(`${product.name} is ready to cross-sell in ${repProductState}.`); }} className="mt-4 w-full rounded-lg bg-[#1F8FE0] px-3 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-gray-300">{stock <= 0 ? "Find alternative" : "Cross-sell →"}</button></article>; })}</div>
+                <div className="mt-5 grid gap-4 lg:grid-cols-[1.15fr_.85fr]">
+                  <aside className="rounded-xl border border-blue-200 bg-blue-50/60 p-4 dark:border-blue-400/25 dark:bg-blue-500/10"><h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">What can I sell to this customer?</h3><p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Live options ranked by product fit and stock in {repProductState}.</p><label className="mt-3 block text-xs font-black text-gray-700 dark:text-slate-200">Currently buying<select className="mt-1 h-10 w-full rounded-lg border border-blue-200 bg-white px-3 text-sm dark:border-slate-600 dark:bg-slate-950 dark:text-slate-100" value={buyingProduct?.id ?? ""} onChange={(e) => setRepProductBuyingId(e.target.value)}>{active.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label><div className="mt-4 space-y-2">{recommendations.map((row, index) => <div key={row.product.id} className="flex items-center justify-between gap-3 rounded-lg bg-white p-3 dark:bg-slate-900"><div><span className="text-[10px] font-black text-blue-600">#{index + 1} {row.score >= 1000 ? "Strong match" : "Available match"}</span><strong className="block text-sm text-gray-900 dark:text-slate-100">{row.product.name}</strong></div><span className="text-xs font-black text-emerald-600">{row.stock} available</span></div>)}</div></aside>
+                  <aside className="rounded-xl border border-gray-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"><h3 className="m-0 text-sm font-black text-gray-900 dark:text-slate-100">Stock by state{buyingProduct ? ` — ${buyingProduct.name}` : ""}</h3><div className="mt-3 space-y-2">{stockAcrossStates.slice(0, 8).map((row) => <div key={row.state} className="flex items-center justify-between border-b border-gray-100 pb-2 text-xs dark:border-slate-700"><span className="font-bold text-gray-600 dark:text-slate-300">{row.state}</span><strong className="text-emerald-600">{row.quantity.toLocaleString()}</strong></div>)}{stockAcrossStates.length === 0 && <p className="text-xs text-gray-500">No state stock is currently available.</p>}</div><div className="mt-4 rounded-lg bg-gray-50 p-3 dark:bg-slate-950"><span className="text-[10px] font-black uppercase text-gray-400">Selling guide</span><p className="mt-1 text-xs font-semibold text-gray-700 dark:text-slate-300">Lead with the customer&apos;s need, confirm {repProductState} stock before promising delivery, then offer the strongest available match above.</p></div></aside>
+                </div>
               </section>
             </>;
           })()}
@@ -71360,10 +71387,14 @@ ${waybillLineItems(w).length > 1
             const isBonusShortcut = targetPage === "Bonuses";
             const isWorkspaceBonusTab = activePage === "Sales Rep Workspace" && repConsoleTab === "Bonuses";
             const isWorkspaceSalesExpansionTab = activePage === "Sales Rep Workspace" && repConsoleTab === "Upsell & Cross-sell Log";
+            const isWorkspaceProductsTab = activePage === "Sales Rep Workspace" && repConsoleTab === "Products & Stock";
             const isActive = isBonusShortcut
               ? isWorkspaceBonusTab
+              : targetPage === "Products & Stock"
+                ? isWorkspaceProductsTab
               : activePage === targetPage
                   && !(targetPage === "Sales Rep Workspace" && isWorkspaceBonusTab && currentAllowedPages.includes("Bonuses"))
+                  && !(targetPage === "Sales Rep Workspace" && isWorkspaceProductsTab && currentAllowedPages.includes("Products & Stock"))
                   && !(targetPage === "Sales Rep Workspace" && isWorkspaceSalesExpansionTab && currentAllowedPages.includes("Upsell & Cross-sell Log"));
             // Customer Retention's own pages render as a contextual
             // sub-section right under Recovery Rep Dashboard - not a second
