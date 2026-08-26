@@ -260,12 +260,22 @@ export default function RecoveryBonusCalendar({ view, range, loading, formatMone
     }));
 
     const countOf = (rows: Row[], reach: ActivityReach) => rows.filter((row) => row.reach === reach).length;
+    /**
+     * ⚠️ DISTINCT ORDERS, not rows - because that is what the four metric cards
+     * directly above this panel count, and what the calendar cell counts. Five
+     * calls to one customer is one order followed up, and a headline here that
+     * counted touches would sit inches from a card counting orders, under the
+     * same word. `order_contact_attempts` also carries ~119 genuine duplicate
+     * submissions, so rows are the wrong unit twice over. Every touch is still
+     * listed underneath; the count just stops disagreeing with its neighbour.
+     */
+    const distinctOrders = (rows: Row[]) => new Set(rows.map((row) => row.orderId)).size;
     return [
       { key: "followUps", label: "Follow-ups", noun: "follow-ups", hint: "Customers that needed a touch today",
         icon: <Phone className="h-3.5 w-3.5 text-emerald-600" />, iconTone: "bg-emerald-50 dark:bg-emerald-500/15",
         openBorder: "border-emerald-200", openHead: "bg-emerald-50/70 dark:bg-emerald-500/10",
         chipOn: "border-emerald-500 bg-emerald-500 text-white",
-        all: followUps, rows: build(followUps),
+        all: followUps, rows: build(followUps), orders: distinctOrders(followUps),
         summary: [
           { label: "reached", count: countOf(followUps, "reached"), tone: CHIP_TONE.good },
           { label: "not reached", count: countOf(followUps, "not_reached"), tone: CHIP_TONE.warn }
@@ -274,7 +284,7 @@ export default function RecoveryBonusCalendar({ view, range, loading, formatMone
         icon: <RefreshCw className="h-3.5 w-3.5 text-sky-600" />, iconTone: "bg-sky-50 dark:bg-sky-500/15",
         openBorder: "border-sky-200", openHead: "bg-sky-50/70 dark:bg-sky-500/10",
         chipOn: "border-sky-500 bg-sky-500 text-white",
-        all: retention, rows: build(retention),
+        all: retention, rows: build(retention), orders: distinctOrders(retention),
         summary: [
           { label: "reached", count: countOf(retention, "reached"), tone: CHIP_TONE.good },
           { label: "not reached", count: countOf(retention, "not_reached"), tone: CHIP_TONE.warn }
@@ -283,19 +293,19 @@ export default function RecoveryBonusCalendar({ view, range, loading, formatMone
         icon: <Inbox className="h-3.5 w-3.5 text-amber-600" />, iconTone: "bg-amber-50 dark:bg-amber-500/15",
         openBorder: "border-amber-200", openHead: "bg-amber-50/70 dark:bg-amber-500/10",
         chipOn: "border-amber-500 bg-amber-500 text-white",
-        all: claimed, rows: build(claimed),
+        all: claimed, rows: build(claimed), orders: distinctOrders(claimed),
         summary: [{ label: "failed", count: countOf(claimed, "failed"), tone: CHIP_TONE.bad }].filter((chip) => chip.count > 0) },
       { key: "delivered", label: "Delivered", noun: "deliveries", hint: "Recovered and delivered today",
         icon: <CheckSquare className="h-3.5 w-3.5 text-violet-600" />, iconTone: "bg-violet-50 dark:bg-violet-500/15",
         openBorder: "border-violet-200", openHead: "bg-violet-50/70 dark:bg-violet-500/10",
         chipOn: "border-violet-500 bg-violet-500 text-white",
-        all: delivered, rows: build(delivered),
+        all: delivered, rows: build(delivered), orders: distinctOrders(delivered),
         summary: [] as { label: string; count: number; tone: string }[] }
     ].filter((group) => group.all.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activity, activitySearch, activityFilter]);
 
-  const activityTotal = activityGroups.reduce((sum, group) => sum + group.all.length, 0);
+  const activityTotal = activityGroups.reduce((sum, group) => sum + group.orders, 0);
 
   const targets = view.targets ?? { followUp: 0, retention: 0, delivered: 0, claimed: 0 };
   const todayKey = new Date().toISOString().slice(0, 10);
@@ -601,7 +611,7 @@ export default function RecoveryBonusCalendar({ view, range, loading, formatMone
                             className={`!min-h-0 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${
                               openStack === group.key ? group.chipOn : "border-slate-200/80 bg-white text-slate-600 hover:bg-slate-50"}`}>
                             {group.label}
-                            <span className="font-black tabular-nums">{group.all.length}</span>
+                            <span className="font-black tabular-nums">{group.orders}</span>
                           </button>
                         ))}
                       </div>
@@ -641,9 +651,16 @@ export default function RecoveryBonusCalendar({ view, range, loading, formatMone
                               <span className="min-w-0 flex-1">
                                 <span className="flex flex-wrap items-baseline gap-1.5">
                                   <span className="text-[12px] font-black text-slate-900 dark:text-slate-100">{group.label}</span>
-                                  <span className="text-[11px] font-black tabular-nums text-slate-400">{group.all.length}</span>
+                                  <span className="text-[11px] font-black tabular-nums text-slate-400">{group.orders}</span>
+                                  {/* Touches only get their own number when a
+                                      customer was contacted more than once, so
+                                      the extra work is visible without the
+                                      headline drifting from the cards above. */}
+                                  {group.all.length > group.orders && (
+                                    <span className="text-[10px] font-bold text-slate-400">{group.all.length} touches</span>
+                                  )}
                                   {group.rows.length !== group.all.length && (
-                                    <span className="text-[10px] font-bold text-slate-400">{group.rows.length} match</span>
+                                    <span className="text-[10px] font-bold text-slate-400">{group.rows.length} shown</span>
                                   )}
                                 </span>
                                 <span className="block text-[10px] font-semibold text-slate-400">{group.hint}</span>

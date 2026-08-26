@@ -9231,7 +9231,12 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     try { window.localStorage.setItem(NEXT_ACTION_STACK_KEY, key); } catch { /* private mode */ }
   };
   const [nextActionShown, setNextActionShown] = useState<Record<string, number>>({});
-  const [nextActionMenuId, setNextActionMenuId] = useState<string | null>(null);
+  // ⚠️ Portalled, so it carries its own position. The row menu lives inside the
+  // desktop table's overflow-x-auto wrapper, and ANY clipping ancestor cuts an
+  // absolutely-positioned panel off at the container edge with no error and no
+  // z-index that can rescue it - the same trap that hid half the date picker's
+  // quick ranges in PR #532.
+  const [nextActionMenu, setNextActionMenu] = useState<{ id: string; top: number; left: number } | null>(null);
   const [nextActionFilterOpen, setNextActionFilterOpen] = useState(false);
   const [nextActionStatusFilter, setNextActionStatusFilter] = useState("all");
   const [nextActionNeverCalledOnly, setNextActionNeverCalledOnly] = useState(false);
@@ -46044,7 +46049,7 @@ ${waybillLineItems(w).length > 1
   useEffect(() => {
     setNextActionSearch({});
     setNextActionShown({});
-    setNextActionMenuId(null);
+    setNextActionMenu(null);
     setNextActionTab("all");
   }, [recoveryRepViewingId]);
 
@@ -65932,40 +65937,67 @@ ${waybillLineItems(w).length > 1
       : nextActionTab;
     // The two ways of reaching a customer that are not "log a call": both are
     // one tap on a phone, which is where this page is actually used.
+    const NEXT_ACTION_MENU_WIDTH = 192;
+    const NEXT_ACTION_MENU_HEIGHT = 148;
     const nextActionRowMenu = (row: NextActionRow) => {
       const whatsappUrl = buildWhatsAppTargets(row.phone, `Hello ${row.customer}, this is Protohub following up on your order.`).normalUrl;
+      const open = nextActionMenu?.id === row.id;
+      // Right-aligned to the button, flipped above it when the viewport runs
+      // out below - a menu on the last row of a long panel opens upward rather
+      // than off the bottom of the screen.
+      const place = (trigger: HTMLElement) => {
+        const rect = trigger.getBoundingClientRect();
+        const margin = 8;
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+        const left = Math.max(margin, Math.min(rect.right - NEXT_ACTION_MENU_WIDTH, viewportWidth - NEXT_ACTION_MENU_WIDTH - margin));
+        const below = rect.bottom + 4;
+        const top = below + NEXT_ACTION_MENU_HEIGHT > viewportHeight - margin
+          ? Math.max(margin, rect.top - NEXT_ACTION_MENU_HEIGHT - 4)
+          : below;
+        setNextActionMenu({ id: row.id, top, left });
+      };
       return (
-        <div className="relative">
+        <>
           <button
             type="button"
             aria-label={`More actions for ${row.customer || row.id}`}
-            onClick={() => setNextActionMenuId(nextActionMenuId === row.id ? null : row.id)}
+            aria-expanded={open}
+            onClick={(event) => (open ? setNextActionMenu(null) : place(event.currentTarget))}
             className="!min-h-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-600"
           >
             <MoreVertical className="h-4 w-4" />
           </button>
-          {nextActionMenuId === row.id && (
+          {/* ⚠️ Portalled to document.body, NOT absolutely positioned in the
+              row: the table wrapper's overflow-x-auto would clip it. Backdrop
+              and panel travel together inside the portal, so click-away closes
+              on the page but never on the menu's own controls. */}
+          {open && nextActionMenu && createPortal(
             <>
-              <div className="fixed inset-0 z-20" onClick={() => setNextActionMenuId(null)} />
-              <div className="absolute right-0 z-30 mt-1 w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
-                <button type="button" onClick={() => { setNextActionMenuId(null); openOrderDetailPopup(row.id); }}
+              <div className="fixed inset-0 z-[190]" onClick={() => setNextActionMenu(null)} />
+              <div
+                className="fixed z-[200] w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg"
+                style={{ top: nextActionMenu.top, left: nextActionMenu.left }}
+              >
+                <button type="button" onClick={() => { setNextActionMenu(null); openOrderDetailPopup(row.id); }}
                   className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">
                   <Eye className="h-4 w-4 text-slate-400" /> Open order
                 </button>
                 {whatsappUrl && (
-                  <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => setNextActionMenuId(null)}
+                  <a href={whatsappUrl} target="_blank" rel="noreferrer" onClick={() => setNextActionMenu(null)}
                     className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">
                     <WhatsAppIcon className="h-4 w-4 text-green-600" /> Message on WhatsApp
                   </a>
                 )}
-                <button type="button" onClick={() => { setNextActionMenuId(null); copyText(row.phone, `${row.customer || "Customer"} phone`); }}
+                <button type="button" onClick={() => { setNextActionMenu(null); copyText(row.phone, `${row.customer || "Customer"} phone`); }}
                   className="!min-h-0 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">
                   <Copy className="h-4 w-4 text-slate-400" /> Copy phone
                 </button>
               </div>
-            </>
+            </>,
+            document.body
           )}
-        </div>
+        </>
       );
     };
     // When it is owed, and how far off that is in plain words. An unscheduled
