@@ -1840,6 +1840,7 @@ router.get("/follow-up-grid",
           const latestEver = latestEverByCart.get(row.id) ?? null;
           const lastOutcomeCode = latestEver?.outcome_code ?? null;
           const closedReason = order?.status === "Delivered" ? "Delivered"
+            : lastOutcomeCode === "Interested" ? "Interested"
             : (lastOutcomeCode === "Not interested" || row.status === "Not interested") ? "Not interested"
             : lastOutcomeCode === "Wrong number" ? "Wrong number"
             : null;
