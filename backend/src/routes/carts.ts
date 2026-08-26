@@ -1759,7 +1759,7 @@ router.get("/follow-up-grid",
       });
 
       let cartQuery = supabase.from("abandoned_carts")
-        .select("id, customer, phone, whatsapp, status, amount, currency, product_name, package_name, city, state, assigned_rep_id, assigned_at, created_at, last_activity, left_at, quantity:capture_payload->>packageQuantity")
+        .select("id, customer, phone, whatsapp, status, amount, currency, product_name, package_name, source, city, state, assigned_rep_id, assigned_at, created_at, last_activity, left_at, quantity:capture_payload->>packageQuantity")
         .eq("org_id", orgId)
         .not("assigned_rep_id", "is", null);
       if (repFilter) cartQuery = cartQuery.eq("assigned_rep_id", repFilter);
@@ -1875,6 +1875,7 @@ router.get("/follow-up-grid",
             currency: row.currency ?? "NGN",
             city: row.city ?? null,
             state: row.state ?? null,
+            source: row.source ?? null,
             status: row.status,
             repId: row.assigned_rep_id,
             repName: nameById.get(row.assigned_rep_id) ?? "Unknown rep",

@@ -3195,6 +3195,7 @@ export type CartGridRow = {
   productName?: string | null; packageName?: string | null;
   amount: number; currency?: string | null; quantity?: number | null;
   city?: string | null; state?: string | null;
+  source?: string | null;
   status: string; repId: string; repName: string; assignedAt?: string | null;
   createdAt: string; createdKey: string;
   convertedOrderId?: string | null; convertedOrderStatus?: string | null;
