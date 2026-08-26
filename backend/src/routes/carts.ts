@@ -2276,6 +2276,7 @@ router.get("/log-penalties",
       if (repFilter) cartQuery = cartQuery.eq("assigned_rep_id", repFilter);
       const { data: cartRows } = await cartQuery.limit(REPORT_ROW_CEILING);
       const carts = (cartRows ?? []) as any[];
+      const cartIds = carts.map((row) => row.id);
 
       const [{ data: repRows }, { data: attemptRows }, { data: orderRows }, { data: decisionRows }] =
         await Promise.all([
@@ -2295,6 +2296,16 @@ router.get("/log-penalties",
             .gte("miss_date", from).lte("miss_date", to).limit(REPORT_ROW_CEILING)
         ]);
 
+      // An Interested outcome is a valid completed follow-up, not an untouched
+      // cart. Keep this lookup outside the selected date range: once a cart has
+      // been positively qualified, it must not create a ₦500 charge tomorrow,
+      // and any earlier pending/approved cart charge must be waived too.
+      const { data: allOutcomeRows } = await supabase.from(CART_ATTEMPTS)
+        .select("cart_id, outcome_code")
+        .eq("org_id", orgId).in("cart_id", cartIds)
+        .eq("outcome_code", "Interested");
+      const interestedCartIds = new Set((allOutcomeRows ?? []).map((row: any) => row.cart_id));
+
       const repName = new Map(((repRows ?? []) as any[]).map((row) => [row.id, row.name]));
       const deliveredCart = new Set(((orderRows ?? []) as any[])
         .filter((row) => row.status === "Delivered").map((row) => row.source_cart_id));
@@ -2305,6 +2316,7 @@ router.get("/log-penalties",
       // one - a penalty built on a guessed date would not survive a dispute.
       const openCarts = carts.filter((row) =>
         !deliveredCart.has(row.id)
+        && !interestedCartIds.has(row.id)
         && row.status !== "Not interested"
         && row.status !== "Wrong number");
 
@@ -2379,8 +2391,11 @@ router.get("/log-penalties",
             // A saved decision keeps the amount it was reviewed at. The Owner
             // approved a specific figure; recomputing it here would silently
             // change what was already agreed if the board or the rate moved.
-            amount: Number(decision?.amount ?? dayPenaltyAmount(input)),
-            status: (decision?.status ?? "pending") as "pending" | "approved" | "waived",
+            // Recalculate against the now-exempt due set. This waives the
+            // Interested cart's share without erasing a same-day charge for
+            // other carts still assigned to the rep.
+            amount: decision ? Math.min(Number(decision.amount ?? 0), dayPenaltyAmount(input)) : dayPenaltyAmount(input),
+            status: decision && dayPenaltyAmount(input) === 0 ? "waived" : (decision?.status ?? "pending") as "pending" | "approved" | "waived",
             reviewedByName: decision?.reviewed_by_name ?? "",
             reviewedAt: decision?.reviewed_at ?? null,
             reviewNote: decision?.review_note ?? ""
@@ -2442,8 +2457,8 @@ router.get("/log-penalties",
               cartsDue: input.cartsDue,
               cartsLogged: input.cartsLogged ?? 0,
               cartsMissed: missedCartCount(input),
-              amount: Number(decision?.amount ?? dayPenaltyAmount(input)),
-              status: (decision?.status ?? "pending") as "pending" | "approved" | "waived",
+              amount: decision ? Math.min(Number(decision.amount ?? 0), dayPenaltyAmount(input)) : dayPenaltyAmount(input),
+              status: decision && dayPenaltyAmount(input) === 0 ? "waived" : (decision?.status ?? "pending") as "pending" | "approved" | "waived",
               reviewedByName: decision?.reviewed_by_name ?? "",
               reviewedAt: decision?.reviewed_at ?? null,
               reviewNote: decision?.review_note ?? ""
