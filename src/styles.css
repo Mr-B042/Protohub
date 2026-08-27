@@ -7905,6 +7905,10 @@ html.dark,
 .dark .text-orange-500 { color: hsl(35 90% 68%); }
 .dark .text-rose-700,
 .dark .text-red-700 { color: hsl(0 80% 78%); }
+.dark .text-rose-900,
+.dark .text-red-900 { color: hsl(0 85% 86%); }
+.dark .text-rose-800,
+.dark .text-red-800 { color: hsl(0 82% 82%); }
 .dark .text-rose-600,
 .dark .text-rose-500,
 .dark .text-red-600,
