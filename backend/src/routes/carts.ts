@@ -2304,29 +2304,32 @@ router.get("/log-penalties",
             .gte("miss_date", from).lte("miss_date", to).limit(REPORT_ROW_CEILING)
         ]);
 
-      // An Interested outcome is a valid completed follow-up, not an untouched
-      // cart. Keep this lookup outside the selected date range: once a cart has
-      // been positively qualified, it must not create a ₦500 charge tomorrow,
-      // and any earlier pending/approved cart charge must be waived too.
+      // Terminal outcomes are valid completed follow-ups, not untouched carts.
+      // Keep this lookup outside the selected date range: once a cart is
+      // delivered, converted, interested, rescheduled, declined or invalid,
+      // it must never create a cart-log charge merely because the source-order
+      // link was written late or is missing on an older conversion.
       const { data: allOutcomeRows } = await supabase.from(CART_ATTEMPTS)
         .select("cart_id, outcome_code")
         .eq("org_id", orgId).in("cart_id", cartIds)
-        .eq("outcome_code", "Interested");
-      const interestedCartIds = new Set((allOutcomeRows ?? []).map((row: any) => row.cart_id));
+        .in("outcome_code", ["Interested", "Rescheduled", "Not interested", "Wrong number"]);
+      const terminalOutcomeCartIds = new Set((allOutcomeRows ?? []).map((row: any) => String(row.cart_id).trim()));
 
       const repName = new Map(((repRows ?? []) as any[]).map((row) => [row.id, row.name]));
       const deliveredCart = new Set(((orderRows ?? []) as any[])
-        .filter((row) => row.status === "Delivered").map((row) => row.source_cart_id));
+        .filter((row) => row.status === "Delivered")
+        .map((row) => String(row.source_cart_id ?? "").trim())
+        .filter(Boolean));
+      const terminalCartStatuses = new Set(["delivered", "converted", "closed", "not interested", "wrong number", "cancelled", "canceled"]);
 
       // ⚠️ A cart currently closed is exempt from EVERY day in the range, not
       // just the days after it closed. There is no reliable timestamp for when
       // a cart went closed, so this errs toward the rep rather than inventing
       // one - a penalty built on a guessed date would not survive a dispute.
       const openCarts = carts.filter((row) =>
-        !deliveredCart.has(row.id)
-        && !interestedCartIds.has(row.id)
-        && row.status !== "Not interested"
-        && row.status !== "Wrong number");
+        !deliveredCart.has(String(row.id).trim())
+        && !terminalOutcomeCartIds.has(String(row.id).trim())
+        && !terminalCartStatuses.has(String(row.status ?? "").trim().toLowerCase()));
 
       // Logs per rep per day, counted BOTH ways. The charge is per cart, so it
       // needs distinct carts touched - five attempts on one cart clears one
