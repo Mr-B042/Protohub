@@ -7913,6 +7913,20 @@ html.dark,
 .dark .text-teal-600,
 .dark .text-teal-500 { color: hsl(180 65% 65%); }
 
+/* Form controls must not fall back to a white/light-mode surface in dark
+   mode. This covers native controls that do not carry an explicit dark:
+   variant while preserving intentionally coloured controls. */
+.dark input:not([type="checkbox"]):not([type="radio"]),
+.dark select,
+.dark textarea {
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--surface-card));
+  border-color: hsl(var(--border));
+  color-scheme: dark;
+}
+.dark input::placeholder,
+.dark textarea::placeholder { color: hsl(var(--text-faint)); }
+
 /* Borders */
 .dark .border-gray-100,
 .dark .border-slate-100 { border-color: hsl(var(--border-subtle)); }
