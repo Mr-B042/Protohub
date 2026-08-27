@@ -7861,6 +7861,7 @@ html.dark,
 .dark .bg-teal-100 { background-color: hsl(180 50% 18%); }
 .dark .bg-pink-50 { background-color: hsl(330 60% 18%); }
 .dark .bg-sky-50 { background-color: hsl(200 70% 18%); }
+.dark .bg-sky-50\/70 { background-color: hsl(200 70% 18% / 0.7); }
 
 /* Text - neutral ramps. Pushed bright to maximise legibility on the
    deeper background. */
@@ -7931,7 +7932,8 @@ html.dark,
 .dark .text-emerald-800,
 .dark .text-green-800 { color: hsl(150 70% 78%); }
 .dark .text-sky-700,
-.dark .text-sky-800 { color: hsl(200 90% 78%); }
+.dark .text-sky-800,
+.dark .text-sky-900 { color: hsl(200 90% 82%); }
 
 /* Form controls must not fall back to a white/light-mode surface in dark
    mode. This covers native controls that do not carry an explicit dark:
@@ -7963,6 +7965,7 @@ html.dark,
 .dark .border-blue-100 { border-color: hsl(217 70% 28%); }
 .dark .border-blue-200 { border-color: hsl(217 70% 34%); }
 .dark .border-blue-200\/70 { border-color: hsl(217 70% 34% / 0.7); }
+.dark .border-sky-100 { border-color: hsl(200 60% 28%); }
 .dark .border-emerald-100,
 .dark .border-green-100 { border-color: hsl(150 50% 22%); }
 .dark .border-emerald-200,
