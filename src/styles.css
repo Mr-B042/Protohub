@@ -7816,6 +7816,7 @@ html.dark,
 .dark .bg-gray-50\/80,
 .dark .bg-gray-50\/70,
 .dark .bg-gray-50\/40,
+.dark .bg-gray-50\/60,
 .dark .bg-slate-50,
 .dark .bg-slate-50\/80,
 .dark .bg-slate-50\/70,
@@ -7947,6 +7948,8 @@ html.dark,
 .dark .border-slate-100 { border-color: hsl(var(--border-subtle)); }
 .dark .border-gray-200,
 .dark .border-gray-200\/50,
+.dark .border-gray-200\/70,
+.dark .border-gray-200\/80,
 .dark .border-slate-200\/80,
 .dark .border-slate-200 { border-color: hsl(var(--border)); }
 .dark .border-gray-300,
@@ -7955,6 +7958,7 @@ html.dark,
 .dark .border-black\/10 { border-color: rgba(255, 255, 255, 0.12); }
 .dark .border-blue-100 { border-color: hsl(217 70% 28%); }
 .dark .border-blue-200 { border-color: hsl(217 70% 34%); }
+.dark .border-blue-200\/70 { border-color: hsl(217 70% 34% / 0.7); }
 .dark .border-emerald-100,
 .dark .border-green-100 { border-color: hsl(150 50% 22%); }
 .dark .border-emerald-200,
