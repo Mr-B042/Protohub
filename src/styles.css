@@ -9320,6 +9320,45 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
   background: hsl(202 86% 62%);
 }
 
+/* Dashboard dialogs render outside .app-shell; give them their own theme
+   boundary so order details, cart summaries, and quick actions stay dark. */
+.theme-modal[data-theme="dark"] {
+  background: rgba(2, 6, 23, 0.78);
+}
+
+.theme-modal[data-theme="dark"] > section {
+  background: linear-gradient(180deg, hsl(var(--surface-card-elevated)), hsl(var(--surface-card))) !important;
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+
+.theme-modal[data-theme="dark"] :is(.border-gray-100, .border-gray-200) {
+  border-color: hsl(var(--border)) !important;
+}
+
+.theme-modal[data-theme="dark"] :is(.bg-gray-50, .bg-gray-50\/50, .bg-gray-100) {
+  background: hsl(var(--surface-muted)) !important;
+}
+
+.theme-modal[data-theme="dark"] :is(.hover\:bg-gray-50:hover, .hover\:bg-gray-100:hover) {
+  background: hsl(var(--surface-hover)) !important;
+}
+
+.theme-modal[data-theme="dark"] :is(.text-gray-900, .text-gray-800, .text-gray-700) {
+  color: hsl(var(--foreground)) !important;
+}
+
+.theme-modal[data-theme="dark"] :is(.text-gray-600, .text-gray-500, .text-gray-400) {
+  color: hsl(var(--text-muted)) !important;
+}
+
+.theme-modal[data-theme="dark"] :is(input, select, textarea) {
+  background: hsl(var(--surface-card)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+  color-scheme: dark;
+}
+
 .app-shell[data-theme="dark"] .bg-gray-200 {
   background: hsl(208 28% 16%) !important;
 }

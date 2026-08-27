@@ -12175,7 +12175,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
       </div>
 
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
+        <div className="theme-modal fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto" data-theme={theme}>
           <section className={`relative my-auto bg-white rounded-2xl shadow-2xl w-full flex flex-col max-h-[90vh] overflow-y-auto ${modal === "bonusSettings" || modal === "stateAvailability" ? "max-w-4xl" : modal === "orderWorkflow" ? "max-w-3xl" : modal === "createOrder" || modal === "editOrderItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "carts" ? "max-w-2xl" : "max-w-lg"}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
               <h2 id="modal-title" className="text-base font-semibold text-gray-900">
