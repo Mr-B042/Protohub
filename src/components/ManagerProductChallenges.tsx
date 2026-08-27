@@ -506,7 +506,7 @@ export function ManagerProductChallenges({
 
   return (
     <>
-      <section className="overflow-hidden rounded-lg border border-indigo-200 bg-gradient-to-br from-indigo-50/80 via-white to-violet-50/70 shadow-sm" aria-label="Product challenges">
+      <section className="manager-product-challenges overflow-hidden rounded-lg border border-indigo-200 bg-gradient-to-br from-indigo-50/80 via-white to-violet-50/70 shadow-sm" aria-label="Product challenges">
         <header className="flex flex-col gap-3 border-b border-indigo-100 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-rose-600 shadow-sm"><Target className="h-5 w-5" /></span>
@@ -528,7 +528,7 @@ export function ManagerProductChallenges({
           ) : error ? (
             <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-4 text-sm font-bold text-rose-700">{error}</div>
           ) : challenges.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-indigo-200 bg-white/70 px-5 py-8 text-center">
+            <div className="manager-product-challenges-empty flex flex-col items-center justify-center rounded-lg border border-dashed border-indigo-200 bg-white/70 px-5 py-8 text-center">
               <Target className="h-7 w-7 text-indigo-300" />
               <h3 className="mt-3 text-sm font-black text-gray-900">No product challenge is active right now</h3>
               <p className="mt-1 max-w-lg text-xs font-medium leading-5 text-gray-500">

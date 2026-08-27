@@ -74846,7 +74846,7 @@ ${waybillLineItems(w).length > 1
               )}
             </div>
           ) : activePage === "Manager Dashboard" && (currentRole === "Owner" || currentRole === "Admin" || currentRole === "Manager") ? (
-              <div className="space-y-6">
+              <div className="manager-dashboard-shell space-y-6">
                 <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 px-5 py-4 bg-gradient-to-r from-indigo-50 to-transparent rounded-2xl border border-indigo-100">
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
