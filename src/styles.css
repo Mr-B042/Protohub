@@ -9634,6 +9634,38 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
   color: white;
 }
 
+/* Deep detail view: workflow rails, bonus/remittance callouts, and nested
+   editable rows are easy to miss because their light tints are component
+   utility classes rather than shared panels. */
+.app-shell[data-theme="dark"] :is(.bg-amber-50\/40, .bg-amber-50\/50) {
+  background: hsl(35 58% 15% / 0.72) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.bg-emerald-50\/40, .bg-emerald-50\/50) {
+  background: hsl(150 48% 13% / 0.72) !important;
+}
+
+.app-shell[data-theme="dark"] .rep-status-timeline .bg-white {
+  background: hsl(var(--surface-muted)) !important;
+  border-color: hsl(var(--border-subtle));
+}
+
+.app-shell[data-theme="dark"] .rep-status-timeline .bg-blue-50 {
+  background: hsl(211 58% 22%) !important;
+}
+
+.app-shell[data-theme="dark"] .rep-status-timeline .ring-blue-50 {
+  --tw-ring-color: hsl(211 58% 22%);
+}
+
+.app-shell[data-theme="dark"] :is(.border-l-emerald-500, .border-l-\[\#1A6FBF\]) {
+  box-shadow: inset 3px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+.app-shell[data-theme="dark"] .custom-scrollbar {
+  scrollbar-color: hsl(214 24% 30%) transparent;
+}
+
 .app-shell[data-theme="dark"] .sticky-col-first tbody tr:hover td:first-child {
   background: hsl(var(--surface-muted));
 }
