@@ -8621,6 +8621,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   }>(null);
   const [inlinePackageDrafts, setInlinePackageDrafts] = useState<Record<string, { name: string; description: string; quantity: string; price: string }>>({});
   const [inlinePackageSavingId, setInlinePackageSavingId] = useState<string | null>(null);
+  const [packageReorderBusyIds, setPackageReorderBusyIds] = useState<Set<string>>(new Set());
   const [addOnPerformanceRange, setAddOnPerformanceRange] = useState<AddOnPerformanceRange>("all");
   const [stateStockProductId, setStateStockProductId] = useState("");
   const [stateStockStateFilter, setStateStockStateFilter] = useState("");
@@ -36623,8 +36624,9 @@ ${waybillLineItems(w).length > 1
   };
 
   // Reorder: move a package up/down by swapping displayOrder with neighbour.
-  const movePackage = (item: ProductPackage, direction: "up" | "down") => {
+  const movePackage = async (item: ProductPackage, direction: "up" | "down") => {
     if (!selectedProduct) return;
+    if (packageReorderBusyIds.has(item.id)) return;
     const sorted = [...selectedProduct.packages].sort((a, b) => a.displayOrder - b.displayOrder);
     const idx = sorted.findIndex((p) => p.id === item.id);
     const target = direction === "up" ? idx - 1 : idx + 1;
@@ -36634,6 +36636,7 @@ ${waybillLineItems(w).length > 1
       showToast("This package is still syncing. Try again in a moment.");
       return;
     }
+    setPackageReorderBusyIds((prev) => new Set(prev).add(a.id).add(b.id));
     const aOrder = a.displayOrder, bOrder = b.displayOrder;
     setProducts((value) =>
       value.map((p) => p.id === selectedProduct.id
@@ -36645,10 +36648,12 @@ ${waybillLineItems(w).length > 1
     // Both calls need to succeed for the swap to be coherent. If either fails,
     // restore both packages to their original displayOrder so the UI matches DB.
     const _mvProdId = selectedProduct.id;
-    Promise.all([
-      productsApi.updatePackage(selectedProduct.id, a.id, { displayOrder: bOrder }),
-      productsApi.updatePackage(selectedProduct.id, b.id, { displayOrder: aOrder })
-    ]).catch((err: any) => {
+    try {
+      await Promise.all([
+        productsApi.updatePackage(selectedProduct.id, a.id, { displayOrder: bOrder }),
+        productsApi.updatePackage(selectedProduct.id, b.id, { displayOrder: aOrder })
+      ]);
+    } catch (err: any) {
       setProducts((value) =>
         value.map((p) => p.id === _mvProdId
           ? { ...p, packages: p.packages.map((pkg) =>
@@ -36657,7 +36662,13 @@ ${waybillLineItems(w).length > 1
           : p)
       );
       showToast(`Failed to reorder packages: ${err?.message ?? "please retry"}.`);
-    });
+    } finally {
+      setPackageReorderBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(a.id); next.delete(b.id);
+        return next;
+      });
+    }
   };
 
   // Companion lines that auto-attach to the order based on chosen package + state.
@@ -95889,14 +95900,14 @@ ${waybillLineItems(w).length > 1
                               <td className="px-4 py-4 text-gray-600">
                                 <div className="inline-flex items-center gap-0.5">
                                   <button
-                                    disabled={sortedIdx === 0}
+                                    disabled={sortedIdx === 0 || packageReorderBusyIds.has(item.id) || packageReorderBusyIds.has(sortedArr[sortedIdx - 1]?.id ?? "")}
                                     onClick={() => movePackage(item, "up")}
                                     title="Move up"
                                     className="!min-h-0 p-0.5 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed"
-                                  ><ChevronUp className="w-3.5 h-3.5" /></button>
+                                  ><ChevronUp className={`w-3.5 h-3.5 ${packageReorderBusyIds.has(item.id) ? "animate-pulse" : ""}`} /></button>
                                   <span>{item.displayOrder}</span>
                                   <button
-                                    disabled={sortedIdx === sortedArr.length - 1}
+                                    disabled={sortedIdx === sortedArr.length - 1 || packageReorderBusyIds.has(item.id) || packageReorderBusyIds.has(sortedArr[sortedIdx + 1]?.id ?? "")}
                                     onClick={() => movePackage(item, "down")}
                                     title="Move down"
                                     className="!min-h-0 p-0.5 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed"
