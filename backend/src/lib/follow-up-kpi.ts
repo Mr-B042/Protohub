@@ -166,6 +166,12 @@ export type FollowUpBoard = {
   atRiskAmount: number;
 };
 
+async function activeRepIdsFor(orgId: string, repIds: string[]) {
+  if (repIds.length === 0) return new Set<string>();
+  const { data } = await supabase.from("users").select("id, active").eq("org_id", orgId).in("id", repIds);
+  return new Set((data ?? []).filter((rep) => rep.active !== false).map((rep) => rep.id));
+}
+
 async function computeBoard(orgId: string, dateKey: string, repId?: string | null): Promise<FollowUpBoard> {
   if (!isWorkingDay(dateKey)) {
     return { date: dateKey, workingDay: false, obligations: [], dueCount: 0, attendedCount: 0, unattendedCount: 0, atRiskAmount: 0 };
@@ -185,7 +191,8 @@ async function computeBoard(orgId: string, dateKey: string, repId?: string | nul
     status: string; created_at: string; updated_at: string | null; next_follow_up_at: string | null; scheduled_at: string | null; scheduled_date: string | null;
     call_outcome: string | null; buyer_health: string | null;
   }>;
-  const orderRows = rawOrderRows.filter((o) => !hasTerminalCustomerOutcome(o.call_outcome) && !optedOutPhones.has(normalizedPhone(o.phone)));
+  const activeRepIds = await activeRepIdsFor(orgId, Array.from(new Set(rawOrderRows.map((o) => o.assigned_rep_id).filter(Boolean))) as string[]);
+  const orderRows = rawOrderRows.filter((o) => o.assigned_rep_id && activeRepIds.has(o.assigned_rep_id) && !hasTerminalCustomerOutcome(o.call_outcome) && !optedOutPhones.has(normalizedPhone(o.phone)));
   if (orderRows.length === 0) {
     return { date: dateKey, workingDay: true, obligations: [], dueCount: 0, attendedCount: 0, unattendedCount: 0, atRiskAmount: 0 };
   }
@@ -541,7 +548,8 @@ export async function getFollowUpGrid(orgId: string, repId?: string | null, week
     product_name: string | null; package_name: string | null; amount: number | null; currency: string | null; location: string | null;
     call_outcome: string | null; buyer_health: string | null;
   }>;
-  const orderRows = rawOrderRows.filter((o) => !hasTerminalCustomerOutcome(o.call_outcome) && !optedOutPhones.has(normalizedPhone(o.phone)));
+  const activeRepIds = await activeRepIdsFor(orgId, Array.from(new Set(rawOrderRows.map((o) => o.assigned_rep_id).filter(Boolean))) as string[]);
+  const orderRows = rawOrderRows.filter((o) => o.assigned_rep_id && activeRepIds.has(o.assigned_rep_id) && !hasTerminalCustomerOutcome(o.call_outcome) && !optedOutPhones.has(normalizedPhone(o.phone)));
   const penaltyMeta = { penaltyStartDate: FOLLOW_UP_KPI_START_DATE, penaltyActive: todayKey >= FOLLOW_UP_KPI_START_DATE, missAmount: FOLLOW_UP_MISS_AMOUNT };
   if (orderRows.length === 0) return { weekStart, isCurrentWeek, ...penaltyMeta, days, summary, rows: [] };
   const orderIds = orderRows.map((o) => o.id);

@@ -124,6 +124,19 @@ router.get("/misses", requireRole("Owner", "Admin", "Sales Rep", "Recovery Rep")
   const state = typeof req.query.state === "string" ? req.query.state : "pending";
   const role = req.user!.effectiveUserRole ?? req.user!.role;
   const userId = req.user!.effectiveUserId ?? req.user!.id;
+  // An inactive rep is no longer responsible for follow-ups. Clear any old
+  // pending misses as a waiver so they cannot later become payroll charges.
+  if (state === "pending" || state === "all") {
+    const { data: inactiveReps } = await supabase.from("users").select("id").eq("org_id", req.user!.orgId).eq("active", false);
+    const inactiveIds = (inactiveReps ?? []).map((rep) => rep.id);
+    if (inactiveIds.length > 0) {
+      await supabase.from("follow_up_misses").update({
+        state: "waived",
+        reviewed_by: "System — rep inactive",
+        reviewed_at: new Date().toISOString()
+      }).eq("org_id", req.user!.orgId).eq("state", "pending").in("rep_id", inactiveIds);
+    }
+  }
   let query = supabase
     .from("follow_up_misses")
     .select("*")
