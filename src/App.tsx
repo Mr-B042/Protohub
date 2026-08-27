@@ -36627,7 +36627,15 @@ ${waybillLineItems(w).length > 1
   const movePackage = async (item: ProductPackage, direction: "up" | "down") => {
     if (!selectedProduct) return;
     if (packageReorderBusyIds.has(item.id)) return;
-    const sorted = [...selectedProduct.packages].sort((a, b) => a.displayOrder - b.displayOrder);
+    // Ordering is scoped to a package set. Older data can contain duplicate
+    // display_order values, so the original array position breaks ties and we
+    // rewrite the whole set to 1..N while applying the move.
+    const setKey = packageSetKey(item.packageSet);
+    const sorted = selectedProduct.packages
+      .map((pkg, originalIndex) => ({ pkg, originalIndex }))
+      .filter(({ pkg }) => packageSetKey(pkg.packageSet) === setKey)
+      .sort((a, b) => a.pkg.displayOrder - b.pkg.displayOrder || a.originalIndex - b.originalIndex)
+      .map(({ pkg }) => pkg);
     const idx = sorted.findIndex((p) => p.id === item.id);
     const target = direction === "up" ? idx - 1 : idx + 1;
     if (target < 0 || target >= sorted.length) return;
@@ -36636,36 +36644,35 @@ ${waybillLineItems(w).length > 1
       showToast("This package is still syncing. Try again in a moment.");
       return;
     }
-    setPackageReorderBusyIds((prev) => new Set(prev).add(a.id).add(b.id));
-    const aOrder = a.displayOrder, bOrder = b.displayOrder;
+    const moved = [...sorted];
+    [moved[idx], moved[target]] = [moved[target], moved[idx]];
+    const orderById = new Map(moved.map((pkg, index) => [pkg.id, index + 1]));
+    const affectedIds = new Set(sorted.map((pkg) => pkg.id));
+    const previousOrders = new Map(sorted.map((pkg) => [pkg.id, pkg.displayOrder]));
+    setPackageReorderBusyIds((prev) => new Set([...prev, ...affectedIds]));
     setProducts((value) =>
       value.map((p) => p.id === selectedProduct.id
         ? { ...p, packages: p.packages.map((pkg) =>
-            pkg.id === a.id ? { ...pkg, displayOrder: bOrder } :
-            pkg.id === b.id ? { ...pkg, displayOrder: aOrder } : pkg) }
+            affectedIds.has(pkg.id) ? { ...pkg, displayOrder: orderById.get(pkg.id) ?? pkg.displayOrder } : pkg) }
         : p)
     );
-    // Both calls need to succeed for the swap to be coherent. If either fails,
-    // restore both packages to their original displayOrder so the UI matches DB.
+    // Persist the normalized order for the complete set so duplicate legacy
+    // values cannot make a move appear to do nothing.
     const _mvProdId = selectedProduct.id;
     try {
-      await Promise.all([
-        productsApi.updatePackage(selectedProduct.id, a.id, { displayOrder: bOrder }),
-        productsApi.updatePackage(selectedProduct.id, b.id, { displayOrder: aOrder })
-      ]);
+      await Promise.all(moved.map((pkg, index) => productsApi.updatePackage(selectedProduct.id, pkg.id, { displayOrder: index + 1 })));
     } catch (err: any) {
       setProducts((value) =>
         value.map((p) => p.id === _mvProdId
           ? { ...p, packages: p.packages.map((pkg) =>
-              pkg.id === a.id ? { ...pkg, displayOrder: aOrder } :
-              pkg.id === b.id ? { ...pkg, displayOrder: bOrder } : pkg) }
+              previousOrders.has(pkg.id) ? { ...pkg, displayOrder: previousOrders.get(pkg.id)! } : pkg) }
           : p)
       );
       showToast(`Failed to reorder packages: ${err?.message ?? "please retry"}.`);
     } finally {
       setPackageReorderBusyIds((prev) => {
         const next = new Set(prev);
-        next.delete(a.id); next.delete(b.id);
+        affectedIds.forEach((id) => next.delete(id));
         return next;
       });
     }
@@ -95659,8 +95666,8 @@ ${waybillLineItems(w).length > 1
                                   </td>
                                 </tr>
                                 {isSetExpanded && setPackages.map((item) => {
-                                  const sortedIdx = sortedPackages.findIndex((pkg) => pkg.id === item.id);
-                                  const sortedArr = sortedPackages;
+                                  const sortedIdx = setPackages.findIndex((pkg) => pkg.id === item.id);
+                                  const sortedArr = setPackages;
                             const packageComponentCount = item.packageComponents?.length ?? 0;
                             const freeGiftCount = (item.packageComponents ?? []).filter((component) => component.isFreeGift).length;
                             const companionRows = item.companionProducts ?? [];
