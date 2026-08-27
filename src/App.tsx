@@ -2,6 +2,7 @@ import { type Dispatch, type ReactNode, type SetStateAction, Fragment, useCallba
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { PAGE_HELP, DEFAULT_HELP } from "./help-content";
+import { LoadingState } from "@/components/ui/loading-state";
 import {
   ArrowRight,
   Archive,
@@ -51290,7 +51291,7 @@ ${waybillLineItems(w).length > 1
             </label>
           </div>
           {retentionActivityLogLoading && retentionActivityLog.length === 0 ? (
-            <div className="px-5 py-10 text-sm text-gray-400 text-center">Loading…</div>
+            <LoadingState label="Loading activity" />
           ) : rows.length === 0 ? (
             <div className="px-5 py-10 text-sm text-gray-400 text-center">{emptyMessage}</div>
           ) : (
@@ -51584,7 +51585,7 @@ ${waybillLineItems(w).length > 1
                 </div>
 
                 {retentionActivityLogLoading && retentionActivityLog.length === 0 ? (
-                  <p className="px-5 py-10 text-center text-sm text-gray-400">Loading…</p>
+                  <LoadingState label="Loading interactions" />
                 ) : pagedCalls.length === 0 ? (
                   <p className="px-5 py-10 text-center text-sm text-gray-400">No interactions match this view.</p>
                 ) : (
@@ -54141,7 +54142,7 @@ ${waybillLineItems(w).length > 1
               </div>
 
               {retentionCustomerDetailLoading && !detail ? (
-                <div className="px-5 py-10 text-center text-sm text-gray-400">Loading…</div>
+                <LoadingState label="Loading customer" />
               ) : detail ? (
                 <>
                   <Section title="Customer">
