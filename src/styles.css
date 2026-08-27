@@ -9359,6 +9359,36 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
   color-scheme: dark;
 }
 
+/* Recovery Rep Dashboard (Sales Closer Workspace). These cards live under
+   workspace-content and use translucent rose/violet/blue utility tints. */
+html.dark .workspace-content :is(.bg-rose-50, .bg-rose-100, .bg-violet-50, .bg-violet-100, .bg-blue-50, .bg-blue-100, .bg-sky-50, .bg-sky-100) {
+  color: hsl(var(--foreground));
+}
+
+html.dark .workspace-content :is(.bg-rose-50, .bg-rose-100) {
+  background: hsl(0 58% 16%) !important;
+}
+
+html.dark .workspace-content :is(.bg-violet-50, .bg-violet-100) {
+  background: hsl(260 52% 18%) !important;
+}
+
+html.dark .workspace-content :is(.bg-blue-50, .bg-blue-100, .bg-sky-50, .bg-sky-100) {
+  background: hsl(210 58% 17%) !important;
+}
+
+html.dark .workspace-content :is(.bg-blue-50\/60, .bg-sky-50\/60) {
+  background: hsl(210 58% 17% / 0.78) !important;
+}
+
+html.dark .workspace-content :is(.border-rose-200, .border-violet-200, .border-blue-100, .border-blue-200, .border-sky-200) {
+  border-color: hsl(214 34% 30%) !important;
+}
+
+html.dark .workspace-content :is(.text-rose-600, .text-rose-700, .text-rose-800, .text-violet-600, .text-violet-700, .text-blue-600, .text-blue-700, .text-blue-900, .text-sky-600, .text-sky-700) {
+  color: hsl(200 90% 82%) !important;
+}
+
 .app-shell[data-theme="dark"] .bg-gray-200 {
   background: hsl(208 28% 16%) !important;
 }
