@@ -9,6 +9,7 @@ import type { CloseCheckRow, PeriodCloseView } from "../lib/api";
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
 import { maskMoneyText, naira, signedNaira } from "../lib/money-privacy";
+import { LoadingState } from "../components/ui/loading-state";
 
 // Weekly close: is this week actually finished?
 //
@@ -184,7 +185,7 @@ export default function PeriodCloseTab(props: PeriodCloseTabProps) {
           </div>
 
           {loading && !view ? (
-            <p className="m-0 px-5 py-10 text-center text-[13px] font-semibold text-gray-500">Loading the week…</p>
+            <LoadingState label="Loading the week" />
           ) : (
             <div className="grid gap-3 px-5 py-4 sm:grid-cols-2">
               {grouped.map((entry) => {

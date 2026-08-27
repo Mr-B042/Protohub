@@ -10,6 +10,7 @@ import type { InventoryValueView, StockConditionKey, ValuedProductRow } from "..
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
 import { naira } from "../lib/money-privacy";
+import { LoadingState } from "../components/ui/loading-state";
 
 // Inventory Value: how much cash is tied up in stock.
 //
@@ -200,7 +201,7 @@ export default function InventoryValueTab(props: InventoryValueTabProps) {
           </div>
 
           {loading && !view ? (
-            <p className="m-0 px-4 py-10 text-center text-[13px] font-semibold text-gray-500">Loading inventory…</p>
+            <LoadingState label="Loading inventory" />
           ) : groupTab === "By Product" ? (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[940px] text-left text-sm">

@@ -14,6 +14,7 @@ import { AccountMark } from "./BankAccountsTab";
 // ignores the topbar "hide money" toggle - which is exactly how these
 // pages kept showing real figures with privacy mode on.
 import { naira, signedNaira } from "../lib/money-privacy";
+import { LoadingState } from "../components/ui/loading-state";
 
 // Reconciling ONE account against its bank statement.
 //
@@ -185,7 +186,7 @@ export default function AccountReconciliationTab(props: AccountReconciliationTab
           </div>
 
           {loading && !view ? (
-            <p className="m-0 px-4 py-10 text-center text-[13px] font-semibold text-gray-500">Loading reconciliations…</p>
+            <LoadingState label="Loading reconciliations" />
           ) : rows.length === 0 ? (
             <div className="px-4 py-10 text-center">
               <Landmark className="mx-auto h-8 w-8 text-gray-300" />
