@@ -9440,6 +9440,44 @@ html.dark .workspace-content :is(.text-rose-600, .text-rose-700, .text-rose-800,
   border-color: hsl(230 42% 42%) !important;
 }
 
+@media (max-width: 699px) {
+  .manager-dashboard-shell > .inline-flex.w-full {
+    display: flex;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .manager-dashboard-shell > .inline-flex.w-full::-webkit-scrollbar {
+    display: none;
+  }
+
+  .manager-dashboard-shell > .inline-flex.w-full > button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    line-height: 1.2;
+  }
+
+  .manager-dashboard-shell .period-nav-band {
+    gap: 0.6rem;
+  }
+
+  .manager-dashboard-shell .period-nav-cluster {
+    width: 100%;
+  }
+
+  .manager-dashboard-shell .period-nav-range,
+  .manager-dashboard-shell .period-nav-window {
+    margin-left: 0;
+    padding-left: 0;
+  }
+
+  .manager-dashboard-shell .period-nav-window {
+    align-self: flex-start;
+  }
+}
+
 .app-shell[data-theme="dark"] .bg-gray-200 {
   background: hsl(208 28% 16%) !important;
 }
