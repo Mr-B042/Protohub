@@ -75824,7 +75824,7 @@ ${waybillLineItems(w).length > 1
                       </div>
                       <div className="min-w-0 overflow-hidden rounded-2xl border border-white/80 bg-white/85 p-4 shadow-sm dark:border-slate-700/80 dark:bg-slate-900/70">
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.16em] text-gray-400 dark:text-slate-500">Recovered revenue</p>
-                        <p className="m-0 mt-1 min-w-0 whitespace-nowrap text-[clamp(1rem,2.4vw,1.875rem)] font-black leading-tight tracking-[-0.045em] text-[#1F8FE0]">{formatProductMoney(teamRecoveredRevenue, teamRecoveryCurrency)}</p>
+                        <p className="m-0 mt-1 min-w-0 whitespace-nowrap text-xl font-black leading-tight tracking-[-0.04em] text-[#1F8FE0]">{formatProductMoney(teamRecoveredRevenue, teamRecoveryCurrency)}</p>
                         <p className="m-0 mt-1 text-xs font-bold text-gray-500 dark:text-slate-400">delivered recovered orders</p>
                       </div>
                     </div>
