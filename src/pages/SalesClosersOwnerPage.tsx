@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Award, Package, Settings, ShoppingCart, Target, TrendingDown, TrendingUp, Trophy, UserPlus, Wallet } from "lucide-react";
 import type { SalesCloserBonusComponent, SalesCloserCostProfitability, SalesCloserLeaderboardRow } from "../lib/api";
+import { LoadingState } from "../components/ui/loading-state";
 
 type Props = {
   rows: SalesCloserLeaderboardRow[];
@@ -223,7 +224,7 @@ export function SalesClosersOwnerPage({ rows, loading, error, canEditCostSetting
         <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
           <div className="border-b border-gray-100 px-5 py-4"><h3 className="text-sm font-bold text-gray-900">Cost & Profitability (This Month)</h3></div>
           {costLoading || !cost ? (
-            costError ? <p className="px-5 py-6 text-sm font-bold text-rose-700">{costError}</p> : <div className="h-40 animate-pulse bg-gray-50" />
+            costError ? <p className="px-5 py-6 text-sm font-bold text-rose-700">{costError}</p> : <LoadingState label="Loading profitability" compact />
           ) : (
             <div className="divide-y divide-gray-50 px-5">
               <div className="flex items-center justify-between py-3"><span className="text-sm font-semibold text-gray-600">Delivered Revenue</span><span className="text-sm font-black text-gray-950">{money(cost.deliveredRevenue)}</span></div>

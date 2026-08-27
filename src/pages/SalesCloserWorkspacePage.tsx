@@ -3,6 +3,7 @@ import { Cell, Legend, Line, LineChart, Pie, PieChart as RePieChart, ResponsiveC
 import { NIGERIA_STATES } from "../lib/nigeria";
 import { WhatsAppIcon } from "../components/WhatsAppIcon";
 import type { SalesCloserBonus, SalesCloserFollowUps, SalesCloserOrders, SalesCloserOverview, SalesCloserPerformance, SalesLeadKpi } from "../lib/api";
+import { LoadingState } from "../components/ui/loading-state";
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -628,7 +629,7 @@ function OverviewSection({
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-600">Sales Closer</p>
           <h1 className="mt-1 text-2xl font-black text-gray-950">Overview</h1>
         </div>
-        {error ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p> : <div className="h-64 animate-pulse rounded-lg border border-gray-100 bg-white" />}
+        {error ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p> : <LoadingState label="Loading overview" />}
       </div>
     );
   }
@@ -1052,7 +1053,7 @@ function MyPerformanceSection({ data, loading, error, onAction }: { data: SalesC
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-600">Sales Closer</p>
           <h1 className="mt-1 text-2xl font-black text-gray-950">My Performance</h1>
         </div>
-        {error ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p> : <div className="h-64 animate-pulse rounded-lg border border-gray-100 bg-white" />}
+        {error ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p> : <LoadingState label="Loading performance" />}
       </div>
     );
   }

@@ -20,6 +20,7 @@ import {
   X,
   XCircle
 } from "lucide-react";
+import { LoadingState } from "./ui/loading-state";
 
 export type ManagerChallengeMilestone = {
   index: number;
@@ -523,7 +524,7 @@ export function ManagerProductChallenges({
 
         <div className="space-y-4 p-3 sm:p-4">
           {loading ? (
-            <div className="h-80 animate-pulse rounded-lg border border-gray-100 bg-white/80" />
+            <LoadingState label="Loading product challenges" />
           ) : error ? (
             <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-4 text-sm font-bold text-rose-700">{error}</div>
           ) : challenges.length === 0 ? (
