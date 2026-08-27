@@ -437,7 +437,7 @@ function WorkspaceModal({ workspace, loading, saving, onClose, onSave, onAddAdju
     return (
       <Modal title="Account Reconciliation" subtitle="Loading the account's movements…"
         icon={Landmark} width="max-w-5xl" onClose={onClose} footer={null}>
-        <p className="m-0 py-10 text-center text-[13px] font-semibold text-gray-500">Loading…</p>
+        <LoadingState label="Loading workspace" />
       </Modal>
     );
   }

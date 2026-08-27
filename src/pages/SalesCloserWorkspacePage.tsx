@@ -1232,7 +1232,7 @@ function MyBonusesSection({
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-blue-600">Sales Closer</p>
           <h1 className="mt-1 text-2xl font-black text-gray-950">My Bonuses</h1>
         </div>
-        {error ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p> : <div className="h-64 animate-pulse rounded-lg border border-gray-100 bg-white" />}
+        {error ? <p className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p> : <LoadingState label="Loading bonuses" />}
       </div>
     );
   }
