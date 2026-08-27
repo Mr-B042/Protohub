@@ -75754,15 +75754,15 @@ ${waybillLineItems(w).length > 1
                         Shows recovered carts converted by admin/sales reps, then tracks if the linked order delivered, failed, or is still pending.
                       </p>
                     </div>
-                    <div className="grid grid-cols-2 gap-3 sm:min-w-[360px]">
-                      <div className="rounded-2xl border border-white/80 bg-white/85 p-4 shadow-sm dark:border-slate-700/80 dark:bg-slate-900/70">
+                    <div className="grid min-w-0 grid-cols-2 gap-3 sm:min-w-[360px]">
+                      <div className="min-w-0 overflow-hidden rounded-2xl border border-white/80 bg-white/85 p-4 shadow-sm dark:border-slate-700/80 dark:bg-slate-900/70">
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.16em] text-gray-400 dark:text-slate-500">Delivery rate</p>
                         <p className="m-0 mt-1 text-4xl font-black text-emerald-600 dark:text-emerald-300">{teamRecoveryDeliveryRate}%</p>
                         <p className="m-0 mt-1 text-xs font-bold text-gray-500 dark:text-slate-400">{teamRecoveredDeliveredRows.length} delivered of {teamRecoveredCartRows.length}</p>
                       </div>
-                      <div className="rounded-2xl border border-white/80 bg-white/85 p-4 shadow-sm dark:border-slate-700/80 dark:bg-slate-900/70">
+                      <div className="min-w-0 overflow-hidden rounded-2xl border border-white/80 bg-white/85 p-4 shadow-sm dark:border-slate-700/80 dark:bg-slate-900/70">
                         <p className="m-0 text-[11px] font-black uppercase tracking-[0.16em] text-gray-400 dark:text-slate-500">Recovered revenue</p>
-                        <p className="m-0 mt-1 text-3xl font-black text-[#1F8FE0]">{formatProductMoney(teamRecoveredRevenue, teamRecoveryCurrency)}</p>
+                        <p className="m-0 mt-1 min-w-0 break-all text-[clamp(1.35rem,3vw,1.875rem)] font-black leading-tight text-[#1F8FE0]">{formatProductMoney(teamRecoveredRevenue, teamRecoveryCurrency)}</p>
                         <p className="m-0 mt-1 text-xs font-bold text-gray-500 dark:text-slate-400">delivered recovered orders</p>
                       </div>
                     </div>
