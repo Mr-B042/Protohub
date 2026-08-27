@@ -7801,6 +7801,8 @@ html.dark,
 /* Surfaces */
 .dark .bg-white { background-color: hsl(var(--card)); }
 .dark .bg-white\/95 { background-color: hsl(210 34% 11% / 0.95); }
+.dark .bg-white\/50 { background-color: hsl(210 34% 11% / 0.5); }
+.dark .bg-white\/40 { background-color: hsl(210 34% 11% / 0.4); }
 .dark .bg-white\/90 { background-color: hsl(210 34% 11% / 0.9); }
 .dark .bg-white\/80 { background-color: hsl(210 34% 11% / 0.8); }
 .dark .bg-white\/70 { background-color: hsl(210 34% 11% / 0.7); }
@@ -7812,6 +7814,8 @@ html.dark,
 .dark .bg-gray-50\/50,
 .dark .bg-gray-50\/40,
 .dark .bg-gray-50\/80,
+.dark .bg-gray-50\/70,
+.dark .bg-gray-50\/40,
 .dark .bg-slate-50 { background-color: hsl(var(--surface-muted)); }
 .dark .bg-gray-100,
 .dark .bg-gray-100\/70,
@@ -7871,6 +7875,7 @@ html.dark,
 .dark .text-muted-foreground { color: hsl(214 17% 78%); }
 .dark .text-gray-400,
 .dark .text-slate-400 { color: hsl(214 16% 72%); }
+.dark .text-gray-950 { color: hsl(0 0% 99%); }
 .dark .text-gray-300,
 .dark .text-slate-300 { color: hsl(214 18% 84%); }
 .dark .text-gray-200,
@@ -7912,6 +7917,13 @@ html.dark,
 .dark .text-teal-700 { color: hsl(180 65% 72%); }
 .dark .text-teal-600,
 .dark .text-teal-500 { color: hsl(180 65% 65%); }
+.dark .text-amber-800,
+.dark .text-amber-900,
+.dark .text-orange-800 { color: hsl(35 92% 82%); }
+.dark .text-emerald-800,
+.dark .text-green-800 { color: hsl(150 70% 78%); }
+.dark .text-sky-700,
+.dark .text-sky-800 { color: hsl(200 90% 78%); }
 
 /* Form controls must not fall back to a white/light-mode surface in dark
    mode. This covers native controls that do not carry an explicit dark:
@@ -7932,6 +7944,7 @@ html.dark,
 .dark .border-slate-100 { border-color: hsl(var(--border-subtle)); }
 .dark .border-gray-200,
 .dark .border-gray-200\/50,
+.dark .border-slate-200\/80,
 .dark .border-slate-200 { border-color: hsl(var(--border)); }
 .dark .border-gray-300,
 .dark .border-slate-300 { border-color: hsl(205 38% 24%); }
