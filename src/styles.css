@@ -9270,12 +9270,26 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
   color: hsl(var(--foreground));
 }
 
-.app-shell[data-theme="dark"] :is(.bg-gray-50, .bg-gray-50\/60, .bg-gray-50\/50, .bg-slate-50) {
+.app-shell[data-theme="dark"] :is(.bg-gray-50, .bg-gray-50\/80, .bg-gray-50\/70, .bg-gray-50\/60, .bg-gray-50\/50, .bg-slate-50) {
   background: hsl(var(--surface-muted)) !important;
 }
 
 .app-shell[data-theme="dark"] :is(.bg-gray-100, .bg-slate-100) {
   background: hsl(var(--surface-hover)) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.hover\:bg-gray-50\/60:hover, .hover\:bg-gray-50:hover, .hover\:bg-gray-100:hover, .hover\:bg-gray-200:hover) {
+  background: hsl(var(--surface-hover)) !important;
+}
+
+.app-shell[data-theme="dark"] .recharts-tooltip-wrapper {
+  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.38));
+}
+
+.app-shell[data-theme="dark"] .recharts-default-tooltip {
+  background: hsl(var(--surface-card-elevated)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
 }
 
 .app-shell[data-theme="dark"] .bg-gray-200 {
