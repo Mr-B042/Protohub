@@ -9389,6 +9389,30 @@ html.dark .workspace-content :is(.text-rose-600, .text-rose-700, .text-rose-800,
   color: hsl(200 90% 82%) !important;
 }
 
+/* Manager Dashboard command-center gradients and the Product Challenges
+   empty state. The gradient utilities otherwise preserve a large light
+   wash over the dark page. */
+.app-shell[data-theme="dark"] :is(.from-indigo-50, .from-indigo-50\/80) {
+  --tw-gradient-from: hsl(231 42% 18%) var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: hsl(231 42% 18% / 0) var(--tw-gradient-to-position) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.to-violet-50, .to-violet-50\/70) {
+  --tw-gradient-to: hsl(260 42% 18%) var(--tw-gradient-to-position) !important;
+}
+
+.app-shell[data-theme="dark"] .bg-white\/70 {
+  background: hsl(var(--surface-card) / 0.72) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.border-indigo-100, .border-indigo-200) {
+  border-color: hsl(230 42% 32%) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.text-indigo-300, .text-indigo-600, .text-indigo-700) {
+  color: hsl(254 86% 82%) !important;
+}
+
 .app-shell[data-theme="dark"] .bg-gray-200 {
   background: hsl(208 28% 16%) !important;
 }
