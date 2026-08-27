@@ -9476,6 +9476,29 @@ html.dark .workspace-content :is(.text-rose-600, .text-rose-700, .text-rose-800,
   .manager-dashboard-shell .period-nav-window {
     align-self: flex-start;
   }
+
+  /* Keep every manager tab readable: data-heavy panels scroll inside their
+     own viewport while headers/actions are allowed to stack. */
+  .manager-dashboard-shell table {
+    min-width: 640px;
+  }
+
+  .manager-dashboard-shell :is(.overflow-x-auto, .overflow-auto) {
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .manager-dashboard-shell section > :is(.flex, .grid) {
+    min-width: 0;
+  }
+
+  .manager-dashboard-shell .manager-product-challenges header {
+    align-items: stretch;
+  }
+
+  .manager-dashboard-shell .manager-product-challenges header > button {
+    width: 100%;
+  }
 }
 
 .app-shell[data-theme="dark"] .bg-gray-200 {
