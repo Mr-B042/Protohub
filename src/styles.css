@@ -9558,6 +9558,82 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
   background: hsl(222 18% 14% / 0.8);
 }
 
+/* Abandoned Carts uses utility dividers and hover states inside its
+   captured-cart table. Keep those states on the shell theme as well as the
+   document-level dark theme so rows never flash back to light surfaces. */
+.app-shell[data-theme="dark"] .divide-gray-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: hsl(var(--border-subtle));
+}
+
+.app-shell[data-theme="dark"] :is(.hover\:bg-gray-50:hover, .hover\:bg-gray-100:hover) {
+  background-color: hsl(var(--surface-hover));
+}
+
+.app-shell[data-theme="dark"] .hover\:bg-red-100:hover {
+  background-color: hsl(0 50% 24%);
+}
+
+/* Recovery Rep Dashboard surfaces that are authored in component CSS. */
+.app-shell[data-theme="dark"] :is(.rep-product-card, .rep-status-timeline article) {
+  background: hsl(var(--surface-card));
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+
+.app-shell[data-theme="dark"] .rep-status-timeline article.selected {
+  background: hsl(211 48% 18%);
+  border-color: hsl(211 74% 45%);
+}
+
+.app-shell[data-theme="dark"] :is(.rep-product-card span, .rep-product-card small, .rep-product-card p, .rep-status-timeline article span) {
+  color: hsl(var(--text-muted));
+}
+
+.app-shell[data-theme="dark"] .rep-status-timeline article strong {
+  color: hsl(var(--foreground));
+}
+
+.app-shell[data-theme="dark"] .rep-product-card .border-t {
+  border-color: hsl(var(--border-subtle));
+}
+
+.app-shell[data-theme="dark"] .rep-console-scope {
+  background: hsl(var(--surface-card)) !important;
+  border-color: hsl(var(--border)) !important;
+  color: hsl(var(--foreground));
+}
+
+.app-shell[data-theme="dark"] :is(.rep-notification-list article, .round-sequence-card) {
+  background: hsl(var(--surface-muted));
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+
+.app-shell[data-theme="dark"] .round-sequence-card p {
+  color: hsl(var(--text-muted));
+}
+
+.app-shell[data-theme="dark"] .round-sequence-card span {
+  color: hsl(var(--foreground));
+}
+
+.app-shell[data-theme="dark"] :is(.rep-console-tabs, .rep-status-tabs) button {
+  background: hsl(var(--surface-muted));
+  border-color: hsl(var(--border));
+  color: hsl(var(--text-muted));
+}
+
+.app-shell[data-theme="dark"] :is(.rep-console-tabs, .rep-status-tabs) button:hover {
+  background: hsl(var(--surface-hover));
+  color: hsl(var(--foreground));
+}
+
+.app-shell[data-theme="dark"] :is(.rep-console-tabs, .rep-status-tabs) button.selected {
+  background: linear-gradient(135deg, hsl(211 74% 45%), hsl(214 80% 38%));
+  border-color: hsl(211 74% 45%);
+  color: white;
+}
+
 .app-shell[data-theme="dark"] .sticky-col-first tbody tr:hover td:first-child {
   background: hsl(var(--surface-muted));
 }
