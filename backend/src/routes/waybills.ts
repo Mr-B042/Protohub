@@ -353,6 +353,10 @@ router.post("/",
 
 // ── PATCH /api/waybills/:id ───────────────────────────────
 const WaybillPatchSchema = z.object({
+  // Items can be amended while stock is still in transit.  The handler below
+  // applies only the difference to the sending location and writes an audit
+  // movement for each difference.
+  items:           z.array(WaybillItemInput).min(1).optional(),
   waybill_fee:     z.number().min(0).optional(),
   carrier:         z.string().max(120).optional(),
   to_location:     z.string().max(120).optional(),
@@ -385,10 +389,108 @@ router.patch("/:id",
     }
     const { data: current, error: currentError } = await supabase
       .from("waybill_records")
-      .select("id, from_agent_location_id, to_agent_location_id")
+      .select("*")
       .eq("id", req.params.id).eq("org_id", req.user!.orgId)
       .single();
     if (currentError || !current) { res.status(404).json({ error: "Waybill not found." }); return; }
+
+    const nextItems = parsed.data.items?.map((item) => ({
+      product_id: item.productId,
+      product_name: item.productName,
+      quantity: item.quantity
+    }));
+    if (nextItems) {
+      if (current.status !== "In Transit") {
+        res.status(409).json({ error: "Only an in-transit waybill can have its products changed. Create an inventory correction for a completed waybill so the audit trail stays accurate." });
+        return;
+      }
+      const seenProductIds = new Set<string>();
+      for (const item of nextItems) {
+        if (seenProductIds.has(item.product_id)) {
+          res.status(400).json({ error: `${item.product_name} is listed twice — combine it into one line.` });
+          return;
+        }
+        seenProductIds.add(item.product_id);
+      }
+      const firstItem = nextItems[0];
+      const totalQty = nextItems.reduce((sum, item) => sum + item.quantity, 0);
+      updates.items = nextItems;
+      // Keep legacy columns in sync for reports and older clients.
+      updates.product_id = firstItem.product_id;
+      updates.product_name = nextItems.length > 1 ? `${firstItem.product_name} +${nextItems.length - 1} more` : firstItem.product_name;
+      updates.quantity = nextItems.length > 1 ? totalQty : firstItem.quantity;
+
+      const oldByProduct = new Map(waybillItemsOf(current).map((item) => [item.product_id, item]));
+      const newByProduct = new Map(nextItems.map((item) => [item.product_id, item]));
+      const changedItems = Array.from(new Set([...oldByProduct.keys(), ...newByProduct.keys()]))
+        .map((productId) => {
+          const previous = oldByProduct.get(productId);
+          const next = newByProduct.get(productId);
+          const delta = (next?.quantity ?? 0) - (previous?.quantity ?? 0);
+          return { productId, item: next ?? previous!, delta };
+        })
+        .filter((change) => change.delta !== 0);
+
+      // Check every extra unit before changing stock. This prevents an edit to
+      // one line from partially applying when another line is short.
+      const sourceLabel = current.from_agent_location_id ? "Sending hub" : "Warehouse";
+      const planned: { productId: string; item: WaybillItem; delta: number; balanceAfter: number }[] = [];
+      for (const change of changedItems) {
+        let available = 0;
+        if (current.from_agent_location_id) {
+          const { data: locationStock } = await supabase
+            .from("agent_location_stock").select("quantity")
+            .eq("agent_location_id", current.from_agent_location_id).eq("product_id", change.productId).single();
+          available = Number(locationStock?.quantity ?? 0);
+        } else {
+          const { data: product } = await supabase
+            .from("products").select("warehouse_stock").eq("id", change.productId).single();
+          available = Number(product?.warehouse_stock ?? 0);
+        }
+        if (change.delta > 0 && available < change.delta) {
+          res.status(400).json({ error: `${sourceLabel} only has ${available} unit${available === 1 ? "" : "s"} of ${change.item.product_name} available to add (need ${change.delta}).` });
+          return;
+        }
+        planned.push({ ...change, balanceAfter: available - change.delta });
+      }
+
+      // Apply the incremental source-stock changes. Positive delta means more
+      // units left the source; negative delta returns the reduced amount.
+      for (const change of planned) {
+        if (current.from_agent_location_id) {
+          await supabase.from("agent_location_stock").upsert({
+            org_id: req.user!.orgId,
+            agent_id: current.from_agent_id,
+            agent_location_id: current.from_agent_location_id,
+            product_id: change.productId,
+            quantity: change.balanceAfter
+          }, { onConflict: "agent_location_id,product_id" });
+          if (current.from_agent_id) await syncAgentStockAggregate(req.user!.orgId, current.from_agent_id, change.productId);
+        } else {
+          await supabase.from("products").update({ warehouse_stock: change.balanceAfter }).eq("id", change.productId);
+        }
+        await supabase.from("stock_movements").insert({
+          id: `MOV-${randomUUID()}`,
+          org_id: req.user!.orgId,
+          product_id: change.productId,
+          product_name: change.item.product_name,
+          type: change.delta > 0 ? "Waybill Out" : "Waybill In",
+          qty: Math.abs(change.delta),
+          balance_after: change.balanceAfter,
+          agent_id: current.to_agent_id ?? current.from_agent_id ?? current.agent_id ?? null,
+          by_name: req.user!.name,
+          by_user_id: req.user!.id,
+          waybill_id: current.id,
+          from_agent_location_id: current.from_agent_location_id ?? null,
+          to_agent_location_id: current.to_agent_location_id ?? null,
+          from_location: current.from_location ?? null,
+          to_location: current.to_location ?? null,
+          note: change.delta > 0
+            ? `Waybill ${current.id} edited — ${change.delta} additional unit${change.delta === 1 ? "" : "s"} dispatched`
+            : `Waybill ${current.id} edited — ${Math.abs(change.delta)} unit${Math.abs(change.delta) === 1 ? "" : "s"} returned to sender`
+        });
+      }
+    }
     const nextFromLocationId = Object.prototype.hasOwnProperty.call(updates, "from_agent_location_id")
       ? updates.from_agent_location_id
       : current.from_agent_location_id;
@@ -410,7 +512,7 @@ router.patch("/:id",
     const patchLabel = waybillItemsLabel(waybillItemsOf(data));
 
     // Sync linked expense if fee was touched
-    if (req.body.waybill_fee !== undefined) {
+    if (req.body.waybill_fee !== undefined || nextItems || req.body.from_location !== undefined || req.body.to_location !== undefined || req.body.dispatched_date !== undefined) {
       await syncWaybillExpense(req.user!.orgId, {
         id: data.id, waybill_fee: data.waybill_fee, itemsLabel: patchLabel,
         product_id: data.product_id ?? null,
