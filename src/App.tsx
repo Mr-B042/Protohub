@@ -60892,7 +60892,7 @@ ${waybillLineItems(w).length > 1
           </div>
         )}
 
-        {penalties && actionRows.length > 0 && (
+        {cartFollowUpIsOwnWork && penalties && actionRows.length > 0 && (
           <div className="border-b border-rose-200 bg-gradient-to-r from-rose-50/70 to-white px-4 py-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div><p className="m-0 text-sm font-black uppercase tracking-wide text-rose-700">{actionRows.length} unlogged cart{actionRows.length === 1 ? "" : "s"} need action</p><p className="m-0 text-[11px] font-semibold text-slate-500">Click any cart to open and log activity.</p></div>
