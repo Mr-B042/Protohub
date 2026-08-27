@@ -49568,16 +49568,7 @@ ${waybillLineItems(w).length > 1
       if (retentionSubPage === "Overview") {
         if (retentionDashboardLoading && !retentionDashboardSummary) {
           return (
-            <div className="space-y-4" aria-label="Loading retention overview">
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-                {Array.from({ length: 8 }).map((_, index) => <div key={index} className="h-28 animate-pulse rounded-lg border border-gray-200 bg-white" />)}
-              </div>
-              <div className="grid gap-4 xl:grid-cols-3">
-                {Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-56 animate-pulse rounded-lg border border-gray-200 bg-white" />)}
-              </div>
-              <div className="h-40 animate-pulse rounded-lg border border-gray-200 bg-white" />
-              <div className="h-72 animate-pulse rounded-lg border border-gray-200 bg-white" />
-            </div>
+            <LoadingState label="Loading retention overview" />
           );
         }
 
@@ -51166,9 +51157,7 @@ ${waybillLineItems(w).length > 1
             )}
 
             {retentionCustomersLoading && retentionCustomers.length === 0 ? (
-              <section className="grid gap-3 sm:grid-cols-2">
-                {Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-48 animate-pulse rounded-lg border border-gray-200 bg-white" />)}
-              </section>
+              <LoadingState label="Loading customers" />
             ) : customers.length === 0 ? (
               <section className="rounded-lg border border-gray-200 bg-white px-5 py-12 text-center text-sm text-gray-400">No customers match the selected filters.</section>
             ) : retentionCustomerView === "cards" ? (
@@ -65632,7 +65621,7 @@ ${waybillLineItems(w).length > 1
         />
 
         {recoveryWorklistLoading && !view ? (
-          <div className="h-40 animate-pulse rounded-2xl bg-gray-50" />
+          <LoadingState label="Loading recovery queue" />
         ) : visibleRows.length === 0 ? (
           <section className="rounded-2xl border border-gray-200 bg-white px-5 py-12 text-center shadow-sm">
             <p className="m-0 text-sm font-bold text-gray-700">Nothing in this queue right now.</p>
