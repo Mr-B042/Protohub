@@ -72018,6 +72018,17 @@ ${waybillLineItems(w).length > 1
         <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-0.5">
           {navItems.filter((item) => currentAllowedPages.includes(item.label as ActivePage)).map((item) => {
             const targetPage = item.label as ActivePage;
+            const sidebarSection = targetPage === "Sales Rep Workspace"
+              ? "Workspace"
+              : targetPage === "Orders"
+                ? "Sales"
+                : targetPage === "Deliveries"
+                  ? "Operations"
+                  : targetPage === "Expenses"
+                    ? "Finance"
+                    : targetPage === "Call Rep Console"
+                      ? "Administration"
+                      : null;
             const isBonusShortcut = targetPage === "Bonuses";
             const isWorkspaceBonusTab = activePage === "Sales Rep Workspace" && repConsoleTab === "Bonuses";
             const isWorkspaceSalesExpansionTab = activePage === "Sales Rep Workspace" && repConsoleTab === "Upsell & Cross-sell Log";
@@ -72055,6 +72066,11 @@ ${waybillLineItems(w).length > 1
               && !collapsed;
             return (
               <Fragment key={item.label}>
+                {sidebarSection && !collapsed && (
+                  <div className="px-3 pt-4 pb-1 text-[10px] font-extrabold uppercase tracking-[0.16em] text-slate-500 first:pt-1">
+                    {sidebarSection}
+                  </div>
+                )}
                 <button
                   type="button"
                   title={collapsed ? item.label : undefined}
