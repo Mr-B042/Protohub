@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Phone, MessageCircle, CalendarDays, StickyNote, Info, X } from "lucide-react";
+import { LoadingState } from "@/components/ui/loading-state";
 
 export type HistoryAttempt = {
   id: string;
@@ -150,7 +151,7 @@ export default function OrderHistoryModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {loading ? (
-            <p className="m-0 py-8 text-center text-sm font-semibold text-slate-400">Loading history…</p>
+            <LoadingState label="Loading history" />
           ) : tab === "history" ? (
             timeline.length === 0 ? (
               <p className="m-0 py-8 text-center text-sm font-semibold text-slate-400">Nothing logged on this order yet.</p>
