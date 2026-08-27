@@ -8613,7 +8613,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     })
   );
   const [packageSetAction, setPackageSetAction] = useState<null | {
-    mode: "duplicate" | "remove";
+    mode: "duplicate" | "remove" | "rename";
     setLabel: string;
     packages: ProductPackage[];
     nextLabel: string;
@@ -35756,6 +35756,40 @@ ${waybillLineItems(w).length > 1
       packages: setPackages,
       nextLabel: ""
     });
+  };
+
+  const openRenamePackageSet = (setLabel: string, setPackages: ProductPackage[]) => {
+    if (isAddOnOnlyPackageSet(setLabel)) {
+      showToast("The add-on bundle set is reserved and cannot be renamed.");
+      return;
+    }
+    setPackageSetAction({ mode: "rename", setLabel, packages: setPackages, nextLabel: setLabel });
+  };
+
+  const renamePackageSet = async (setLabel: string, setPackages: ProductPackage[], requestedSetLabel: string) => {
+    if (!selectedProduct || setPackages.length === 0) return;
+    const nextSetLabel = cleanPackageSetLabel(requestedSetLabel);
+    if (!nextSetLabel) return;
+    if (packageSetKey(nextSetLabel) !== packageSetKey(setLabel) && packageSetOptionsForProduct(selectedProduct).some((label) => packageSetKey(label) === packageSetKey(nextSetLabel))) {
+      showToast(`A set named "${nextSetLabel}" already exists. Pick a different name.`);
+      setPackageSetAction((prev) => prev ? { ...prev, busy: false } : prev);
+      return;
+    }
+    const productId = selectedProduct.id;
+    const previousPackages = selectedProduct.packages;
+    setProducts((value) => value.map((product) => product.id === productId
+      ? { ...product, packages: product.packages.map((pkg) => setPackages.some((target) => target.id === pkg.id) ? { ...pkg, packageSet: nextSetLabel } : pkg) }
+      : product));
+    try {
+      await Promise.all(setPackages.map((pkg) => productsApi.updatePackage(productId, pkg.id, { packageSet: nextSetLabel })));
+      showToast(`Renamed set "${setLabel}" to "${nextSetLabel}".`);
+      setPackageSetAction(null);
+    } catch (err: any) {
+      setProducts((value) => value.map((product) => product.id === productId ? { ...product, packages: previousPackages } : product));
+      showToast(`Failed to rename set: ${err?.message ?? "please retry"}.`);
+    } finally {
+      setPackageSetAction((prev) => prev ? { ...prev, busy: false } : prev);
+    }
   };
 
   const duplicatePackageSet = async (setLabel: string, setPackages: ProductPackage[], requestedSetLabel: string) => {
@@ -95553,6 +95587,17 @@ ${waybillLineItems(w).length > 1
                                           <Copy className="h-3.5 w-3.5" />
                                           Copy set
                                         </button>
+                                        {!setIsAddOnOnly && (
+                                          <button
+                                            type="button"
+                                            className="!min-h-0 inline-flex items-center gap-1.5 rounded-full border border-violet-100 bg-white px-3 py-1.5 text-xs font-black text-violet-700 transition-colors hover:bg-violet-50"
+                                            onClick={() => openRenamePackageSet(setLabel, setPackages)}
+                                            title="Rename every package in this set"
+                                          >
+                                            <Pencil className="h-3.5 w-3.5" />
+                                            Rename set
+                                          </button>
+                                        )}
                                         <button
                                           type="button"
                                           className={`!min-h-0 rounded-full border px-3 py-1.5 text-xs font-black transition-colors ${setIsFullyLive ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100" : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"}`}
@@ -97112,8 +97157,8 @@ ${waybillLineItems(w).length > 1
         const offerCount = action.packages.reduce((sum, pkg) => sum + (pkg.companionProducts?.length ?? 0), 0);
         const liveCount = action.packages.filter((pkg) => pkg.active).length;
         const duplicateLabel = cleanPackageSetLabel(action.nextLabel);
-        const duplicateNameTaken = action.mode === "duplicate" && Boolean(selectedProduct && duplicateLabel && packageSetOptionsForProduct(selectedProduct).some((label) => packageSetKey(label) === packageSetKey(duplicateLabel)));
-        const duplicateNameEmpty = action.mode === "duplicate" && !duplicateLabel;
+        const duplicateNameTaken = (action.mode === "duplicate" || action.mode === "rename") && Boolean(selectedProduct && duplicateLabel && packageSetKey(duplicateLabel) !== packageSetKey(action.setLabel) && packageSetOptionsForProduct(selectedProduct).some((label) => packageSetKey(label) === packageSetKey(duplicateLabel)));
+        const duplicateNameEmpty = (action.mode === "duplicate" || action.mode === "rename") && !duplicateLabel;
         const canSubmit = action.mode === "remove" || (!duplicateNameEmpty && !duplicateNameTaken);
         const closePackageSetAction = () => {
           if (!action.busy) setPackageSetAction(null);
@@ -97123,6 +97168,8 @@ ${waybillLineItems(w).length > 1
           setPackageSetAction((prev) => prev ? { ...prev, busy: true } : prev);
           if (action.mode === "duplicate") {
             await duplicatePackageSet(action.setLabel, action.packages, action.nextLabel);
+          } else if (action.mode === "rename") {
+            await renamePackageSet(action.setLabel, action.packages, action.nextLabel);
           } else {
             await removePackageSet(action.setLabel, action.packages);
           }
@@ -97138,12 +97185,12 @@ ${waybillLineItems(w).length > 1
               <div className={`px-6 py-5 ${action.mode === "remove" ? "bg-gradient-to-br from-red-50 via-white to-orange-50 dark:from-red-950/40 dark:via-[#0d1722] dark:to-orange-950/20" : "bg-gradient-to-br from-blue-50 via-white to-indigo-50 dark:from-blue-950/40 dark:via-[#0d1722] dark:to-indigo-950/20"}`}>
                 <div className="flex items-start gap-4">
                   <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm ${action.mode === "remove" ? "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-200" : "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-200"}`}>
-                    {action.mode === "remove" ? <Trash2 className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
+                    {action.mode === "remove" ? <Trash2 className="h-5 w-5" /> : action.mode === "rename" ? <Pencil className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="m-0 text-xs font-black uppercase tracking-[0.22em] text-slate-400 dark:text-slate-500">Package set action</p>
                     <h2 className="m-0 mt-1 text-2xl font-black text-slate-950 dark:text-white">
-                      {action.mode === "remove" ? `Remove "${action.setLabel}"?` : `Duplicate "${action.setLabel}"`}
+                      {action.mode === "remove" ? `Remove "${action.setLabel}"?` : action.mode === "rename" ? `Rename "${action.setLabel}"` : `Duplicate "${action.setLabel}"`}
                     </h2>
                     <p className="m-0 mt-2 text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
                       {packageCount} package{packageCount === 1 ? "" : "s"} · {liveCount} live · {offerCount} add-on offer{offerCount === 1 ? "" : "s"}
@@ -97162,10 +97209,10 @@ ${waybillLineItems(w).length > 1
               </div>
 
               <div className="space-y-4 px-6 py-5">
-                {action.mode === "duplicate" ? (
+                {action.mode === "duplicate" || action.mode === "rename" ? (
                   <>
                     <label className="block">
-                      <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">New set name</span>
+                      <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{action.mode === "rename" ? "Set name" : "New set name"}</span>
                       <input
                         className={`mt-2 w-full rounded-2xl border px-4 py-3 text-base font-bold text-slate-900 outline-none transition focus:ring-4 dark:bg-[#111f2d] dark:text-white ${duplicateNameTaken || duplicateNameEmpty ? "border-red-300 bg-red-50/60 focus:ring-red-100 dark:border-red-500/50 dark:bg-red-950/20 dark:focus:ring-red-500/10" : "border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100 dark:border-slate-700 dark:focus:border-blue-400 dark:focus:ring-blue-500/10"}`}
                         value={action.nextLabel}
@@ -97174,7 +97221,7 @@ ${waybillLineItems(w).length > 1
                       />
                     </label>
                     <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold leading-6 text-blue-900 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
-                      The copied set will be saved as <strong>draft</strong>, so it will not appear on customer forms until you make it live.
+                      {action.mode === "rename" ? "All packages in this set will keep their current pricing, offers, and live/draft status." : <>The copied set will be saved as <strong>draft</strong>, so it will not appear on customer forms until you make it live.</>}
                     </div>
                     {duplicateNameTaken && (
                       <p className="m-0 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-bold text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">
@@ -97221,7 +97268,7 @@ ${waybillLineItems(w).length > 1
                   onClick={submitPackageSetAction}
                   disabled={!canSubmit || action.busy}
                 >
-                  {action.busy ? "Working..." : action.mode === "remove" ? "Remove set" : "Create draft set"}
+                  {action.busy ? "Working..." : action.mode === "remove" ? "Remove set" : action.mode === "rename" ? "Save new name" : "Create draft set"}
                 </button>
               </div>
             </section>
