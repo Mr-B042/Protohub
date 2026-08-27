@@ -73299,7 +73299,7 @@ ${waybillLineItems(w).length > 1
               </div>
             </>
           ) : isOrderWorkspacePage(activePage) ? (
-            <div className="space-y-6">
+            <div className={`order-workspace-page ${orderWorkspacePage === "Follow-up Queue" ? "follow-up-queue-page" : ""} space-y-6`}>
               {/* Header */}
               <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div className="flex flex-col gap-1">

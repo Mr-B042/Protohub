@@ -9440,6 +9440,69 @@ html.dark .workspace-content :is(.text-rose-600, .text-rose-700, .text-rose-800,
   border-color: hsl(230 42% 42%) !important;
 }
 
+/* Follow-up Queue typography: keep operational data compact and aligned,
+   while reserving italics for actual notes/secondary guidance. */
+.follow-up-queue-page {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.follow-up-queue-page :is(h1, h2, h3, h4, strong, button, th) {
+  letter-spacing: -0.01em;
+}
+
+.follow-up-queue-page table :is(th, td) {
+  vertical-align: top;
+}
+
+.follow-up-queue-page table th {
+  white-space: nowrap;
+  text-align: left;
+}
+
+.follow-up-queue-page table td {
+  line-height: 1.35;
+}
+
+.follow-up-queue-page :is(.text-gray-500, .text-slate-500, .text-gray-400, .text-slate-400) {
+  font-weight: 500;
+}
+
+.follow-up-queue-page :is(.text-gray-900, .text-slate-900, .text-gray-950, .text-slate-950) {
+  font-weight: 700;
+}
+
+@media (max-width: 699px) {
+  .follow-up-queue-page > header {
+    align-items: flex-start;
+  }
+
+  .follow-up-queue-page > header h1 {
+    line-height: 1.1;
+  }
+
+  .follow-up-queue-page .inline-flex.max-w-full {
+    width: 100%;
+    justify-content: flex-start;
+    scrollbar-width: none;
+  }
+
+  .follow-up-queue-page .inline-flex.max-w-full::-webkit-scrollbar {
+    display: none;
+  }
+
+  .follow-up-queue-page .inline-flex.max-w-full > button {
+    flex: 0 0 auto;
+  }
+
+  .follow-up-queue-page table {
+    min-width: 760px;
+  }
+
+  .follow-up-queue-page :is(.grid.grid-cols-4, .grid.grid-cols-2) {
+    min-width: 0;
+  }
+}
+
 @media (max-width: 699px) {
   .manager-dashboard-shell > .inline-flex.w-full {
     display: flex;
