@@ -8619,6 +8619,8 @@ export function App({ onLogout }: { onLogout?: () => void }) {
     nextLabel: string;
     busy?: boolean;
   }>(null);
+  const [inlinePackageDrafts, setInlinePackageDrafts] = useState<Record<string, { name: string; description: string; quantity: string; price: string }>>({});
+  const [inlinePackageSavingId, setInlinePackageSavingId] = useState<string | null>(null);
   const [addOnPerformanceRange, setAddOnPerformanceRange] = useState<AddOnPerformanceRange>("all");
   const [stateStockProductId, setStateStockProductId] = useState("");
   const [stateStockStateFilter, setStateStockStateFilter] = useState("");
@@ -34943,6 +34945,32 @@ ${waybillLineItems(w).length > 1
     setPackageCompanionSyncScope("current_product");
     if (!productId) return;
     openInventoryEditPackageRoute(productId, item.id);
+  };
+
+  const beginInlinePackageEdit = (item: ProductPackage) => {
+    setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { name: item.name, description: item.description ?? "", quantity: String(item.quantity), price: String(item.price) } }));
+  };
+
+  const saveInlinePackage = async (item: ProductPackage) => {
+    if (!selectedProduct) return;
+    const draft = inlinePackageDrafts[item.id];
+    if (!draft?.name.trim()) { showToast("Package name is required."); return; }
+    const quantity = Math.max(1, Number(draft.quantity) || 0);
+    const price = Math.max(0, Number(draft.price) || 0);
+    if (quantity < 1) { showToast("Quantity must be at least 1."); return; }
+    const productId = selectedProduct.id;
+    const previous = selectedProduct.packages;
+    const next = { name: draft.name.trim(), description: draft.description.trim(), quantity, price };
+    setInlinePackageSavingId(item.id);
+    setProducts((value) => value.map((product) => product.id === productId ? { ...product, packages: product.packages.map((pkg) => pkg.id === item.id ? { ...pkg, ...next } : pkg) } : product));
+    try {
+      await productsApi.updatePackage(productId, item.id, next);
+      setInlinePackageDrafts((prev) => { const copy = { ...prev }; delete copy[item.id]; return copy; });
+      showToast(`Saved ${next.name}.`);
+    } catch (err: any) {
+      setProducts((value) => value.map((product) => product.id === productId ? { ...product, packages: previous } : product));
+      showToast(`Failed to save package: ${err?.message ?? "please retry"}.`);
+    } finally { setInlinePackageSavingId(null); }
   };
 
   const replaceTemporaryPackageId = (productId: string, tempId: string, savedPackage: ProductPackage) => {
@@ -95633,11 +95661,13 @@ ${waybillLineItems(w).length > 1
                             const hasContentBadges = packageComponentCount > 0 || freeGiftCount > 0 || extraOfferCount > 0;
                             const hasRuleBadges = hasStateRule || item.requiresStateStock || item.featuredComboCard || hasCarousel;
                             const isPackageExpanded = expandedPackageRows[item.id] === true;
+                            const inlineDraft = inlinePackageDrafts[item.id];
+                            const inlineInput = "rounded-lg border border-blue-200 bg-blue-50/40 px-2 py-1.5 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-blue-200";
                             return (
                             <tr key={item.id} className="hover:bg-gray-50 transition-colors">
                               <td className="px-4 py-4 font-bold text-gray-900 min-w-[220px]">
                                 <div className="flex flex-col gap-2">
-                                  <span className="leading-tight">{item.name}</span>
+                                  {inlineDraft ? <input className={`${inlineInput} w-full font-bold`} value={inlineDraft.name} onChange={(event) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], name: event.target.value } }))} aria-label="Package name" /> : <span className="leading-tight">{item.name}</span>}
 	                                  <span className={`inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.16em] ${isAddOnOnlyPackageSet(item.packageSet) ? "border-violet-100 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200" : "border-blue-100 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200"}`} title="Only packages with the same set show together on package-set embed links">
 	                                    {isAddOnOnlyPackageSet(item.packageSet) ? "Add-on bundle" : `Set: ${packageSetLabelFor(item)}`}
 	                                  </span>
@@ -95852,10 +95882,10 @@ ${waybillLineItems(w).length > 1
                                 </div>
                               </td>
                               <td className="px-4 py-4 text-gray-600">
-                                {item.description || summarizePackageComponents(item.packageComponents, products) || "-"}
+                                {inlineDraft ? <input className={`${inlineInput} w-full min-w-[220px]`} value={inlineDraft.description} onChange={(event) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], description: event.target.value } }))} aria-label="Package description" placeholder="Description" /> : (item.description || summarizePackageComponents(item.packageComponents, products) || "-")}
                               </td>
-                              <td className="px-4 py-4 text-gray-700">{item.quantity}</td>
-                              <td className="px-4 py-4 text-gray-700">{formatProductMoney(item.price, item.currency)}</td>
+                              <td className="px-4 py-4 text-gray-700">{inlineDraft ? <input type="number" min={1} className={`${inlineInput} w-20`} value={inlineDraft.quantity} onChange={(event) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], quantity: event.target.value } }))} aria-label="Package quantity" /> : item.quantity}</td>
+                              <td className="px-4 py-4 text-gray-700">{inlineDraft ? <input type="number" min={0} className={`${inlineInput} w-32`} value={inlineDraft.price} onChange={(event) => setInlinePackageDrafts((prev) => ({ ...prev, [item.id]: { ...prev[item.id], price: event.target.value } }))} aria-label="Package price" /> : formatProductMoney(item.price, item.currency)}</td>
                               <td className="px-4 py-4 text-gray-600">
                                 <div className="inline-flex items-center gap-0.5">
                                   <button
@@ -95883,7 +95913,10 @@ ${waybillLineItems(w).length > 1
                               </td>
                               <td className="px-4 py-4">
                                 <div className="flex items-center gap-1">
-                                  <button className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors" title="Edit package" onClick={() => openEditPackage(item)}><Pencil className="w-4 h-4" /></button>
+                                  {inlineDraft ? <>
+                                    <button className="!min-h-0 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50" disabled={inlinePackageSavingId === item.id} title="Save inline changes" onClick={() => saveInlinePackage(item)}>{inlinePackageSavingId === item.id ? "Saving…" : "Save"}</button>
+                                    <button className="!min-h-0 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50" disabled={inlinePackageSavingId === item.id} title="Cancel inline edit" onClick={() => setInlinePackageDrafts((prev) => { const copy = { ...prev }; delete copy[item.id]; return copy; })}>Cancel</button>
+                                  </> : <button className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors" title="Edit package inline" onClick={() => beginInlinePackageEdit(item)}><Pencil className="w-4 h-4" /></button>}
                                   <button className="p-1.5 rounded hover:bg-blue-50 text-gray-500 hover:text-[#1F8FE0] transition-colors" title="Duplicate package" onClick={() => duplicatePackage(item)}><Copy className="w-4 h-4" /></button>
                                   {(item.packageComponents?.length ?? 0) > 0 && (
                                     <>
