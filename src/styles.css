@@ -9292,6 +9292,34 @@ article.public-order-card.public-form-clean .public-companion-teaser-visual img 
   color: hsl(var(--foreground)) !important;
 }
 
+.app-shell[data-theme="dark"] :is(.border-gray-50, .border-gray-100) {
+  border-color: hsl(var(--border-subtle)) !important;
+}
+
+.app-shell[data-theme="dark"] :is(.recharts-text, .recharts-cartesian-axis-tick-value, .recharts-legend-item-text) {
+  fill: hsl(var(--text-muted)) !important;
+  color: hsl(var(--text-muted)) !important;
+}
+
+.app-shell[data-theme="dark"] .recharts-tooltip-item,
+.app-shell[data-theme="dark"] .recharts-tooltip-label {
+  color: hsl(var(--foreground)) !important;
+}
+
+.app-shell[data-theme="dark"] input[type="range"] {
+  accent-color: hsl(202 86% 62%);
+  color-scheme: dark;
+}
+
+.app-shell[data-theme="dark"] input[type="range"]::-webkit-slider-runnable-track {
+  background: hsl(214 24% 24%);
+  border-radius: 999px;
+}
+
+.app-shell[data-theme="dark"] input[type="range"]::-webkit-slider-thumb {
+  background: hsl(202 86% 62%);
+}
+
 .app-shell[data-theme="dark"] .bg-gray-200 {
   background: hsl(208 28% 16%) !important;
 }
