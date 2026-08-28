@@ -346,8 +346,8 @@ router.post("/", captureRateLimit, async (req, res) => {
     }
 
     res.json(wasRekeyed
-      ? { ...data, id: captureId, merged: true, dedupSignal: "canonical", originalId: d.id }
-      : data);
+      ? { id: captureId, merged: true, dedupSignal: "canonical", originalId: d.id }
+      : { id: captureId, merged: false });
     return;
   }
 
@@ -452,7 +452,7 @@ router.post("/", captureRateLimit, async (req, res) => {
         .select()
         .single();
       if (merged) {
-        res.json({ ...merged, merged: true, dedupSignal, originalId: d.id });
+        res.json({ id: merged.id, merged: true, dedupSignal, originalId: d.id });
         return;
       }
     }
@@ -489,7 +489,7 @@ router.post("/", captureRateLimit, async (req, res) => {
     currency: data.currency ?? "NGN",
     source: data.source ?? "Website"
   });
-  res.status(201).json(data);
+  res.status(201).json({ id: data.id, merged: false });
 });
 
 // ── POST /api/public/carts/:id/heartbeat ─────────────────
@@ -607,7 +607,7 @@ router.post("/:id/events", captureRateLimit, async (req, res) => {
       .then(() => {});
   }
 
-  res.status(201).json(data);
+  res.status(201).json({ id: data.id });
 });
 
 export default router;

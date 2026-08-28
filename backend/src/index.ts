@@ -212,7 +212,7 @@ app.use(helmet());
 // Public endpoints are designed to be hit from customer-owned domains hosting
 // the embed iframe — they need wildcard CORS. Authenticated endpoints stay
 // restricted to known app origins.
-app.use("/api/public", cors({ origin: "*", credentials: false }));
+app.use("/api/public", cors({ origin: "*", credentials: false, maxAge: 86400 }));
 app.use(cors({
   origin(origin, callback) {
     if (isAllowedFrontendOrigin(origin)) {
@@ -222,7 +222,8 @@ app.use(cors({
     logger.warn("cors_origin_blocked", { origin, allowedFrontendOrigins });
     callback(null, false);
   },
-  credentials: true
+  credentials: true,
+  maxAge: 86400
 }));
 // Global rate limit — skip for local development
 app.use(rateLimit({
