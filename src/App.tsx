@@ -60680,7 +60680,356 @@ ${waybillLineItems(w).length > 1
       }
     };
 
+
+    // ── Abandoned Cart Recovery (Owner / Admin / Manager) ─────────────────
+    //
+    // ⚠️ THE PENALTY PANEL BELOW ANSWERS "DID THE REP LOG THE CART?" That is a
+    // compliance question, and a rep can satisfy it by marking carts Not
+    // Interested the moment they open them. This answers the question that
+    // actually matters - did the cart become delivered revenue - so clearing
+    // and recovering stop looking like the same thing.
+    //
+    // Same cohort as the penalty list (weekScoped), so the two panels cannot
+    // disagree about which carts are in scope.
+    const canSeeCartRecovery = ["Owner", "Admin", "Manager"].includes(currentRole);
+    const followUpById = new Map(cartFollowUps.map((row) => [row.id, row]));
+
+    /** Where a cart ended up. Buckets are the values the data really holds. */
+    const recoveryOutcome = (row: CartGridRow) => {
+      const linked = followUpById.get(row.id);
+      if (linked?.convertedOrderId) return "converted";
+      const label = `${row.lastOutcome ?? ""} ${row.status ?? ""}`.toLowerCase();
+      if (label.includes("wrong number") || label.includes("not reachable")) return "wrong_number";
+      if (label.includes("not interested")) return "not_interested";
+      if (label.includes("unresponsive") || label.includes("no response")) return "unresponsive";
+      return "pending";
+    };
+
+    const recoveryStats = (rows: CartGridRow[]) => {
+      const linked = rows.map((row) => followUpById.get(row.id)).filter(Boolean) as CartFollowUpRow[];
+      const converted = linked.filter((row) => row.convertedOrderId);
+      const delivered = converted.filter((row) => row.convertedOrderStatus === "Delivered");
+      const counts = { converted: 0, not_interested: 0, unresponsive: 0, wrong_number: 0, pending: 0 };
+      rows.forEach((row) => { counts[recoveryOutcome(row) as keyof typeof counts] += 1; });
+      return {
+        assigned: rows.length,
+        // "Worked" is a logged attempt, NOT a closed cart. Separating the two
+        // is the whole point: a closed cart with no attempt was never worked.
+        worked: rows.filter((row) => (row.attempts ?? 0) > 0).length,
+        converted: converted.length,
+        delivered: delivered.length,
+        revenue: delivered.reduce((sum, row) => sum + Number(row.convertedOrderAmount ?? row.amount ?? 0), 0),
+        counts
+      };
+    };
+
+    const recoveryAll = recoveryStats(weekScoped);
+    const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
+
+    const recoveryReps = [...new Map(weekScoped.map((row) => [row.repId, row.repName])).entries()]
+      .map(([repId, repName]) => {
+        const rows = weekScoped.filter((row) => row.repId === repId);
+        return { repId, repName: repName || "Unassigned", ...recoveryStats(rows) };
+      })
+      .filter((rep) => rep.assigned > 0)
+      .sort((a, b) => b.assigned - a.assigned);
+
+    // Team average, so a rep's disposal mix is judged against the room rather
+    // than against a number somebody picked.
+    const teamNotInterestedPct = pct(recoveryAll.counts.not_interested, recoveryAll.assigned);
+
+    /**
+     * ⚠️ ONLY THE FLAGS THE DATA CAN ACTUALLY SUPPORT.
+     *
+     * The design also asked for "quick closes" (closed under 2 minutes after
+     * first contact) and "bulk closes" (several closed within 3 minutes).
+     * Neither is built, because nothing records WHEN a cart was closed -
+     * there is no closed_at. Inventing them from the last attempt time would
+     * put a misconduct flag on a rep's name using a timestamp that means
+     * something else. They need a column first.
+     */
+    const flagWeakFollowUp = weekScoped.filter((row) =>
+      recoveryOutcome(row) === "unresponsive" && (row.attempts ?? 0) < 3);
+    const flagHighNotInterested = recoveryReps.filter((rep) =>
+      rep.assigned >= 5 && pct(rep.counts.not_interested, rep.assigned) > teamNotInterestedPct + 15);
+    const flagClosedUnworked = weekScoped.filter((row) => row.closed && (row.attempts ?? 0) === 0);
+
+    // By ASSIGNMENT DATE, not activity date. A cart handed out Monday that
+    // converts Thursday belongs to Monday - otherwise no day ever shows what
+    // its own carts came to.
+    const recoveryCohortDays = days.map((day) => {
+      const rows = weekScoped.filter((row) => assignedDayKey(row) === day.key);
+      return { key: day.key, label: day.label, ...recoveryStats(rows) };
+    });
     return (
+      <>
+      {canSeeCartRecovery && (
+      <section className="mb-4 rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 px-4 py-3.5">
+          <div className="min-w-0">
+            <h3 className="m-0 text-[15px] font-black text-gray-900">Abandoned Cart Recovery</h3>
+            <p className="m-0 mt-0.5 text-[11px] font-medium text-gray-500">
+              How assigned carts were worked, converted and delivered — not just cleared.
+            </p>
+          </div>
+          <span className="inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2.5 py-1 text-[11px] font-black text-violet-700">
+            <Users className="h-3.5 w-3.5" />Owner · Admin · Manager
+          </span>
+        </div>
+
+        {/* ── A. Recovery funnel ─────────────────────────── */}
+        <div className="px-4 py-4">
+          <p className="m-0 mb-2.5 text-[11px] font-black uppercase tracking-wider text-violet-700">
+            Recovery funnel <span className="font-bold normal-case tracking-normal text-gray-400">· carts assigned this week</span>
+          </p>
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-stretch">
+            {[
+              { label: "Assigned", value: recoveryAll.assigned.toLocaleString(), sub: "100%", note: "Carts given to reps",
+                icon: <Users className="h-5 w-5" />, tone: "bg-violet-50 text-violet-600", ring: "border-violet-200/70" },
+              { label: "Worked", value: recoveryAll.worked.toLocaleString(), sub: `${pct(recoveryAll.worked, recoveryAll.assigned)}%`, note: "At least one logged attempt",
+                icon: <CheckCircle2 className="h-5 w-5" />, tone: "bg-blue-50 text-blue-600", ring: "border-blue-200/70" },
+              { label: "Converted", value: recoveryAll.converted.toLocaleString(), sub: `${pct(recoveryAll.converted, recoveryAll.worked)}%`, note: "Became an order",
+                icon: <ShoppingBag className="h-5 w-5" />, tone: "bg-amber-50 text-amber-600", ring: "border-amber-200/70" },
+              { label: "Delivered", value: recoveryAll.delivered.toLocaleString(), sub: `${pct(recoveryAll.delivered, recoveryAll.converted)}% DR`, note: "Successfully delivered",
+                icon: <Package className="h-5 w-5" />, tone: "bg-emerald-50 text-emerald-600", ring: "border-emerald-200/70" },
+              { label: "Revenue recovered", value: cartRowMoney(recoveryAll.revenue, "NGN"),
+                sub: `${cartRowMoney(recoveryAll.delivered > 0 ? Math.round(recoveryAll.revenue / recoveryAll.delivered) : 0, "NGN")} AOV`,
+                note: "From delivered orders",
+                icon: <TrendingUp className="h-5 w-5" />, tone: "bg-emerald-50 text-emerald-700", ring: "border-emerald-200/70" }
+            ].map((stage, index, all) => (
+              <div key={stage.label} className="flex flex-1 items-center gap-2">
+                <article className={`min-w-0 flex-1 rounded-xl border ${stage.ring} bg-white p-3`}>
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${stage.tone}`}>{stage.icon}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-[11px] font-black text-gray-600">{stage.label}</span>
+                      <strong className="block truncate text-[20px] font-black leading-tight tracking-tight text-gray-900">{stage.value}</strong>
+                    </span>
+                  </div>
+                  <p className="m-0 mt-1 text-[11px] font-black text-gray-500">{stage.sub}</p>
+                  <p className="m-0 text-[10px] font-medium text-gray-400">{stage.note}</p>
+                </article>
+                {index < all.length - 1 && <ArrowRight className="hidden h-4 w-4 shrink-0 text-gray-300 lg:block" />}
+              </div>
+            ))}
+          </div>
+          {/* The one number the whole panel exists for. */}
+          <p className="m-0 mt-2.5 text-[11px] font-semibold text-gray-500">
+            <strong className="text-gray-900">Cart → Delivered: {pct(recoveryAll.delivered, recoveryAll.assigned)}%</strong>
+            {" "}— of every 100 abandoned customers handed out this week, {Math.round(pct(recoveryAll.delivered, recoveryAll.assigned))} became a delivered sale.
+          </p>
+        </div>
+
+        {/* ── B. Rep cards ───────────────────────────────── */}
+        {recoveryReps.length > 0 && (
+          <div className="grid gap-3 border-t border-gray-100 px-4 py-4 sm:grid-cols-2 xl:grid-cols-4">
+            {recoveryReps.map((rep) => {
+              const bar = [
+                { key: "delivered", n: rep.delivered, cls: "bg-emerald-500", label: "Delivered" },
+                { key: "pending", n: rep.counts.pending, cls: "bg-amber-400", label: "Pending" },
+                { key: "not_interested", n: rep.counts.not_interested, cls: "bg-rose-500", label: "Not interested" },
+                { key: "unresponsive", n: rep.counts.unresponsive, cls: "bg-gray-300", label: "Unresponsive" },
+                { key: "wrong_number", n: rep.counts.wrong_number, cls: "bg-gray-400", label: "Wrong number" }
+              ].filter((seg) => seg.n > 0);
+              return (
+                <article key={rep.repId} className="rounded-xl border border-gray-200 bg-white p-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-100 text-[12px] font-black text-violet-700">
+                        {(rep.repName || "?").slice(0, 1).toUpperCase()}
+                      </span>
+                      <span className="min-w-0">
+                        <strong className="block truncate text-[13px] font-black text-gray-900">{rep.repName}</strong>
+                        <span className="block text-[11px] font-semibold text-gray-400">{rep.assigned} assigned</span>
+                      </span>
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-1 text-center">
+                    {[
+                      { label: "Worked", n: rep.worked, sub: `${pct(rep.worked, rep.assigned)}%`, cls: "text-blue-600" },
+                      { label: "Converted", n: rep.converted, sub: `${pct(rep.converted, rep.worked)}%`, cls: "text-amber-600" },
+                      { label: "Delivered", n: rep.delivered, sub: `${pct(rep.delivered, rep.converted)}% DR`, cls: "text-emerald-600" }
+                    ].map((cell) => (
+                      <span key={cell.label} className="min-w-0">
+                        <span className="block text-[10px] font-black text-gray-500">{cell.label}</span>
+                        <strong className={`block text-[18px] font-black leading-tight ${cell.cls}`}>{cell.n}</strong>
+                        <span className="block truncate text-[10px] font-bold text-gray-400">{cell.sub}</span>
+                      </span>
+                    ))}
+                  </div>
+                  {bar.length > 0 && (
+                    <span className="mt-2.5 flex h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                      {bar.map((seg) => (
+                        <span key={seg.key} className={seg.cls} title={`${seg.label}: ${seg.n}`}
+                          style={{ width: `${(seg.n / rep.assigned) * 100}%` }} />
+                      ))}
+                    </span>
+                  )}
+                  <p className="m-0 mt-2 text-[10px] font-semibold leading-relaxed text-gray-500">
+                    {bar.map((seg) => `${seg.n} ${seg.label}`).join(" · ") || "No outcomes yet"}
+                  </p>
+                  <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2 text-[11px] font-black">
+                    <span className="text-gray-600">Cart → Delivered: <span className="text-gray-900">{pct(rep.delivered, rep.assigned)}%</span></span>
+                    <span className="text-emerald-600">{cartRowMoney(rep.revenue, "NGN")}</span>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── C. Rep comparison + outcome quality + flags ── */}
+        <div className="grid gap-3 border-t border-gray-100 px-4 py-4 xl:grid-cols-[1.3fr_1fr_1fr]">
+          <div className="min-w-0 rounded-xl border border-gray-200 p-3">
+            <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-wider text-violet-700">Rep performance comparison</p>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[430px] text-left text-[11px]">
+                <thead className="text-[10px] font-black uppercase tracking-wide text-gray-400">
+                  <tr><th className="pb-1.5 pr-2">Rep</th><th className="pb-1.5 px-1 text-right">Assigned</th>
+                  <th className="pb-1.5 px-1 text-right">Worked</th><th className="pb-1.5 px-1 text-right">Orders</th>
+                  <th className="pb-1.5 px-1 text-right">Delivered</th><th className="pb-1.5 px-1 text-right">Cart→Order</th>
+                  <th className="pb-1.5 pl-1 text-right">Cart→Delivered</th></tr>
+                </thead>
+                <tbody>
+                  {recoveryReps.map((rep) => {
+                    const c2d = pct(rep.delivered, rep.assigned);
+                    return (
+                      <tr key={rep.repId} className="border-t border-gray-100">
+                        <td className="py-1.5 pr-2 font-bold text-gray-900">{rep.repName}</td>
+                        <td className="py-1.5 px-1 text-right tabular-nums text-gray-600">{rep.assigned}</td>
+                        <td className="py-1.5 px-1 text-right tabular-nums text-gray-600">{rep.worked}</td>
+                        <td className="py-1.5 px-1 text-right tabular-nums text-gray-600">{rep.converted}</td>
+                        <td className="py-1.5 px-1 text-right tabular-nums text-gray-600">{rep.delivered}</td>
+                        <td className="py-1.5 px-1 text-right font-bold tabular-nums text-gray-700">{pct(rep.converted, rep.assigned)}%</td>
+                        {/* Coloured against the team rate, so a number is judged
+                            against the room rather than a figure someone picked. */}
+                        <td className={`py-1.5 pl-1 text-right font-black tabular-nums ${
+                          c2d >= pct(recoveryAll.delivered, recoveryAll.assigned) ? "text-emerald-600" : "text-rose-600"}`}>{c2d}%</td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="border-t-2 border-gray-200 font-black text-violet-700">
+                    <td className="py-1.5 pr-2">TOTAL</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums">{recoveryAll.assigned}</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums">{recoveryAll.worked}</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums">{recoveryAll.converted}</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums">{recoveryAll.delivered}</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums">{pct(recoveryAll.converted, recoveryAll.assigned)}%</td>
+                    <td className="py-1.5 pl-1 text-right tabular-nums">{pct(recoveryAll.delivered, recoveryAll.assigned)}%</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="min-w-0 rounded-xl border border-gray-200 p-3">
+            <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-wider text-violet-700">Outcome quality</p>
+            <p className="m-0 text-[10px] font-medium text-gray-400">How the {recoveryAll.assigned} assigned carts were disposed of.</p>
+            <div className="mt-2.5 space-y-1.5">
+              {[
+                { label: "Converted", n: recoveryAll.counts.converted, cls: "bg-emerald-500", text: "text-emerald-700" },
+                { label: "Not interested", n: recoveryAll.counts.not_interested, cls: "bg-rose-500", text: "text-rose-700" },
+                { label: "Unresponsive", n: recoveryAll.counts.unresponsive, cls: "bg-gray-400", text: "text-gray-600" },
+                { label: "Wrong number", n: recoveryAll.counts.wrong_number, cls: "bg-amber-400", text: "text-amber-700" },
+                { label: "Still working", n: recoveryAll.counts.pending, cls: "bg-blue-400", text: "text-blue-700" }
+              ].map((row) => (
+                <div key={row.label} className="flex items-center gap-2">
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${row.cls}`} />
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-gray-600">{row.label}</span>
+                  <span className="shrink-0 text-[11px] font-black tabular-nums text-gray-900">{row.n}</span>
+                  <span className={`w-11 shrink-0 text-right text-[10px] font-black tabular-nums ${row.text}`}>
+                    {pct(row.n, recoveryAll.assigned)}%
+                  </span>
+                </div>
+              ))}
+            </div>
+            <span className="mt-2.5 flex h-2 w-full overflow-hidden rounded-full bg-gray-100">
+              {[
+                { n: recoveryAll.counts.converted, cls: "bg-emerald-500" },
+                { n: recoveryAll.counts.not_interested, cls: "bg-rose-500" },
+                { n: recoveryAll.counts.unresponsive, cls: "bg-gray-400" },
+                { n: recoveryAll.counts.wrong_number, cls: "bg-amber-400" },
+                { n: recoveryAll.counts.pending, cls: "bg-blue-400" }
+              ].filter((seg) => seg.n > 0).map((seg, i) => (
+                <span key={i} className={seg.cls} style={{ width: `${pct(seg.n, recoveryAll.assigned)}%` }} />
+              ))}
+            </span>
+          </div>
+
+          {/* ⚠️ AUDIT FLAGS, NOT PROOF. Each names a pattern worth opening, and
+              every one is computed from data that actually exists - see the
+              note in the model about the two flags deliberately not built. */}
+          <div className="min-w-0 rounded-xl border border-gray-200 p-3">
+            <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-wider text-violet-700">Quality flags</p>
+            <div className="space-y-2">
+              {[
+                { n: flagClosedUnworked.length, title: "Closed without an attempt",
+                  note: "Cart reached a final state with no logged contact", tone: "border-rose-200 bg-rose-50", num: "text-rose-600", icon: <CircleX className="h-4 w-4 text-rose-500" /> },
+                { n: flagHighNotInterested.length, title: "High Not Interested rate",
+                  note: `More than 15 points above the team's ${teamNotInterestedPct}%`, tone: "border-amber-200 bg-amber-50", num: "text-amber-600", icon: <AlertTriangle className="h-4 w-4 text-amber-500" /> },
+                { n: flagWeakFollowUp.length, title: "Weak follow-ups",
+                  note: "Marked unresponsive after fewer than 3 attempts", tone: "border-blue-200 bg-blue-50", num: "text-blue-600", icon: <Phone className="h-4 w-4 text-blue-500" /> }
+              ].map((flag) => (
+                <div key={flag.title} className={`flex items-center gap-2.5 rounded-lg border ${flag.tone} px-2.5 py-2`}>
+                  <span className="shrink-0">{flag.icon}</span>
+                  <span className="min-w-0 flex-1">
+                    <strong className="block truncate text-[11px] font-black text-gray-900">{flag.title}</strong>
+                    <span className="block text-[10px] font-medium leading-snug text-gray-500">{flag.note}</span>
+                  </span>
+                  <strong className={`shrink-0 text-[17px] font-black tabular-nums ${flag.num}`}>{flag.n}</strong>
+                </div>
+              ))}
+            </div>
+            {flagHighNotInterested.length > 0 && (
+              <p className="m-0 mt-2 text-[10px] font-bold text-amber-700">
+                {flagHighNotInterested.map((rep) => `${rep.repName} ${pct(rep.counts.not_interested, rep.assigned)}%`).join(" · ")}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* ── D. Daily cohort ────────────────────────────── */}
+        {recoveryCohortDays.length > 0 && (
+          <div className="border-t border-gray-100 px-4 py-4">
+            <p className="m-0 mb-0.5 text-[11px] font-black uppercase tracking-wider text-violet-700">Daily cohort performance</p>
+            {/* ⚠️ BY ASSIGNMENT DATE. A cart handed out Monday that converts on
+                Thursday counts to MONDAY - otherwise no day ever shows what its
+                own carts came to, which is the question being asked. */}
+            <p className="m-0 mb-2 text-[10px] font-medium text-gray-400">
+              Grouped by the day the cart was assigned, wherever the conversion later landed.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[560px] text-left text-[11px]">
+                <thead className="text-[10px] font-black uppercase tracking-wide text-gray-400">
+                  <tr>
+                    <th className="pb-1.5 pr-2">Metric</th>
+                    {recoveryCohortDays.map((day) => <th key={day.key} className="pb-1.5 px-1 text-right">{day.label}</th>)}
+                    <th className="pb-1.5 pl-1 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {([
+                    ["Assigned", (d: typeof recoveryCohortDays[number]) => `${d.assigned}`, recoveryAll.assigned, ""],
+                    ["Worked", (d: typeof recoveryCohortDays[number]) => d.assigned > 0 ? `${d.worked} (${pct(d.worked, d.assigned)}%)` : "—", recoveryAll.worked, "text-blue-600"],
+                    ["Converted", (d: typeof recoveryCohortDays[number]) => d.worked > 0 ? `${d.converted} (${pct(d.converted, d.worked)}%)` : "—", recoveryAll.converted, "text-amber-600"],
+                    ["Delivered", (d: typeof recoveryCohortDays[number]) => d.converted > 0 ? `${d.delivered} (${pct(d.delivered, d.converted)}%)` : "—", recoveryAll.delivered, "text-emerald-600"]
+                  ] as const).map(([label, cell, total, cls]) => (
+                    <tr key={label} className="border-t border-gray-100">
+                      <td className="py-1.5 pr-2 font-black text-gray-700">{label}</td>
+                      {recoveryCohortDays.map((day) => (
+                        <td key={day.key} className={`py-1.5 px-1 text-right tabular-nums ${cls || "text-gray-600"}`}>{cell(day)}</td>
+                      ))}
+                      <td className="py-1.5 pl-1 text-right font-black tabular-nums text-gray-900">{total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
+      )}
+
       <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
         {/* ⚠️ ₦500 per REP per DAY, not per cart - a rep with 61 carts and one
             with 6 have committed the same offence by not logging. Nothing is
@@ -61253,6 +61602,7 @@ ${waybillLineItems(w).length > 1
           </table>
         </div>
       </section>
+      </>
     );
   };
 
