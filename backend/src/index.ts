@@ -177,15 +177,15 @@ function rateLimitBucketKey(req: express.Request) {
 // and per-IP rate limiting.
 app.set("trust proxy", 1);
 
-// Disable ETag generation for /api responses — Express's auto-ETag was
-// triggering 304 Not Modified for orders/notifications polling, which made
-// the browser keep using stale cached payloads after order edits (e.g. agent
-// assignments not visible after refresh even though DB had the change).
-app.set("etag", false);
-
-// Belt-and-suspenders: every /api response must be revalidated, never cached.
+// Read endpoints can be revalidated briefly; writes remain uncached. This
+// prevents repeated dashboard refreshes from transferring the same large JSON
+// lists while keeping mutations immediately visible after a write.
 app.use("/api", (_req, res, next) => {
-  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  if (_req.method === "GET" || _req.method === "HEAD") {
+    res.set("Cache-Control", "private, max-age=20, stale-while-revalidate=60");
+  } else {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  }
   next();
 });
 
