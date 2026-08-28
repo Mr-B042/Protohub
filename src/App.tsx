@@ -81527,14 +81527,38 @@ ${waybillLineItems(w).length > 1
                   && (waybillProductIds.size === 0 || waybillProductIds.has(w.productId))
                   && isInPeriod(w.dateSent, waybillsPeriod, waybillsDateRange)
                 );
+                // ⚠️ "No waybill records yet" was shown whenever the FILTER
+                // matched nothing, even with thousands of records in hand. The
+                // page defaults to This Month, so anyone looking for older
+                // stock movements was told, in plain words, that the business
+                // had never waybilled anything. That is what sent us hunting
+                // for deleted data. An empty filter and an empty table are two
+                // different sentences now.
                 if (filtered.length === 0) {
+                  const hasAny = waybillRecords.length > 0;
                   return (
                     <div className="rounded-xl border border-dashed border-gray-200 p-12 text-center">
-                      <p className="text-gray-400 font-medium">No waybill records yet.</p>
-                      <p className="text-gray-400 text-sm mt-1">Click "New Waybill" to record a stock transfer.</p>
+                      <p className="text-gray-400 font-medium">
+                        {hasAny ? `No waybills match these filters.` : "No waybill records yet."}
+                      </p>
+                      <p className="text-gray-400 text-sm mt-1">
+                        {hasAny
+                          ? `${waybillRecords.length.toLocaleString()} waybill${waybillRecords.length === 1 ? "" : "s"} are recorded — the ${waybillsPeriod === "Custom" ? "chosen date range" : `"${waybillsPeriod}"`} filter is hiding them.`
+                          : 'Click "New Waybill" to record a stock transfer.'}
+                      </p>
+                      {hasAny && (
+                        <button type="button" onClick={() => handleWaybillsPeriodChange("This Year")}
+                          className="!min-h-0 mt-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-black text-[#1F8FE0] hover:bg-blue-50">
+                          Show this year
+                        </button>
+                      )}
                     </div>
                   );
                 }
+                // Same point, for the non-empty case: a count of what the
+                // filter is holding back, so a short list never reads as a
+                // complete one.
+                const hiddenByFilter = waybillRecords.length - filtered.length;
                 const WAYBILL_PAGE_SIZE = 25;
                 const waybillTotalPages = Math.ceil(filtered.length / WAYBILL_PAGE_SIZE);
                 const waybillPageClamped = Math.min(waybillPage, waybillTotalPages);
@@ -81549,6 +81573,16 @@ ${waybillLineItems(w).length > 1
                 };
                 return (
                   <>
+                  {hiddenByFilter > 0 && (
+                    <p className="m-0 mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2 text-[12px] font-semibold text-amber-800">
+                      <Filter className="h-3.5 w-3.5 shrink-0" />
+                      Showing {filtered.length.toLocaleString()} of {waybillRecords.length.toLocaleString()} waybills — {hiddenByFilter.toLocaleString()} hidden by the current filters.
+                      {waybillsPeriod !== "This Year" && (
+                        <button type="button" onClick={() => handleWaybillsPeriodChange("This Year")}
+                          className="!min-h-0 font-black text-[#1F8FE0] underline-offset-2 hover:underline">Show this year</button>
+                      )}
+                    </p>
+                  )}
                   <div className="sm:hidden space-y-3">
                     {pagedWaybills.map((w) => (
                       <article key={w.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm flex flex-col gap-3">
