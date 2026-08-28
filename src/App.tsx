@@ -71041,12 +71041,7 @@ ${waybillLineItems(w).length > 1
       });
     }
 
-    if (modal === "createWaybill") {
-      return renderPersistentActions({
-        primaryLabel: "Create Waybill",
-        onPrimary: createWaybill
-      });
-    }
+    if (modal === "createWaybill") return null;
 
     if (modal === "editWaybill") {
       return renderPersistentActions({
@@ -98083,7 +98078,7 @@ ${waybillLineItems(w).length > 1
 	                {modal === "manualBonus" && "Manual Bonus Adjustment"}
 	                {modal === "addPenalty" && "Apply Penalty"}
 	                {modal === "editProduct" && selectedProduct && `Edit ${selectedProduct.name}`}
-	                {modal === "createWaybill" && "New Waybill"}
+                {false && modal === "createWaybill" && "New Waybill"}
                 {modal === "editWaybill" && "Edit Waybill"}
                 {modal === "receiveWaybill" && "Receive Waybill"}
                 {modal === "waybillDetails" && "Waybill Details"}
