@@ -8818,6 +8818,7 @@ export function App({ onLogout }: { onLogout?: () => void }) {
   const [waybillPage, setWaybillPage] = useState(1);
   const [waybillEditId, setWaybillEditId] = useState("");
   const [waybillErrors, setWaybillErrors] = useState<Record<string, string>>({});
+  const [waybillCreating, setWaybillCreating] = useState(false);
   const [payrollTab, setPayrollTab] = useState<PayrollTab>("Pay Rates");
   const [salaryPayMonth, setSalaryPayMonth] = useState<string>(() => lagosDateKeyNow().slice(0, 7)); // YYYY-MM to record salaries for
   const [payrollMonth, setPayrollMonth] = useState(currentPayrollMonthLabel);
@@ -40433,6 +40434,7 @@ ${waybillLineItems(w).length > 1
   };
 
   const createWaybill = () => {
+    if (waybillCreating) return;
     const errs: Record<string, string> = {};
     // Collapse the line-item rows: keep the ones with a product chosen, sum
     // duplicate products into one line, and coerce each quantity to a min of 1.
@@ -40488,6 +40490,7 @@ ${waybillLineItems(w).length > 1
     }
     if (Object.keys(errs).length > 0) { setWaybillErrors(errs); return; }
     setWaybillErrors({});
+    setWaybillCreating(true);
 
     const fee = Math.max(0, Number(waybillFee) || 0);
     const sendingState = waybillFromType === "Warehouse" ? "Lagos" : (fromLocation?.state || (fromAgent ? agentPrimaryBaseState(fromAgent) : ""));
@@ -40553,14 +40556,16 @@ ${waybillLineItems(w).length > 1
     }
 
     setWaybillRecords((prev) => [record, ...prev]);
-    closeModal();
     showToast(`Waybill created - ${itemsLabel} → ${receivingState}.${fee > 0 ? ` Fee ${naira(fee)} booked to expenses.` : ""}`);
     // Roll back the waybill record if the
     // server rejects the create. Stock movement stays as a paper trail of
     // the attempt and is reconciled by the next stockApi.movements load.
     waybillsApi.create({ id: record.id, items: itemsForRecord, productId: record.productId, productName: record.productName, quantity: record.quantity, waybillFee: record.waybillFee, fromLocation: record.sendingState, toLocation: record.receivingState, carrier: record.logisticsPartner, agentId: record.toAgentId, fromAgentId: record.fromAgentId, fromAgentLocationId: record.fromAgentLocationId, toAgentId: record.toAgentId, toAgentLocationId: record.toAgentLocationId, notes: record.note, dispatchedDate: record.dateSent } as any).then(() => {
+      setWaybillCreating(false);
+      closeModal();
       if (fee > 0) expensesApi.list().then((rows) => setExpenses(rows.map(normalizeExpenseRecord))).catch(() => {});
     }).catch((err: any) => {
+      setWaybillCreating(false);
       setWaybillRecords((prev) => prev.filter((w) => w.id !== record.id));
       showToast(`Waybill not synced: ${err?.message ?? "please retry"}.`);
     });
@@ -97923,7 +97928,7 @@ ${waybillLineItems(w).length > 1
         const orderModalTypes: (typeof modal)[] = ["orderDetails", "changeOrderStatus", "editOrderCustomer", "editOrderItems", "sendToAgent"];
         const orderDetailsGold = orderModalTypes.includes(modal) && (repGoldHonorActive || Boolean(selectedOrder && orderAssignedRepGoldHonorActive(selectedOrder)));
         return (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] p-2 sm:p-4 overflow-y-auto">
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 dark:bg-[rgba(3,7,18,0.82)] backdrop-blur-[6px] p-2 sm:p-4 overflow-y-auto">
           <section
             className={`relative my-auto bg-white dark:bg-[#0f1822] dark:border dark:border-slate-800/90 rounded-2xl shadow-2xl w-full flex flex-col max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] overflow-hidden ${modal === "sendToAgent" ? "h-[calc(100dvh-1rem)] sm:h-[46rem]" : ""} ${modal === "bonusBreakdown" || modal === "recordBatchRemittance" || modal === "pdaMediaViewer" || modal === "salesBonusFullReport" ? "max-w-5xl" :modal === "recordRemittance" || modal === "sendToAgent" || modal === "bonusSettings" || modal === "stateAvailability" || modal === "addPackage" || modal === "editPackage" ? "max-w-4xl" : modal === "logFollowUpAttempt" || modal === "addPersonalDeliveryAgent" ? "max-w-4xl" : modal === "cartFollowUp" ? "max-w-3xl" : modal === "orderWorkflow" || modal === "salesExpansionLog" ? "max-w-3xl" : modal === "remittanceReceipts" ? "max-w-4xl" :modal === "createOrder" || modal === "editOrderItems" || modal === "addExtraItems" || modal === "editOrderCustomer" || modal === "changeOrderStatus" || modal === "orderDetails" || modal === "productDetails" || modal === "agentDetails" || modal === "salesRepDetails" || modal === "editSalesRep" || modal === "addSalesRep" || modal === "editUser" || modal === "addUser" || modal === "addProduct" || modal === "addAgent" || modal === "carts" || modal === "waybillDetails" ? "max-w-2xl" : "max-w-lg"} ${orderDetailsGold ? "!border-2 !border-amber-500 !shadow-[0_0_30px_rgba(251,191,36,0.4)] dark:!border-amber-400/60 dark:!shadow-[0_0_32px_rgba(251,191,36,0.25)]" : ""}`}
             style={orderDetailsGold ? { animation: "goldGlowPulse 2.6s ease-in-out infinite" } : undefined}
@@ -108619,7 +108624,7 @@ ${waybillLineItems(w).length > 1
               const Req = () => <span className="text-red-500 ml-0.5">*</span>;
               const ErrMsg = ({ k }: { k: string }) => e[k] ? <p className="mt-1 text-xs text-red-600 font-medium">{e[k]}</p> : null;
               return (
-                <div className="waybill-create-modal px-6 py-5 flex flex-col gap-4">
+                <div className="waybill-create-modal px-6 py-5 flex flex-col gap-4" aria-busy={waybillCreating}>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {/* One waybill can carry several products - each its own qty, one shared route + fee. */}
                     <div className="sm:col-span-2">
@@ -108813,7 +108818,10 @@ ${waybillLineItems(w).length > 1
                   </div>
                   <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
                     <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg border border-gray-200 text-gray-900 text-sm font-bold hover:bg-gray-50 transition-colors" onClick={closeModal}>Cancel</button>
-                    <button className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center px-6 py-2.5 rounded-lg bg-[#1F8FE0] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors" onClick={createWaybill}>Create Waybill</button>
+                    <button disabled={waybillCreating} className="!min-h-0 inline-flex w-full sm:w-auto items-center justify-center gap-2 px-6 py-2.5 rounded-lg bg-[#1F8FE0] text-white text-sm font-bold hover:bg-[#1560a8] transition-colors disabled:cursor-wait disabled:opacity-70" onClick={createWaybill}>
+                      {waybillCreating && <RefreshCw className="h-4 w-4 animate-spin" />}
+                      {waybillCreating ? "Creating Waybill…" : "Create Waybill"}
+                    </button>
                   </div>
                 </div>
               );
