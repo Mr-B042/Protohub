@@ -9497,7 +9497,9 @@ html.dark .workspace-content :is(.text-rose-600, .text-rose-700, .text-rose-800,
 /* New Waybill modal: reference-style grouped form without changing its
    existing field order or validation behavior. */
 body:has(.waybill-create-modal) > .fixed > section {
-  max-width: 64rem;
+  width: min(70rem, calc(100vw - 2rem));
+  max-width: 70rem;
+  max-height: calc(100dvh - 2rem);
 }
 
 .waybill-create-modal {
@@ -9570,6 +9572,11 @@ body:has(.waybill-create-modal) .waybill-modal-subtitle {
 @media (max-width: 699px) {
   body:has(.waybill-create-modal) > .fixed {
     padding: 0.5rem;
+  }
+
+  body:has(.waybill-create-modal) > .fixed > section {
+    width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 1rem);
   }
 
   .waybill-create-modal {
