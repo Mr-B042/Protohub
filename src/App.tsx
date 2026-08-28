@@ -2277,6 +2277,29 @@ const orderStatuses: OrderStatus[] = ["All Orders", "New", "Confirmed", "In Proc
 const orderScheduleFilters: OrderScheduleFilter[] = ["All schedule marks", "Scheduled Delivered", "Scheduled Late", "Scheduled Pending", "⚡ Outage recovered"];
 const orderSources: OrderSource[] = ["All Sources", "Facebook", "Instagram", "Messenger", "Audience Network", "Threads", "TikTok", "WhatsApp", "Website", "Direct"];
 const orderLocations: OrderLocation[] = ["All Locations", "Lagos", "Abuja", "Port Harcourt", "Ibadan"];
+/**
+ * ⚠️ "NOT INTERESTED" MUST NAME A REASON. It is the cheapest way out of a cart:
+ * one click clears the ₦500 exposure and closes the customer for good. Making
+ * the rep say WHY turns a disposal into a statement somebody can check, and
+ * gives the business the objection data it currently throws away.
+ */
+const CART_NOT_INTERESTED_REASONS = [
+  "Price", "Already bought elsewhere", "No longer needs it",
+  "Does not remember ordering", "Product concern", "Delivery concern", "Other"
+] as const;
+
+/**
+ * ⚠️ A CART CANNOT BE CALLED UNRESPONSIVE ON THE FIRST TRY. Three logged
+ * attempts, the third being this one. Without a floor, "Unresponsive" is a
+ * one-click close on a customer nobody actually chased - indistinguishable
+ * from real work in every report, and free of the daily penalty.
+ *
+ * Deliberately NOT applied to "Number not reachable": a dead line is a fact
+ * about the number, established on the first call, not a judgement about
+ * whether the customer is ignoring us.
+ */
+const CART_UNRESPONSIVE_MIN_ATTEMPTS = 3;
+
 const cartStatuses: CartStatus[] = ["All statuses", "Open abandoned", "In progress", "Abandoned", "Assigned", "Contacted", "Converted", "No response", "Not interested"];
 const cartConversionFilters: CartConversionFilter[] = ["All conversion paths", "Recovered by Team", "Recovered Delivered", "Recovered Pending", "Recovered Failed / Cancelled", "Customer Finished Later"];
 const scheduleRanges: ScheduleRange[] = ["Today", "Tomorrow", "Day After", "Custom"];
@@ -41193,6 +41216,18 @@ ${waybillLineItems(w).length > 1
       showToast("Describe the outcome.");
       return;
     }
+    // ⚠️ Enforced on SAVE, not just in the form. The disabled option stops the
+    // honest mistake; this stops the request.
+    if (cartAttemptDraft.outcomeCode === "Not interested" && !cartAttemptDraft.customOutcome.trim()) {
+      showToast("Cannot close as Not interested without a reason. Pick why the customer said no.");
+      return;
+    }
+    if (cartAttemptDraft.outcomeCode === "Unresponsive"
+        && (cartAttemptCart.attempts ?? 0) + 1 < CART_UNRESPONSIVE_MIN_ATTEMPTS) {
+      const done = (cartAttemptCart.attempts ?? 0) + 1;
+      showToast(`Cannot close as Unresponsive yet — this is attempt ${done} of ${CART_UNRESPONSIVE_MIN_ATTEMPTS}. Log the call with what happened, and try again later.`);
+      return;
+    }
     try {
       const result = await cartsApi.logContactAttempt(cartAttemptCart.id, {
         channel: cartAttemptDraft.channel,
@@ -60723,16 +60758,77 @@ ${waybillLineItems(w).length > 1
       };
     };
 
+    /**
+     * Hours from assignment to the FIRST logged attempt. Null when the cart
+     * has never been touched, so an untouched cart cannot quietly score as
+     * "instant" - it is excluded from the median and punished by work
+     * completion instead, where it belongs.
+     */
+    const hoursToFirstContact = (row: CartGridRow) => {
+      const stamps = Object.values(row.cells ?? {})
+        .flatMap((cell: any) => (cell?.entries ?? []).map((entry: any) => entry.attemptedAt))
+        .filter(Boolean).map((iso: string) => new Date(iso).getTime())
+        .filter((time) => Number.isFinite(time));
+      if (stamps.length === 0) return null;
+      const start = new Date(row.assignedAt ?? row.createdAt).getTime();
+      if (!Number.isFinite(start)) return null;
+      return Math.max(0, (Math.min(...stamps) - start) / 3_600_000);
+    };
+
     const recoveryAll = recoveryStats(weekScoped);
     const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
 
     const recoveryReps = [...new Map(weekScoped.map((row) => [row.repId, row.repName])).entries()]
       .map(([repId, repName]) => {
         const rows = weekScoped.filter((row) => row.repId === repId);
-        return { repId, repName: repName || "Unassigned", ...recoveryStats(rows) };
+        const stat = recoveryStats(rows);
+        return { repId, repName: repName || "Unassigned", ...stat, ...recoveryScoreFor(rows, stat) };
       })
       .filter((rep) => rep.assigned > 0)
       .sort((a, b) => b.assigned - a.assigned);
+
+    /**
+     * Cart Recovery Score /100 - the distinction between a rep who CLEARS carts
+     * and one who RECOVERS customers.
+     *
+     * ⚠️ Every component is the rep's own rate, not a curve against the team.
+     * A relative score always crowns somebody, even in a bad week; an absolute
+     * one can say "everyone is at 38" and mean it. So a score reads as "the
+     * weighted average of your rates", never as a class ranking.
+     *
+     * Speed is the one component that is not already a percentage: 100 at two
+     * hours or better, 0 at twenty-four, straight line between. Stated here
+     * because it is a judgement, not a measurement.
+     */
+    const RECOVERY_SCORE_WEIGHTS = [
+      { key: "conversion", label: "Cart → Order", weight: 30 },
+      { key: "delivered", label: "Cart → Delivered", weight: 25 },
+      { key: "work", label: "Work completion", weight: 15 },
+      { key: "quality", label: "Follow-up quality", weight: 15 },
+      { key: "speed", label: "Speed to first contact", weight: 10 },
+      { key: "compliance", label: "Logging compliance", weight: 5 }
+    ] as const;
+
+    const recoveryScoreFor = (rows: CartGridRow[], stat: ReturnType<typeof recoveryStats>) => {
+      const unconverted = rows.filter((row) => recoveryOutcome(row) !== "converted");
+      const speeds = rows.map(hoursToFirstContact).filter((hours): hours is number => hours !== null).sort((a, b) => a - b);
+      const medianHours = speeds.length > 0 ? speeds[Math.floor(speeds.length / 2)] : null;
+      const parts = {
+        conversion: pct(stat.converted, stat.assigned),
+        delivered: pct(stat.delivered, stat.assigned),
+        work: pct(stat.worked, stat.assigned),
+        // Chasing a "no" properly: of the carts that did NOT convert, how many
+        // got a real sequence of attempts rather than one call and a label.
+        quality: unconverted.length > 0
+          ? pct(unconverted.filter((row) => (row.attempts ?? 0) >= CART_UNRESPONSIVE_MIN_ATTEMPTS).length, unconverted.length)
+          : 100,
+        speed: medianHours === null ? 0 : Math.max(0, Math.min(100, Math.round(((24 - medianHours) / 22) * 100))),
+        compliance: 100 - pct(rows.filter((row) => !row.closed && (row.cells?.[todayKey]?.attempts ?? 0) === 0).length, stat.assigned)
+      };
+      const score = RECOVERY_SCORE_WEIGHTS.reduce(
+        (sum, part) => sum + (parts[part.key as keyof typeof parts] * part.weight) / 100, 0);
+      return { score: Math.round(score), parts, medianHours };
+    };
 
     // Team average, so a rep's disposal mix is judged against the room rather
     // than against a number somebody picked.
@@ -60843,6 +60939,13 @@ ${waybillLineItems(w).length > 1
                         <span className="block text-[11px] font-semibold text-gray-400">{rep.assigned} assigned</span>
                       </span>
                     </span>
+                    <span className={`shrink-0 rounded-lg px-2 py-1 text-center ${
+                      rep.score >= 60 ? "bg-emerald-50" : rep.score >= 40 ? "bg-amber-50" : "bg-rose-50"}`}
+                      title={RECOVERY_SCORE_WEIGHTS.map((w) => `${w.label} ${Math.round(rep.parts[w.key as keyof typeof rep.parts])}% × ${w.weight}%`).join("\n")}>
+                      <strong className={`block text-[17px] font-black leading-none tabular-nums ${
+                        rep.score >= 60 ? "text-emerald-700" : rep.score >= 40 ? "text-amber-700" : "text-rose-700"}`}>{rep.score}</strong>
+                      <span className="mt-0.5 block text-[9px] font-black uppercase tracking-wide text-gray-400">score</span>
+                    </span>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-1 text-center">
                     {[
@@ -60882,13 +60985,18 @@ ${waybillLineItems(w).length > 1
         <div className="grid gap-3 border-t border-gray-100 px-4 py-4 xl:grid-cols-[1.3fr_1fr_1fr]">
           <div className="min-w-0 rounded-xl border border-gray-200 p-3">
             <p className="m-0 mb-2 text-[11px] font-black uppercase tracking-wider text-violet-700">Rep performance comparison</p>
+            <p className="m-0 mb-2 text-[10px] font-medium leading-snug text-gray-400">
+              Score /100 = {RECOVERY_SCORE_WEIGHTS.map((w) => `${w.weight}% ${w.label.toLowerCase()}`).join(" · ")}.
+              Each part is the rep&apos;s own rate, so a whole team can score low in a bad week.
+            </p>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[430px] text-left text-[11px]">
+              <table className="w-full min-w-[490px] text-left text-[11px]">
                 <thead className="text-[10px] font-black uppercase tracking-wide text-gray-400">
                   <tr><th className="pb-1.5 pr-2">Rep</th><th className="pb-1.5 px-1 text-right">Assigned</th>
                   <th className="pb-1.5 px-1 text-right">Worked</th><th className="pb-1.5 px-1 text-right">Orders</th>
                   <th className="pb-1.5 px-1 text-right">Delivered</th><th className="pb-1.5 px-1 text-right">Cart→Order</th>
-                  <th className="pb-1.5 pl-1 text-right">Cart→Delivered</th></tr>
+                  <th className="pb-1.5 px-1 text-right">Cart→Delivered</th>
+                  <th className="pb-1.5 pl-1 text-right">Score</th></tr>
                 </thead>
                 <tbody>
                   {recoveryReps.map((rep) => {
@@ -60903,8 +61011,9 @@ ${waybillLineItems(w).length > 1
                         <td className="py-1.5 px-1 text-right font-bold tabular-nums text-gray-700">{pct(rep.converted, rep.assigned)}%</td>
                         {/* Coloured against the team rate, so a number is judged
                             against the room rather than a figure someone picked. */}
-                        <td className={`py-1.5 pl-1 text-right font-black tabular-nums ${
+                        <td className={`py-1.5 px-1 text-right font-black tabular-nums ${
                           c2d >= pct(recoveryAll.delivered, recoveryAll.assigned) ? "text-emerald-600" : "text-rose-600"}`}>{c2d}%</td>
+                        <td className="py-1.5 pl-1 text-right font-black tabular-nums text-gray-900">{rep.score}</td>
                       </tr>
                     );
                   })}
@@ -60915,7 +61024,8 @@ ${waybillLineItems(w).length > 1
                     <td className="py-1.5 px-1 text-right tabular-nums">{recoveryAll.converted}</td>
                     <td className="py-1.5 px-1 text-right tabular-nums">{recoveryAll.delivered}</td>
                     <td className="py-1.5 px-1 text-right tabular-nums">{pct(recoveryAll.converted, recoveryAll.assigned)}%</td>
-                    <td className="py-1.5 pl-1 text-right tabular-nums">{pct(recoveryAll.delivered, recoveryAll.assigned)}%</td>
+                    <td className="py-1.5 px-1 text-right tabular-nums">{pct(recoveryAll.delivered, recoveryAll.assigned)}%</td>
+                    <td className="py-1.5 pl-1 text-right tabular-nums">—</td>
                   </tr>
                 </tbody>
               </table>
@@ -104922,11 +105032,45 @@ ${waybillLineItems(w).length > 1
 	                    <select className="rounded-lg border border-gray-200 px-3 py-2 text-sm" value={cartAttemptDraft.outcomeCode}
 	                      onChange={(e) => setCartAttemptDraft((v) => ({ ...v, outcomeCode: e.target.value }))}>
 	                      {["Interested", "Wants to order now", "Asked to call back", "Price concern",
-                        "Rescheduled", "Unresponsive", "Number not reachable", "Wrong number", "Not interested", "Other"].map((o) => (
-	                        <option key={o} value={o}>{o}</option>
-	                      ))}
+                        "Rescheduled", "Unresponsive", "Number not reachable", "Wrong number", "Not interested", "Other"].map((o) => {
+                          const attemptsAfterSave = (cartAttemptCart?.attempts ?? 0) + 1;
+                          const lockUnresponsive = o === "Unresponsive" && attemptsAfterSave < CART_UNRESPONSIVE_MIN_ATTEMPTS;
+                          return (
+	                          <option key={o} value={o} disabled={lockUnresponsive}>
+                              {o}{lockUnresponsive ? ` — needs ${CART_UNRESPONSIVE_MIN_ATTEMPTS} attempts (this is ${attemptsAfterSave})` : ""}
+                            </option>
+                          );
+                        })}
 	                    </select>
 	                  </label>
+	                  {/* ⚠️ A reason, not a free-text box. Free text on a closing
+	                      outcome is where "no" goes to die - unsearchable, and
+	                      impossible to count objections across a week. */}
+	                  {cartAttemptDraft.outcomeCode === "Not interested" && (
+	                    <label className="flex flex-col gap-1 sm:col-span-2">
+	                      <span className="text-xs font-bold text-gray-600">Why did they say no? *</span>
+	                      <select className="rounded-lg border border-rose-200 bg-rose-50/40 px-3 py-2 text-sm"
+	                        value={cartAttemptDraft.customOutcome}
+	                        onChange={(e) => setCartAttemptDraft((v) => ({ ...v, customOutcome: e.target.value }))}>
+	                        <option value="">Choose a reason…</option>
+	                        {CART_NOT_INTERESTED_REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+	                      </select>
+	                      <span className="text-[11px] text-gray-500">
+	                        This closes the customer, so it has to say why. The reason is reported back to you as objection data.
+	                      </span>
+	                    </label>
+	                  )}
+	                  {(cartAttemptCart?.attempts ?? 0) + 1 < CART_UNRESPONSIVE_MIN_ATTEMPTS && (
+	                    <div className="sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+	                      <p className="m-0 text-[11px] font-black text-amber-900">
+	                        Follow-up required — attempt {(cartAttemptCart?.attempts ?? 0) + 1} of {CART_UNRESPONSIVE_MIN_ATTEMPTS}
+	                      </p>
+	                      <p className="m-0 mt-0.5 text-[11px] font-medium text-amber-800">
+	                        “Unresponsive” unlocks on the {CART_UNRESPONSIVE_MIN_ATTEMPTS}rd logged attempt. Log what happened on this
+	                        call and come back to it — a customer who was rung once has not stopped responding.
+	                      </p>
+	                    </div>
+	                  )}
 	                  {cartAttemptDraft.outcomeCode === "Other" && (
 	                    <label className="flex flex-col gap-1 sm:col-span-2">
 	                      <span className="text-xs font-bold text-gray-600">Describe the outcome *</span>
