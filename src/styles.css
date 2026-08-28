@@ -9574,6 +9574,20 @@ body:has(.waybill-create-modal) .waybill-modal-subtitle {
 }
 
 @media (max-width: 699px) {
+  .user-directory-mobile-card .user-account-controls {
+    align-items: stretch;
+    flex-direction: column;
+    gap: .75rem;
+  }
+  .user-directory-mobile-card .user-card-actions {
+    grid-template-columns: 1fr;
+  }
+  .user-directory-mobile-card .user-card-actions button {
+    min-height: 2.75rem;
+  }
+}
+
+@media (max-width: 699px) {
   /* Same dead-selector story as above; the shell's own p-2 and
      max-h-[calc(100dvh-1rem)] already cover narrow screens. */
 
