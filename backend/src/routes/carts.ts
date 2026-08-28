@@ -305,7 +305,8 @@ const buildConvertedCartLinkRepairReport = async (orgId: string) => {
     .select("id, customer, phone, product_name, package_name, amount, currency, source, embed_label, status, last_activity")
     .eq("org_id", orgId)
     .eq("status", "Converted")
-    .order("last_activity", { ascending: false });
+    .order("last_activity", { ascending: false })
+    .limit(REPORT_ROW_CEILING);
 
   if (cartsError) throw cartsError;
 

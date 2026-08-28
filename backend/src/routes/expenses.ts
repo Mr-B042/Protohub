@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { REPORT_ROW_CEILING } from "../lib/query-limits.js";
 import { humanFieldErrors } from "../lib/validation-message.js";
 import { z } from "zod";
 import { supabase } from "../lib/supabase.js";
@@ -16,7 +17,9 @@ router.get("/", requireRole("Owner", "Admin"), async (req, res) => {
     .order("date", { ascending: false });
   if (from) query = query.gte("date", from as string);
   if (to)   query = query.lte("date", to as string);
-  const { data, error } = await query;
+  // Explicit ceiling: without one PostgREST silently returns the newest 1000
+  // and reports no truncation, so an unfiltered list quietly loses old spend.
+  const { data, error } = await query.limit(REPORT_ROW_CEILING);
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json(data);
 });
